@@ -502,123 +502,121 @@
   }
 
   async function applyAllocationOverlay() {
-    const db = ensureClient();
-    const cid = await getCompanyId();
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const itemIds = allStockItems.map(i => i.id).filter(Boolean);
-    if (!itemIds.length) return;
+  const itemIds = allStockItems.map(i => i.id).filter(Boolean);
+  if (!itemIds.length) return;
 
-    const { data: allocations, error } = await db
+  function chunks(arr, size = 80) {
+    const out = [];
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+    return out;
+  }
+
+  let allocations = [];
+
+  for (const part of chunks(itemIds, 80)) {
+    const { data, error } = await db
       .from("order_allocations")
-      .select(`
-        id,
-        item_id,
-        order_line_id,
-        allocation_status,
-        allocated_at
-      `)
-      .eq("company_id", cid)
-      .in("item_id", itemIds)
+      .select("id,item_id,order_line_id,allocation_status,allocated_at")
+      .in("item_id", part)
       .neq("allocation_status", CANCELLED_ALLOCATION_STATUS);
 
     if (error) {
-      console.warn("Allocation overlay skipped:", error.message);
-      return;
+      console.warn("Allocation chunk skipped:", error.message);
+      continue;
     }
 
-    const orderLineIds = [...new Set((allocations || []).map(a => a.order_line_id).filter(Boolean))];
-    if (!orderLineIds.length) return;
-
-    const { data: lines, error: lineError } = await db
-      .from("order_lines")
-      .select("id, order_id")
-      .in("id", orderLineIds);
-
-    if (lineError) {
-      console.warn("Order line lookup skipped:", lineError.message);
-      return;
-    }
-
-    const orderIds = [...new Set((lines || []).map(l => l.order_id).filter(Boolean))];
-    if (!orderIds.length) return;
-
-    const { data: orders, error: orderError } = await db
-      .from("orders")
-      .select(`
-        id,
-        order_number,
-        external_reference,
-        purchase_order,
-        retail_name,
-        delivery_name,
-        delivery_company,
-        recipient_name
-      `)
-      .in("id", orderIds);
-
-    if (orderError) {
-      console.warn("Order lookup skipped:", orderError.message);
-      return;
-    }
-
-    const lineById = new Map((lines || []).map(line => [String(line.id), line]));
-    const orderById = new Map((orders || []).map(order => [String(order.id), order]));
-
-    const allocationByItem = new Map();
-
-    (allocations || []).forEach(alloc => {
-      if (!alloc.item_id) return;
-
-      const current = allocationByItem.get(String(alloc.item_id));
-
-      if (!current) {
-        allocationByItem.set(String(alloc.item_id), alloc);
-        return;
-      }
-
-      const currentTime = new Date(current.allocated_at || 0).getTime();
-      const newTime = new Date(alloc.allocated_at || 0).getTime();
-
-      if (newTime > currentTime) {
-        allocationByItem.set(String(alloc.item_id), alloc);
-      }
-    });
-
-    allStockItems = allStockItems.map(item => {
-      const alloc = allocationByItem.get(String(item.id));
-      if (!alloc) return item;
-
-      const line = lineById.get(String(alloc.order_line_id));
-      const order = orderById.get(String(line?.order_id || ""));
-
-      if (!line || !order) return item;
-
-      const orderNo =
-        order.order_number ||
-        order.external_reference ||
-        order.id ||
-        "";
-
-      const retailer =
-        order.retail_name ||
-        order.delivery_company ||
-        order.delivery_name ||
-        order.recipient_name ||
-        "";
-
-      return {
-        ...item,
-        linked_order_id: order.id,
-        order_number: orderNo,
-        retailer_name: retailer,
-        purchase_order: order.purchase_order || "",
-        allocation_id: alloc.id,
-        allocation_status: alloc.allocation_status || "reserved",
-        reserved_at: item.reserved_at || alloc.allocated_at || null,
-        status: normalize(item.status) === "in_stock" ? "reserved" : item.status
-      };
-    });
+    allocations = allocations.concat(data || []);
   }
+
+  const orderLineIds = [...new Set(allocations.map(a => a.order_line_id).filter(Boolean))];
+  if (!orderLineIds.length) return;
+
+  let lines = [];
+
+  for (const part of chunks(orderLineIds, 80)) {
+    const { data, error } = await db
+      .from("order_lines")
+      .select("id,order_id")
+      .in("id", part);
+
+    if (error) {
+      console.warn("Order line chunk skipped:", error.message);
+      continue;
+    }
+
+    lines = lines.concat(data || []);
+  }
+
+  const orderIds = [...new Set(lines.map(l => l.order_id).filter(Boolean))];
+  if (!orderIds.length) return;
+
+  let orders = [];
+
+  for (const part of chunks(orderIds, 80)) {
+    const { data, error } = await db
+      .from("orders")
+      .select("id,order_number,external_reference,purchase_order,retail_name")
+      .in("id", part);
+
+    if (error) {
+      console.warn("Order chunk skipped:", error.message);
+      continue;
+    }
+
+    orders = orders.concat(data || []);
+  }
+
+  const lineById = new Map(lines.map(line => [String(line.id), line]));
+  const orderById = new Map(orders.map(order => [String(order.id), order]));
+  const allocationByItem = new Map();
+
+  allocations.forEach(alloc => {
+    if (!alloc.item_id) return;
+
+    const current = allocationByItem.get(String(alloc.item_id));
+    if (!current) {
+      allocationByItem.set(String(alloc.item_id), alloc);
+      return;
+    }
+
+    const currentTime = new Date(current.allocated_at || 0).getTime();
+    const newTime = new Date(alloc.allocated_at || 0).getTime();
+
+    if (newTime > currentTime) allocationByItem.set(String(alloc.item_id), alloc);
+  });
+
+  allStockItems = allStockItems.map(item => {
+    const alloc = allocationByItem.get(String(item.id));
+    if (!alloc) return item;
+
+    const line = lineById.get(String(alloc.order_line_id));
+    const order = orderById.get(String(line?.order_id || ""));
+
+    if (!line || !order) return item;
+
+    return {
+      ...item,
+      linked_order_id: order.id,
+      order_number: order.order_number || order.external_reference || order.id || "",
+      retailer_name: order.retail_name || "",
+      purchase_order: order.purchase_order || "",
+      allocation_id: alloc.id,
+      allocation_status: alloc.allocation_status || "reserved",
+      reserved_at: item.reserved_at || alloc.allocated_at || null,
+      status: normalize(item.status) === "in_stock" ? "reserved" : item.status
+    };
+  });
+
+  console.log("Stock allocation overlay:", {
+    items: itemIds.length,
+    allocations: allocations.length,
+    lines: lines.length,
+    orders: orders.length
+  });
+}
 
   function applyRoleVisibility() {
     const manager = canManageStock();
