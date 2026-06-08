@@ -33,6 +33,9 @@
   --danger-tx: #b91c1c;
   --danger-bd: #fecaca;
 }
+html.auth-loading body {
+  visibility: hidden;
+}
 
 * {
   box-sizing: border-box;
