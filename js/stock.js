@@ -8,6 +8,8 @@
 
   let client = null;
   let companyId = null;
+  let currentUser = null;
+  let currentProfile = null;
 
   let allStockItems = [];
   let filteredStockItems = [];
@@ -55,6 +57,7 @@
 
   function formatDateTime(value) {
     if (!value) return "—";
+
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
 
@@ -107,8 +110,66 @@
     return client;
   }
 
+  async function loadCurrentProfile() {
+    const db = ensureClient();
+
+    const { data: sessionData, error: sessionError } = await db.auth.getUser();
+    if (sessionError) throw sessionError;
+
+    currentUser = sessionData?.user || null;
+
+    if (!currentUser?.id) {
+      window.location.replace("/login.html");
+      throw new Error("Not authenticated.");
+    }
+
+    let result = await db
+      .from("user_profiles")
+      .select("id, auth_user_id, role, is_active, company_id, customer_id, retailer_code")
+      .eq("id", currentUser.id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!result.data && !result.error) {
+      result = await db
+        .from("user_profiles")
+        .select("id, auth_user_id, role, is_active, company_id, customer_id, retailer_code")
+        .eq("auth_user_id", currentUser.id)
+        .eq("is_active", true)
+        .maybeSingle();
+    }
+
+    if (result.error) throw result.error;
+    if (!result.data?.id) throw new Error("No active user profile found.");
+
+    currentProfile = result.data;
+    companyId = currentProfile.company_id || null;
+    document.body.classList.add(`role-${normalize(currentProfile.role)}`);
+  }
+
+  function isTenantRole() {
+    return ["veynor_admin", "tenant_admin", "tenant_user"].includes(normalize(currentProfile?.role));
+  }
+
+  function isProductOwnerRole() {
+    return ["product_owner_admin", "product_owner_user"].includes(normalize(currentProfile?.role));
+  }
+
+  function isRetailerRole() {
+    return normalize(currentProfile?.role) === "retailer_user";
+  }
+
+  function canManageStock() {
+    return isTenantRole();
+  }
+
   async function getCompanyId() {
     if (companyId) return companyId;
+
+    if (currentProfile?.company_id) {
+      companyId = currentProfile.company_id;
+      return companyId;
+    }
 
     const db = ensureClient();
 
@@ -235,18 +296,6 @@
     return item.inbound_date || item.created_at || null;
   }
 
-  function getLastActivity(item) {
-    return (
-      item.shipped_at ||
-      item.loaded_at ||
-      item.picked_at ||
-      item.reserved_at ||
-      item.inbound_date ||
-      item.created_at ||
-      null
-    );
-  }
-
   function isAvailable(item) {
     return normalize(item.status) === "in_stock";
   }
@@ -273,23 +322,21 @@
     `;
   }
 
-  function linkedOrderText(item) {
-    return [
-      item.order_number || item.linked_order_id || "",
-      item.retailer_name || "",
-      item.purchase_order || ""
-    ].filter(Boolean).join(" · ");
-  }
-
   async function loadCustomers() {
     const db = ensureClient();
     const cid = await getCompanyId();
 
-    const { data, error } = await db
+    let query = db
       .from("customers")
-      .select("id, name")
+      .select("id, name, customer_type")
       .eq("company_id", cid)
       .order("name", { ascending: true });
+
+    if (isProductOwnerRole() && currentProfile?.customer_id) {
+      query = query.eq("id", currentProfile.customer_id);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.warn("Customers skipped:", error.message);
@@ -352,6 +399,12 @@
         `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`
       ).join("");
 
+    if (isProductOwnerRole() && currentProfile?.customer_id) {
+      select.value = currentProfile.customer_id;
+      select.disabled = true;
+      return;
+    }
+
     if (current && customers.some(c => String(c.id) === String(current))) {
       select.value = current;
     }
@@ -367,7 +420,7 @@
       loadLocations()
     ]);
 
-    const { data, error } = await db
+    let query = db
       .from("items")
       .select(`
         id,
@@ -404,6 +457,12 @@
       .eq("company_id", cid)
       .order("created_at", { ascending: false });
 
+    if (isProductOwnerRole() && currentProfile?.customer_id) {
+      query = query.eq("products.customer_id", currentProfile.customer_id);
+    }
+
+    const { data, error } = await query;
+
     if (error) throw error;
 
     allStockItems = (data || [])
@@ -434,6 +493,10 @@
         };
       });
 
+    if (isProductOwnerRole() && currentProfile?.customer_id) {
+      allStockItems = allStockItems.filter(item => String(item.customer_id) === String(currentProfile.customer_id));
+    }
+
     await applyAllocationOverlay();
 
     selectedItemIds.clear();
@@ -441,6 +504,7 @@
     setKpis();
     applyFilters(false);
     renderExportProductOptions();
+    applyRoleVisibility();
   }
 
   async function applyAllocationOverlay() {
@@ -450,28 +514,14 @@
     const itemIds = allStockItems.map(i => i.id).filter(Boolean);
     if (!itemIds.length) return;
 
-    const { data, error } = await db
+    const { data: allocations, error } = await db
       .from("order_allocations")
       .select(`
         id,
         item_id,
         order_line_id,
         allocation_status,
-        allocated_at,
-        order_lines (
-          id,
-          order_id,
-          orders (
-            id,
-            order_number,
-            external_reference,
-            purchase_order,
-            retail_name,
-            delivery_name,
-            delivery_company,
-            recipient_name
-          )
-        )
+        allocated_at
       `)
       .eq("company_id", cid)
       .in("item_id", itemIds)
@@ -482,23 +532,51 @@
       return;
     }
 
+    const orderLineIds = [...new Set((allocations || []).map(a => a.order_line_id).filter(Boolean))];
+    if (!orderLineIds.length) return;
+
+    const { data: lines, error: lineError } = await db
+      .from("order_lines")
+      .select(`
+        id,
+        order_id,
+        orders (
+          id,
+          order_number,
+          external_reference,
+          purchase_order,
+          retail_name,
+          delivery_name,
+          delivery_company,
+          recipient_name,
+          customer_id
+        )
+      `)
+      .in("id", orderLineIds);
+
+    if (lineError) {
+      console.warn("Order line lookup skipped:", lineError.message);
+      return;
+    }
+
+    const lineById = new Map((lines || []).map(line => [String(line.id), line]));
     const allocationByItem = new Map();
 
-    (data || []).forEach(row => {
-      if (!row.item_id) return;
+    (allocations || []).forEach(alloc => {
+      if (!alloc.item_id) return;
 
-      const current = allocationByItem.get(String(row.item_id));
+      const current = allocationByItem.get(String(alloc.item_id));
 
       if (!current) {
-        allocationByItem.set(String(row.item_id), row);
+        allocationByItem.set(String(alloc.item_id), alloc);
         return;
       }
 
       const currentTime = new Date(current.allocated_at || 0).getTime();
-      const newTime = new Date(row.allocated_at || 0).getTime();
+      const newTime = new Date(alloc.allocated_at || 0).getTime();
 
       if (newTime > currentTime) {
-        allocationByItem.set(String(row.item_id), row);
+        allocationByItem.set(String(alloc.item_id), alloc);
       }
     });
 
@@ -506,12 +584,10 @@
       const alloc = allocationByItem.get(String(item.id));
       if (!alloc) return item;
 
-      const order = alloc.order_lines?.orders || {};
+      const line = lineById.get(String(alloc.order_line_id));
+      const order = line?.orders || {};
 
-      const orderId =
-        alloc.order_lines?.order_id ||
-        order.id ||
-        "";
+      const orderId = line?.order_id || order.id || "";
 
       const orderNo =
         order.order_number ||
@@ -526,21 +602,37 @@
         order.recipient_name ||
         "";
 
-      const purchaseOrder =
-        order.purchase_order ||
-        "";
-
       return {
         ...item,
         linked_order_id: orderId,
         order_number: orderNo,
         retailer_name: retailer,
-        purchase_order: purchaseOrder,
+        purchase_order: order.purchase_order || "",
         allocation_id: alloc.id,
         allocation_status: alloc.allocation_status || "reserved",
         reserved_at: item.reserved_at || alloc.allocated_at || null,
         status: normalize(item.status) === "in_stock" ? "reserved" : item.status
       };
+    });
+  }
+
+  function applyRoleVisibility() {
+    const manager = canManageStock();
+
+    [
+      "btnSelectAllVisible",
+      "btnSelectNone",
+      "btnRemoveReservation",
+      "btnMarkPicked",
+      "btnMarkLoaded",
+      "btnRunMatch"
+    ].forEach(id => {
+      const el = byId(id);
+      if (el) el.style.display = manager ? "" : "none";
+    });
+
+    document.querySelectorAll(".tenant-only-stock").forEach(el => {
+      el.style.display = manager ? "" : "none";
     });
   }
 
@@ -582,7 +674,6 @@
           available: 0,
           reserved: 0,
           blocked: 0,
-          picked_loaded: 0,
           volume_m3: 0,
           weight_kg: 0,
           items: []
@@ -599,7 +690,6 @@
       if (isAvailable(item)) group.available += 1;
       if (isReserved(item)) group.reserved += 1;
       if (isBlocked(item)) group.blocked += 1;
-      if (["picked", "loaded"].includes(normalize(item.status))) group.picked_loaded += 1;
     });
 
     Array.from(map.values()).forEach(group => {
@@ -619,17 +709,11 @@
 
     const textSort = (a, b) => String(a || "").localeCompare(String(b || ""), "en-GB");
 
-    if (sort === "sku_asc") {
-      rows.sort((a, b) => textSort(a.sku_base, b.sku_base));
-    } else if (sort === "product_asc") {
-      rows.sort((a, b) => textSort(a.product_name, b.product_name));
-    } else if (sort === "total_desc") {
-      rows.sort((a, b) => b.total - a.total || textSort(a.sku_base, b.sku_base));
-    } else if (sort === "available_desc") {
-      rows.sort((a, b) => b.available - a.available || textSort(a.sku_base, b.sku_base));
-    } else if (sort === "reserved_desc") {
-      rows.sort((a, b) => b.reserved - a.reserved || textSort(a.sku_base, b.sku_base));
-    }
+    if (sort === "sku_asc") rows.sort((a, b) => textSort(a.sku_base, b.sku_base));
+    else if (sort === "product_asc") rows.sort((a, b) => textSort(a.product_name, b.product_name));
+    else if (sort === "total_desc") rows.sort((a, b) => b.total - a.total || textSort(a.sku_base, b.sku_base));
+    else if (sort === "available_desc") rows.sort((a, b) => b.available - a.available || textSort(a.sku_base, b.sku_base));
+    else if (sort === "reserved_desc") rows.sort((a, b) => b.reserved - a.reserved || textSort(a.sku_base, b.sku_base));
 
     rows.forEach(group => {
       group.items.sort((a, b) => {
@@ -676,7 +760,6 @@
           item.order_number,
           item.retailer_name,
           item.purchase_order,
-          item.shipment_number,
           item.status,
           item.linked_order_id
         ].join(" ").toLowerCase();
@@ -703,6 +786,7 @@
     renderDetail();
     renderSelectionSummary();
     renderExportProductOptions();
+    applyRoleVisibility();
   }
 
   function makeGroupHtml(group, index) {
@@ -734,24 +818,30 @@
             <div class="mini-kpi"><div class="label">Total volume</div><div class="value">${formatNumber(group.volume_m3, 3)} m³</div></div>
           </div>
 
-          <div class="group-action-bar">
-            <label class="check-row">
-              <input class="row-check" type="checkbox" data-select-group="${escapeHtml(group.key)}"/>
-              Select all rows in this product group
-            </label>
+          ${
+            canManageStock()
+              ? `
+                <div class="group-action-bar tenant-only-stock">
+                  <label class="check-row">
+                    <input class="row-check" type="checkbox" data-select-group="${escapeHtml(group.key)}"/>
+                    Select all rows in this product group
+                  </label>
 
-            <div class="bulk-actions">
-              <button class="btn" type="button" data-group-action="remove_reservation" data-group-key="${escapeHtml(group.key)}">Remove Reservation</button>
-              <button class="btn" type="button" data-group-action="picked" data-group-key="${escapeHtml(group.key)}">Mark Picked</button>
-              <button class="btn" type="button" data-group-action="loaded" data-group-key="${escapeHtml(group.key)}">Mark Loaded</button>
-            </div>
-          </div>
+                  <div class="bulk-actions">
+                    <button class="btn" type="button" data-group-action="remove_reservation" data-group-key="${escapeHtml(group.key)}">Remove Reservation</button>
+                    <button class="btn" type="button" data-group-action="picked" data-group-key="${escapeHtml(group.key)}">Mark Picked</button>
+                    <button class="btn" type="button" data-group-action="loaded" data-group-key="${escapeHtml(group.key)}">Mark Loaded</button>
+                  </div>
+                </div>
+              `
+              : ""
+          }
 
           <div class="table-wrap">
             <table class="stock-detail-table">
               <thead>
                 <tr>
-                  <th>Select</th>
+                  ${canManageStock() ? `<th class="tenant-only-stock">Select</th>` : ""}
                   <th>SKU</th>
                   <th>Mutation</th>
                   <th>Status</th>
@@ -762,7 +852,7 @@
                   <th>m³</th>
                   <th>kg</th>
                   <th>Inbound Date</th>
-                  <th>Actions</th>
+                  ${canManageStock() ? `<th class="tenant-only-stock">Actions</th>` : ""}
                 </tr>
               </thead>
               <tbody>
@@ -781,15 +871,18 @@
 
     return `
       <tr class="${active}" data-stock-id="${escapeHtml(item.id)}">
-        <td><input class="row-check" type="checkbox" data-select-item="${escapeHtml(item.id)}" ${checked}/></td>
+        ${canManageStock() ? `<td class="tenant-only-stock"><input class="row-check" type="checkbox" data-select-item="${escapeHtml(item.id)}" ${checked}/></td>` : ""}
+
         <td>
           <span class="stock-link">${escapeHtml(item.display_sku || shortSku(item))}</span>
           <span class="subline">${escapeHtml(item.product_name || "—")}</span>
         </td>
+
         <td>
           <span class="mut-id">${escapeHtml(item.display_mutation || mutationDisplay(item))}</span>
           <span class="subline">${escapeHtml(item.sku_unique || "—")}</span>
         </td>
+
         <td>${statusPill(item.status)}</td>
         <td>${allocationPill(item)}</td>
         <td>${linkedOrderDisplay(item)}</td>
@@ -798,13 +891,20 @@
         <td>${formatNumber(item.volume_m3, 3)}</td>
         <td>${formatNumber(item.weight_kg, 1)}</td>
         <td>${escapeHtml(formatDateTime(getInboundDate(item)))}</td>
-        <td>
-          <div class="bulk-actions">
-            <button class="mini-btn" type="button" data-row-action="remove_reservation" data-stock-id="${escapeHtml(item.id)}">Unreserve</button>
-            <button class="mini-btn" type="button" data-row-action="picked" data-stock-id="${escapeHtml(item.id)}">Picked</button>
-            <button class="mini-btn" type="button" data-row-action="loaded" data-stock-id="${escapeHtml(item.id)}">Loaded</button>
-          </div>
-        </td>
+
+        ${
+          canManageStock()
+            ? `
+              <td class="tenant-only-stock">
+                <div class="bulk-actions">
+                  <button class="mini-btn" type="button" data-row-action="remove_reservation" data-stock-id="${escapeHtml(item.id)}">Unreserve</button>
+                  <button class="mini-btn" type="button" data-row-action="picked" data-stock-id="${escapeHtml(item.id)}">Picked</button>
+                  <button class="mini-btn" type="button" data-row-action="loaded" data-stock-id="${escapeHtml(item.id)}">Loaded</button>
+                </div>
+              </td>
+            `
+            : ""
+        }
       </tr>
     `;
   }
@@ -821,6 +921,7 @@
     container.innerHTML = groupedStock.map((group, index) => makeGroupHtml(group, index)).join("");
     bindGroupEvents();
     syncSelectionUi();
+    applyRoleVisibility();
   }
 
   function bindGroupEvents() {
@@ -840,6 +941,8 @@
         renderDetail();
       });
     });
+
+    if (!canManageStock()) return;
 
     document.querySelectorAll("[data-select-item]").forEach(input => {
       input.addEventListener("change", () => {
@@ -897,6 +1000,12 @@
   }
 
   function syncSelectionUi() {
+    if (!canManageStock()) {
+      selectedItemIds.clear();
+      renderSelectionSummary();
+      return;
+    }
+
     document.querySelectorAll("[data-select-item]").forEach(input => {
       const id = input.getAttribute("data-select-item");
       input.checked = selectedItemIds.has(String(id));
@@ -992,15 +1101,23 @@
         </div>
       </div>
 
-      <div class="bulk-actions">
-        <button class="btn" data-detail-action="in_stock" data-stock-id="${escapeHtml(item.id)}" type="button">Mark In Stock</button>
-        <button class="btn" data-detail-action="reserved" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Reserved</button>
-        <button class="btn" data-detail-action="picked" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Picked</button>
-        <button class="btn" data-detail-action="loaded" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Loaded</button>
-        <button class="btn" data-detail-action="damaged" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Damaged</button>
-        <button class="btn btn-primary" data-detail-action="remove_reservation" data-stock-id="${escapeHtml(item.id)}" type="button">Remove Reservation</button>
-      </div>
+      ${
+        canManageStock()
+          ? `
+            <div class="bulk-actions tenant-only-stock">
+              <button class="btn" data-detail-action="in_stock" data-stock-id="${escapeHtml(item.id)}" type="button">Mark In Stock</button>
+              <button class="btn" data-detail-action="reserved" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Reserved</button>
+              <button class="btn" data-detail-action="picked" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Picked</button>
+              <button class="btn" data-detail-action="loaded" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Loaded</button>
+              <button class="btn" data-detail-action="damaged" data-stock-id="${escapeHtml(item.id)}" type="button">Mark Damaged</button>
+              <button class="btn btn-primary" data-detail-action="remove_reservation" data-stock-id="${escapeHtml(item.id)}" type="button">Remove Reservation</button>
+            </div>
+          `
+          : ""
+      }
     `;
+
+    if (!canManageStock()) return;
 
     container.querySelectorAll("[data-detail-action]").forEach(button => {
       button.addEventListener("click", async () => {
@@ -1028,6 +1145,8 @@
   }
 
   async function updateItemStatus(stockId, newStatus) {
+    if (!canManageStock()) throw new Error("You do not have permission to change stock.");
+
     const db = ensureClient();
     const cid = await getCompanyId();
 
@@ -1076,6 +1195,8 @@
   }
 
   async function removeReservation(stockId) {
+    if (!canManageStock()) throw new Error("You do not have permission to change stock.");
+
     const db = ensureClient();
     const cid = await getCompanyId();
 
@@ -1148,6 +1269,8 @@
   }
 
   async function bulkAction(action, stockIds) {
+    if (!canManageStock()) throw new Error("You do not have permission to change stock.");
+
     const ids = (stockIds || []).filter(Boolean);
 
     if (!ids.length) {
@@ -1184,6 +1307,8 @@
   }
 
   async function runMatchFromStock() {
+    if (!canManageStock()) throw new Error("You do not have permission to run matching.");
+
     if (!window.AllocationEngine?.run) {
       throw new Error("AllocationEngine is not loaded. Add /js/allocation-engine.js before /js/stock.js.");
     }
@@ -1531,36 +1656,38 @@
       applyFilters(false);
     });
 
-    byId("btnSelectAllVisible")?.addEventListener("click", () => {
-      filteredStockItems.forEach(item => selectedItemIds.add(String(item.id)));
-      syncSelectionUi();
-    });
+    if (canManageStock()) {
+      byId("btnSelectAllVisible")?.addEventListener("click", () => {
+        filteredStockItems.forEach(item => selectedItemIds.add(String(item.id)));
+        syncSelectionUi();
+      });
 
-    byId("btnSelectNone")?.addEventListener("click", () => {
-      selectedItemIds.clear();
-      syncSelectionUi();
-    });
+      byId("btnSelectNone")?.addEventListener("click", () => {
+        selectedItemIds.clear();
+        syncSelectionUi();
+      });
 
-    byId("btnRemoveReservation")?.addEventListener("click", () => {
-      bulkAction("remove_reservation", Array.from(selectedItemIds));
-    });
+      byId("btnRemoveReservation")?.addEventListener("click", () => {
+        bulkAction("remove_reservation", Array.from(selectedItemIds));
+      });
 
-    byId("btnMarkPicked")?.addEventListener("click", () => {
-      bulkAction("picked", Array.from(selectedItemIds));
-    });
+      byId("btnMarkPicked")?.addEventListener("click", () => {
+        bulkAction("picked", Array.from(selectedItemIds));
+      });
 
-    byId("btnMarkLoaded")?.addEventListener("click", () => {
-      bulkAction("loaded", Array.from(selectedItemIds));
-    });
+      byId("btnMarkLoaded")?.addEventListener("click", () => {
+        bulkAction("loaded", Array.from(selectedItemIds));
+      });
 
-    byId("btnRunMatch")?.addEventListener("click", async () => {
-      try {
-        await runMatchFromStock();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Run Match failed.", "err");
-      }
-    });
+      byId("btnRunMatch")?.addEventListener("click", async () => {
+        try {
+          await runMatchFromStock();
+        } catch (error) {
+          console.error(error);
+          showToast(error.message || "Run Match failed.", "err");
+        }
+      });
+    }
 
     bindExportEvents();
   }
@@ -1568,6 +1695,7 @@
   async function init() {
     try {
       ensureClient();
+      await loadCurrentProfile();
       bindEvents();
       await loadStock();
 
