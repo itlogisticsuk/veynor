@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Proof of Delivery · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/pod.js?v=2" defer></script>
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside id="sidebarMount" class="sidebar"></aside>
+
+    <main class="page">
+      <header class="page-topbar">
+        <div class="page-title">
+          <h1>Proof of Delivery</h1>
+          <p>Signed delivery note, customer signature and delivery photos.</p>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="btn" type="button" onclick="history.back()">Back</button>
+        </div>
+      </header>
+
+      <div id="podRoot"></div>
+    </main>
+  </div>
+</body>
+</html>

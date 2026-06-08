@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Orders & Route Planner · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBH...="
+    crossorigin=""
+  />
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/planning-engine.js" defer></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="/js/orders-map.js" defer></script>
+<script src="/js/available-vehicles.js" defer></script>
+<script src="/js/orders.js" defer></script>
+
+  <style>
+    .planner-page{display:grid;gap:14px;padding-bottom:24px}
+    .planner-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .planner-title h1{margin:0;font-size:22px;font-weight:900}
+    .planner-title p{margin:6px 0 0;color:var(--muted);font-size:12.5px;line-height:1.45;max-width:980px}
+    .planner-date-pill{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:800;border-radius:10px}
+
+    .planner-stats{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:12px}
+    .planner-stat{border:1px solid var(--border);background:#fff;padding:14px;min-height:92px;display:grid;gap:6px;border-radius:10px}
+    .planner-stat-label{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em;color:#667085}
+    .planner-stat-value{font-size:22px;font-weight:900;color:#111827}
+    .planner-stat-sub{font-size:11px;color:#6b7280;line-height:1.35}
+
+    .planner-layout{display:grid;grid-template-columns:minmax(0,1.42fr) minmax(430px,.78fr);gap:14px;align-items:start}
+    .planner-left,.planner-right{display:grid;gap:14px;min-width:0}
+    .planner-panel,.map-card,.detail-card,.vehicles-card,.charter-card{border:1px solid var(--border);background:#fff;border-radius:10px;overflow:hidden;min-width:0}
+    .planner-panel-head,.map-head,.detail-head,.card-head{padding:12px 14px;border-bottom:1px solid var(--border);background:#fafbfc;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .planner-panel-title,.map-head h3,.detail-head h3,.card-head h3{margin:0;font-size:14px;font-weight:900;color:#111827}
+    .planner-panel-sub{margin:4px 0 0;font-size:11.5px;color:#6b7280;line-height:1.4}
+    .planner-panel-body{padding:12px 14px;display:grid;gap:12px;min-width:0}
+
+    .planner-btn{height:34px;border-radius:8px;border:1px solid var(--border);background:#fff;color:var(--text);padding:0 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap}
+    .planner-btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    .planner-btn.success{background:#16a34a;border-color:#16a34a;color:#fff}
+    .planner-btn.warning{background:#f59e0b;border-color:#f59e0b;color:#fff}
+    .planner-btn:hover{background:#f8fafc}
+    .planner-btn.primary:hover,.planner-btn.success:hover,.planner-btn.warning:hover{filter:brightness(.96)}
+
+    .controls-actions,.map-actions,.vehicle-row-actions,.detail-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .planner-meta{font-size:11.5px;color:var(--muted);font-weight:800}
+
+    .filters-grid{display:grid;grid-template-columns:1.15fr .75fr .75fr .75fr .75fr;gap:12px;align-items:end}
+    .assignment-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end}
+    .field{display:grid;gap:6px}
+    .field label{font-size:11.5px;font-weight:800;color:#374151}
+    .input,.select{width:100%;border:1px solid var(--border);background:#fff;border-radius:8px;padding:10px 12px;color:var(--text);font-size:12px;min-height:36px}
+    .search-wrap{position:relative}
+    .search-wrap .input{padding-right:36px}
+    .search-icon{position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none;font-size:13px}
+
+    .options-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    .options-left,.options-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .toggle-chip{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);border-radius:999px;background:#fff;font-size:11.5px;font-weight:800;color:#374151}
+    .toggle-chip input{margin:0}
+
+    .selection-finance{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .mini-card{border:1px solid var(--border);border-radius:10px;background:#fbfdff;padding:10px 12px;display:grid;gap:4px}
+    .mini-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.04em}
+    .mini-value{font-size:14px;font-weight:900;color:#111827}
+
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:8px;background:#fff}
+    .planner-table{width:100%;min-width:1840px;border-collapse:collapse}
+    .planner-table th,.planner-table td{padding:9px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:12px}
+    .planner-table th{background:#fbfbfc;font-size:10px;font-weight:900;color:#374151;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+    .planner-table tbody tr{cursor:pointer}
+    .planner-table tbody tr:hover{background:#fafcff}
+    .planner-table tbody tr.active{background:#f7fbff}
+
+    .sortable-th{cursor:pointer;user-select:none}
+    .sortable-th:hover{background:#eef4ff}
+    .sort-indicator{margin-left:5px;color:#1267ff;font-size:10px}
+
+    .order-row-delivered{background:#f0fdf4}
+    .order-row-delivered:hover{background:#dcfce7!important}
+    .order-row-issue{background:#fff7ed}
+    .order-row-issue:hover{background:#ffedd5!important}
+    .order-row-failed{background:#fef2f2}
+    .order-row-failed:hover{background:#fee2e2!important}
+
+    .checkbox-cell{width:34px}
+    .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .coord-ok{color:#16a34a;font-weight:900}
+    .coord-missing{color:#b42318;font-weight:900}
+
+    .status-pill,.transport-pill,.completion-pill,.route-pill,.driver-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:3px 8px;font-size:10.5px;font-weight:900;border:1px solid transparent;white-space:nowrap}
+    .status-imported{background:var(--gray-bg);color:var(--gray-tx);border-color:var(--gray-bd)}
+    .status-ready_for_planning{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
+    .status-ready_for_picking{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .status-planned{background:var(--blue-bg);color:var(--blue-tx);border-color:var(--blue-bd)}
+    .status-sent_to_driver{background:var(--blue-bg);color:var(--blue-tx);border-color:var(--blue-bd)}
+    .status-out_for_delivery,.status-loaded{background:var(--purple-bg);color:var(--purple-tx);border-color:var(--purple-bd)}
+    .status-delivered{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .status-delivery_issue,.status-partial_delivery{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
+    .status-failed_delivery,.status-not_delivered,.status-returned{background:var(--red-bg);color:var(--red-tx);border-color:var(--red-bd)}
+    .status-export_for_charter{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
+
+    .completion-delivered{background:#dcfce7;color:#166534;border-color:#86efac}
+    .completion-issue{background:#ffedd5;color:#c2410c;border-color:#fdba74}
+    .completion-failed{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}
+    .completion-open{background:#f3f4f6;color:#374151;border-color:#d1d5db}
+    .completion-stock{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
+
+    .transport-own{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .transport-charter{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
+    .transport-unassigned{background:var(--gray-bg);color:var(--gray-tx);border-color:var(--gray-bd)}
+    .driver-pill{background:var(--blue-bg);color:var(--blue-tx);border-color:var(--blue-bd)}
+
+    .map-box{position:relative;height:68vh;min-height:620px;max-height:900px;overflow:hidden;background:#f8fafc;border-top:1px solid var(--border)}
+    #ordersMap{width:100%;height:100%;display:block}
+    .leaflet-container{width:100%;height:100%;background:#dbeafe;font:inherit}
+
+    .planning-toolbar{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px;border-bottom:1px solid var(--border);background:#f8fafc}
+    .planning-date-center{display:grid;justify-items:center;min-width:180px}
+    .planning-date-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.04em}
+    #planningDateLabel{font-size:18px;font-weight:900;color:#111827}
+    .planning-day-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px;border-bottom:1px solid var(--border);background:#fff}
+    .planning-day-kpi{border:1px solid var(--border);border-radius:10px;background:#fbfdff;padding:10px 12px;display:grid;gap:4px}
+    .planning-day-kpi span{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280}
+    .planning-day-kpi strong{font-size:18px;font-weight:900;color:#111827}
+
+    .detail-body{padding:14px;display:grid;gap:14px}
+    .detail-empty{color:var(--muted);line-height:1.6;font-size:12.5px}
+    .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+    .detail-item{display:grid;gap:4px}
+    .detail-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
+    .detail-value{font-size:12px;font-weight:800;line-height:1.45;word-break:break-word}
+
+    .vehicle-list,.charter-list{padding:12px;display:grid;gap:8px;background:#fff}
+    .vehicle-compact-row{border:1px solid var(--border);border-radius:8px;background:#fff;overflow:hidden;display:grid;gap:0}
+    .vehicle-compact-row.selected{border-color:#60a5fa;box-shadow:0 0 0 1px rgba(18,103,255,.12)}
+    .vehicle-row-main{display:grid;grid-template-columns:minmax(170px,1.18fr) minmax(84px,.58fr) minmax(130px,.9fr) minmax(90px,.62fr) minmax(58px,.45fr) minmax(70px,.5fr) minmax(82px,.55fr) minmax(82px,.55fr) minmax(82px,.55fr) minmax(70px,.5fr) auto;gap:10px;align-items:center;padding:10px 12px}
+    .vehicle-main{min-width:0;display:grid;gap:3px}
+    .vehicle-title-line{display:flex;align-items:center;gap:8px;min-width:0}
+    .route-color-chip{width:10px;height:10px;border-radius:999px;border:1px solid rgba(17,24,39,.10);flex:0 0 auto}
+    .vehicle-name{font-size:12.5px;font-weight:900;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .vehicle-sub{color:var(--muted);font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .vehicle-stat{display:grid;gap:2px;min-width:0}
+    .vehicle-stat-label{font-size:9.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em;white-space:nowrap}
+    .vehicle-stat-value{font-size:11.5px;font-weight:900;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .vehicle-status{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:900;border:1px solid transparent;white-space:nowrap;width:max-content}
+    .vehicle-status.available{background:var(--gray-bg);color:var(--gray-tx);border-color:var(--gray-bd)}
+    .vehicle-status.assigned{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .vehicle-status.selected{background:#fff7ed;color:#c2410c;border-color:#fdba74}
+
+    .vehicle-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+    .vehicle-row-actions .planner-btn{height:30px;padding:0 10px;font-size:11.5px;border-radius:7px}
+    .vehicle-row-extra{display:none;padding:12px;border-top:1px solid var(--border);background:#fafafa;gap:10px}
+    .vehicle-compact-row.expanded .vehicle-row-extra{display:grid}
+
+    .vehicle-assignment-panel{display:none;border:1px solid #bfdbfe;background:#eff6ff;border-radius:10px;padding:12px;gap:10px;margin-bottom:10px}
+    .vehicle-assignment-panel.open{display:grid}
+    .vehicle-assignment-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .vehicle-assignment-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .mini-note{font-size:11.5px;color:var(--muted);line-height:1.45}
+
+    .vehicle-route-orders{display:grid;gap:8px}
+    .vehicle-route-order{display:grid;grid-template-columns:auto 1fr auto auto auto;gap:8px;align-items:center;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px 10px}
+    .vehicle-route-order-main{display:grid;gap:2px;min-width:0}
+    .vehicle-route-order-title{font-size:12px;font-weight:800}
+    .vehicle-route-order-sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .route-order-expandable[draggable="true"]{cursor:grab}
+    .vehicle-empty,.route-editor-empty{border:1px dashed var(--border);border-radius:8px;background:#fff;padding:14px;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .notice{display:none;padding:12px 14px;border-radius:10px;border:1px solid var(--border);font-weight:800;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    @media (max-width:1900px){
+      .planner-stats{grid-template-columns:repeat(5,minmax(0,1fr))}
+      .vehicle-row-main{grid-template-columns:minmax(180px,1.35fr) minmax(88px,.72fr) minmax(130px,1fr) minmax(70px,.52fr) minmax(72px,.52fr) minmax(72px,.52fr) auto}
+      .hide-xl{display:none}
+    }
+
+    @media (max-width:1480px){
+      .planner-layout{grid-template-columns:1fr}
+      .filters-grid,.assignment-grid{grid-template-columns:1fr}
+      .map-box{min-height:540px}
+    }
+
+    @media (max-width:920px){
+      .planner-stats,.detail-grid,.vehicle-assignment-grid,.selection-finance{grid-template-columns:1fr}
+      .vehicle-route-order{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside id="sidebarMount" class="sidebar"></aside>
+
+    <main class="page planner-page">
+      <header class="planner-title-row">
+        <div class="planner-title">
+          <h1>Orders &amp; Route Planner</h1>
+          <p>Plan released orders into efficient routes, assign vehicles and drivers, monitor delivery completion and keep delivered orders visible for control.</p>
+        </div>
+
+        <div class="planner-date-pill" id="plannerDateBadge">Live planner</div>
+      </header>
+
+      <div id="toast" class="notice"></div>
+
+      <section class="planner-stats">
+        <article class="planner-stat"><div class="planner-stat-label">Released Orders</div><div class="planner-stat-value" id="kpiReleasedOrders">0</div><div class="planner-stat-sub">Orders released for planning</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Orders with Coordinates</div><div class="planner-stat-value" id="kpiCoordsOrders">0</div><div class="planner-stat-sub">Orders visible on the map</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Routes</div><div class="planner-stat-value" id="kpiRoutes">0</div><div class="planner-stat-sub">Stored routes</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Stops</div><div class="planner-stat-value" id="kpiStops">0</div><div class="planner-stat-sub">Stops in visible routes</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Delivered</div><div class="planner-stat-value" id="kpiDelivered">0</div><div class="planner-stat-sub">Completed deliveries</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Delivery Issues</div><div class="planner-stat-value" id="kpiDeliveryIssues">0</div><div class="planner-stat-sub">Partial or problem deliveries</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Failed</div><div class="planner-stat-value" id="kpiFailedDeliveries">0</div><div class="planner-stat-sub">Not delivered / returned</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Revenue</div><div class="planner-stat-value" id="kpiRevenue">£0.00</div><div class="planner-stat-sub">Visible route revenue</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Result</div><div class="planner-stat-value" id="kpiProfit">£0.00</div><div class="planner-stat-sub">Estimated route result</div></article>
+        <article class="planner-stat"><div class="planner-stat-label">Margin</div><div class="planner-stat-value" id="kpiMargin">0.0%</div><div class="planner-stat-sub">Estimated gross margin</div></article>
+
+        <span id="kpiMiles" style="display:none;">0.0 mi</span>
+        <span id="kpiCost" style="display:none;">£0.00</span>
+        <span id="kpiCostPerStop" style="display:none;">£0.00</span>
+      </section>
+
+      <section class="planner-layout">
+        <div class="planner-left">
+          <section class="map-card">
+            <div class="map-head">
+              <div>
+                <h3>Route Map</h3>
+                <div class="planner-panel-sub">Shows depot, released orders, delivery points and selected route lines.</div>
+              </div>
+
+              <div class="map-actions">
+                <label class="toggle-chip"><input id="toggleShowMarkers" type="checkbox" checked/> Show markers</label>
+                <label class="toggle-chip"><input id="toggleShowRouteLine" type="checkbox" checked/> Show route lines</label>
+                <button id="btnFitUkMap" class="planner-btn" type="button">Fit UK</button>
+                <button id="btnRefreshMap" class="planner-btn" type="button">Refresh Map</button>
+              </div>
+            </div>
+
+            <div class="map-box">
+              <div id="ordersMap"></div>
+            </div>
+          </section>
+
+          <section class="planner-panel">
+            <div class="planner-panel-head">
+              <div>
+                <h2 class="planner-panel-title">Planner Controls</h2>
+                <p class="planner-panel-sub">Filter, sort, select, plan and monitor order delivery completion from one screen.</p>
+              </div>
+
+              <div class="controls-actions">
+                <button id="btnRefreshPlanner" class="planner-btn" type="button">Refresh</button>
+                <button id="btnAutoPlanRoutes" class="planner-btn primary" type="button">Auto Plan Routes</button>
+                <button id="btnExportCharter" class="planner-btn primary" type="button">Export for Charter</button>
+                <button id="btnReloadRoutes" class="planner-btn" type="button">Reload Routes</button>
+                <button id="btnToggleOrdersTable" class="planner-btn" type="button">Minimize Orders</button>
+                <button id="btnClearSelection" class="planner-btn" type="button">Clear Selection</button>
+                <button id="btnClearPreferredVehicle" class="planner-btn" type="button">Clear Vehicle</button>
+              </div>
+            </div>
+
+            <div class="planner-panel-body">
+              <div class="filters-grid">
+                <div class="field">
+                  <label for="orderSearch">Search</label>
+                  <div class="search-wrap">
+                    <input id="orderSearch" class="input" type="text" placeholder="Order, product owner, retailer, city, postcode or driver..."/>
+                    <span class="search-icon">⌕</span>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="filterStatus">Order Status</label>
+                  <select id="filterStatus" class="select">
+                    <option value="">All statuses</option>
+                    <option value="ready_for_planning">ready_for_planning</option>
+                    <option value="ready_for_picking">ready_for_picking</option>
+                    <option value="planned">planned</option>
+                    <option value="sent_to_driver">sent_to_driver</option>
+                    <option value="out_for_delivery">out_for_delivery</option>
+                    <option value="loaded">loaded</option>
+                    <option value="delivered">delivered</option>
+                    <option value="delivery_issue">delivery_issue</option>
+                    <option value="partial_delivery">partial_delivery</option>
+                    <option value="failed_delivery">failed_delivery</option>
+                    <option value="not_delivered">not_delivered</option>
+                    <option value="returned">returned</option>
+                    <option value="export_for_charter">export_for_charter</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="filterCompletion">Completion</label>
+                  <select id="filterCompletion" class="select">
+                    <option value="">All completion</option>
+                    <option value="open">Open / not completed</option>
+                    <option value="stock_complete">Stock complete only</option>
+                    <option value="delivered">Delivered</option>
+                    <option value="issue">Delivery issue / partial</option>
+                    <option value="failed">Failed / not delivered</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="filterRoute">Route Assignment</label>
+                  <select id="filterRoute" class="select">
+                    <option value="">All orders</option>
+                    <option value="unplanned">Unplanned only</option>
+                    <option value="planned">Planned only</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="filterDriver">Driver</label>
+                  <select id="filterDriver" class="select">
+                    <option value="">All drivers</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="assignment-grid">
+                <div class="field">
+                  <label for="manualVehicleSelect">Preferred Vehicle</label>
+                  <select id="manualVehicleSelect" class="select"><option value="">Auto / no fixed vehicle</option></select>
+                </div>
+
+                <div class="field">
+                  <label for="manualDriverSelect">Preferred Driver</label>
+                  <select id="manualDriverSelect" class="select"><option value="">Use vehicle default driver</option></select>
+                </div>
+
+                <div class="field">
+                  <label for="manualRouteDeliveryDate">Route Delivery Date</label>
+                  <input id="manualRouteDeliveryDate" class="input" type="date"/>
+                </div>
+
+                <div class="field">
+                  <label for="manualRouteStartTime">Route Start Time</label>
+                  <input id="manualRouteStartTime" class="input" type="time"/>
+                </div>
+              </div>
+
+              <div class="options-row">
+                <div class="options-left">
+                  <label class="toggle-chip"><input id="toggleOwnTransportOnly" type="checkbox"/> Own transport only</label>
+                  <label class="toggle-chip"><input id="toggleCharterOnly" type="checkbox"/> Charter only</label>
+                  <label class="toggle-chip"><input id="checkAllOrders" type="checkbox"/> Select all visible orders</label>
+                  <label class="toggle-chip"><input id="manualFinalizeEta" type="checkbox"/> Confirm ETA window now</label>
+                  <label class="toggle-chip"><input id="toggleHideCompleted" type="checkbox"/> Hide completed</label>
+                </div>
+
+                <div class="options-right">
+                  <div class="planner-meta">
+                    Selected: <span id="selectedOrdersCount">0</span> ·
+                    Vehicle: <span id="selectedVehicleName">Auto</span> ·
+                    Driver: <span id="selectedDriverName">Vehicle default</span> ·
+                    Delivery: <span id="selectedDeliveryDate">—</span>
+                  </div>
+                  <div id="resultsMeta" class="planner-meta">0 orders shown</div>
+                </div>
+              </div>
+
+              <div class="selection-finance">
+                <div class="mini-card"><div class="mini-label">Selected Volume</div><div class="mini-value" id="selectedVolume">0.00 m³</div></div>
+                <div class="mini-card"><div class="mini-label">Selected Revenue</div><div class="mini-value" id="selectedRevenue">£0.00</div></div>
+                <div class="mini-card"><div class="mini-label">Selected Completed</div><div class="mini-value" id="selectedCompletedCount">0</div></div>
+                <div class="mini-card"><div class="mini-label">Delivery Visibility</div><div class="mini-value">Date now · ETA optional</div></div>
+              </div>
+
+              <div id="ordersTableWrap" class="table-wrap">
+                <table class="planner-table">
+                  <thead>
+                    <tr>
+                      <th class="checkbox-cell"></th>
+                      <th class="sortable-th" data-sort-key="order">Order <span class="sort-indicator" data-sort-indicator="order"></span></th>
+                      <th class="sortable-th" data-sort-key="product_owner">Product Owner <span class="sort-indicator" data-sort-indicator="product_owner"></span></th>
+                      <th class="sortable-th" data-sort-key="retailer">Retailer / Delivery Point <span class="sort-indicator" data-sort-indicator="retailer"></span></th>
+                      <th class="sortable-th" data-sort-key="city">City <span class="sort-indicator" data-sort-indicator="city"></span></th>
+                      <th class="sortable-th" data-sort-key="postcode">Postcode <span class="sort-indicator" data-sort-indicator="postcode"></span></th>
+                      <th class="sortable-th" data-sort-key="colli">Colli <span class="sort-indicator" data-sort-indicator="colli"></span></th>
+                      <th class="sortable-th" data-sort-key="volume">Volume (m³) <span class="sort-indicator" data-sort-indicator="volume"></span></th>
+                      <th class="sortable-th" data-sort-key="revenue">Revenue <span class="sort-indicator" data-sort-indicator="revenue"></span></th>
+                      <th class="sortable-th" data-sort-key="coords">Coords <span class="sort-indicator" data-sort-indicator="coords"></span></th>
+                      <th class="sortable-th" data-sort-key="status">Status <span class="sort-indicator" data-sort-indicator="status"></span></th>
+                      <th class="sortable-th" data-sort-key="completion">Completion <span class="sort-indicator" data-sort-indicator="completion"></span></th>
+                      <th class="sortable-th" data-sort-key="transport">Transport <span class="sort-indicator" data-sort-indicator="transport"></span></th>
+                      <th class="sortable-th" data-sort-key="route">Route <span class="sort-indicator" data-sort-indicator="route"></span></th>
+                      <th class="sortable-th" data-sort-key="driver">Driver <span class="sort-indicator" data-sort-indicator="driver"></span></th>
+                      <th class="sortable-th" data-sort-key="expected">Expected Delivery <span class="sort-indicator" data-sort-indicator="expected"></span></th>
+                      <th class="sortable-th" data-sort-key="eta">ETA <span class="sort-indicator" data-sort-indicator="eta"></span></th>
+                      <th class="sortable-th" data-sort-key="requested">Requested <span class="sort-indicator" data-sort-indicator="requested"></span></th>
+                    </tr>
+                  </thead>
+                  <tbody id="ordersTableBody">
+                    <tr><td colspan="18">Loading orders...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="planner-right">
+          <section class="vehicles-card">
+            <div class="card-head">
+              <div>
+                <h3>Available Vehicles</h3>
+                <div class="planner-panel-sub">Assign routes, drivers, delivery dates and send routes to the driver app.</div>
+              </div>
+            </div>
+
+            <div class="planning-toolbar">
+              <button id="prevPlanningDay" class="planner-btn" type="button">◀</button>
+              <div class="planning-date-center">
+                <span class="planning-date-label">Planning Date</span>
+                <strong id="planningDateLabel">—</strong>
+              </div>
+              <button id="nextPlanningDay" class="planner-btn" type="button">▶</button>
+              <button id="todayPlanningBtn" class="planner-btn primary" type="button">Today</button>
+            </div>
+
+            <div class="planning-day-kpis">
+              <div class="planning-day-kpi"><span>Routes</span><strong id="planningRoutesCount">0</strong></div>
+              <div class="planning-day-kpi"><span>Revenue</span><strong id="planningRevenue">£0.00</strong></div>
+              <div class="planning-day-kpi"><span>Cost</span><strong id="planningCost">£0.00</strong></div>
+              <div class="planning-day-kpi"><span>Result</span><strong id="planningResult">£0.00</strong></div>
+            </div>
+
+            <div id="availableVehiclesList" class="vehicle-list">
+              <div class="vehicle-empty">Loading vehicles...</div>
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <div class="detail-head">
+              <div>
+                <h3>Order Detail</h3>
+                <div class="planner-panel-sub">Select an order to inspect delivery, ETA, route, POD and planning data.</div>
+              </div>
+            </div>
+
+            <div class="detail-body">
+              <div id="orderDetailEmpty" class="detail-empty">No order selected yet.</div>
+
+              <div id="orderDetailBody" style="display:none;">
+                <div class="detail-grid">
+                  <div class="detail-item"><div class="detail-label">Order Number</div><div id="detailOrderNumber" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Product Owner</div><div id="detailCustomerName" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Retailer / Delivery Point</div><div id="detailRetailerName" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Requested Delivery</div><div id="detailDeliveryDate" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Expected / Confirmed Delivery</div><div id="detailExpectedDelivery" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">ETA Window</div><div id="detailEta" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Completion</div><div id="detailCompletion" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Order Revenue</div><div id="detailRevenue" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Status</div><div id="detailStatus" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Route</div><div id="detailRoute" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Driver</div><div id="detailDriver" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Vehicle</div><div id="detailVehicle" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Transport Type</div><div id="detailTransportType" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Coordinates</div><div id="detailCoordinates" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">City</div><div id="detailCity" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Postcode</div><div id="detailPostcode" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Country</div><div id="detailCountry" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Colli</div><div id="detailColli" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Volume</div><div id="detailVolume" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Planning Release</div><div id="detailPlanningRelease" class="detail-value">—</div></div>
+                  <div class="detail-item"><div class="detail-label">Planning Readiness</div><div id="detailMatchStatus" class="detail-value">—</div></div>
+                  <div class="detail-item" style="grid-column:1 / -1;"><div class="detail-label">Address</div><div id="detailAddress" class="detail-value">—</div></div>
+                  <div class="detail-item" style="grid-column:1 / -1;"><div class="detail-label">Notes</div><div id="detailNotes" class="detail-value">—</div></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="charterOrdersSection" class="charter-card" style="display:none;">
+            <div class="card-head">
+              <div>
+                <h3>Charter Orders</h3>
+                <div class="planner-panel-sub">Orders marked for external carriers.</div>
+              </div>
+              <div class="planner-meta"><span id="charterOrdersCount">0</span> orders</div>
+            </div>
+
+            <div id="charterOrdersList" class="charter-list">
+              <div class="route-editor-empty">No charter orders at the moment.</div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

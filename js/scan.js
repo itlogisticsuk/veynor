@@ -1,0 +1,826 @@
+(function () {
+  "use strict";
+
+  const TENANT_NAME = "Sofa2U";
+
+  let client = null;
+  let companyId = null;
+
+  let products = [];
+  let productOwners = [];
+  let warehouses = [];
+  let locations = [];
+
+  let activeWarehouse = null;
+  let activeLocation = null;
+
+  let inboundHistory = [];
+  let outboundHistory = [];
+
+  let linesToday = 0;
+  let unitsIn = 0;
+  let unitsOut = 0;
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    }[c]));
+  }
+
+  function normalize(value) {
+    return String(value ?? "").trim().toLowerCase();
+  }
+
+  function cleanCode(value) {
+    return normalize(value).replace(/\s+/g, "");
+  }
+
+  function toNumber(value, fallback = 0) {
+    const n = Number(String(value ?? "").replace(",", "."));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function formatNumber(value, digits = 0) {
+    return Number(value || 0).toLocaleString("en-GB", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function nowIso() {
+    return new Date().toISOString();
+  }
+
+  function nowTime() {
+    return new Date().toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+  }
+
+  function showToast(message, type = "ok") {
+    const el = byId("toast");
+    if (!el) return;
+
+    el.textContent = message;
+    el.className = `notice ${type}`;
+
+    clearTimeout(window.__scanToastTimer);
+    window.__scanToastTimer = setTimeout(() => {
+      el.textContent = "";
+      el.className = "notice";
+    }, 5000);
+  }
+
+  function setText(id, value) {
+    const el = byId(id);
+    if (el) el.textContent = value;
+  }
+
+  function ensureClient() {
+    if (client) return client;
+    if (typeof sb !== "function") throw new Error("Supabase helper sb() is not available.");
+    client = sb();
+    return client;
+  }
+
+  async function getCompanyId() {
+    if (companyId) return companyId;
+
+    const { data, error } = await ensureClient()
+      .from("companies")
+      .select("id")
+      .eq("name", TENANT_NAME)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+
+    companyId = data.id;
+    return companyId;
+  }
+
+  function parseScan(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+
+    if (raw.includes(":")) {
+      const parts = raw.split(":");
+      return parts[parts.length - 1].trim();
+    }
+
+    if (raw.includes("/")) {
+      const last = raw.split("/").pop().trim();
+      return last || raw;
+    }
+
+    return raw;
+  }
+
+  function ownerName(product) {
+    return product?.customers?.name || "—";
+  }
+
+  function warehouseLabel(row) {
+    return row?.name || row?.code || "—";
+  }
+
+  function locationLabel(row) {
+    return row?.code || row?.name || "—";
+  }
+
+  function buildUniqueSku(product, index) {
+    const sku = String(product.sku_base || "SKU").replace(/[^a-zA-Z0-9_-]/g, "");
+    const d = new Date();
+
+    const stamp =
+      d.getFullYear().toString() +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      String(d.getDate()).padStart(2, "0") +
+      String(d.getHours()).padStart(2, "0") +
+      String(d.getMinutes()).padStart(2, "0") +
+      String(d.getSeconds()).padStart(2, "0");
+
+    return `${sku}-IN-${stamp}-${String(index).padStart(3, "0")}`;
+  }
+
+  function mutationFromUnique(product, uniqueSku) {
+    const match = String(uniqueSku || "").match(/-(\d{1,6})$/);
+    if (match) return `${product.sku_base}-${Number(match[1])}`;
+    return `${product.sku_base}-1`;
+  }
+
+  function updateKpis(mode, lastScanText) {
+    setText("kpiLinesToday", formatNumber(linesToday));
+    setText("kpiUnitsIn", formatNumber(unitsIn));
+    setText("kpiUnitsOut", formatNumber(unitsOut));
+    setText("kpiMode", mode || "Scan In");
+    setText("kpiLastScan", lastScanText || "No scan yet");
+  }
+
+  function updateActiveState() {
+    setText("activeWarehouseLabel", activeWarehouse ? warehouseLabel(activeWarehouse) : "No warehouse scanned");
+    setText("activeLocationLabel", activeLocation ? locationLabel(activeLocation) : "No location scanned");
+
+    const ref = byId("referenceInput")?.value?.trim();
+    setText("activeReferenceLabel", ref || "No reference");
+
+    const whSelect = byId("manualWarehouse");
+    if (whSelect && activeWarehouse) whSelect.value = activeWarehouse.id;
+
+    renderLocationOptions();
+
+    const locSelect = byId("manualLocation");
+    if (locSelect && activeLocation) locSelect.value = activeLocation.id;
+  }
+
+  async function logWarehouseEvent(eventInput) {
+    if (!window.EventLog?.logWarehouseEvent) return;
+
+    try {
+      await window.EventLog.logWarehouseEvent(eventInput);
+    } catch (error) {
+      console.warn("Event log skipped:", error.message);
+    }
+  }
+
+  async function loadWarehouses() {
+    const cid = await getCompanyId();
+
+    const { data, error } = await ensureClient()
+      .from("warehouses")
+      .select("*")
+      .eq("company_id", cid)
+      .order("name", { ascending: true });
+
+    if (error) throw error;
+
+    warehouses = data || [];
+
+    const select = byId("manualWarehouse");
+    if (!select) return;
+
+    const current = select.value || "";
+
+    select.innerHTML =
+      `<option value="">No warehouse selected</option>` +
+      warehouses.map(w => `<option value="${escapeHtml(w.id)}">${escapeHtml(warehouseLabel(w))}</option>`).join("");
+
+    if (current && warehouses.some(w => String(w.id) === String(current))) {
+      select.value = current;
+    }
+  }
+
+  async function loadLocations() {
+    const cid = await getCompanyId();
+
+    const { data, error } = await ensureClient()
+      .from("warehouse_locations")
+      .select("*")
+      .eq("company_id", cid)
+      .order("code", { ascending: true });
+
+    if (error) throw error;
+
+    locations = data || [];
+    renderLocationOptions();
+  }
+
+  function renderLocationOptions() {
+    const select = byId("manualLocation");
+    if (!select) return;
+
+    const current = select.value || "";
+
+    const rows = activeWarehouse
+      ? locations.filter(l => String(l.warehouse_id) === String(activeWarehouse.id))
+      : locations;
+
+    select.innerHTML =
+      `<option value="">No location selected</option>` +
+      rows.map(l => `<option value="${escapeHtml(l.id)}">${escapeHtml(locationLabel(l))}</option>`).join("");
+
+    if (current && rows.some(l => String(l.id) === String(current))) {
+      select.value = current;
+    }
+  }
+
+  async function loadProducts() {
+    const cid = await getCompanyId();
+
+    const { data, error } = await ensureClient()
+      .from("products")
+      .select(`
+        *,
+        customers (
+          id,
+          name
+        )
+      `)
+      .eq("company_id", cid)
+      .order("sku_base", { ascending: true });
+
+    if (error) throw error;
+
+    products = data || [];
+
+    const owners = new Map();
+
+    products.forEach(p => {
+      if (p.customer_id && p.customers?.name) {
+        owners.set(String(p.customer_id), {
+          id: p.customer_id,
+          name: p.customers.name
+        });
+      }
+    });
+
+    productOwners = Array.from(owners.values()).sort((a, b) =>
+      String(a.name).localeCompare(String(b.name), "en-GB")
+    );
+
+    renderProductOwners();
+    renderProducts();
+  }
+
+  function renderProductOwners() {
+    const select = byId("productOwnerFilter");
+    if (!select) return;
+
+    const current = select.value || "";
+
+    select.innerHTML =
+      `<option value="">All product owners</option>` +
+      productOwners.map(o => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`).join("");
+
+    if (current && productOwners.some(o => String(o.id) === String(current))) {
+      select.value = current;
+    }
+  }
+
+  function filteredProducts() {
+    const q = normalize(byId("productSearch")?.value || "");
+    const ownerId = byId("productOwnerFilter")?.value || "";
+
+    return products.filter(p => {
+      if (ownerId && String(p.customer_id) !== String(ownerId)) return false;
+
+      if (q) {
+        const haystack = [
+          p.sku_base,
+          p.name,
+          p.description,
+          ownerName(p)
+        ].join(" ").toLowerCase();
+
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }
+
+  function renderProducts() {
+    const tbody = byId("productsBody");
+    if (!tbody) return;
+
+    const rows = filteredProducts();
+
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="4">No products found.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = rows.slice(0, 150).map(p => `
+      <tr data-sku="${escapeHtml(p.sku_base || "")}">
+        <td><strong>${escapeHtml(p.sku_base || "—")}</strong></td>
+        <td>${escapeHtml(p.name || "—")}</td>
+        <td>${escapeHtml(ownerName(p))}</td>
+        <td>${formatNumber(p.volume_m3, 3)}</td>
+      </tr>
+    `).join("");
+
+    tbody.querySelectorAll("tr[data-sku]").forEach(row => {
+      row.addEventListener("click", () => {
+        const sku = row.dataset.sku || "";
+
+        if (byId("manualSku")) byId("manualSku").value = sku;
+
+        if (byId("mainScanInput")) {
+          byId("mainScanInput").value = sku;
+          byId("mainScanInput").focus();
+        }
+
+        if (byId("outboundSku")) byId("outboundSku").value = sku;
+      });
+    });
+  }
+
+  function findWarehouse(scanValue) {
+    const code = cleanCode(parseScan(scanValue));
+
+    return warehouses.find(w =>
+      cleanCode(w.name) === code ||
+      cleanCode(w.code) === code ||
+      cleanCode(w.barcode) === code
+    ) || null;
+  }
+
+  function findLocation(scanValue) {
+    const code = cleanCode(parseScan(scanValue));
+
+    const rows = activeWarehouse
+      ? locations.filter(l => String(l.warehouse_id) === String(activeWarehouse.id))
+      : locations;
+
+    return rows.find(l =>
+      cleanCode(l.code) === code ||
+      cleanCode(l.name) === code ||
+      cleanCode(l.barcode) === code
+    ) || null;
+  }
+
+  function findProduct(scanValue) {
+    const sku = cleanCode(parseScan(scanValue));
+    const ownerId = byId("productOwnerFilter")?.value || "";
+
+    return products.find(p => {
+      if (ownerId && String(p.customer_id) !== String(ownerId)) return false;
+
+      return (
+        cleanCode(p.sku_base) === sku ||
+        cleanCode(p.sku) === sku ||
+        cleanCode(p.barcode) === sku
+      );
+    }) || null;
+  }
+
+  async function bookInbound(product, qty = 1) {
+    if (!activeWarehouse) throw new Error("Scan or select a warehouse first.");
+    if (!activeLocation) throw new Error("Scan or select a location first.");
+
+    const cid = await getCompanyId();
+    const reference = byId("referenceInput")?.value?.trim() || "";
+    const inboundDate = nowIso();
+
+    const count = Math.max(1, Math.round(toNumber(qty, 1)));
+    const rows = [];
+
+    for (let i = 1; i <= count; i++) {
+      const uniqueSku = buildUniqueSku(product, i);
+
+      rows.push({
+        company_id: cid,
+        product_id: product.id,
+        warehouse_id: activeWarehouse.id,
+        location_id: activeLocation.id,
+        storage_mutation_id: uniqueSku,
+        sku_unique: uniqueSku,
+        status: "in_stock",
+        volume_m3: toNumber(product.volume_m3, 0),
+        weight_kg: toNumber(product.weight_kg, 0),
+        inbound_reference: reference || null,
+        inbound_date: inboundDate,
+        received_at: inboundDate
+      });
+    }
+
+    const { data, error } = await ensureClient()
+      .from("items")
+      .insert(rows)
+      .select("id, sku_unique, storage_mutation_id, status, created_at");
+
+    if (error) throw error;
+
+    const inserted = data || [];
+
+    inserted.forEach(item => {
+      inboundHistory.unshift({
+        time: nowTime(),
+        warehouse: warehouseLabel(activeWarehouse),
+        location: locationLabel(activeLocation),
+        sku: product.sku_base,
+        product: product.name,
+        owner: ownerName(product),
+        mutation: mutationFromUnique(product, item.sku_unique),
+        reference,
+        status: item.status
+      });
+    });
+
+    inboundHistory = inboundHistory.slice(0, 100);
+
+    linesToday += 1;
+    unitsIn += inserted.length;
+
+    renderInboundHistory();
+    updateKpis("Scan In", `${product.sku_base} booked in`);
+    showToast(`${inserted.length} item(s) booked in for ${product.sku_base}.`, "ok");
+
+    for (const item of inserted) {
+      await logWarehouseEvent({
+        company_id: cid,
+        event_type: "item_received",
+        entity_type: "item",
+        entity_id: item.id,
+        reference_no: item.sku_unique || product.sku_base,
+        source_module: "scan-in",
+        old_status: null,
+        new_status: "in_stock",
+        payload: {
+          product_id: product.id,
+          sku_base: product.sku_base,
+          warehouse_id: activeWarehouse.id,
+          location_id: activeLocation.id,
+          inbound_reference: reference || null
+        }
+      });
+    }
+  }
+
+  async function handleInboundScan(rawValue) {
+    const value = parseScan(rawValue);
+    if (!value) return;
+
+    const warehouse = findWarehouse(value);
+
+    if (warehouse) {
+      activeWarehouse = warehouse;
+      activeLocation = null;
+
+      updateActiveState();
+      updateKpis("Scan In", `Warehouse ${warehouseLabel(warehouse)}`);
+      showToast(`Warehouse selected: ${warehouseLabel(warehouse)}. Scan a location next.`, "ok");
+      return;
+    }
+
+    const location = findLocation(value);
+
+    if (location) {
+      if (activeWarehouse && String(location.warehouse_id) !== String(activeWarehouse.id)) {
+        throw new Error(`Location ${locationLabel(location)} does not belong to active warehouse ${warehouseLabel(activeWarehouse)}.`);
+      }
+
+      activeLocation = location;
+
+      updateActiveState();
+      updateKpis("Scan In", `Location ${locationLabel(location)}`);
+      showToast(`Location selected: ${locationLabel(location)}.`, "ok");
+      return;
+    }
+
+    const product = findProduct(value);
+
+    if (!product) {
+      throw new Error(`No warehouse, location or SKU found for scan: ${value}`);
+    }
+
+    await bookInbound(product, byId("manualQty")?.value || 1);
+  }
+
+  function renderInboundHistory() {
+    const tbody = byId("inboundHistoryBody");
+    if (!tbody) return;
+
+    if (!inboundHistory.length) {
+      tbody.innerHTML = `<tr><td colspan="9">No inbound scans yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = inboundHistory.map(row => `
+      <tr>
+        <td>${escapeHtml(row.time)}</td>
+        <td>${escapeHtml(row.warehouse)}</td>
+        <td>${escapeHtml(row.location)}</td>
+        <td><strong>${escapeHtml(row.sku)}</strong></td>
+        <td>${escapeHtml(row.product || "—")}</td>
+        <td>${escapeHtml(row.owner || "—")}</td>
+        <td>${escapeHtml(row.mutation || "—")}</td>
+        <td>${escapeHtml(row.reference || "—")}</td>
+        <td><span class="soft-pill green">${escapeHtml(row.status || "in_stock")}</span></td>
+      </tr>
+    `).join("");
+  }
+
+  async function bookOutboundManual() {
+    const sku = byId("outboundSku")?.value?.trim() || "";
+    const qty = Math.max(1, Math.round(toNumber(byId("outboundQty")?.value, 1)));
+    const reference = byId("outboundReference")?.value?.trim() || "";
+
+    const product = findProduct(sku);
+    if (!product) throw new Error(`SKU ${sku} not found.`);
+
+    const cid = await getCompanyId();
+
+    const { data, error } = await ensureClient()
+      .from("items")
+      .select("id, sku_unique, storage_mutation_id, status, product_id")
+      .eq("company_id", cid)
+      .eq("product_id", product.id)
+      .eq("status", "in_stock")
+      .order("created_at", { ascending: true })
+      .limit(qty);
+
+    if (error) throw error;
+
+    const rows = data || [];
+
+    if (rows.length < qty) {
+      throw new Error(`Only ${rows.length} available item(s) found for ${product.sku_base}.`);
+    }
+
+    const ids = rows.map(r => r.id);
+    const outboundDate = nowIso();
+
+    const { error: updateError } = await ensureClient()
+      .from("items")
+      .update({
+        status: "manual_outbound",
+        shipped_at: outboundDate
+      })
+      .in("id", ids);
+
+    if (updateError) throw updateError;
+
+    outboundHistory.unshift({
+      time: nowTime(),
+      sku: product.sku_base,
+      product: product.name,
+      qty,
+      reference,
+      status: "manual_outbound"
+    });
+
+    outboundHistory = outboundHistory.slice(0, 100);
+
+    linesToday += 1;
+    unitsOut += qty;
+
+    renderOutboundHistory();
+    updateKpis("Scan Out", `${product.sku_base} booked out`);
+    showToast(`${qty} item(s) booked out for ${product.sku_base}.`, "ok");
+
+    for (const item of rows) {
+      await logWarehouseEvent({
+        company_id: cid,
+        event_type: "item_manual_outbound",
+        entity_type: "item",
+        entity_id: item.id,
+        reference_no: item.sku_unique || product.sku_base,
+        source_module: "scan-out",
+        old_status: "in_stock",
+        new_status: "manual_outbound",
+        payload: {
+          product_id: product.id,
+          sku_base: product.sku_base,
+          outbound_reference: reference || null
+        }
+      });
+    }
+  }
+
+  function renderOutboundHistory() {
+    const tbody = byId("outboundHistoryBody");
+    if (!tbody) return;
+
+    if (!outboundHistory.length) {
+      tbody.innerHTML = `<tr><td colspan="6">No outbound scans yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = outboundHistory.map(row => `
+      <tr>
+        <td>${escapeHtml(row.time)}</td>
+        <td><strong>${escapeHtml(row.sku)}</strong></td>
+        <td>${escapeHtml(row.product || "—")}</td>
+        <td>${escapeHtml(row.qty || 1)}</td>
+        <td>${escapeHtml(row.reference || "—")}</td>
+        <td><span class="soft-pill orange">${escapeHtml(row.status || "manual_outbound")}</span></td>
+      </tr>
+    `).join("");
+  }
+
+  function renderPicklistsPlaceholder() {
+    const tbody = byId("picklistsBody");
+    if (!tbody) return;
+
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="7">
+          <div class="empty-state">
+            Picklists are ready for the next step. We will connect these to order lines and reserved stock by SKU.
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function switchTab(panelId) {
+    document.querySelectorAll(".scan-tab").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.scanTab === panelId);
+    });
+
+    document.querySelectorAll(".tab-panel").forEach(panel => {
+      panel.classList.toggle("active", panel.id === panelId);
+    });
+
+    if (panelId === "scanInPanel") {
+      updateKpis("Scan In", byId("kpiLastScan")?.textContent || "No scan yet");
+      setTimeout(() => byId("mainScanInput")?.focus(), 50);
+    }
+
+    if (panelId === "scanOutPanel") {
+      updateKpis("Scan Out", byId("kpiLastScan")?.textContent || "No scan yet");
+      setTimeout(() => byId("outboundSku")?.focus(), 50);
+    }
+
+    if (panelId === "picklistsPanel") {
+      updateKpis("Picklists", byId("kpiLastScan")?.textContent || "No scan yet");
+      renderPicklistsPlaceholder();
+    }
+  }
+
+  function clearInboundState() {
+    activeWarehouse = null;
+    activeLocation = null;
+
+    if (byId("manualWarehouse")) byId("manualWarehouse").value = "";
+    if (byId("manualLocation")) byId("manualLocation").value = "";
+
+    updateActiveState();
+    byId("mainScanInput")?.focus();
+  }
+
+  function bindEvents() {
+    document.querySelectorAll("[data-scan-tab]").forEach(btn => {
+      btn.addEventListener("click", () => switchTab(btn.dataset.scanTab));
+    });
+
+    byId("mainScanInput")?.addEventListener("keydown", async event => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+
+      try {
+        const value = byId("mainScanInput").value;
+        await handleInboundScan(value);
+        byId("mainScanInput").value = "";
+        byId("mainScanInput").focus();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Scan failed.", "err");
+        byId("mainScanInput").select();
+      }
+    });
+
+    byId("btnBookInManual")?.addEventListener("click", async () => {
+      try {
+        const product = findProduct(byId("manualSku")?.value);
+        if (!product) throw new Error("Manual SKU not found.");
+        await bookInbound(product, byId("manualQty")?.value || 1);
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Manual book-in failed.", "err");
+      }
+    });
+
+    byId("manualWarehouse")?.addEventListener("change", () => {
+      const id = byId("manualWarehouse").value || "";
+      activeWarehouse = warehouses.find(w => String(w.id) === String(id)) || null;
+      activeLocation = null;
+      updateActiveState();
+    });
+
+    byId("manualLocation")?.addEventListener("change", () => {
+      const id = byId("manualLocation").value || "";
+      activeLocation = locations.find(l => String(l.id) === String(id)) || null;
+      updateActiveState();
+    });
+
+    byId("referenceInput")?.addEventListener("input", updateActiveState);
+
+    byId("btnClearInboundState")?.addEventListener("click", clearInboundState);
+
+    byId("btnRefreshScanData")?.addEventListener("click", async () => {
+      try {
+        await loadAllData();
+        showToast("Scan data refreshed.", "ok");
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Refresh failed.", "err");
+      }
+    });
+
+    byId("productSearch")?.addEventListener("input", renderProducts);
+    byId("productOwnerFilter")?.addEventListener("change", renderProducts);
+
+    byId("btnBookOutManual")?.addEventListener("click", async () => {
+      try {
+        await bookOutboundManual();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Manual outbound failed.", "err");
+      }
+    });
+
+    byId("btnClearOutbound")?.addEventListener("click", () => {
+      if (byId("outboundSku")) byId("outboundSku").value = "";
+      if (byId("outboundQty")) byId("outboundQty").value = "1";
+      if (byId("outboundReference")) byId("outboundReference").value = "";
+      byId("outboundSku")?.focus();
+    });
+
+    byId("outboundSku")?.addEventListener("keydown", async event => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+
+      try {
+        await bookOutboundManual();
+        byId("outboundSku").value = "";
+        byId("outboundQty").value = "1";
+        byId("outboundSku").focus();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Manual outbound failed.", "err");
+      }
+    });
+
+    byId("btnRefreshPicklists")?.addEventListener("click", renderPicklistsPlaceholder);
+  }
+
+  async function loadAllData() {
+    await getCompanyId();
+
+    await Promise.all([
+      loadWarehouses(),
+      loadLocations(),
+      loadProducts()
+    ]);
+
+    updateActiveState();
+    renderPicklistsPlaceholder();
+  }
+
+  async function init() {
+    try {
+      ensureClient();
+      bindEvents();
+      await loadAllData();
+      updateKpis("Scan In", "No scan yet");
+      byId("mainScanInput")?.focus();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Scan page failed to load.", "err");
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();

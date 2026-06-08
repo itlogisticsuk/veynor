@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Products · IT LOGISTICS UK</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <script src="/js/supabase.js"></script>
+<script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/products.js" defer></script>
+
+  <style>
+    .products-page{display:grid;gap:14px;align-content:start}
+    .page-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .kpi-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+    .kpi-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px}
+    .kpi-label{font-size:10.5px;text-transform:uppercase;color:#6b7280;font-weight:900;letter-spacing:.04em}
+    .kpi-value{font-size:20px;font-weight:900;margin-top:4px}
+    .card-inner{display:grid;gap:12px}
+    .field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:12px;font-weight:900;color:#374151}
+    .input,.select,.textarea{width:100%;border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px 12px;font-size:12.5px;color:var(--text);min-height:38px}
+    .textarea{min-height:90px;resize:vertical}
+    .actions-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .section-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+    .section-title{margin:0;font-size:16px;font-weight:900}
+    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.45}
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:800;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+    .filters-row{display:grid;grid-template-columns:1.2fr .8fr .8fr .8fr auto auto;gap:10px;align-items:end}
+    .data-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
+    .data-table{width:100%;min-width:1500px;border-collapse:collapse}
+    .data-table th,.data-table td{padding:9px 10px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:top}
+    .data-table th{background:#fbfbfc;text-transform:uppercase;font-size:10px;font-weight:900;color:#374151}
+    .sku-cell{font-weight:900;color:#2563eb}
+    .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px}
+    .soft-badge{display:inline-flex;border-radius:999px;background:#f3f4f6;border:1px solid #e5e7eb;padding:4px 8px;font-size:11px;font-weight:900;white-space:nowrap}
+    .quick-actions{display:flex;gap:6px;flex-wrap:wrap}
+    .mini-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 9px;font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap}
+    .mini-btn.primary{background:var(--gold);border-color:var(--gold);color:#fff}
+    .import-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .products-help-box{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:12px;padding:12px 14px;font-size:12.5px;font-weight:800;line-height:1.5}
+
+    .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.60);z-index:9999;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:28px}
+    .modal-backdrop.open{display:flex}
+    .modal-card{width:min(920px,96vw);background:#f8fafc;border-radius:20px;box-shadow:0 24px 80px rgba(15,23,42,.30);padding:20px;display:grid;gap:16px}
+    .stock-label-modal{width:min(1180px,96vw)}
+    .modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+    .modal-title{margin:0;font-size:24px;font-weight:900;color:var(--text)}
+    .modal-sub{margin:4px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+    .modal-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .modal-panel{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px;display:grid;gap:12px}
+
+    .stock-label-modal-grid{display:grid;grid-template-columns:360px minmax(0,1fr);gap:16px;align-items:start}
+    .selected-product-card{border:1px dashed var(--border);background:#f8fafc;border-radius:12px;padding:12px;display:grid;gap:6px}
+    .selected-product-card b{color:var(--text);font-size:14px}
+    .selected-product-card span{color:var(--muted);font-size:12px;line-height:1.4}
+    .label-preview-shell{border:1px dashed var(--border);background:#f8fafc;border-radius:14px;padding:14px;display:grid;gap:12px;min-height:360px;overflow:auto}
+    .stock-label-preview-area{display:grid;gap:14px;align-items:start;justify-items:start}
+
+    .stock-label{width:140mm;height:110mm;background:#fff;border:1px solid #d9dee7;border-radius:10px;overflow:hidden;font-family:Arial,sans-serif;color:#111827;display:grid;grid-template-rows:24mm 74mm 12mm;flex:none}
+    .stock-label-top{display:grid;grid-template-columns:1fr 45mm;background:#182029;color:#fff}
+    .stock-brand{padding:8mm 8mm 0;font-size:25px;letter-spacing:7px;color:#d6b27a;white-space:nowrap}
+    .stock-brand span{color:#fff}
+    .stock-brand-sub{padding:1mm 8mm 0;font-size:10px;letter-spacing:3px;color:#fff;white-space:nowrap}
+    .stock-status{display:flex;align-items:center;justify-content:center;background:#2f6b3b;font-weight:900;font-size:16px;text-align:center}
+    .stock-body{padding:7mm 8mm;display:grid;gap:4mm;overflow:hidden}
+    .stock-k{font-size:9px;font-weight:900;color:#2f6b3b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:1.5mm}
+    .stock-v{font-size:15px;font-weight:900;line-height:1.18;word-break:break-word}
+    .stock-v.big{font-size:20px}
+    .stock-v.huge{font-size:25px}
+    .stock-line{height:1px;background:#d9dee7}
+    .barcode-text{text-align:center;font-size:10px;letter-spacing:.05em}
+    .stock-footer{background:#2f6b3b;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8mm;font-size:10px;font-weight:900}
+    .stock-footer span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+    @media(max-width:1500px){
+      .kpi-grid{grid-template-columns:repeat(3,1fr)}
+      .filters-row{grid-template-columns:1fr 1fr}
+      .stock-label-modal-grid{grid-template-columns:1fr}
+    }
+    @media(max-width:900px){
+      .field-grid,.filters-row,.kpi-grid{grid-template-columns:1fr}
+      .stock-label{transform:scale(.70);transform-origin:top left;margin-bottom:-32mm}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page products-page">
+    <section class="page-topbar">
+      <div class="page-title">
+        <h1>Products</h1>
+        <p>Product master data, pricing, packages per unit and stock label generation.</p>
+      </div>
+
+      <div class="page-actions">
+        <button id="btnOpenProductModal" class="btn btn-primary" type="button">+ New Product</button>
+        <button id="btnRefreshProducts" class="btn" type="button">Refresh</button>
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="kpi-grid">
+      <div class="kpi-box"><div class="kpi-label">Products</div><div id="kpiProductsTotal" class="kpi-value">0</div></div>
+      <div class="kpi-box"><div class="kpi-label">With Volume</div><div id="kpiProductsVolume" class="kpi-value">0</div></div>
+      <div class="kpi-box"><div class="kpi-label">Missing Volume</div><div id="kpiProductsMissingVolume" class="kpi-value">0</div></div>
+      <div class="kpi-box"><div class="kpi-label">With Tariffs</div><div id="kpiProductsTariffs" class="kpi-value">0</div></div>
+      <div class="kpi-box"><div class="kpi-label">Avg CBM</div><div id="kpiProductsAvgVolume" class="kpi-value">0</div></div>
+      <div class="kpi-box"><div class="kpi-label">Avg Charge</div><div id="kpiProductsAvgCharge" class="kpi-value">£0.00</div></div>
+    </section>
+
+    <section class="card card-inner">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Import Products</h2>
+          <p class="section-sub">Existing SKUs are updated. New SKUs are created. Products are linked to product owner, not retailer.</p>
+        </div>
+      </div>
+
+      <div class="import-row">
+        <input id="productsImportFile" class="input" type="file" accept=".xlsx,.xls,.csv" style="max-width:420px;"/>
+        <button id="btnImportProducts" class="btn btn-primary" type="button">Import Products</button>
+        <button id="btnDownloadTemplate" class="btn" type="button">Download Template</button>
+        <span id="excelFileStatus" class="section-sub">No file selected</span>
+      </div>
+    </section>
+
+    <section class="card card-inner">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Product List</h2>
+          <p class="section-sub">SKU is leading. Package count determines stock labels and later order packages.</p>
+        </div>
+        <div id="productsResultsMeta" class="section-sub">0 products shown</div>
+      </div>
+
+      <div class="filters-row">
+        <div class="field">
+          <label for="productSearch">Search</label>
+          <input id="productSearch" class="input" placeholder="SKU, name, barcode..."/>
+        </div>
+        <div class="field">
+          <label for="filterProductCustomer">Owner</label>
+          <select id="filterProductCustomer" class="select"></select>
+        </div>
+        <div class="field">
+          <label for="filterProductCategory">Range</label>
+          <select id="filterProductCategory" class="select"></select>
+        </div>
+        <div class="field">
+          <label for="filterProductCompleteness">Completeness</label>
+          <select id="filterProductCompleteness" class="select">
+            <option value="">All</option>
+            <option value="complete">Complete volume/weight</option>
+            <option value="missing_volume">Missing volume</option>
+            <option value="missing_weight">Missing weight</option>
+            <option value="with_tariff">With tariff</option>
+            <option value="missing_tariff">Missing tariff</option>
+          </select>
+        </div>
+        <button id="btnClearProductFilters" class="btn" type="button">Clear</button>
+      </div>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Product</th>
+              <th>Owner</th>
+              <th>Range</th>
+              <th>CBM</th>
+              <th>Net kg</th>
+              <th>Gross kg</th>
+              <th>Storage</th>
+              <th>Admin</th>
+              <th>Pick</th>
+              <th>Transport</th>
+              <th>Total Charge</th>
+              <th>Packages</th>
+              <th>Barcode</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="productsTableBody">
+            <tr><td colspan="15">Loading products...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="productModal" class="modal-backdrop">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h2 id="productModalTitle" class="modal-title">New Product</h2>
+        <p class="modal-sub">Owner must be Bellstone, Zoy or another product owner. Retailers do not belong here.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btnSaveProduct" class="btn btn-primary" type="button">Save Product</button>
+        <button id="btnCloseProductModal" class="btn" type="button">Close</button>
+      </div>
+    </div>
+
+    <section class="modal-panel">
+      <div class="field-grid">
+        <div class="field"><label for="productCustomer">Product Owner</label><select id="productCustomer" class="select"></select></div>
+        <div class="field"><label for="productSku">SKU</label><input id="productSku" class="input"/></div>
+        <div class="field"><label for="productName">Product Name</label><input id="productName" class="input"/></div>
+        <div class="field"><label for="productCategory">Brand / Range</label><input id="productCategory" class="input"/></div>
+        <div class="field"><label for="productBarcode">Barcode</label><input id="productBarcode" class="input"/></div>
+        <div class="field"><label for="productQr">QR Value</label><input id="productQr" class="input"/></div>
+        <div class="field" style="grid-column:1/-1;"><label for="productDescription">Description</label><textarea id="productDescription" class="textarea"></textarea></div>
+        <div class="field"><label for="productVolume">CBM / Volume</label><input id="productVolume" class="input" type="number" step="0.001"/></div>
+        <div class="field"><label for="productNetWeight">Net Weight kg</label><input id="productNetWeight" class="input" type="number" step="0.1"/></div>
+        <div class="field"><label for="productWeight">Gross Weight kg</label><input id="productWeight" class="input" type="number" step="0.1"/></div>
+        <div class="field"><label for="productLocationPrefix">Location Prefix</label><input id="productLocationPrefix" class="input"/></div>
+        <div class="field"><label for="tariffStorage">Storage £</label><input id="tariffStorage" class="input" type="number" step="0.01"/></div>
+        <div class="field"><label for="tariffAdmin">Admin £</label><input id="tariffAdmin" class="input" type="number" step="0.01"/></div>
+        <div class="field"><label for="tariffHandling">Pick £</label><input id="tariffHandling" class="input" type="number" step="0.01"/></div>
+        <div class="field"><label for="tariffTransport">Transport £</label><input id="tariffTransport" class="input" type="number" step="0.01"/></div>
+        <div class="field"><label for="totalCustomerCharge">Total Customer Charge £</label><input id="totalCustomerCharge" class="input" type="number" step="0.01"/></div>
+        <div class="field"><label for="productPackagesPerUnit">Packages Per Unit</label><input id="productPackagesPerUnit" class="input" type="number" min="1" step="1"/></div>
+        <div class="field"><label for="package1Qty">Package 1 Qty</label><input id="package1Qty" class="input" type="number" min="0" step="1"/></div>
+        <div class="field"><label for="package2Qty">Package 2 Qty</label><input id="package2Qty" class="input" type="number" min="0" step="1"/></div>
+        <div class="field"><label for="package3Qty">Package 3 Qty</label><input id="package3Qty" class="input" type="number" min="0" step="1"/></div>
+      </div>
+
+      <div class="actions-row">
+        <button id="btnClearProductForm" class="btn" type="button">Clear Form</button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="stockLabelModal" class="modal-backdrop">
+  <div class="modal-card stock-label-modal">
+    <div class="modal-head">
+      <div>
+        <h2 class="modal-title">Stock Label</h2>
+        <p class="modal-sub">Generate inbound stock labels. PDF format is fixed at 14 × 11 cm, one label per page.</p>
+      </div>
+      <div class="modal-actions">
+        <button id="btnDownloadStockLabelPdf" class="btn btn-primary" type="button" disabled>Download PDF</button>
+        <button id="btnCloseStockLabelModal" class="btn" type="button">Close</button>
+      </div>
+    </div>
+
+    <div class="stock-label-modal-grid">
+      <section class="modal-panel">
+        <div class="selected-product-card">
+          <b id="stockModalProductName">Product name</b>
+          <span id="stockModalProductSub">SKU / owner</span>
+        </div>
+
+        <div class="field">
+          <label for="stockLabelPackageSelect">Package</label>
+          <select id="stockLabelPackageSelect" class="select">
+            <option value="1">1/1</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="stockLabelQty">Number of Labels</label>
+          <input id="stockLabelQty" class="input" type="number" min="1" max="500" value="1"/>
+        </div>
+
+        <div class="field">
+          <label for="stockModalBarcode">Barcode / QR Value</label>
+          <input id="stockModalBarcode" class="input" readonly value="—"/>
+        </div>
+
+        <div class="actions-row">
+          <button id="btnGenerateStockLabel" class="btn btn-primary" type="button">Generate Preview</button>
+        </div>
+
+        <div class="products-help-box">
+          Commission labels are generated later from orders or picklists.
+        </div>
+      </section>
+
+      <section class="label-preview-shell">
+        <div class="section-sub">Preview below. Download PDF to print the selected number of labels.</div>
+        <div id="stockLabelPreviewArea" class="stock-label-preview-area"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

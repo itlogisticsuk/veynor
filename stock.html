@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Current Stock · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js?v=2" defer></script>
+  <script src="/js/event-log.js"></script>
+  <script src="/js/match-module.js"></script>
+  <script src="/js/allocation-engine.js"></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/stock.js" defer></script>
+
+  <style>
+    .stock-page{display:grid;gap:14px}
+    .stock-header{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+    .stock-kpi-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+    .stock-kpi-card{padding:16px;display:grid;gap:8px;min-height:108px}
+    .stock-kpi-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.04em}
+    .stock-kpi-value{font-size:28px;font-weight:950;line-height:1;color:#07152f}
+    .stock-kpi-sub{font-size:12px;color:var(--muted);line-height:1.45}
+    .section-card{padding:16px;display:grid;gap:14px}
+    .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .section-title{margin:0;font-size:16px;font-weight:950;color:#07152f}
+    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+    .section-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto}
+    .stock-toolbar{display:grid;grid-template-columns:1.5fr repeat(4,minmax(0,1fr)) auto;gap:12px;align-items:end}
+    .field{display:grid;gap:6px}
+    .field label{font-size:12px;font-weight:900;color:#344054}
+    .input,.select{width:100%;border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:40px}
+    .bulk-bar{border:1px solid var(--border);border-radius:16px;background:#fbfdff;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+    .bulk-summary{font-size:12.5px;font-weight:950;color:#07152f}
+    .bulk-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .stock-layout{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:14px;align-items:start}
+    .group-list{display:grid;gap:12px}
+    .stock-group{border:1px solid var(--border);border-radius:18px;background:#fff;overflow:hidden;box-shadow:var(--shadow)}
+    .stock-group-head{width:100%;border:none;background:#fff;cursor:pointer;padding:15px 16px;display:grid;grid-template-columns:150px minmax(260px,1fr) 110px 110px 110px 42px;gap:14px;align-items:center;text-align:left}
+    .stock-group-head:hover{background:#fbfdff}
+    .sg-sku{font-size:16px;font-weight:950;color:#1267ff;word-break:break-word;line-height:1.15}
+    .sg-info b{display:block;color:#07152f;font-size:15px;font-weight:950;margin-bottom:4px;line-height:1.25}
+    .sg-info .sub{font-size:12px;color:var(--muted);line-height:1.35}
+    .sg-meta{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+    .soft-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;font-size:10.5px;font-weight:900;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;white-space:nowrap}
+    .soft-pill.orange{background:#fff7ed;border-color:#fed7aa;color:#c2410c}
+    .soft-pill.green{background:#ecfdf5;border-color:#bbf7d0;color:#047857}
+    .soft-pill.gray{background:#f1f5f9;border-color:#e2e8f0;color:#475569}
+    .sg-stat{text-align:right}
+    .sg-stat .n{font-size:26px;line-height:1;font-weight:950;color:#07152f}
+    .sg-stat .t{font-size:10px;color:#667085;font-weight:900;text-transform:uppercase;letter-spacing:.04em;margin-top:5px}
+    .sg-arrow{width:38px;height:38px;border:1px solid var(--border);border-radius:999px;display:flex;align-items:center;justify-content:center;color:#07152f;font-size:18px;font-weight:950;background:#fff;transition:.16s ease}
+    .stock-group.open .sg-arrow{transform:rotate(180deg);background:#eff6ff;border-color:#bfdbfe;color:#1267ff}
+    .stock-group-body{display:none;border-top:1px solid var(--border);background:#fbfdff;padding:14px}
+    .stock-group.open .stock-group-body{display:block}
+    .group-mini-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+    .mini-kpi{border:1px solid var(--border);border-radius:14px;background:#fff;padding:12px;display:grid;gap:5px}
+    .mini-kpi .label{font-size:10px;color:#667085;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+    .mini-kpi .value{font-size:20px;line-height:1;font-weight:950;color:#07152f}
+    .group-action-bar{border:1px dashed #d7e3f4;border-radius:14px;background:#fff;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    .check-row{display:flex;gap:8px;align-items:center;font-size:12px;font-weight:900;color:#07152f}
+    .row-check{width:17px;height:17px;accent-color:#1267ff}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px;background:#fff}
+    .stock-detail-table{width:100%;border-collapse:collapse;min-width:1280px}
+    .stock-detail-table th,.stock-detail-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;font-size:12px;vertical-align:middle}
+    .stock-detail-table th{background:#f8fafc;color:#344054;font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+    .stock-detail-table tbody tr:hover td{background:#fbfdff}
+    .stock-detail-table tbody tr.active td{background:#eff6ff}
+    .stock-link{color:#1267ff;font-weight:950;cursor:pointer}
+    .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.35}
+    .mut-id{display:inline-flex;align-items:center;border:1px solid var(--border);background:#f8fafc;border-radius:8px;padding:4px 8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;white-space:nowrap}
+    .status-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:900;white-space:nowrap;border:1px solid var(--gray-bd);background:var(--gray-bg);color:var(--gray-tx)}
+    .status-imported{border-color:var(--blue-bd);background:var(--blue-bg);color:var(--blue-tx)}
+    .status-ready_for_picking{border-color:var(--orange-bd);background:var(--orange-bg);color:var(--orange-tx)}
+    .status-planned{border-color:var(--purple-bd);background:var(--purple-bg);color:var(--purple-tx)}
+    .status-loaded,.status-closed{border-color:var(--green-bd);background:var(--green-bg);color:var(--green-tx)}
+    .status-cancelled{border-color:var(--danger-bd);background:var(--danger-bg);color:var(--danger-tx)}
+    .detail-panel{display:grid;gap:14px;position:sticky;top:14px}
+    .detail-card,.summary-card{padding:16px;display:grid;gap:14px}
+    .detail-empty{color:var(--muted);font-size:12.5px;line-height:1.6}
+    .detail-code{font-size:15px;font-weight:950;margin-bottom:4px;color:#07152f}
+    .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .detail-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:11px;display:grid;gap:5px}
+    .detail-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.03em}
+    .detail-value{font-size:13px;font-weight:900;line-height:1.35;word-break:break-word}
+    .summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .summary-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px;display:grid;gap:6px}
+    .summary-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.03em}
+    .summary-value{font-size:22px;font-weight:950;line-height:1;color:#07152f}
+    .history-list{display:grid;gap:8px}
+    .history-item{border:1px solid var(--border);background:#fbfcfd;border-radius:10px;padding:10px 12px}
+    .history-title{font-weight:900;font-size:12px;color:#07152f}
+    .history-sub{margin-top:4px;color:var(--muted);font-size:11.5px;line-height:1.5}
+    .note-box{border:1px solid var(--blue-bd);background:var(--blue-bg);color:var(--blue-tx);border-radius:12px;padding:12px 14px;font-size:12px;font-weight:800;line-height:1.5}
+    .empty-state{border:1px solid var(--border);border-radius:16px;background:#fff;padding:18px;color:var(--muted);font-size:13px}
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:800;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    .export-modal-backdrop{position:fixed;inset:0;background:rgba(7,21,47,.52);display:none;align-items:center;justify-content:center;padding:20px;z-index:99999}
+    .export-modal-backdrop.open{display:flex}
+    .export-modal{width:min(560px,100%);background:#fff;border:1px solid var(--border);border-radius:22px;box-shadow:0 30px 80px rgba(7,21,47,.28);overflow:hidden}
+    .export-modal-head{padding:18px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:12px;background:linear-gradient(180deg,#fff,#fbfdff)}
+    .export-modal-head h2{margin:0;font-size:18px;font-weight:950;color:#07152f}
+    .export-modal-head p{margin:5px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
+    .export-close{width:38px;height:38px;border-radius:999px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:950;color:#07152f}
+    .export-modal-body{padding:20px;display:grid;gap:16px}
+    .export-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .export-radio-card{border:1px solid var(--border);border-radius:14px;padding:13px;display:flex;gap:10px;align-items:flex-start;cursor:pointer;background:#fff}
+    .export-radio-card:hover{border-color:#93c5fd;background:#fbfdff}
+    .export-radio-card input{margin-top:2px;accent-color:#1267ff}
+    .export-radio-card strong{display:block;font-size:13px;color:#07152f}
+    .export-radio-card span{display:block;margin-top:3px;font-size:11.5px;color:var(--muted);line-height:1.4}
+    .export-modal-footer{padding:16px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;background:#fbfdff}
+    .export-product-row{display:none}
+    .export-product-row.open{display:grid}
+
+    @media(max-width:1500px){
+      .stock-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .stock-toolbar{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .stock-layout{grid-template-columns:1fr}
+      .detail-panel{position:static}
+    }
+
+    @media(max-width:1000px){
+      .stock-group-head{
+        grid-template-columns:1fr 90px 90px 90px 38px;
+        grid-template-areas:"sku total available reserved arrow" "info info info info info";
+      }
+      .sg-sku{grid-area:sku}
+      .sg-info{grid-area:info}
+      .sg-stat.total{grid-area:total}
+      .sg-stat.available{grid-area:available}
+      .sg-stat.reserved{grid-area:reserved}
+      .sg-arrow{grid-area:arrow}
+      .group-mini-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+    @media(max-width:760px){
+      .stock-kpi-grid,.stock-toolbar,.group-mini-grid,.detail-grid,.summary-grid,.export-grid{grid-template-columns:1fr}
+      .stock-group-head{
+        grid-template-columns:1fr 38px;
+        grid-template-areas:"sku arrow" "info info" "total total" "available available" "reserved reserved";
+      }
+      .sg-stat{text-align:left}
+      .section-actions{width:100%}
+      .section-actions .btn{width:100%}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page stock-page">
+    <section class="page-topbar stock-header">
+      <div class="page-title">
+        <h1>Current Stock</h1>
+        <p>Grouped stock overview by SKU, product owner, availability and linked orders.</p>
+      </div>
+
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btnRunMatch" type="button">Run Match</button>
+        <button class="btn" id="btnRefreshStock" type="button">Refresh</button>
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="stock-kpi-grid">
+      <article class="card stock-kpi-card">
+        <div class="stock-kpi-label">SKU Groups</div>
+        <div class="stock-kpi-value" id="kpiSkuGroups">0</div>
+        <div class="stock-kpi-sub">Grouped product lines</div>
+      </article>
+
+      <article class="card stock-kpi-card">
+        <div class="stock-kpi-label">Total Items</div>
+        <div class="stock-kpi-value" id="kpiStockTotal">0</div>
+        <div class="stock-kpi-sub">Physical stock rows</div>
+      </article>
+
+      <article class="card stock-kpi-card">
+        <div class="stock-kpi-label">Available</div>
+        <div class="stock-kpi-value" id="kpiStockAvailable">0</div>
+        <div class="stock-kpi-sub">Ready for matching</div>
+      </article>
+
+      <article class="card stock-kpi-card">
+        <div class="stock-kpi-label">Reserved</div>
+        <div class="stock-kpi-value" id="kpiStockReserved">0</div>
+        <div class="stock-kpi-sub">Linked to order</div>
+      </article>
+
+      <article class="card stock-kpi-card">
+        <div class="stock-kpi-label">Blocked</div>
+        <div class="stock-kpi-value" id="kpiStockBlocked">0</div>
+        <div class="stock-kpi-sub">Missing, damaged or cancelled</div>
+      </article>
+    </section>
+
+    <section class="card section-card">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title">Filter stock</h2>
+          <p class="section-sub">Search by SKU, mutation, order, reference, location or product owner.</p>
+        </div>
+      </div>
+
+      <div class="stock-toolbar">
+        <div class="field">
+          <label for="stockSearch">Search</label>
+          <input id="stockSearch" class="input" type="text" placeholder="SKU, mutation, reference, product, owner, order..."/>
+        </div>
+
+        <div class="field">
+          <label for="stockCustomer">Product Owner</label>
+          <select id="stockCustomer" class="select">
+            <option value="">All Product Owners</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="stockStatus">Status</label>
+          <select id="stockStatus" class="select">
+            <option value="">All statuses</option>
+            <option value="in_stock">In Stock</option>
+            <option value="reserved">Reserved</option>
+            <option value="picked">Picked</option>
+            <option value="loaded">Loaded</option>
+            <option value="shipped">Shipped</option>
+            <option value="missing">Missing</option>
+            <option value="damaged">Damaged</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="stockAvailability">Availability</label>
+          <select id="stockAvailability" class="select">
+            <option value="">All</option>
+            <option value="available">Available only</option>
+            <option value="allocated">Allocated / Reserved</option>
+            <option value="blocked">Blocked</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="stockSort">Sort</label>
+          <select id="stockSort" class="select">
+            <option value="sku_asc">SKU A-Z</option>
+            <option value="product_asc">Product A-Z</option>
+            <option value="total_desc">Most stock first</option>
+            <option value="available_desc">Most available first</option>
+            <option value="reserved_desc">Most reserved first</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn" id="btnClearStockFilters" type="button">Clear Filters</button>
+        </div>
+      </div>
+
+      <div class="bulk-bar">
+        <div class="bulk-summary" id="stockResultsMeta">Showing 0 stock items</div>
+
+        <div class="bulk-actions">
+          <button class="btn" id="btnSelectAllVisible" type="button">Select visible</button>
+          <button class="btn" id="btnSelectNone" type="button">Clear selection</button>
+          <button class="btn" id="btnRemoveReservation" type="button">Remove Reservation</button>
+          <button class="btn" id="btnMarkPicked" type="button">Mark Picked</button>
+          <button class="btn" id="btnMarkLoaded" type="button">Mark Loaded</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stock-layout">
+      <section class="card section-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Stock by product</h2>
+            <p class="section-sub">Open a product group to view individual stock items, batch reference and inbound date.</p>
+          </div>
+
+          <div class="section-actions">
+            <button class="btn btn-primary" id="btnOpenStockExport" type="button">Export Stock</button>
+          </div>
+        </div>
+
+        <div id="stockGroupList" class="group-list">
+          <div class="empty-state">Loading stock groups...</div>
+        </div>
+      </section>
+
+      <aside class="detail-panel">
+        <section class="card detail-card">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">Stock detail</h2>
+              <p class="section-sub">Selected item information.</p>
+            </div>
+          </div>
+
+          <div id="stockDetail" class="detail-empty">
+            Select a stock item from an opened product group to view details, linked order and movement history.
+          </div>
+        </section>
+
+        <section class="card summary-card">
+          <div class="section-head">
+            <div>
+              <h2 class="section-title">Stock summary</h2>
+              <p class="section-sub">Operational readiness overview.</p>
+            </div>
+          </div>
+
+          <div class="summary-grid">
+            <div class="summary-box">
+              <div class="summary-label">Available</div>
+              <div class="summary-value" id="summaryAvailable">0</div>
+            </div>
+
+            <div class="summary-box">
+              <div class="summary-label">Linked to Orders</div>
+              <div class="summary-value" id="summaryLinked">0</div>
+            </div>
+
+            <div class="summary-box">
+              <div class="summary-label">Picked / Loaded</div>
+              <div class="summary-value" id="summaryShipments">0</div>
+            </div>
+
+            <div class="summary-box">
+              <div class="summary-label">Blocked</div>
+              <div class="summary-value" id="summaryBlocked">0</div>
+            </div>
+          </div>
+
+          <div class="note-box">
+            This overview groups physical stock by product. Each item keeps its own mutation number, reference, inbound date, reservation status and linked order.
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+</div>
+
+<div class="export-modal-backdrop" id="stockExportModal" aria-hidden="true">
+  <section class="export-modal" role="dialog" aria-modal="true" aria-labelledby="stockExportTitle">
+    <div class="export-modal-head">
+      <div>
+        <h2 id="stockExportTitle">Export Stock</h2>
+        <p>Choose the export format and which stock rows should be included.</p>
+      </div>
+      <button class="export-close" id="btnCloseStockExport" type="button">×</button>
+    </div>
+
+    <div class="export-modal-body">
+      <div class="field">
+        <label>File format</label>
+        <div class="export-grid">
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportFormat" value="xlsx" checked/>
+            <span><strong>Excel</strong><span>.xlsx file for analysis and filtering.</span></span>
+          </label>
+
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportFormat" value="csv"/>
+            <span><strong>CSV</strong><span>Simple import/export format.</span></span>
+          </label>
+
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportFormat" value="pdf"/>
+            <span><strong>PDF</strong><span>Printable stock overview.</span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Export scope</label>
+        <div class="export-grid">
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportScope" value="filtered" checked/>
+            <span><strong>Current filtered stock</strong><span>Export the rows currently shown by the active filters.</span></span>
+          </label>
+
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportScope" value="all"/>
+            <span><strong>All stock</strong><span>Export all physical stock rows.</span></span>
+          </label>
+
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportScope" value="selected"/>
+            <span><strong>Selected rows</strong><span>Export only manually selected stock items.</span></span>
+          </label>
+
+          <label class="export-radio-card">
+            <input type="radio" name="stockExportScope" value="product"/>
+            <span><strong>Specific product / SKU</strong><span>Choose one product group to export.</span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field export-product-row" id="stockExportProductRow">
+        <label for="stockExportProduct">Product / SKU</label>
+        <select id="stockExportProduct" class="select">
+          <option value="">Select product</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="export-modal-footer">
+      <button class="btn" id="btnCancelStockExport" type="button">Cancel</button>
+      <button class="btn btn-primary" id="btnConfirmStockExport" type="button">Export</button>
+    </div>
+  </section>
+</div>
+</body>
+</html>

@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Tenant Settings · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/settings.js" defer></script>
+
+  <style>
+    .settings-page{display:grid;gap:14px;align-content:start}
+    .settings-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0}
+    .settings-tab{height:38px;border:1px solid var(--border);background:#fff;border-radius:10px;padding:0 14px;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap}
+    .settings-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    .settings-panel{display:none;gap:14px;align-content:start}
+    .settings-panel.active{display:grid}
+
+    .settings-card{padding:16px;display:grid;gap:14px}
+    .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .section-title{margin:0;font-size:16px;font-weight:900}
+    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .field-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .field-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .field-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .field{display:grid;gap:6px}
+    .field label{font-size:12px;font-weight:800;color:#374151}
+    .input,.select,.textarea{width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:38px}
+    .textarea{min-height:96px;resize:vertical}
+
+    .actions-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .owner-tools{display:flex;gap:8px;flex-wrap:wrap}
+
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:700;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    .note-box{border:1px solid var(--blue-bd);background:var(--blue-bg);color:var(--blue-tx);border-radius:12px;padding:12px 14px;font-size:12px;font-weight:700;line-height:1.5}
+
+    .summary-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+    .summary-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px;display:grid;gap:5px}
+    .summary-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
+    .summary-value{font-size:18px;font-weight:900;line-height:1.1}
+    .summary-sub{font-size:12px;color:var(--muted);line-height:1.45}
+
+    .tenant-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+    .tenant-flow-card{border:1px solid var(--border);background:#fff;border-radius:14px;padding:14px;display:grid;gap:5px}
+    .tenant-flow-kicker{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.04em}
+    .tenant-flow-title{font-size:15px;font-weight:900;color:var(--text)}
+    .tenant-flow-sub{font-size:12px;color:var(--muted);line-height:1.45}
+
+    .product-owner-layout{display:grid;grid-template-columns:300px minmax(0,1fr);gap:14px;align-items:start}
+    .owner-list{display:grid;gap:8px}
+    .owner-btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:12px;text-align:left;cursor:pointer}
+    .owner-btn.active{border-color:var(--primary);box-shadow:0 0 0 2px rgba(18,103,255,.14)}
+    .owner-btn strong{display:block;font-size:13px}
+    .owner-btn span{display:block;margin-top:4px;font-size:11.5px;color:var(--muted)}
+
+    .vehicle-row{border:1px solid var(--border);border-radius:14px;background:#fff;overflow:hidden}
+    .vehicle-head{padding:14px;display:grid;grid-template-columns:minmax(210px,1.3fr) repeat(8,minmax(90px,1fr)) auto;gap:12px;align-items:center}
+    .vehicle-name{font-size:14px;font-weight:900}
+    .vehicle-sub{font-size:12px;color:var(--muted);line-height:1.4}
+    .vehicle-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
+    .vehicle-value{font-size:12.5px;font-weight:900;line-height:1.25}
+    .vehicle-body{display:none;padding:14px;border-top:1px solid var(--border);background:#fafafa;gap:14px}
+    .vehicle-body.open{display:grid}
+    .vehicle-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+
+    .pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:900;border:1px solid transparent;white-space:nowrap}
+    .pill-green{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
+    .pill-gray{background:var(--gray-bg);color:var(--gray-tx);border-color:var(--gray-bd)}
+
+    .mini-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 9px;font-size:11.5px;font-weight:900;cursor:pointer}
+    .mini-btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    .data-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
+    .data-table{width:100%;min-width:1100px;border-collapse:collapse}
+    .data-table th,.data-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:12.5px}
+    .data-table th{background:#fbfbfc;font-size:10.5px;font-weight:900;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
+    .data-table tbody tr:hover{background:#fafcff}
+    .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.35}
+
+    .logo-preview-box{min-height:82px;border:1px dashed var(--border);border-radius:12px;background:#fafafa;padding:10px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;font-weight:800}
+    .logo-preview-box img{display:none;max-width:220px;max-height:68px;object-fit:contain}
+    .logo-preview-box.has-logo img{display:block}
+    .logo-preview-box.has-logo span{display:none}
+
+    @media(max-width:1500px){
+      .summary-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .field-grid,.vehicle-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .vehicle-head{grid-template-columns:1fr 1fr 1fr}
+      .product-owner-layout{grid-template-columns:1fr}
+      .tenant-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+    @media(max-width:760px){
+      .summary-grid,.field-grid,.field-grid.two,.field-grid.three,.vehicle-grid,.vehicle-head,.tenant-flow{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page settings-page">
+    <section class="page-topbar">
+      <div class="page-title">
+        <h1>Veynor Tenant Settings</h1>
+        <p>Configure Sofa2U, vehicles, drivers, product owners, documents and automation.</p>
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="tenant-flow">
+      <div class="tenant-flow-card">
+        <div class="tenant-flow-kicker">Platform</div>
+        <div class="tenant-flow-title">Veynor</div>
+        <div class="tenant-flow-sub">The software platform and future admin layer.</div>
+      </div>
+      <div class="tenant-flow-card">
+        <div class="tenant-flow-kicker">Tenant</div>
+        <div class="tenant-flow-title">Sofa2U</div>
+        <div class="tenant-flow-sub">The operating logistics account.</div>
+      </div>
+      <div class="tenant-flow-card">
+        <div class="tenant-flow-kicker">Product Owners</div>
+        <div class="tenant-flow-title">Bellstone / Zoy</div>
+        <div class="tenant-flow-sub">Contract customers whose stock and orders are handled.</div>
+      </div>
+      <div class="tenant-flow-card">
+        <div class="tenant-flow-kicker">Drivers</div>
+        <div class="tenant-flow-title">Personnel / Chauffeurs</div>
+        <div class="tenant-flow-sub">Driver accounts used for vehicles, planning and POD.</div>
+      </div>
+    </section>
+
+    <nav class="settings-tabs">
+      <button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
+      <button class="settings-tab" data-tab="transport" type="button">Transport</button>
+      <button class="settings-tab" data-tab="personnel" type="button">Personnel / Drivers</button>
+      <button class="settings-tab" data-tab="customers" type="button">Product Owners</button>
+      <button class="settings-tab" data-tab="shops" type="button">Retailers</button>
+      <button class="settings-tab" data-tab="documents" type="button">Documents</button>
+      <button class="settings-tab" data-tab="automation" type="button">Automation</button>
+      <button class="settings-tab" data-tab="system" type="button">System</button>
+    </nav>
+
+    <section id="tab-main" class="settings-panel active">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Tenant Account</h2>
+            <p class="section-sub">Main company data used across documents, dashboard, planning and billing.</p>
+          </div>
+          <button id="btnSaveMain" class="btn btn-primary" type="button">Save Tenant Account</button>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="main_company_name">Tenant Company Name</label><input id="main_company_name" class="input"/></div>
+          <div class="field"><label for="main_display_name">Display Name</label><input id="main_display_name" class="input"/></div>
+          <div class="field"><label for="main_trading_name">Trading Name</label><input id="main_trading_name" class="input"/></div>
+          <div class="field"><label for="main_company_registration">Company Registration No.</label><input id="main_company_registration" class="input"/></div>
+          <div class="field"><label for="main_email">Default Email</label><input id="main_email" class="input"/></div>
+          <div class="field"><label for="main_phone">Phone</label><input id="main_phone" class="input"/></div>
+          <div class="field"><label for="main_vat">VAT Number</label><input id="main_vat" class="input"/></div>
+          <div class="field"><label for="main_country">Country</label><input id="main_country" class="input"/></div>
+          <div class="field" style="grid-column:span 2;"><label for="main_address">Trading Address</label><input id="main_address" class="input"/></div>
+          <div class="field" style="grid-column:span 2;"><label for="main_registered_address">Registered Office Address</label><input id="main_registered_address" class="input"/></div>
+          <div class="field"><label for="main_website">Website</label><input id="main_website" class="input"/></div>
+          <div class="field"><label for="main_default_currency">Default Currency</label><select id="main_default_currency" class="select"><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="USD">USD</option></select></div>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Tenant Logo / Branding</h2>
+            <p class="section-sub">Used on invoices, ACK, delivery notes and customer-facing documents.</p>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="main_logo_file">Upload Logo</label><input id="main_logo_file" class="input" type="file" accept="image/png,image/jpeg,image/webp"/></div>
+          <div class="field"><label for="main_logo_url">Logo URL</label><input id="main_logo_url" class="input"/></div>
+          <div class="field"><label for="main_logo_storage_path">Logo Storage Path</label><input id="main_logo_storage_path" class="input"/></div>
+          <div class="field">
+            <label>Current Logo Preview</label>
+            <div class="logo-preview-box" id="main_logo_preview_box">
+              <img id="main_logo_preview" alt="Company logo preview"/>
+              <span id="main_logo_preview_empty">No logo uploaded yet.</span>
+            </div>
+          </div>
+          <div class="field"><label for="brand_primary_color">Primary Brand Colour</label><input id="brand_primary_color" class="input"/></div>
+          <div class="field"><label for="brand_accent_color">Accent Colour</label><input id="brand_accent_color" class="input"/></div>
+          <div class="field"><label for="document_logo_position">Logo Position</label><select id="document_logo_position" class="select"><option value="top_left">Top left</option><option value="top_center">Top center</option><option value="top_right">Top right</option></select></div>
+          <div class="field"><label for="document_show_company_details">Show Company Details</label><select id="document_show_company_details" class="select"><option value="true">true</option><option value="false">false</option></select></div>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Tenant Contact Details</h2>
+            <p class="section-sub">Default contacts used by workflow and automatic emails.</p>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="contact_finance_name">Finance Contact Name</label><input id="contact_finance_name" class="input"/></div>
+          <div class="field"><label for="contact_finance_email">Finance Email</label><input id="contact_finance_email" class="input"/></div>
+          <div class="field"><label for="contact_finance_phone">Finance Phone</label><input id="contact_finance_phone" class="input"/></div>
+          <div class="field"><label for="contact_invoice_email">Invoice Email</label><input id="contact_invoice_email" class="input"/></div>
+          <div class="field"><label for="contact_ops_name">Operations Contact Name</label><input id="contact_ops_name" class="input"/></div>
+          <div class="field"><label for="contact_ops_email">Operations Email</label><input id="contact_ops_email" class="input"/></div>
+          <div class="field"><label for="contact_ops_phone">Operations Phone</label><input id="contact_ops_phone" class="input"/></div>
+          <div class="field"><label for="contact_orders_email">Orders Email</label><input id="contact_orders_email" class="input"/></div>
+          <div class="field"><label for="contact_pod_email">POD Email</label><input id="contact_pod_email" class="input"/></div>
+          <div class="field"><label for="contact_claims_email">Claims / Damage Email</label><input id="contact_claims_email" class="input"/></div>
+          <div class="field"><label for="contact_customer_service_email">Customer Service Email</label><input id="contact_customer_service_email" class="input"/></div>
+          <div class="field"><label for="contact_default_cc">Default CC</label><input id="contact_default_cc" class="input"/></div>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Bank / Payment Details</h2>
+            <p class="section-sub">Used on invoices and payment instructions.</p>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="bank_company_name">Company Name</label><input id="bank_company_name" class="input"/></div>
+          <div class="field"><label for="bank_name">Bank Name</label><input id="bank_name" class="input"/></div>
+          <div class="field"><label for="bank_sort_code">Sort Code</label><input id="bank_sort_code" class="input"/></div>
+          <div class="field"><label for="bank_account_no">Account No</label><input id="bank_account_no" class="input"/></div>
+          <div class="field"><label for="bank_iban">IBAN</label><input id="bank_iban" class="input"/></div>
+          <div class="field"><label for="bank_bic">BIC / SWIFT</label><input id="bank_bic" class="input"/></div>
+          <div class="field"><label for="bank_payment_reference_format">Payment Reference Format</label><input id="bank_payment_reference_format" class="input"/></div>
+          <div class="field"><label for="bank_international_details_available">International Details Available</label><select id="bank_international_details_available" class="select"><option value="true">true</option><option value="false">false</option></select></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-transport" class="settings-panel">
+      <section class="summary-grid">
+        <div class="summary-box"><div class="summary-label">Labour</div><div id="summaryLabour" class="summary-value">£38.50 / hour</div><div class="summary-sub">Driver + labour</div></div>
+        <div class="summary-box"><div class="summary-label">Vehicle</div><div id="summaryVehicle" class="summary-value">£0.55 / mile</div><div class="summary-sub">Fuel + vehicle</div></div>
+        <div class="summary-box"><div class="summary-label">Average Speed</div><div id="summarySpeed" class="summary-value">50 km/h</div><div class="summary-sub">Default speed</div></div>
+        <div class="summary-box"><div class="summary-label">Stop Time</div><div id="summaryStopTime" class="summary-value">15 min</div><div class="summary-sub">Unload per stop</div></div>
+        <div class="summary-box"><div class="summary-label">Max Hours</div><div id="summaryMaxHours" class="summary-value">9.0 h</div><div class="summary-sub">Per route</div></div>
+        <div class="summary-box"><div class="summary-label">Active Vehicles</div><div id="summaryActiveVehicles" class="summary-value">0</div><div class="summary-sub">Visible in planner</div></div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Transport Settings</h2>
+            <p class="section-sub">Depot, route rules, route cost settings and planner limits.</p>
+          </div>
+          <div class="actions-row">
+            <button id="btnResetDefaults" class="btn" type="button">Load Defaults</button>
+            <button id="btnSaveTransport" class="btn btn-primary" type="button">Save Transport</button>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="home_depot_name">Depot Name</label><input id="home_depot_name" class="input"/></div>
+          <div class="field"><label for="home_depot_postcode">Depot Postcode</label><input id="home_depot_postcode" class="input"/></div>
+          <div class="field"><label for="home_depot_city">Depot City</label><input id="home_depot_city" class="input"/></div>
+          <div class="field"><label for="home_depot_country">Depot Country</label><input id="home_depot_country" class="input"/></div>
+          <div class="field"><label for="home_depot_lat">Depot Latitude</label><input id="home_depot_lat" class="input" type="number" step="any"/></div>
+          <div class="field"><label for="home_depot_lng">Depot Longitude</label><input id="home_depot_lng" class="input" type="number" step="any"/></div>
+          <div class="field"><label for="average_speed_kmh">Average Speed (km/h)</label><input id="average_speed_kmh" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="stop_time_minutes">Stop Time (minutes)</label><input id="stop_time_minutes" class="input" type="number" step="1"/></div>
+          <div class="field"><label for="distance_factor">Distance Factor</label><input id="distance_factor" class="input" type="number" step="0.01"/></div>
+          <div class="field"><label for="max_route_volume_m3">Max Route Volume (m³)</label><input id="max_route_volume_m3" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="max_route_stops">Max Route Stops</label><input id="max_route_stops" class="input" type="number" step="1"/></div>
+          <div class="field"><label for="max_route_duration_hours">Max Route Duration (hours)</label><input id="max_route_duration_hours" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="max_orders_per_route">Max Orders Per Route</label><input id="max_orders_per_route" class="input" type="number" step="1"/></div>
+          <div class="field"><label for="labour_cost_per_hour_gbp">Labour Cost / Hour (£)</label><input id="labour_cost_per_hour_gbp" class="input" type="number" step="0.01"/></div>
+          <div class="field"><label for="vehicle_cost_per_mile_gbp">Vehicle Cost / Mile (£)</label><input id="vehicle_cost_per_mile_gbp" class="input" type="number" step="0.01"/></div>
+          <div class="field"><label for="default_transport_type">Default Transport Type</label><select id="default_transport_type" class="select"><option value="own_transport">own_transport</option><option value="charter">charter</option><option value="unassigned">unassigned</option></select></div>
+        </div>
+      </section>
+
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Vehicles</h2>
+            <p class="section-sub">Assign a default driver to each vehicle. Only active vehicles are visible in the route planner.</p>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="newVehicleName">Vehicle Name</label><input id="newVehicleName" class="input" placeholder="Truck 1"/></div>
+          <div class="field"><label for="newVehicleCode">Vehicle Code</label><input id="newVehicleCode" class="input" placeholder="TRK-01"/></div>
+          <div class="field"><label for="newVehicleType">Vehicle Type</label><select id="newVehicleType" class="select"><option value="van">van</option><option value="rigid">rigid</option><option value="artic">artic</option><option value="trailer">trailer</option><option value="other">other</option></select></div>
+          <div class="field"><label for="newVehicleRegistration">Registration</label><input id="newVehicleRegistration" class="input" placeholder="AB12 CDE"/></div>
+
+          <div class="field">
+            <label for="newVehicleDriverUserId">Default Driver</label>
+            <select id="newVehicleDriverUserId" class="select">
+              <option value="">No driver assigned</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="newVehicleDriverEmail">Driver Email</label>
+            <input id="newVehicleDriverEmail" class="input" placeholder="driver@email.com"/>
+          </div>
+
+          <div class="field"><label for="newVehicleMaxVolume">Max Volume (m³)</label><input id="newVehicleMaxVolume" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="newVehicleMaxStops">Max Stops</label><input id="newVehicleMaxStops" class="input" type="number" step="1"/></div>
+          <div class="field"><label for="newVehicleMaxHours">Max Hours</label><input id="newVehicleMaxHours" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="newVehicleAverageSpeed">Average Speed</label><input id="newVehicleAverageSpeed" class="input" type="number" step="0.1"/></div>
+          <div class="field"><label for="newVehicleCostPerMile">Cost / Mile (£)</label><input id="newVehicleCostPerMile" class="input" type="number" step="0.01"/></div>
+          <div class="field"><label for="newVehicleLabourPerHour">Labour / Hour (£)</label><input id="newVehicleLabourPerHour" class="input" type="number" step="0.01"/></div>
+        </div>
+
+        <div class="actions-row">
+          <button id="btnAddVehicle" class="btn btn-primary" type="button">Add Vehicle</button>
+          <button id="btnResetNewVehicle" class="btn" type="button">Clear</button>
+        </div>
+
+        <div id="vehicleStack" style="display:grid;gap:12px;"></div>
+      </section>
+    </section>
+
+    <section id="tab-personnel" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Personnel / Drivers</h2>
+            <p class="section-sub">
+              Driver accounts are loaded from user profiles. Drivers can be assigned to vehicles and later selected directly on route planning.
+            </p>
+          </div>
+        </div>
+
+        <div class="note-box">
+          To make a driver visible here and in vehicle assignment, the user must exist in Supabase Auth and have an active row in <strong>user_profiles</strong>.
+          Recommended role: <strong>driver</strong> or <strong>chauffeur</strong>.
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="newDriverName">Driver Name</label><input id="newDriverName" class="input" placeholder="Driver full name"/></div>
+          <div class="field"><label for="newDriverEmail">Driver Email</label><input id="newDriverEmail" class="input" placeholder="driver@email.com"/></div>
+          <div class="field"><label for="newDriverPhone">Phone</label><input id="newDriverPhone" class="input" placeholder="+44 ..."/></div>
+          <div class="field"><label for="newDriverRole">Role</label><select id="newDriverRole" class="select"><option value="driver">driver</option><option value="chauffeur">chauffeur</option><option value="tenant_user">tenant_user</option></select></div>
+          <div class="field"><label for="newDriverDefaultVehicle">Default Vehicle</label><select id="newDriverDefaultVehicle" class="select"><option value="">No default vehicle</option></select></div>
+          <div class="field"><label for="newDriverUseInPlanning">Use in Planning</label><select id="newDriverUseInPlanning" class="select"><option value="true">true</option><option value="false">false</option></select></div>
+          <div class="field"><label for="newDriverActive">Active</label><select id="newDriverActive" class="select"><option value="true">true</option><option value="false">false</option></select></div>
+        </div>
+
+        <div class="actions-row">
+          <button id="btnAddDriver" class="btn btn-primary" type="button">Add / Link Driver</button>
+          <button id="btnRefreshDrivers" class="btn" type="button">Refresh Drivers</button>
+        </div>
+
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Driver</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Role</th>
+                <th>Default Vehicle</th>
+                <th>Use in Planning</th>
+                <th>Active</th>
+              </tr>
+            </thead>
+            <tbody id="driversBody">
+              <tr><td colspan="7">Driver management will be connected in settings.js.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-customers" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Product Owners / Contract Customers</h2>
+            <p class="section-sub">Product owners such as Bellstone and Zoy. Products, invoices and operational flows are linked to these companies.</p>
+          </div>
+          <div class="owner-tools">
+            <input id="newOwnerName" class="input" style="width:220px;" placeholder="New product owner name"/>
+            <button id="btnAddOwnerProfile" class="btn" type="button">Add Product Owner</button>
+            <button id="btnSaveOwnerProfile" class="btn btn-primary" type="button">Save Product Owner</button>
+          </div>
+        </div>
+
+        <div class="product-owner-layout">
+          <div class="owner-list" id="ownerList"></div>
+
+          <div class="card settings-card">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title" id="ownerEditorTitle">Select product owner</h2>
+                <p class="section-sub">Billing, document and operational master data for the selected product owner.</p>
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <div class="field"><label for="owner_name">Product Owner Name</label><input id="owner_name" class="input"/></div>
+              <div class="field"><label for="owner_trading_name">Trading Name</label><input id="owner_trading_name" class="input"/></div>
+              <div class="field"><label for="owner_customer_code">Product Owner Code</label><input id="owner_customer_code" class="input"/></div>
+              <div class="field"><label for="owner_vat">VAT Number</label><input id="owner_vat" class="input"/></div>
+              <div class="field"><label for="owner_address1">Address 1</label><input id="owner_address1" class="input"/></div>
+              <div class="field"><label for="owner_address2">Address 2</label><input id="owner_address2" class="input"/></div>
+              <div class="field"><label for="owner_city">City</label><input id="owner_city" class="input"/></div>
+              <div class="field"><label for="owner_postcode">Postcode</label><input id="owner_postcode" class="input"/></div>
+              <div class="field"><label for="owner_country">Country</label><input id="owner_country" class="input"/></div>
+              <div class="field"><label for="owner_logo_file">Product Owner Logo Upload</label><input id="owner_logo_file" class="input" type="file" accept="image/png,image/jpeg,image/webp"/></div>
+              <div class="field"><label for="owner_logo_url">Product Owner Logo URL</label><input id="owner_logo_url" class="input"/></div>
+              <div class="field"><label for="owner_logo_storage_path">Logo Storage Path</label><input id="owner_logo_storage_path" class="input"/></div>
+              <div class="field">
+                <label>Product Owner Logo Preview</label>
+                <div class="logo-preview-box" id="owner_logo_preview_box">
+                  <img id="owner_logo_preview" alt="Product owner logo preview"/>
+                  <span id="owner_logo_preview_empty">No logo uploaded yet.</span>
+                </div>
+              </div>
+              <div class="field"><label for="owner_invoice_email">Invoice Email</label><input id="owner_invoice_email" class="input"/></div>
+              <div class="field"><label for="owner_ack_email">ACK Email</label><input id="owner_ack_email" class="input"/></div>
+              <div class="field"><label for="owner_pod_email">POD Email</label><input id="owner_pod_email" class="input"/></div>
+              <div class="field"><label for="owner_ops_email">Operations Email</label><input id="owner_ops_email" class="input"/></div>
+              <div class="field"><label for="owner_payment_terms">Payment Terms Days</label><input id="owner_payment_terms" class="input"/></div>
+              <div class="field"><label for="owner_invoice_frequency">Invoice Frequency</label><select id="owner_invoice_frequency" class="select"><option value="batch">Batch</option><option value="per_order">Per Order</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
+              <div class="field"><label for="owner_default_source_name">Default Import Name</label><input id="owner_default_source_name" class="input"/></div>
+              <div class="field"><label for="owner_auto_ack">Auto ACK</label><select id="owner_auto_ack" class="select"><option value="false">false</option><option value="true">true</option></select></div>
+              <div class="field"><label for="owner_auto_invoice">Auto Invoice</label><select id="owner_auto_invoice" class="select"><option value="false">false</option><option value="true">true</option></select></div>
+              <div class="field" style="grid-column:1 / -1;"><label for="owner_notes">Document / Product Owner Notes</label><textarea id="owner_notes" class="textarea"></textarea></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-shops" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Retailers / Delivery Shops</h2>
+            <p class="section-sub">Retailers are delivery locations linked to product owners.</p>
+          </div>
+          <button id="btnRefreshShops" class="btn" type="button">Refresh Retailers</button>
+        </div>
+
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Retailer Code</th>
+                <th>Retailer / Shop</th>
+                <th>Linked Product Owner</th>
+                <th>City</th>
+                <th>Postcode</th>
+                <th>Orders</th>
+                <th>Last Activity</th>
+              </tr>
+            </thead>
+            <tbody id="shopsBody">
+              <tr><td colspan="8">Loading retailers...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-documents" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Documents</h2>
+            <p class="section-sub">Default document settings for ACK, invoices, delivery notes and POD.</p>
+          </div>
+          <button id="btnSaveDocuments" class="btn btn-primary" type="button">Save Documents</button>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="doc_default_payment_terms">Default Payment Terms</label><input id="doc_default_payment_terms" class="input"/></div>
+          <div class="field"><label for="doc_vat_rate">VAT Rate</label><input id="doc_vat_rate" class="input"/></div>
+          <div class="field"><label for="doc_ack_lead_days">ACK Lead Days</label><input id="doc_ack_lead_days" class="input"/></div>
+          <div class="field"><label for="doc_bucket">Document Bucket</label><input id="doc_bucket" class="input"/></div>
+          <div class="field" style="grid-column:1 / -1;"><label for="doc_damage_note">Damage Note</label><textarea id="doc_damage_note" class="textarea"></textarea></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-automation" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Email Automation</h2>
+            <p class="section-sub">Sender settings and automatic document email defaults.</p>
+          </div>
+          <button id="btnSaveAutomation" class="btn btn-primary" type="button">Save Automation</button>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="email_sender_name">Sender Name</label><input id="email_sender_name" class="input"/></div>
+          <div class="field"><label for="email_sender_address">Sender Address</label><input id="email_sender_address" class="input"/></div>
+          <div class="field"><label for="email_auto_ack_default">Auto ACK Default</label><select id="email_auto_ack_default" class="select"><option value="false">false</option><option value="true">true</option></select></div>
+          <div class="field"><label for="email_auto_invoice_default">Auto Invoice Default</label><select id="email_auto_invoice_default" class="select"><option value="false">false</option><option value="true">true</option></select></div>
+          <div class="field"><label for="email_auto_pod_default">Auto POD Default</label><select id="email_auto_pod_default" class="select"><option value="false">false</option><option value="true">true</option></select></div>
+          <div class="field"><label for="email_default_cc">Default CC</label><input id="email_default_cc" class="input"/></div>
+          <div class="field" style="grid-column:1 / -1;"><label for="email_footer">Email Footer</label><textarea id="email_footer" class="textarea"></textarea></div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-system" class="settings-panel">
+      <section class="card settings-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">System</h2>
+            <p class="section-sub">Default import, product owner and country settings.</p>
+          </div>
+          <button id="btnSaveSystem" class="btn btn-primary" type="button">Save System</button>
+        </div>
+
+        <div class="field-grid">
+          <div class="field"><label for="system_default_country">Default Country</label><input id="system_default_country" class="input"/></div>
+          <div class="field"><label for="system_default_product_owner">Default Product Owner</label><input id="system_default_product_owner" class="input"/></div>
+          <div class="field"><label for="system_default_import_status">Default Import Status</label><select id="system_default_import_status" class="select"><option value="imported">imported</option><option value="matching_review">matching_review</option></select></div>
+          <div class="field"><label for="system_default_source_type">Default Source Type</label><input id="system_default_source_type" class="input"/></div>
+        </div>
+      </section>
+    </section>
+  </main>
+</div>
+</body>
+</html>

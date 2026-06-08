@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+  <title>Veynor Driver</title>
+
+<meta name="theme-color" content="#07152f"/>
+
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Veynor"/>
+
+<link rel="apple-touch-icon"
+      sizes="180x180"
+      href="/assets/veynor-icon-192.png">
+
+<link rel="manifest" href="/manifest.webmanifest"/>
+
+<link rel="stylesheet" href="/styles.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+
+<body>
+  <div id="app" class="app">
+
+    <section id="loginView" class="login-view login-view-branded">
+      <div class="login-bg-overlay"></div>
+
+      <form id="loginForm" class="login-card">
+        <h1>Driver Login</h1>
+        <p>Access your routes, deliveries, POD and volume tools.</p>
+
+        <label>Email</label>
+        <input id="loginEmail" class="input" type="email" autocomplete="email" required/>
+
+        <label>Password</label>
+        <input id="loginPassword" class="input" type="password" autocomplete="current-password" required/>
+
+        <button class="btn primary" type="submit">Sign in</button>
+        <div id="loginMessage" class="notice"></div>
+      </form>
+    </section>
+
+    <section id="mainView" class="main-view hidden">
+
+      <header class="driver-header">
+        <div class="driver-header-bg"></div>
+
+        <div class="driver-topline">
+          <div class="brand-lockup">
+            <img src="/assets/veynor-mobile-app.png" alt="Veynor" class="mobile-header-logo"/>
+            <span>Driver App</span>
+          </div>
+
+          <button id="logoutBtn" class="logout-btn" type="button">Logout</button>
+        </div>
+
+        <div class="driver-hero">
+          <div>
+            <p class="eyebrow">Today’s operation</p>
+            <h1>Route control</h1>
+            <p class="hero-sub">Stops, delivery status, exceptions and POD capture.</p>
+          </div>
+
+          <button id="refreshBtn" class="refresh-pill" type="button">Refresh</button>
+        </div>
+
+        <section class="kpi-strip">
+          <article class="kpi-card">
+            <span>Stops</span>
+            <strong id="kpiStops">0</strong>
+          </article>
+          <article class="kpi-card">
+            <span>Delivered</span>
+            <strong id="kpiDelivered">0</strong>
+          </article>
+          <article class="kpi-card">
+            <span>Open</span>
+            <strong id="kpiOpen">0</strong>
+          </article>
+        </section>
+      </header>
+
+      <main class="app-content">
+
+        <section id="tab-routes" class="tab-panel active">
+          <div class="section-title">
+            <div>
+              <h2>Open stops</h2>
+              <p>Planned and active stops assigned to this driver.</p>
+            </div>
+          </div>
+
+          <div id="routesTimeline" class="route-timeline"></div>
+          <div id="stopsList" class="list"></div>
+        </section>
+
+        <section id="tab-delivered" class="tab-panel">
+          <div class="section-title">
+            <div>
+              <h2>Delivered</h2>
+              <p>Completed stops and POD history.</p>
+            </div>
+            <button id="refreshDeliveredBtn" class="small-action" type="button">Refresh</button>
+          </div>
+
+          <div class="filter-row">
+            <button class="filter-chip active" data-delivered-filter="today" type="button">Today</button>
+            <button class="filter-chip" data-delivered-filter="week" type="button">This week</button>
+            <button class="filter-chip" data-delivered-filter="all" type="button">All</button>
+          </div>
+
+          <div id="deliveredList" class="list"></div>
+        </section>
+
+        <section id="tab-issues" class="tab-panel">
+          <div class="section-title">
+            <div>
+              <h2>Issues</h2>
+              <p>Damaged, partial, refused or failed deliveries.</p>
+            </div>
+          </div>
+
+          <div class="filter-row">
+            <button class="filter-chip active" data-issue-filter="all" type="button">All issues</button>
+            <button class="filter-chip" data-issue-filter="damaged" type="button">Damaged</button>
+            <button class="filter-chip" data-issue-filter="partial" type="button">Partial</button>
+            <button class="filter-chip" data-issue-filter="refused" type="button">Refused</button>
+          </div>
+
+          <div id="issuesList" class="list"></div>
+        </section>
+
+        <section id="tab-pod" class="tab-panel">
+          <section class="pod-card">
+            <div class="section-title">
+              <div>
+                <h2>Proof of Delivery</h2>
+                <p id="podSelectedStop">Select a stop from Routes first.</p>
+              </div>
+            </div>
+
+            <div class="pod-grid">
+              <label>Status
+                <select id="podStatus" class="input">
+                  <option value="delivered">Delivered</option>
+                  <option value="partial">Part delivered / Manco</option>
+                  <option value="damaged">Damaged</option>
+                  <option value="refused">Refused</option>
+                  <option value="failed">Failed delivery</option>
+                </select>
+              </label>
+
+              <label>Delivered to
+                <input id="deliveredTo" class="input" placeholder="Customer name"/>
+              </label>
+            </div>
+
+            <label>General notes
+              <textarea id="podNotes" class="input textarea" placeholder="Damage, access issues, remarks..."></textarea>
+            </label>
+
+            <label>Delivery photos
+              <input id="podPhotos" class="input" type="file" accept="image/*" capture="environment" multiple/>
+            </label>
+
+            <div class="signature-box">
+              <div class="signature-head">
+                <strong>Customer signature</strong>
+                <button id="clearSignatureBtn" class="small-action" type="button">Clear</button>
+              </div>
+              <canvas id="signatureCanvas" width="800" height="300"></canvas>
+            </div>
+
+            <button id="savePodBtn" class="btn primary save-pod-btn" type="button">Save POD</button>
+            <div id="podMessage" class="notice"></div>
+          </section>
+        </section>
+
+        <section id="tab-volume" class="tab-panel">
+          <section class="volume-card">
+            <div class="section-title">
+              <div>
+                <h2>Volume Scanner MVP</h2>
+                <p>Capture photos, enter dimensions and calculate loading volume.</p>
+              </div>
+            </div>
+
+            <label>Product / SKU
+              <input id="volumeSku" class="input" placeholder="SKU or product name"/>
+            </label>
+
+            <div class="scan-guide">
+              <div class="guide-step"><strong>1</strong><span>Front</span></div>
+              <div class="guide-step"><strong>2</strong><span>Back</span></div>
+              <div class="guide-step"><strong>3</strong><span>Left</span></div>
+              <div class="guide-step"><strong>4</strong><span>Right</span></div>
+              <div class="guide-step"><strong>5</strong><span>Top</span></div>
+              <div class="guide-step"><strong>6</strong><span>Angle</span></div>
+            </div>
+
+            <div class="photo-capture-grid">
+              <label>Front photo
+                <input id="photoFront" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Back photo
+                <input id="photoBack" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Left photo
+                <input id="photoLeft" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Right photo
+                <input id="photoRight" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Top photo
+                <input id="photoTop" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Angle photo
+                <input id="photoAngle" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+            </div>
+
+            <div id="volumePhotoPreview" class="volume-preview-grid"></div>
+
+            <div class="grid3">
+              <label>Length cm
+                <input id="lengthCm" class="input" type="number" step="0.1" placeholder="e.g. 210"/>
+              </label>
+
+              <label>Width / depth cm
+                <input id="widthCm" class="input" type="number" step="0.1" placeholder="e.g. 95"/>
+              </label>
+
+              <label>Height cm
+                <input id="heightCm" class="input" type="number" step="0.1" placeholder="e.g. 85"/>
+              </label>
+            </div>
+
+            <div class="grid2">
+              <label>Shape correction
+                <select id="shapeCorrection" class="input">
+                  <option value="1">Box / full cube - 100%</option>
+                  <option value="0.90">Sofa / armchair - 90%</option>
+                  <option value="0.80">Chair / open shape - 80%</option>
+                  <option value="0.70">Irregular / lots of air - 70%</option>
+                </select>
+              </label>
+
+              <label>Confidence
+                <select id="volumeConfidence" class="input">
+                  <option value="manual">Manual measurement</option>
+                  <option value="estimated">Estimated from photos</option>
+                  <option value="needs_review">Needs review</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="result-box">
+              <span>Calculated loading volume</span>
+              <strong id="volumeResult">0.000 m³</strong>
+              <small id="volumeFormula">Length × width × height × correction</small>
+            </div>
+
+            <div class="actions-row">
+              <button id="estimateFromPhotosBtn" class="btn" type="button">Estimate from photos</button>
+              <button id="clearVolumeBtn" class="btn" type="button">Clear</button>
+              <button id="saveVolumeBtn" class="btn primary" type="button">Save Volume Scan</button>
+            </div>
+
+            <div id="volumeMessage" class="notice"></div>
+          </section>
+        </section>
+
+        <section id="tab-profile" class="tab-panel">
+          <section class="profile-card">
+            <div class="section-title">
+              <div>
+                <h2>Driver profile</h2>
+                <p>Account, route visibility and app information.</p>
+              </div>
+            </div>
+
+            <div class="profile-grid">
+              <article>
+                <span>App</span>
+                <strong>Veynor Driver PWA</strong>
+              </article>
+              <article>
+                <span>Mode</span>
+                <strong>Store · Plan · Drive</strong>
+              </article>
+              <article>
+                <span>Status</span>
+                <strong>Online</strong>
+              </article>
+            </div>
+          </section>
+        </section>
+
+      </main>
+
+      <nav class="bottom-nav">
+        <button class="bottom-tab active" data-tab="routes" type="button">
+          <span>●</span>
+          Routes
+        </button>
+        <button class="bottom-tab" data-tab="delivered" type="button">
+          <span>✓</span>
+          Delivered
+        </button>
+        <button class="bottom-tab" data-tab="issues" type="button">
+          <span>!</span>
+          Issues
+        </button>
+        <button class="bottom-tab" data-tab="pod" type="button">
+          <span>✎</span>
+          POD
+        </button>
+        <button class="bottom-tab" data-tab="volume" type="button">
+          <span>▣</span>
+          Volume
+        </button>
+      </nav>
+
+    </section>
+  </div>
+
+  <script src="./config.js?v=5"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="./pod-generator.js?v=12"></script>
+  <script src="./app.js?v=47"></script>
+</body>
+</html>

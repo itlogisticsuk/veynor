@@ -1,0 +1,719 @@
+(function () {
+  "use strict";
+
+  const DOCUMENT_BUCKET = "order-documents";
+
+  const FALLBACK_COMPANY = {
+    name: "Sofa2U Ltd",
+    displayName: "Sofa2U",
+    address: "860-862 Garratt Lane, London, SW17 0NB",
+    phone: "+44 (0) 7894 469947",
+    email: "sales@sofa2u.co.uk",
+    vat: "GB 368 665 249",
+    logoUrl: "",
+    footerText: ""
+  };
+
+  const DEFAULT_DAMAGE_NOTE =
+    "Received in good condition. Claims for damages must be reported within 48 hours.";
+
+  function cleanText(value) {
+    return String(value ?? "").replace(/\s+/g, " ").trim();
+  }
+
+  function normalize(value) {
+    return String(value ?? "").trim().toLowerCase();
+  }
+
+  function toNumber(value, fallback = 0) {
+    const num = Number(String(value ?? "").replace(",", "."));
+    return Number.isFinite(num) ? num : fallback;
+  }
+
+  function round2(value) {
+    return Number(toNumber(value, 0).toFixed(2));
+  }
+
+  function formatDate(value) {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString("en-GB");
+  }
+
+  function formatNumber(value, digits = 2) {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return "0";
+    return num.toLocaleString("en-GB", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
+  function safeFilePart(value) {
+    return String(value || "")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+
+  function splitText(doc, text, width) {
+    return doc.splitTextToSize(String(text || ""), width);
+  }
+
+  function setDark(doc) {
+    doc.setTextColor(28, 36, 52);
+  }
+
+  function setMuted(doc) {
+    doc.setTextColor(100, 110, 130);
+  }
+
+  function getOrderNumber(order) {
+    return cleanText(order.order_number || order.external_reference || order.id || "—");
+  }
+
+  function getPurchaseOrder(order) {
+    return cleanText(order.purchase_order || order.po_number || "—");
+  }
+
+  function getProductOwnerName(order) {
+    return cleanText(
+      order.customers?.name ||
+      order.product_owner_name ||
+      order.customer_name ||
+      "Product Owner"
+    );
+  }
+
+  function getRetailerName(order) {
+    return cleanText(
+      order.retail_name ||
+      order.retailer_name ||
+      order.delivery_name ||
+      "—"
+    );
+  }
+
+  function getShipToLines(order) {
+    return [
+      getRetailerName(order),
+      order.delivery_address_1,
+      order.delivery_address_2,
+      order.delivery_city,
+      order.delivery_region,
+      order.delivery_postcode,
+      order.delivery_country || "United Kingdom",
+      order.delivery_email || order.email || "",
+      order.delivery_phone || order.phone || ""
+    ].filter(Boolean).map(cleanText);
+  }
+
+  function getOrderLines(order) {
+    return Array.isArray(order?.order_lines) ? order.order_lines : [];
+  }
+
+  function getLineSku(line) {
+    return cleanText(line.sku_base || line.products?.sku_base || "—");
+  }
+
+  function getLineDescription(line) {
+    return cleanText(
+      line.description ||
+      line.products?.description ||
+      line.products?.name ||
+      "—"
+    );
+  }
+
+  function getLineQty(line) {
+    return toNumber(line.quantity_ordered || line.quantity || 0, 0);
+  }
+
+  function getLineVolume(line) {
+    const explicit =
+      toNumber(line.total_line_volume_m3, 0) ||
+      toNumber(line.total_volume_m3, 0) ||
+      toNumber(line.volume_m3, 0);
+
+    if (explicit > 0) return explicit;
+
+    const qty = getLineQty(line);
+    const unit =
+      toNumber(line.unit_volume_m3, 0) ||
+      toNumber(line.products?.volume_m3, 0);
+
+    return round2(qty * unit);
+  }
+
+  function getTotalVolume(order) {
+    const explicit =
+      toNumber(order.total_order_volume_m3, 0) ||
+      toNumber(order.planning_volume_m3, 0) ||
+      toNumber(order.volume_m3, 0);
+
+    if (explicit > 0) return explicit;
+
+    return getOrderLines(order).reduce((sum, line) => sum + getLineVolume(line), 0);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function urlToDataUrl(url) {
+    if (!url) return "";
+
+    try {
+      const res = await fetch(url, { mode: "cors" });
+      if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      return await blobToDataUrl(blob);
+    } catch (error) {
+      console.warn("Image could not be loaded for delivery note:", error.message);
+      return "";
+    }
+  }
+
+  function getImageFormat(dataUrl) {
+    const lower = String(dataUrl || "").toLowerCase();
+    if (lower.includes("image/jpeg") || lower.includes("image/jpg")) return "JPEG";
+    if (lower.includes("image/webp")) return "WEBP";
+    return "PNG";
+  }
+
+  function addLogo(doc, logoDataUrl, x, y, maxW, maxH) {
+    if (!logoDataUrl) return false;
+
+    try {
+      const props = doc.getImageProperties(logoDataUrl);
+      const ratio = props.width / props.height;
+
+      let w = maxW;
+      let h = w / ratio;
+
+      if (h > maxH) {
+        h = maxH;
+        w = h * ratio;
+      }
+
+      doc.addImage(logoDataUrl, getImageFormat(logoDataUrl), x, y, w, h);
+      return true;
+    } catch (error) {
+      console.warn("Delivery note logo addImage failed:", error.message);
+      return false;
+    }
+  }
+
+  function addWatermark(doc, watermarkDataUrl) {
+    if (!watermarkDataUrl) return;
+
+    try {
+      const props = doc.getImageProperties(watermarkDataUrl);
+      const ratio = props.width / props.height;
+
+      let w = 105;
+      let h = w / ratio;
+
+      if (h > 85) {
+        h = 85;
+        w = h * ratio;
+      }
+
+      const x = (210 - w) / 2;
+      const y = 142;
+
+      if (doc.setGState && doc.GState) {
+        const gState = new doc.GState({ opacity: 0.15 });
+        doc.setGState(gState);
+        doc.addImage(watermarkDataUrl, getImageFormat(watermarkDataUrl), x, y, w, h);
+        doc.setGState(new doc.GState({ opacity: 1 }));
+      } else {
+        doc.addImage(watermarkDataUrl, getImageFormat(watermarkDataUrl), x, y, w, h);
+      }
+    } catch (error) {
+      console.warn("Delivery note watermark failed:", error.message);
+    }
+  }
+
+  async function loadCompanySettings(client, companyId) {
+    const { data, error } = await client
+      .from("settings")
+      .select("setting_key, setting_value")
+      .eq("company_id", companyId);
+
+    if (error) {
+      console.warn("Delivery note settings skipped:", error.message);
+      return {
+        company: { ...FALLBACK_COMPANY },
+        ownerProfiles: [],
+        damageNote: DEFAULT_DAMAGE_NOTE
+      };
+    }
+
+    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
+
+    let ownerProfiles = [];
+    try {
+      ownerProfiles = JSON.parse(map.get("product_owner_profiles") || "[]");
+      if (!Array.isArray(ownerProfiles)) ownerProfiles = [];
+    } catch {
+      ownerProfiles = [];
+    }
+
+    return {
+      company: {
+        name: map.get("main_company_name") || FALLBACK_COMPANY.name,
+        displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
+        address: map.get("main_address") || FALLBACK_COMPANY.address,
+        phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
+        email: map.get("main_email") || FALLBACK_COMPANY.email,
+        vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
+        logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
+        footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
+      },
+      ownerProfiles,
+      damageNote:
+        map.get("text_damage_reporting_note") ||
+        map.get("doc_damage_note") ||
+        DEFAULT_DAMAGE_NOTE
+    };
+  }
+
+  async function loadProductOwnerProfile(client, order, ownerProfiles) {
+    if (!order.customer_id) {
+      throw new Error("Cannot generate delivery note: order has no product owner/customer_id.");
+    }
+
+    const { data: customer, error: customerError } = await client
+      .from("customers")
+      .select("*")
+      .eq("id", order.customer_id)
+      .maybeSingle();
+
+    if (customerError) throw customerError;
+    if (!customer?.id) throw new Error("Cannot generate delivery note: product owner/customer not found.");
+
+    const customerName = customer.name || getProductOwnerName(order);
+    const customerCode = customer.customer_code || "";
+
+    const profile = (ownerProfiles || []).find(owner => {
+      const keys = [
+        owner.key,
+        owner.name,
+        owner.trading_name,
+        owner.customer_code,
+        owner.default_source_name
+      ].map(normalize).filter(Boolean);
+
+      return keys.includes(normalize(customerName)) ||
+        keys.includes(normalize(customerCode)) ||
+        keys.some(k => normalize(customerName).includes(k) || k.includes(normalize(customerName)));
+    }) || null;
+
+    return {
+      id: customer.id,
+      name: profile?.name || customer.name || getProductOwnerName(order),
+      tradingName: profile?.trading_name || customer.trading_name || customer.name || getProductOwnerName(order),
+      customerCode: profile?.customer_code || customer.customer_code || "",
+      vat: profile?.vat || customer.vat_number || customer.vat || "",
+      address1: profile?.address1 || customer.address1 || customer.address_1 || "",
+      address2: profile?.address2 || customer.address2 || customer.address_2 || "",
+      city: profile?.city || customer.city || "",
+      postcode: profile?.postcode || customer.postcode || "",
+      country: profile?.country || customer.country || "United Kingdom",
+      logoUrl: profile?.logo_url || ""
+    };
+  }
+
+  function drawTopBar(doc) {
+    doc.setFillColor(17, 24, 39);
+    doc.rect(0, 0, 210, 15.5, "F");
+
+    doc.setFillColor(18, 103, 255);
+    doc.rect(0, 15.5, 210, 2, "F");
+  }
+
+  function drawHeader(doc, order, ctx, tenantLogoDataUrl) {
+    const company = ctx.company;
+
+    drawTopBar(doc);
+
+    const logoAdded = addLogo(doc, tenantLogoDataUrl, 14, 23, 42, 18);
+
+    setDark(doc);
+
+    if (!logoAdded) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(15);
+      doc.text(company.displayName || company.name, 14, 33);
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(21);
+    doc.text("Delivery Note", 196, 31, { align: "right" });
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.text(`Date: ${formatDate(new Date())}`, 196, 41, { align: "right" });
+    doc.text(`Order #: ${getOrderNumber(order)}`, 196, 48, { align: "right" });
+    doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 55, { align: "right" });
+
+    const infoY = logoAdded ? 47 : 40;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.text(company.name, 14, infoY);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(cleanText(company.address), 14, infoY + 5.5);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Phone", 14, infoY + 13.5);
+    doc.setFont("helvetica", "normal");
+    doc.text(company.phone, 28, infoY + 13.5);
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Email", 78, infoY + 13.5);
+    doc.setFont("helvetica", "normal");
+    doc.text(company.email, 92, infoY + 13.5);
+  }
+
+  function drawAddressBlock(doc, title, lines, x, y, width, height) {
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(x, y, width, height, 2, 2, "F");
+
+    doc.setDrawColor(220, 226, 235);
+    doc.roundedRect(x, y, width, height, 2, 2);
+
+    setDark(doc);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(title, x + 5, y + 8);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+
+    const wrapped = splitText(doc, lines.filter(Boolean).map(cleanText).join("\n"), width - 10);
+    let lineY = y + 16;
+
+    wrapped.forEach(line => {
+      if (lineY < y + height - 4) {
+        doc.text(line, x + 5, lineY);
+        lineY += 4.4;
+      }
+    });
+  }
+
+  function drawBillShip(doc, order, ctx) {
+    const owner = ctx.productOwner;
+
+    const onBehalfOfLines = [
+      owner.tradingName || owner.name,
+      owner.address1,
+      owner.address2,
+      owner.city,
+      owner.postcode,
+      owner.country,
+      owner.vat ? `VAT No: ${owner.vat}` : ""
+    ];
+
+    const shipToLines = getShipToLines(order);
+
+    drawAddressBlock(doc, "ON BEHALF OF", onBehalfOfLines, 14, 72, 86, 47);
+    drawAddressBlock(doc, "SHIP TO", shipToLines, 110, 72, 86, 47);
+  }
+
+  function drawTableHeader(doc, y) {
+    doc.setFillColor(245, 247, 250);
+    doc.rect(14, y - 6, 182, 9, "F");
+
+    setDark(doc);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.6);
+
+    doc.text("Item", 14, y);
+    doc.text("Description", 40, y);
+    doc.text("Delivered", 156, y, { align: "right" });
+    doc.text("Volume", 192, y, { align: "right" });
+
+    doc.setDrawColor(70, 80, 95);
+    doc.line(14, y + 3.5, 196, y + 3.5);
+
+    return y + 8.5;
+  }
+
+  function maybeAddPage(doc, y, order, ctx, tenantLogoDataUrl) {
+    if (y <= 262) return y;
+
+    doc.addPage();
+    drawHeader(doc, order, ctx, tenantLogoDataUrl);
+
+    return drawTableHeader(doc, 72);
+  }
+
+  function drawLines(doc, order, ctx, tenantLogoDataUrl) {
+    let y = 134;
+    y = drawTableHeader(doc, y);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7.4);
+
+    const lines = getOrderLines(order);
+
+    if (!lines.length) {
+      doc.text("No product lines found for this order.", 14, y);
+      return y + 9;
+    }
+
+    lines.forEach(line => {
+      y = maybeAddPage(doc, y, order, ctx, tenantLogoDataUrl);
+
+      const sku = getLineSku(line);
+      const description = getLineDescription(line);
+      const qty = getLineQty(line);
+      const volume = getLineVolume(line);
+
+      const descLines = splitText(doc, description, 104);
+      const rowHeight = Math.max(6.3, descLines.length * 3.4);
+
+      setDark(doc);
+      doc.text(sku, 14, y);
+      doc.text(descLines, 40, y);
+      doc.text(formatNumber(qty, 0), 156, y, { align: "right" });
+      doc.text(formatNumber(volume, 2), 192, y, { align: "right" });
+
+      y += rowHeight;
+    });
+
+    return y + 5;
+  }
+
+  function drawTotalsAndSignature(doc, y, order, ctx, tenantLogoDataUrl) {
+    if (y > 235) {
+      doc.addPage();
+      drawHeader(doc, order, ctx, tenantLogoDataUrl);
+      y = 72;
+    }
+
+    const totalVolume = getTotalVolume(order);
+
+    doc.setDrawColor(70, 80, 95);
+    doc.line(14, y, 196, y);
+
+    y += 9;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("Total Volume", 142, y);
+    doc.text(formatNumber(totalVolume, 2), 192, y, { align: "right" });
+
+    y += 16;
+
+    if (y > 244) {
+      doc.addPage();
+      drawHeader(doc, order, ctx, tenantLogoDataUrl);
+      y = 72;
+    }
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+
+    doc.text("Delivered Via:", 14, y);
+    doc.line(44, y, 132, y);
+
+    y += 14;
+    doc.text("Received By:", 14, y);
+    doc.line(46, y, 132, y);
+
+    y += 10;
+    doc.text("Date:", 14, y);
+    doc.line(28, y, 132, y);
+
+    y += 14;
+
+    if (y > 263) {
+      doc.addPage();
+      drawHeader(doc, order, ctx, tenantLogoDataUrl);
+      y = 72;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+
+    const noteLines = splitText(doc, ctx.damageNote || DEFAULT_DAMAGE_NOTE, 170);
+    doc.text(noteLines.slice(0, 2), 14, y);
+
+    return y + 10;
+  }
+
+  function drawFooter(doc, company) {
+    const pageCount = doc.getNumberOfPages();
+
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+
+      doc.setDrawColor(220, 226, 235);
+      doc.line(14, 282, 196, 282);
+
+      setMuted(doc);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+
+      const footerLine1 = company.footerText || `${company.name}  ${company.address}`;
+      const footerLine2 = `Phone ${company.phone}   Email ${company.email}   VAT No ${company.vat}`;
+
+      doc.text(footerLine1, 105, 287, { align: "center" });
+      doc.text(footerLine2, 105, 292, { align: "center" });
+
+      setDark(doc);
+    }
+  }
+
+  async function createPdfBlob(order, ctx) {
+    if (!window.jspdf?.jsPDF) {
+      throw new Error("jsPDF is not loaded. Add jsPDF before delivery-note-generator.js in the HTML.");
+    }
+
+    const { jsPDF } = window.jspdf;
+
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    const tenantLogoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
+    const watermarkDataUrl = await urlToDataUrl(ctx.productOwner.logoUrl);
+
+    drawHeader(doc, order, ctx, tenantLogoDataUrl);
+    drawBillShip(doc, order, ctx);
+    addWatermark(doc, watermarkDataUrl);
+
+    let y = drawLines(doc, order, ctx, tenantLogoDataUrl);
+    drawTotalsAndSignature(doc, y, order, ctx, tenantLogoDataUrl);
+    drawFooter(doc, ctx.company);
+
+    return doc.output("blob");
+  }
+
+  async function uploadPdf(client, companyId, order, blob) {
+    const orderPart = safeFilePart(order.order_number || order.id);
+    const fileName = `delivery-note-${orderPart}.pdf`;
+    const storagePath = `${companyId}/${order.id}/${fileName}`;
+
+    const { error } = await client.storage
+      .from(DOCUMENT_BUCKET)
+      .upload(storagePath, blob, {
+        contentType: "application/pdf",
+        upsert: true
+      });
+
+    if (error) throw error;
+
+    const { data } = client.storage
+      .from(DOCUMENT_BUCKET)
+      .getPublicUrl(storagePath);
+
+    return {
+      storagePath,
+      fileUrl: data?.publicUrl || ""
+    };
+  }
+
+  async function upsertDocumentRecord(client, companyId, order, uploaded) {
+    const existing = (order.order_documents || []).find(doc =>
+      normalize(doc.document_type) === "delivery_note"
+    );
+
+    const payload = {
+      company_id: companyId,
+      customer_id: order.customer_id || null,
+      order_id: order.id,
+      document_type: "delivery_note",
+      document_number: `DN-${order.order_number || String(order.id).slice(0, 8)}`,
+      document_status: "generated",
+      file_url: uploaded.fileUrl,
+      storage_path: uploaded.storagePath,
+      customer_visible: true,
+      updated_at: new Date().toISOString()
+    };
+
+    if (existing?.id) {
+      const { error } = await client
+        .from("order_documents")
+        .update(payload)
+        .eq("id", existing.id);
+
+      if (error) throw error;
+      return existing.id;
+    }
+
+    const { data, error } = await client
+      .from("order_documents")
+      .insert({
+        ...payload,
+        created_at: new Date().toISOString()
+      })
+      .select("id")
+      .single();
+
+    if (error) throw error;
+    return data?.id || null;
+  }
+
+  async function createActivity(client, companyId, order) {
+    const { error } = await client
+      .from("order_activity_log")
+      .insert({
+        company_id: companyId,
+        customer_id: order.customer_id || null,
+        order_id: order.id,
+        activity_type: "document_generated",
+        old_status: "not_generated",
+        new_status: "generated",
+        description: "Delivery note generated and uploaded",
+        created_by: "manual"
+      });
+
+    if (error) {
+      console.warn("Delivery note activity log skipped:", error.message);
+    }
+  }
+
+  async function generate(order, client, companyId) {
+    if (!order?.id) throw new Error("Cannot generate delivery note: order is missing.");
+    if (!client) throw new Error("Cannot generate delivery note: Supabase client is missing.");
+    if (!companyId) throw new Error("Cannot generate delivery note: companyId is missing.");
+
+    const ctx = await loadCompanySettings(client, companyId);
+    ctx.productOwner = await loadProductOwnerProfile(client, order, ctx.ownerProfiles);
+
+    const blob = await createPdfBlob(order, ctx);
+    const uploaded = await uploadPdf(client, companyId, order, blob);
+
+    if (!uploaded.fileUrl || !uploaded.storagePath) {
+      throw new Error("Delivery note PDF was uploaded, but no file URL/storage path was returned.");
+    }
+
+    await upsertDocumentRecord(client, companyId, order, uploaded);
+    await createActivity(client, companyId, order);
+
+    await client
+      .from("orders")
+      .update({ last_activity_at: new Date().toISOString() })
+      .eq("id", order.id);
+
+    return uploaded;
+  }
+
+  window.DeliveryNoteGenerator = {
+    generate
+  };
+})();

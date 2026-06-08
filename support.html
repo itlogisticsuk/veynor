@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Support Center · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/support.js" defer></script>
+
+  <style>
+    .support-page{display:grid;gap:14px;padding-bottom:32px}
+    .support-hero{
+      border-radius:26px;
+      min-height:260px;
+      padding:30px;
+      color:#fff;
+      background:
+        linear-gradient(90deg,rgba(7,21,47,.96),rgba(7,21,47,.70)),
+        url("/assets/veynor-login-bg.png") center/cover no-repeat;
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:22px;
+      align-items:center;
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .support-hero h1{margin:0;font-size:42px;font-weight:950;letter-spacing:-.06em;line-height:1}
+    .support-hero p{margin:14px 0 0;max-width:980px;color:rgba(255,255,255,.82);font-size:14px;line-height:1.7}
+    .support-hero .hero-wordmark{width:160px;opacity:.82;filter:drop-shadow(0 10px 22px rgba(0,0,0,.35))}
+
+    .support-toolbar{padding:14px;display:flex;justify-content:space-between;align-items:end;gap:12px;flex-wrap:wrap}
+    .support-tabs{display:flex;gap:8px;flex-wrap:wrap}
+    .support-tab{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:12px;font-weight:950;cursor:pointer}
+    .support-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+    .field{display:grid;gap:6px}
+    .field label{font-size:10.5px;font-weight:950;text-transform:uppercase;color:#667085;letter-spacing:.05em}
+    .input,.select,.textarea{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;color:var(--text);font-size:12.5px}
+    .input,.select{min-height:42px;min-width:240px}
+    .textarea{min-height:130px;resize:vertical;width:100%}
+
+    .tab-panel{display:none}
+    .tab-panel.active{display:grid;gap:14px}
+
+    .support-grid-2{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}
+    .support-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    .support-grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .support-card{padding:16px;display:grid;gap:14px}
+    .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .card-head h2,.card-head h3{margin:0;font-size:16px;font-weight:950;color:#07152f}
+    .card-head p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .concept-block{font-size:13px;color:#344054;line-height:1.75;display:grid;gap:12px}
+    .concept-block strong{color:#07152f}
+    .concept-highlight{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:16px;padding:14px;font-size:13px;font-weight:850;line-height:1.65}
+
+    .role-card,.module-card,.faq-card,.status-card{
+      border:1px solid var(--border);
+      background:#fff;
+      border-radius:18px;
+      padding:15px;
+      display:grid;
+      gap:9px;
+    }
+    .role-icon,.module-icon{width:46px;height:46px;border-radius:16px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:22px}
+    .role-card h3,.module-card h3,.faq-card h3{margin:0;font-size:14px;font-weight:950;color:#07152f}
+    .role-card p,.module-card p,.faq-card p{margin:0;color:var(--muted);font-size:12px;line-height:1.55}
+
+    .flow-list{display:grid;gap:10px}
+    .flow-step{display:grid;grid-template-columns:42px 1fr;gap:12px;align-items:start;border:1px solid var(--border);border-radius:16px;background:#fff;padding:13px}
+    .flow-number{width:42px;height:42px;border-radius:15px;background:linear-gradient(135deg,#1267ff,#38bdf8);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:950}
+    .flow-step h3{margin:0;font-size:13px;font-weight:950;color:#07152f}
+    .flow-step p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .ticket-form{display:grid;gap:12px}
+    .field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+    .actions-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:800;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    .data-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px;background:#fff}
+    .data-table{width:100%;min-width:900px;border-collapse:collapse}
+    .data-table th,.data-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:top}
+    .data-table th{background:#f8fafc;color:#667085;font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.04em}
+
+    .pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:900;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;white-space:nowrap}
+    .pill.green{background:#ecfdf5;border-color:#bbf7d0;color:#047857}
+    .pill.orange{background:#fff7ed;border-color:#fed7aa;color:#c2410c}
+    .pill.red{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+    .pill.gray{background:#f1f5f9;border-color:#e2e8f0;color:#475569}
+
+    @media(max-width:1500px){
+      .support-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .support-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .support-grid-2{grid-template-columns:1fr}
+    }
+    @media(max-width:800px){
+      .support-hero,.support-grid-3,.support-grid-4,.field-grid{grid-template-columns:1fr}
+      .support-hero .hero-wordmark{width:140px}
+      .input,.select{min-width:0;width:100%}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page support-page">
+    <section class="support-hero">
+      <div>
+        <h1>Support Center</h1>
+        <p>
+          Learn how the Veynor portal works as a complete logistics operating system:
+          from order import and stock matching to transport planning, customer portals,
+          proof of delivery, billing, analytics and support diagnostics.
+        </p>
+      </div>
+      <img class="hero-wordmark" src="/assets/veynor-wordmark.png" alt="Veynor">
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="card support-toolbar">
+      <div class="support-tabs">
+        <button class="support-tab active" data-tab="overview">Overview</button>
+        <button class="support-tab" data-tab="portal">Portal Concept</button>
+        <button class="support-tab" data-tab="modules">Modules</button>
+        <button class="support-tab" data-tab="workflows">Workflows</button>
+        <button class="support-tab" data-tab="faq">FAQ</button>
+        <button class="support-tab" data-tab="ticket">Report Issue</button>
+        <button class="support-tab" data-tab="diagnostics">Diagnostics</button>
+        <button class="support-tab" data-tab="release-notes">Release Notes</button>
+      </div>
+    </section>
+
+    <section id="tab-overview" class="tab-panel active">
+      <section class="support-grid-4">
+        <article class="role-card">
+          <div class="role-icon">🏢</div>
+          <h3>Main Operator Portal</h3>
+          <p>For the primary logistics company managing orders, warehouse stock, routes, PODs, invoices and analytics.</p>
+        </article>
+
+        <article class="role-card">
+          <div class="role-icon">🏭</div>
+          <h3>Producer / Product Owner Portal</h3>
+          <p>For suppliers, manufacturers or product owners who need access to their own orders, stock and delivery data.</p>
+        </article>
+
+        <article class="role-card">
+          <div class="role-icon">🛒</div>
+          <h3>Retailer Portal</h3>
+          <p>For retailers and delivery stakeholders who require controlled access to order progress and delivery information.</p>
+        </article>
+
+        <article class="role-card">
+          <div class="role-icon">📊</div>
+          <h3>Shared Data Platform</h3>
+          <p>One data model with role-based access, so every party sees the right information without exposing internal data.</p>
+        </article>
+      </section>
+
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>A Total Logistics Concept</h2>
+            <p>One connected environment for the full operational chain.</p>
+          </div>
+        </div>
+
+        <div class="concept-block">
+          <p>
+            Veynor is built as a complete logistics platform where the main operator can manage the entire operation,
+            while connected sub-users such as producers, product owners, retailers and delivery stakeholders can each
+            receive their own secure login.
+          </p>
+
+          <p>
+            This means the portal is not limited to internal warehouse users only. It is designed as a shared logistics
+            ecosystem where every party can access the information that is relevant to them: stock availability, order
+            status, delivery progress, proof of delivery, invoices, service levels and operational reports.
+          </p>
+
+          <div class="concept-highlight">
+            The key principle is controlled visibility: the main operator manages the full process, while sub-users
+            receive filtered access to their own data. This creates transparency without losing operational control.
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-portal" class="tab-panel">
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>Portal Concept</h2>
+            <p>How Veynor connects the main user, producers, product owners and retailers.</p>
+          </div>
+        </div>
+
+        <div class="flow-list">
+          <div class="flow-step">
+            <div class="flow-number">1</div>
+            <div>
+              <h3>Main Operator Account</h3>
+              <p>The logistics company uses Veynor as the central operational platform for warehouse, transport, billing and analytics.</p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">2</div>
+            <div>
+              <h3>Product Owner / Producer Accounts</h3>
+              <p>External producers or product owners can receive their own login to view their stock, orders, delivery progress and documents.</p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">3</div>
+            <div>
+              <h3>Retailer Accounts</h3>
+              <p>Retailers can receive limited portal access to follow order progress, delivery status and POD availability.</p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">4</div>
+            <div>
+              <h3>Role-Based Data Visibility</h3>
+              <p>Every user role receives access only to the data they are allowed to see. Internal planning and finance details remain protected.</p>
+            </div>
+          </div>
+
+          <div class="flow-step">
+            <div class="flow-number">5</div>
+            <div>
+              <h3>One Operational Source of Truth</h3>
+              <p>Orders, stock, scans, routes, PODs and invoices all connect to the same operational database.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-modules" class="tab-panel">
+      <section class="support-grid-4" id="moduleGrid"></section>
+    </section>
+
+    <section id="tab-workflows" class="tab-panel">
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>Complete Operational Workflow</h2>
+            <p>The current Veynor process from order import to invoicing.</p>
+          </div>
+        </div>
+
+        <div class="flow-list" id="workflowList"></div>
+      </section>
+    </section>
+
+    <section id="tab-faq" class="tab-panel">
+      <section class="support-grid-2">
+        <div class="stack">
+          <section class="card support-card">
+            <div class="card-head">
+              <div>
+                <h2>Frequently Asked Questions</h2>
+                <p>Operational support topics for the current portal.</p>
+              </div>
+            </div>
+            <div class="flow-list" id="faqList"></div>
+          </section>
+        </div>
+
+        <aside class="card support-card">
+          <div class="card-head">
+            <div>
+              <h2>Quick Troubleshooting</h2>
+              <p>Common checks before reporting an issue.</p>
+            </div>
+          </div>
+
+          <div class="concept-block">
+            <p><strong>Orders not visible in planner:</strong> check status, planning release and coordinates.</p>
+            <p><strong>Matching incomplete:</strong> check stock availability and SKU matching.</p>
+            <p><strong>Missing dashboard data:</strong> check selected period, customer filter and role access.</p>
+            <p><strong>POD not visible:</strong> check delivery status and document upload.</p>
+          </div>
+        </aside>
+      </section>
+    </section>
+
+    <section id="tab-ticket" class="tab-panel">
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>Report an Issue</h2>
+            <p>Create a support request with enough operational detail to investigate quickly.</p>
+          </div>
+        </div>
+
+        <form id="supportTicketForm" class="ticket-form">
+          <div class="field-grid">
+            <div class="field">
+              <label for="ticketCategory">Category</label>
+              <select id="ticketCategory" class="select">
+                <option>Order Import</option>
+                <option>Order Matching</option>
+                <option>Stock / Scanning</option>
+                <option>Route Planning</option>
+                <option>Proof of Delivery</option>
+                <option>Billing</option>
+                <option>Analytics</option>
+                <option>User Access</option>
+                <option>Other</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="ticketPriority">Priority</label>
+              <select id="ticketPriority" class="select">
+                <option>Low</option>
+                <option selected>Normal</option>
+                <option>High</option>
+                <option>Critical</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="ticketSubject">Subject</label>
+            <input id="ticketSubject" class="input" placeholder="Short description of the issue">
+          </div>
+
+          <div class="field">
+            <label for="ticketDetails">Details</label>
+            <textarea id="ticketDetails" class="textarea" placeholder="Describe what happened, what you expected, order numbers, route numbers or screenshots if available."></textarea>
+          </div>
+
+          <div class="actions-row">
+            <button class="btn btn-primary" type="submit">Create Support Ticket</button>
+            <button id="btnCopyDiagnostics" class="btn" type="button">Copy Diagnostics</button>
+          </div>
+        </form>
+      </section>
+    </section>
+
+    <section id="tab-diagnostics" class="tab-panel">
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>Diagnostics</h2>
+            <p>Useful technical information for support investigation.</p>
+          </div>
+          <button id="btnRefreshDiagnostics" class="btn" type="button">Refresh</button>
+        </div>
+
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Value</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="diagnosticsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-release-notes" class="tab-panel">
+      <section class="card support-card">
+        <div class="card-head">
+          <div>
+            <h2>Release Notes</h2>
+            <p>Current platform status and recent improvements.</p>
+          </div>
+        </div>
+
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Version</th>
+                <th>Area</th>
+                <th>Update</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="releaseNotesBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+</div>
+</body>
+</html>
