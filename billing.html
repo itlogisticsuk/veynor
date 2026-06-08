@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Billing · IT LOGISTICS UK</title>
+  <title>Billing · Veynor</title>
 
   <link rel="stylesheet" href="/css/theme.css"/>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/js/supabase.js"></script>
-<script src="/js/page-guard.js" defer></script>
+  <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
   <script src="/js/billing.js" defer></script>
 
@@ -17,68 +17,42 @@
     .billing-page{display:grid;gap:14px}
     .billing-kpis{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:12px}
     .billing-kpi{padding:14px;display:grid;gap:6px;min-height:92px}
-    .billing-kpi-label{font-size:10px;font-weight:800;text-transform:uppercase;color:#667085;letter-spacing:.04em}
-    .billing-kpi-value{font-size:22px;font-weight:800;line-height:1.05}
+    .billing-kpi-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.04em}
+    .billing-kpi-value{font-size:22px;font-weight:900;line-height:1.05}
     .billing-kpi-sub{font-size:11.5px;color:var(--muted);line-height:1.35}
 
     .billing-card{padding:16px;display:grid;gap:14px}
-    .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
-    .section-title{margin:0;font-size:16px;font-weight:800}
-    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
-
     .filters-grid{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr .8fr;gap:12px;align-items:end}
-    .field{display:grid;gap:6px}
-    .field label{font-size:12px;font-weight:700;color:#374151}
-    .input,.select{width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:38px}
-
     .actions-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
     .actions-left,.actions-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
-    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
-    .billing-table{width:100%;min-width:1720px;border-collapse:collapse}
+    .billing-table{width:100%;min-width:1560px;border-collapse:collapse}
     .billing-table th,.billing-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;vertical-align:top}
-    .billing-table th{background:#fbfbfc;font-size:10.5px;font-weight:800;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
+    .billing-table th{background:#fbfbfc;font-size:10.5px;font-weight:900;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
     .billing-table tbody tr:hover{background:#fafcff}
     .billing-table tfoot td{background:#fafafa;font-weight:900;border-top:2px solid var(--border)}
-
     .sortable-th{cursor:pointer;user-select:none}
     .sortable-th:hover{background:#f2f4f7}
     .sort-indicator{margin-left:5px;color:var(--muted);font-size:10px}
 
-    .invoice-main{font-weight:900;color:#111827}
+    .invoice-main{font-weight:950;color:#07152f}
     .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.35}
-    .money-cell{text-align:right!important;white-space:nowrap;font-weight:800}
-    .total-cell{text-align:right!important;white-space:nowrap;font-weight:900;color:#111827}
+    .money-cell{text-align:right!important;white-space:nowrap;font-weight:850}
+    .total-cell{text-align:right!important;white-space:nowrap;font-weight:950;color:#07152f}
 
-    .status-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:900;border:1px solid var(--gray-bd);background:var(--gray-bg);color:var(--gray-tx);white-space:nowrap}
-    .status-generated{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
-    .status-sent{background:var(--blue-bg);color:var(--blue-tx);border-color:var(--blue-bd)}
-    .status-paid{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
-    .status-overdue{background:var(--danger-bg);color:var(--danger-tx);border-color:var(--danger-bd)}
-    .status-partially_paid{background:var(--purple-bg);color:var(--purple-tx);border-color:var(--purple-bd)}
-    .status-missing{background:var(--gray-bg);color:var(--gray-tx);border-color:var(--gray-bd)}
-
-    .mini-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 9px;font-size:11.5px;font-weight:800;cursor:pointer;text-decoration:none;color:var(--text);display:inline-flex;align-items:center;justify-content:center}
-    .mini-btn:hover{background:#f8fafc}
     .mini-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-
     .invoice-detail-row{display:none;background:#fbfcfd}
     .invoice-detail-row.open{display:table-row}
     .invoice-detail-cell{padding:0!important}
     .invoice-detail{padding:14px 16px;display:grid;gap:12px;border-top:1px solid #edf1f6}
     .detail-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
     .detail-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px;display:grid;gap:4px}
-    .detail-label{font-size:10px;font-weight:800;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
-    .detail-value{font-size:12.5px;font-weight:800;line-height:1.35;word-break:break-word}
-
+    .detail-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
+    .detail-value{font-size:12.5px;font-weight:850;line-height:1.35;word-break:break-word}
     .orders-list{display:grid;gap:8px}
     .order-line{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;display:grid;grid-template-columns:1fr repeat(5,110px);gap:10px;align-items:center}
-    .order-line-title{font-weight:900}
+    .order-line-title{font-weight:950}
     .order-line-sub{font-size:11.5px;color:var(--muted);line-height:1.35}
-
-    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:700;font-size:12.5px}
-    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
-    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
 
     @media(max-width:1500px){
       .billing-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -102,14 +76,14 @@
     <section class="page-topbar">
       <div class="page-title">
         <h1>Billing</h1>
-        <p>Invoice overview with split revenue by picking, warehouse, admin and transport.</p>
+        <p>Invoice overview with warehouse and transport revenue.</p>
       </div>
 
       <div class="topbar-actions">
         <div class="user-mini">
           <div class="user-badge">S2</div>
           <div>
-            <div style="font-weight:700;">Sofa2U</div>
+            <div style="font-weight:800;">Sofa2U</div>
             <div style="font-size:12px;color:var(--muted);">Finance overview</div>
           </div>
         </div>
@@ -119,43 +93,43 @@
     <div id="toast" class="notice"></div>
 
     <section class="billing-kpis">
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardInvoices">
         <div class="billing-kpi-label">Invoices</div>
         <div class="billing-kpi-value" id="kpiInvoices">0</div>
         <div class="billing-kpi-sub">Visible invoice groups</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardPick" data-billing-col="pick">
         <div class="billing-kpi-label">Pick Revenue</div>
         <div class="billing-kpi-value" id="kpiPick">£0.00</div>
-        <div class="billing-kpi-sub">Handling / picking</div>
+        <div class="billing-kpi-sub">Internal picking revenue</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardWarehouse" data-billing-col="warehouse">
         <div class="billing-kpi-label">Warehouse Revenue</div>
         <div class="billing-kpi-value" id="kpiWarehouse">£0.00</div>
-        <div class="billing-kpi-sub">Storage / warehousing</div>
+        <div class="billing-kpi-sub">Warehouse fees</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardAdmin" data-billing-col="admin">
         <div class="billing-kpi-label">Admin Revenue</div>
         <div class="billing-kpi-value" id="kpiAdmin">£0.00</div>
-        <div class="billing-kpi-sub">Admin fees</div>
+        <div class="billing-kpi-sub">Internal admin revenue</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardTransport" data-billing-col="transport">
         <div class="billing-kpi-label">Transport Revenue</div>
         <div class="billing-kpi-value" id="kpiTransport">£0.00</div>
         <div class="billing-kpi-sub">Transport fees</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardTotalExVat">
         <div class="billing-kpi-label">Total Excl. VAT</div>
         <div class="billing-kpi-value" id="kpiTotalExVat">£0.00</div>
-        <div class="billing-kpi-sub">Net income</div>
+        <div class="billing-kpi-sub">Net invoice value</div>
       </article>
 
-      <article class="card billing-kpi">
+      <article class="card billing-kpi" id="kpiCardTotalIncVat">
         <div class="billing-kpi-label">Total Incl. VAT</div>
         <div class="billing-kpi-value" id="kpiTotalIncVat">£0.00</div>
         <div class="billing-kpi-sub">Gross invoice value</div>
@@ -166,7 +140,7 @@
       <div class="section-head">
         <div>
           <h2 class="section-title">Filters</h2>
-          <p class="section-sub">Filter generated invoices by invoice number, customer, status and date range.</p>
+          <p class="section-sub">Filter invoices by invoice number, customer, status and date range.</p>
         </div>
       </div>
 
@@ -176,10 +150,10 @@
           <input id="filterSearch" class="input" placeholder="Invoice, order, customer, postcode..."/>
         </div>
 
-        <div class="field">
+        <div class="field" id="filterCustomerWrap">
           <label for="filterCustomer">Customer</label>
           <select id="filterCustomer" class="select">
-            <option value="">All customers</option>
+            <option value="">All product owners</option>
           </select>
         </div>
 
@@ -236,15 +210,17 @@
               <th class="sortable-th" data-sort-key="customer">Customer <span class="sort-indicator" data-sort-indicator="customer"></span></th>
               <th class="sortable-th" data-sort-key="orders">Orders <span class="sort-indicator" data-sort-indicator="orders"></span></th>
               <th class="sortable-th" data-sort-key="date">Invoice Date <span class="sort-indicator" data-sort-indicator="date"></span></th>
-              <th class="sortable-th" data-sort-key="pick">Pick <span class="sort-indicator" data-sort-indicator="pick"></span></th>
-              <th class="sortable-th" data-sort-key="warehouse">Warehouse <span class="sort-indicator" data-sort-indicator="warehouse"></span></th>
-              <th class="sortable-th" data-sort-key="admin">Admin <span class="sort-indicator" data-sort-indicator="admin"></span></th>
-              <th class="sortable-th" data-sort-key="transport">Transport <span class="sort-indicator" data-sort-indicator="transport"></span></th>
+
+              <th class="sortable-th" data-sort-key="pick" data-billing-col="pick">Pick <span class="sort-indicator" data-sort-indicator="pick"></span></th>
+              <th class="sortable-th" data-sort-key="warehouse" data-billing-col="warehouse">Warehouse <span class="sort-indicator" data-sort-indicator="warehouse"></span></th>
+              <th class="sortable-th" data-sort-key="admin" data-billing-col="admin">Admin <span class="sort-indicator" data-sort-indicator="admin"></span></th>
+              <th class="sortable-th" data-sort-key="transport" data-billing-col="transport">Transport <span class="sort-indicator" data-sort-indicator="transport"></span></th>
+
               <th class="sortable-th" data-sort-key="net">Total Excl. VAT <span class="sort-indicator" data-sort-indicator="net"></span></th>
               <th>VAT 20%</th>
               <th class="sortable-th" data-sort-key="gross">Total Incl. VAT <span class="sort-indicator" data-sort-indicator="gross"></span></th>
               <th class="sortable-th" data-sort-key="status">Status <span class="sort-indicator" data-sort-indicator="status"></span></th>
-              <th>Actions</th>
+              <th data-billing-col="actions">Actions</th>
             </tr>
           </thead>
 
@@ -255,10 +231,10 @@
           <tfoot>
             <tr>
               <td colspan="5">Visible totals</td>
-              <td class="money-cell" id="footPick">£0.00</td>
-              <td class="money-cell" id="footWarehouse">£0.00</td>
-              <td class="money-cell" id="footAdmin">£0.00</td>
-              <td class="money-cell" id="footTransport">£0.00</td>
+              <td class="money-cell" id="footPick" data-billing-col="pick">£0.00</td>
+              <td class="money-cell" id="footWarehouse" data-billing-col="warehouse">£0.00</td>
+              <td class="money-cell" id="footAdmin" data-billing-col="admin">£0.00</td>
+              <td class="money-cell" id="footTransport" data-billing-col="transport">£0.00</td>
               <td class="total-cell" id="footNet">£0.00</td>
               <td class="money-cell" id="footVat">£0.00</td>
               <td class="total-cell" id="footGross">£0.00</td>
