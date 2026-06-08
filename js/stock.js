@@ -4,6 +4,7 @@
   const TENANT_NAME = "Sofa2U";
   const STOCK_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
   const CANCELLED_ALLOCATION_STATUS = "cancelled";
+  const OUTBOUND_STATUSES = ["picked", "loaded", "shipped", "closed"];
 
   let client = null;
   let companyId = null;
@@ -45,6 +46,7 @@
   function formatNumber(value, digits = 0) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "0";
+
     return num.toLocaleString("en-GB", {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits
@@ -145,22 +147,26 @@
 
   function statusClass(status) {
     const safe = normalize(status || "in_stock").replace(/[^a-z0-9_]/g, "");
+
     if (safe === "reserved") return "status-ready_for_picking";
     if (safe === "picked") return "status-planned";
     if (safe === "loaded") return "status-loaded";
     if (safe === "shipped" || safe === "closed") return "status-closed";
     if (["missing", "damaged", "cancelled"].includes(safe)) return "status-cancelled";
+
     return "status-imported";
   }
 
   function statusLabel(status) {
     const safe = normalize(status || "in_stock");
+
     const map = {
       in_stock: "In Stock",
       reserved: "Reserved",
       picked: "Picked",
       loaded: "Loaded",
       shipped: "Shipped",
+      closed: "Closed",
       missing: "Missing",
       damaged: "Damaged",
       cancelled: "Cancelled"
@@ -173,6 +179,14 @@
     return `<span class="status-pill ${statusClass(status)}">${escapeHtml(statusLabel(status))}</span>`;
   }
 
+  function isOutboundStatus(itemOrStatus) {
+    const status = typeof itemOrStatus === "string"
+      ? normalize(itemOrStatus)
+      : normalize(itemOrStatus?.status);
+
+    return OUTBOUND_STATUSES.includes(status);
+  }
+
   function allocationPill(item) {
     const status = normalize(item.status);
 
@@ -181,7 +195,7 @@
     }
 
     if (status === "picked") {
-      return `<span class="soft-pill orange">Picked</span>`;
+      return `<span class="soft-pill orange">Picked / Outbound</span>`;
     }
 
     if (status === "reserved" || item.linked_order_id) {
@@ -243,6 +257,28 @@
 
   function isBlocked(item) {
     return ["missing", "damaged", "cancelled"].includes(normalize(item.status));
+  }
+
+  function linkedOrderDisplay(item) {
+    if (!item.order_number && !item.linked_order_id) return "—";
+
+    const orderNo = item.order_number || item.linked_order_id || "Order";
+    const retailer = item.retailer_name || "";
+    const po = item.purchase_order || "";
+
+    return `
+      <span class="stock-link">${escapeHtml(orderNo)}</span>
+      ${retailer ? `<span class="subline">${escapeHtml(retailer)}</span>` : ""}
+      ${po ? `<span class="subline">PO: ${escapeHtml(po)}</span>` : ""}
+    `;
+  }
+
+  function linkedOrderText(item) {
+    return [
+      item.order_number || item.linked_order_id || "",
+      item.retailer_name || "",
+      item.purchase_order || ""
+    ].filter(Boolean).join(" · ");
   }
 
   async function loadCustomers() {
@@ -370,29 +406,33 @@
 
     if (error) throw error;
 
-    allStockItems = (data || []).map(row => {
-      const productVolume = toNumber(row.products?.volume_m3, 0);
-      const productWeight = toNumber(row.products?.weight_kg, 0);
+    allStockItems = (data || [])
+      .filter(row => !isOutboundStatus(row))
+      .map(row => {
+        const productVolume = toNumber(row.products?.volume_m3, 0);
+        const productWeight = toNumber(row.products?.weight_kg, 0);
 
-      return {
-        ...row,
-        linked_order_id: null,
-        order_number: "",
-        shipment_id: null,
-        shipment_number: "",
-        sku_base: getSkuBase(row),
-        product_name: getProductName(row),
-        product_description: row.products?.description || "",
-        customer_id: row.products?.customer_id || "",
-        customer_name: getOwnerName(row),
-        warehouse_name: getWarehouseName(row.warehouse_id),
-        location_code: getLocationCode(row.location_id),
-        inbound_reference: row.inbound_reference || "",
-        inbound_date: row.inbound_date || row.created_at || null,
-        volume_m3: toNumber(row.volume_m3, productVolume),
-        weight_kg: toNumber(row.weight_kg, productWeight)
-      };
-    });
+        return {
+          ...row,
+          linked_order_id: null,
+          order_number: "",
+          retailer_name: "",
+          purchase_order: "",
+          shipment_id: null,
+          shipment_number: "",
+          sku_base: getSkuBase(row),
+          product_name: getProductName(row),
+          product_description: row.products?.description || "",
+          customer_id: row.products?.customer_id || "",
+          customer_name: getOwnerName(row),
+          warehouse_name: getWarehouseName(row.warehouse_id),
+          location_code: getLocationCode(row.location_id),
+          inbound_reference: row.inbound_reference || "",
+          inbound_date: row.inbound_date || row.created_at || null,
+          volume_m3: toNumber(row.volume_m3, productVolume),
+          weight_kg: toNumber(row.weight_kg, productWeight)
+        };
+      });
 
     await applyAllocationOverlay();
 
@@ -423,7 +463,13 @@
           order_id,
           orders (
             id,
-            order_number
+            order_number,
+            external_reference,
+            purchase_order,
+            retail_name,
+            delivery_name,
+            delivery_company,
+            recipient_name
           )
         )
       `)
@@ -442,6 +488,7 @@
       if (!row.item_id) return;
 
       const current = allocationByItem.get(String(row.item_id));
+
       if (!current) {
         allocationByItem.set(String(row.item_id), row);
         return;
@@ -459,20 +506,36 @@
       const alloc = allocationByItem.get(String(item.id));
       if (!alloc) return item;
 
+      const order = alloc.order_lines?.orders || {};
+
       const orderId =
         alloc.order_lines?.order_id ||
-        alloc.order_lines?.orders?.id ||
+        order.id ||
         "";
 
       const orderNo =
-        alloc.order_lines?.orders?.order_number ||
+        order.order_number ||
+        order.external_reference ||
         orderId ||
+        "";
+
+      const retailer =
+        order.retail_name ||
+        order.delivery_company ||
+        order.delivery_name ||
+        order.recipient_name ||
+        "";
+
+      const purchaseOrder =
+        order.purchase_order ||
         "";
 
       return {
         ...item,
         linked_order_id: orderId,
         order_number: orderNo,
+        retailer_name: retailer,
+        purchase_order: purchaseOrder,
         allocation_id: alloc.id,
         allocation_status: alloc.allocation_status || "reserved",
         reserved_at: item.reserved_at || alloc.allocated_at || null,
@@ -496,7 +559,7 @@
 
     setText("summaryAvailable", formatNumber(available));
     setText("summaryLinked", formatNumber(reserved));
-    setText("summaryShipments", formatNumber(allStockItems.filter(i => ["picked", "loaded"].includes(normalize(i.status))).length));
+    setText("summaryShipments", "0");
     setText("summaryBlocked", formatNumber(blocked));
   }
 
@@ -596,7 +659,7 @@
       if (status && normalize(item.status) !== status) return false;
 
       if (availability === "available" && !isAvailable(item)) return false;
-      if (availability === "allocated" && !["reserved", "picked", "loaded"].includes(normalize(item.status))) return false;
+      if (availability === "allocated" && !["reserved"].includes(normalize(item.status))) return false;
       if (availability === "blocked" && !isBlocked(item)) return false;
 
       if (search) {
@@ -611,6 +674,8 @@
           item.warehouse_name,
           item.location_code,
           item.order_number,
+          item.retailer_name,
+          item.purchase_order,
           item.shipment_number,
           item.status,
           item.linked_order_id
@@ -623,6 +688,7 @@
     });
 
     const visibleIds = new Set(filteredStockItems.map(i => String(i.id)));
+
     Array.from(selectedItemIds).forEach(id => {
       if (!visibleIds.has(String(id))) selectedItemIds.delete(id);
     });
@@ -726,7 +792,7 @@
         </td>
         <td>${statusPill(item.status)}</td>
         <td>${allocationPill(item)}</td>
-        <td>${escapeHtml(item.order_number || item.linked_order_id || "—")}</td>
+        <td>${linkedOrderDisplay(item)}</td>
         <td>${escapeHtml(item.inbound_reference || "—")}</td>
         <td>${escapeHtml(item.location_code || "—")}<span class="subline">${escapeHtml(item.warehouse_name || "—")}</span></td>
         <td>${formatNumber(item.volume_m3, 3)}</td>
@@ -902,7 +968,7 @@
         <div class="detail-box"><div class="detail-label">Status</div><div class="detail-value">${statusPill(item.status)}</div></div>
         <div class="detail-box"><div class="detail-label">Warehouse</div><div class="detail-value">${escapeHtml(item.warehouse_name || "—")}</div></div>
         <div class="detail-box"><div class="detail-label">Location</div><div class="detail-value">${escapeHtml(item.location_code || "—")}</div></div>
-        <div class="detail-box"><div class="detail-label">Linked Order</div><div class="detail-value">${escapeHtml(item.order_number || item.linked_order_id || "—")}</div></div>
+        <div class="detail-box"><div class="detail-label">Linked Order</div><div class="detail-value">${linkedOrderDisplay(item)}</div></div>
         <div class="detail-box"><div class="detail-label">Reference</div><div class="detail-value">${escapeHtml(item.inbound_reference || "—")}</div></div>
         <div class="detail-box"><div class="detail-label">Inbound Date</div><div class="detail-value">${escapeHtml(formatDateTime(getInboundDate(item)))}</div></div>
         <div class="detail-box"><div class="detail-label">Original Code</div><div class="detail-value">${escapeHtml(item.sku_unique || "—")}</div></div>
@@ -1001,8 +1067,9 @@
       new_status: newStatus,
       payload: {
         product_id: item.product_id || null,
-        sku_base: item.sku_base || null,
         linked_order_id: item.linked_order_id || null,
+        order_number: item.order_number || null,
+        retailer_name: item.retailer_name || null,
         inbound_reference: item.inbound_reference || null
       }
     });
@@ -1052,6 +1119,8 @@
       payload: {
         product_id: item.product_id || null,
         linked_order_id: item.linked_order_id || null,
+        order_number: item.order_number || null,
+        retailer_name: item.retailer_name || null,
         inbound_reference: item.inbound_reference || null
       }
     });
@@ -1068,7 +1137,13 @@
     }
 
     await updateItemStatus(stockId, action);
-    showToast(`Item marked as ${statusLabel(action)}.`, "ok");
+
+    if (isOutboundStatus(action)) {
+      showToast(`Item marked as ${statusLabel(action)} and moved to Outbound.`, "ok");
+    } else {
+      showToast(`Item marked as ${statusLabel(action)}.`, "ok");
+    }
+
     await loadStock();
   }
 
@@ -1083,7 +1158,9 @@
     const confirmText =
       action === "remove_reservation"
         ? `Remove reservation from ${ids.length} selected item(s)?`
-        : `Mark ${ids.length} selected item(s) as ${statusLabel(action)}?`;
+        : isOutboundStatus(action)
+          ? `Mark ${ids.length} selected item(s) as ${statusLabel(action)} and move them to Outbound?`
+          : `Mark ${ids.length} selected item(s) as ${statusLabel(action)}?`;
 
     if (!window.confirm(confirmText)) return;
 
@@ -1096,7 +1173,13 @@
     }
 
     selectedItemIds.clear();
-    showToast(`${formatNumber(ids.length)} item(s) updated.`, "ok");
+
+    if (isOutboundStatus(action)) {
+      showToast(`${formatNumber(ids.length)} item(s) moved to Outbound.`, "ok");
+    } else {
+      showToast(`${formatNumber(ids.length)} item(s) updated.`, "ok");
+    }
+
     await loadStock();
   }
 
@@ -1126,9 +1209,10 @@
     const status = normalize(item.status);
 
     if (status === "loaded" || item.shipment_id) return "On Shipment";
-    if (status === "picked") return "Picked";
+    if (status === "picked") return "Picked / Outbound";
     if (status === "reserved" || item.linked_order_id) return "Linked to Order";
     if (["damaged", "missing", "cancelled"].includes(status)) return "Blocked";
+
     return "Available";
   }
 
@@ -1143,7 +1227,9 @@
       "Original Mutation ID": item.storage_mutation_id || "",
       "Status": statusLabel(item.status),
       "Availability": exportAvailabilityLabel(item),
-      "Linked Order": item.order_number || item.linked_order_id || "",
+      "Linked Order": item.order_number || "",
+      "Retailer": item.retailer_name || "",
+      "Purchase Order": item.purchase_order || "",
       "Reference": item.inbound_reference || "",
       "Warehouse": item.warehouse_name || "",
       "Location": item.location_code || "",
@@ -1290,6 +1376,8 @@
       "Status",
       "Availability",
       "Linked Order",
+      "Retailer",
+      "Purchase Order",
       "Reference",
       "Warehouse",
       "Location",
