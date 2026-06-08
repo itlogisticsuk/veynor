@@ -2,12 +2,14 @@
   "use strict";
 
   const TENANT_NAME = "Sofa2U";
+  const POD_BUCKET = "pod-assets";
   const ETA_WINDOW_HOURS = 2;
 
   let client = null;
   let companyId = null;
   let currentUser = null;
   let currentProfile = null;
+
   let allOrders = [];
   let filteredOrders = [];
 
@@ -89,6 +91,7 @@
   function formatNumber(value, digits = 0) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "0";
+
     return num.toLocaleString("en-GB", {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits
@@ -98,6 +101,7 @@
   function formatMoney(value) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "£0.00";
+
     return `£${num.toLocaleString("en-GB", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
@@ -106,20 +110,25 @@
 
   function formatDate(value) {
     if (!value) return "—";
+
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
+
     return d.toLocaleDateString("en-GB");
   }
 
   function formatDateTime(value) {
     if (!value) return "—";
+
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
+
     return d.toLocaleString("en-GB");
   }
 
   function formatTime(value) {
     if (!value) return "";
+
     const text = String(value).trim();
 
     if (/^\d{1,2}:\d{2}$/.test(text)) {
@@ -175,6 +184,17 @@
       el.textContent = "";
       el.className = "notice";
     }, 6500);
+  }
+
+  function ensureClient() {
+    if (client) return client;
+
+    if (typeof sb !== "function") {
+      throw new Error("Supabase helper sb() is not available.");
+    }
+
+    client = sb();
+    return client;
   }
 
   function isTenantRole() {
@@ -247,17 +267,19 @@
   }
 
   async function loadCurrentProfile() {
-    const { data: sessionData, error: sessionError } = await client.auth.getUser();
+    const db = ensureClient();
+
+    const { data: sessionData, error: sessionError } = await db.auth.getUser();
     if (sessionError) throw sessionError;
 
     currentUser = sessionData?.user || null;
 
     if (!currentUser?.id) {
-      window.location.href = "/login.html";
+      window.location.replace("/login.html");
       throw new Error("Not authenticated.");
     }
 
-    const { data, error } = await client
+    let result = await db
       .from("user_profiles")
       .select(`
         *,
@@ -275,13 +297,33 @@
       .eq("is_active", true)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error("No active user profile found for this login.");
+    if (!result.data && !result.error) {
+      result = await db
+        .from("user_profiles")
+        .select(`
+          *,
+          companies (
+            id,
+            name
+          ),
+          customers (
+            id,
+            name,
+            customer_code
+          )
+        `)
+        .eq("auth_user_id", currentUser.id)
+        .eq("is_active", true)
+        .maybeSingle();
+    }
 
-    currentProfile = data;
+    if (result.error) throw result.error;
+    if (!result.data?.id) throw new Error("No active user profile found for this login.");
+
+    currentProfile = result.data;
     document.body.classList.add(`role-${normalize(currentProfile.role)}`);
 
-    const companyName = currentProfile.companies?.name || "Veynor";
+    const companyName = currentProfile.companies?.name || TENANT_NAME;
     const customerName = currentProfile.customers?.name || "";
     const roleLabel = ROLE_LABELS[normalize(currentProfile.role)] || currentProfile.role;
 
@@ -297,44 +339,6 @@
     }
 
     setText("portalRole", roleLabel);
-  }
-
-  async function loadCurrentProfileFallback() {
-    try {
-      await loadCurrentProfile();
-    } catch (error) {
-      console.warn("No auth session found. Temporary Sofa2U admin mode.");
-
-      const { data, error: companyError } = await client
-        .from("companies")
-        .select("id, name")
-        .eq("name", TENANT_NAME)
-        .maybeSingle();
-
-      if (companyError) throw companyError;
-      if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-      companyId = data.id;
-
-      currentProfile = {
-        id: "local-test-user",
-        company_id: companyId,
-        customer_id: null,
-        retailer_code: null,
-        role: "tenant_admin",
-        full_name: "Local Sofa2U Admin",
-        is_active: true,
-        companies: {
-          id: companyId,
-          name: TENANT_NAME
-        }
-      };
-
-      document.body.classList.add("role-tenant_admin");
-      setText("portalName", TENANT_NAME);
-      setText("roleBadge", "S2");
-      setText("portalRole", "Temporary Admin Mode");
-    }
   }
 
   async function getCompanyId() {
@@ -434,7 +438,7 @@
     const assets = getPodAssets(order);
 
     const podDoc = docs.find(doc =>
-      normalize(doc.document_type) === "pod" &&
+      ["pod", "signed_delivery_note", "signed_pod_pdf"].includes(normalize(doc.document_type)) &&
       doc.file_url
     );
 
@@ -465,26 +469,10 @@
       stop?.planned_arrival_time ||
       stop?.arrival_eta ||
       stop?.eta ||
+      order.delivery_eta_from ||
       order.planned_arrival_time ||
       ""
     );
-  }
-
-  function getEtaStatus(order) {
-    if (getPlannedEtaStart(order)) return "confirmed";
-    if (getExpectedDeliveryDate(order)) return "planned";
-    return "pending";
-  }
-
-  function getEtaDisplay(order) {
-    const start = getPlannedEtaStart(order);
-
-    if (!start) return "Time not confirmed yet";
-
-    const from = formatTime(start);
-    const to = addHoursToHHMM(from, ETA_WINDOW_HOURS);
-
-    return to ? `${from} - ${to}` : from;
   }
 
   function getRequestedDeliveryDate(order) {
@@ -504,6 +492,23 @@
       stop?.route_date ||
       null
     );
+  }
+
+  function getEtaStatus(order) {
+    if (getPlannedEtaStart(order)) return "confirmed";
+    if (getExpectedDeliveryDate(order)) return "planned";
+    return "pending";
+  }
+
+  function getEtaDisplay(order) {
+    const start = getPlannedEtaStart(order);
+
+    if (!start) return "Time not confirmed yet";
+
+    const from = formatTime(start);
+    const to = formatTime(order.delivery_eta_to) || addHoursToHHMM(from, ETA_WINDOW_HOURS);
+
+    return to ? `${from} - ${to}` : from;
   }
 
   function getDeliveryStatusLabel(order) {
@@ -639,10 +644,18 @@
       return "on_transport";
     }
 
-    if (status === "planned" || transportStatus === "planned" || order.route_id) return "planned";
+    if (
+      status === "planned" ||
+      transportStatus === "planned" ||
+      order.route_id ||
+      order.confirmed_delivery_date ||
+      order.delivery_eta_from ||
+      order.delivery_eta_to
+    ) {
+      return "planned";
+    }
 
     if (completeness.required > 0 && completeness.missing <= 0) return "stock_complete";
-
     if (completeness.required > 0 && completeness.missing > 0) return "awaiting_goods";
 
     if (["delivery_issue", "returned", "failed_delivery", "issue"].includes(status)) return "issue";
@@ -752,6 +765,9 @@
         ),
         order_documents (
           id,
+          company_id,
+          customer_id,
+          order_id,
           document_type,
           document_number,
           document_status,
@@ -764,6 +780,8 @@
         ),
         order_pod_assets (
           id,
+          company_id,
+          order_id,
           asset_type,
           file_name,
           file_url,
@@ -852,6 +870,7 @@
     if (key === "finance") return normalize(order.derived_finance_status || "");
     if (key === "confirmed_date") return getExpectedDeliveryDate(order) ? new Date(getExpectedDeliveryDate(order)).getTime() : 0;
     if (key === "activity") return order.last_activity_at ? new Date(order.last_activity_at).getTime() : 0;
+
     return normalize(order.order_number || "");
   }
 
@@ -1248,13 +1267,19 @@
               : `<div class="quick-action" style="opacity:.7;"><span>Delivery Photos</span><span>No photos</span></div>`
             : ""
         }
+
+        ${
+          isTenantRole()
+            ? `<button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}"><span>Manual delivery / POD</span><span>Open</span></button>`
+            : ""
+        }
       </div>
     `;
   }
 
   function renderExpandedRow(order) {
     const c = order.product_completeness || getProductCompleteness(order);
-    const latestActivity = order.order_activity_log?.[0];
+    const latestActivity = Array.isArray(order.order_activity_log) ? order.order_activity_log[0] : null;
 
     return `
       <tr class="expanded-row" data-expanded-order-id="${escapeHtml(order.id)}">
@@ -1382,7 +1407,11 @@
             <span class="subline">${escapeHtml(order.order_activity_log?.[0]?.description || order.delivery_status_label || "—")}</span>
           </td>
           <td class="actions-cell">
-            <button class="action-menu-btn" type="button" data-expand-order-id="${escapeHtml(orderId)}">⋯</button>
+            ${
+              isTenantRole()
+                ? `<button class="action-menu-btn tenant-only" type="button" data-manual-ops-order-id="${escapeHtml(orderId)}">⋯</button>`
+                : `<button class="action-menu-btn" type="button" data-expand-order-id="${escapeHtml(orderId)}">⋯</button>`
+            }
           </td>
         </tr>
       `);
@@ -1413,10 +1442,20 @@
     tbody.querySelectorAll("[data-expand-order-id]").forEach(button => {
       button.addEventListener("click", event => {
         event.stopPropagation();
+
         const id = String(button.getAttribute("data-expand-order-id") || "");
+
         if (expandedOrderIds.has(id)) expandedOrderIds.delete(id);
         else expandedOrderIds.add(id);
+
         renderTable();
+      });
+    });
+
+    tbody.querySelectorAll("[data-manual-ops-order-id]").forEach(button => {
+      button.addEventListener("click", event => {
+        event.stopPropagation();
+        openManualOpsModal(button.dataset.manualOpsOrderId || button.getAttribute("data-manual-ops-order-id"));
       });
     });
 
@@ -1427,10 +1466,15 @@
         const orderId = button.getAttribute("data-order-id");
         const docType = button.getAttribute("data-doc-action");
 
-        if (docType === "acknowledgement") return generateAcknowledgement(orderId);
-        if (docType === "delivery_note") return generateDeliveryNote(orderId);
+        try {
+          if (docType === "acknowledgement") return generateAcknowledgement(orderId);
+          if (docType === "delivery_note") return generateDeliveryNote(orderId);
 
-        return createPlaceholderDocument(orderId, docType);
+          return createPlaceholderDocument(orderId, docType);
+        } catch (error) {
+          console.error(error);
+          showToast(error.message || "Could not generate document.", "err");
+        }
       });
     });
 
@@ -1464,221 +1508,410 @@
       .occ-memo-modal-backdrop{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:24px}
       .occ-memo-modal-card{width:min(760px,96vw);background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(15,23,42,.25);padding:18px}
       .occ-memo-modal-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}
-      .occ-memo-modal-text{white-space:pre-wrap;border:1px solid #d1d5db;border-radius:12px;padding:12px;min-height:140px;max-height:60vh;overflow:auto;line-height:1.45;color:#111827;background:#f9fafb}
-      .memo-link{cursor:pointer;color:#2563eb;text-decoration:underline;text-underline-offset:2px}
-      .delivery-cell,.finance-metric{display:grid;gap:4px}
-      .delivery-cell strong,.finance-metric strong{font-size:12.5px;color:#111827}
-      .pod-photo-modal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-top:12px}
-      .pod-photo-modal-grid a{display:block;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#f8fafc}
-      .pod-photo-modal-grid img{width:100%;height:130px;object-fit:cover;display:block}
+      .occ-memo-modal-text{white-space:pre-wrap;border:1px solid #d1d5db;border-radius:12px;padding:12px;min-height:140px;max-height:60vh;overflow:auto;background:#f8fafc}
+      .occ-photo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+      .occ-photo-grid img{width:100%;height:140px;object-fit:cover;border-radius:12px;border:1px solid #d1d5db}
     `;
+
     document.head.appendChild(style);
   }
 
-  function ensureMemoModal() {
-    if (byId("occMemoModal")) return;
-
-    const modal = document.createElement("div");
-    modal.id = "occMemoModal";
-    modal.className = "occ-memo-modal-backdrop";
-    modal.style.display = "none";
-    modal.innerHTML = `
-      <div class="occ-memo-modal-card">
-        <div class="occ-memo-modal-head">
-          <strong id="occMemoModalTitle">Memo</strong>
-          <button type="button" class="btn" id="btnCloseOccMemoModal">Close</button>
-        </div>
-        <div id="occMemoModalText" class="occ-memo-modal-text"></div>
-      </div>
-    `;
-
-    document.body.appendChild(modal);
-    byId("btnCloseOccMemoModal")?.addEventListener("click", closeMemoModal);
-    modal.addEventListener("click", event => {
-      if (event.target === modal) closeMemoModal();
-    });
-  }
-
   function openMemoModal(orderId) {
-    const order = allOrders.find(o => String(o.id) === String(orderId));
+    ensurePageStyles();
+
+    const order = allOrders.find(row => String(row.id) === String(orderId));
     if (!order) return;
 
-    setText("occMemoModalTitle", `Memo - ${order.order_number || "order"}`);
-
-    const text = byId("occMemoModalText");
-    if (text) text.textContent = getMemo(order) || "No memo available.";
-
-    const modal = byId("occMemoModal");
-    if (modal) modal.style.display = "flex";
-  }
-
-  function closeMemoModal() {
-    const modal = byId("occMemoModal");
-    if (modal) modal.style.display = "none";
-  }
-
-  function ensurePhotoModal() {
-    if (byId("occPhotoModal")) return;
-
     const modal = document.createElement("div");
-    modal.id = "occPhotoModal";
     modal.className = "occ-memo-modal-backdrop";
-    modal.style.display = "none";
     modal.innerHTML = `
-      <div class="occ-memo-modal-card">
+      <section class="occ-memo-modal-card">
         <div class="occ-memo-modal-head">
-          <strong id="occPhotoModalTitle">Delivery Photos</strong>
-          <button type="button" class="btn" id="btnCloseOccPhotoModal">Close</button>
+          <strong>Memo · ${escapeHtml(order.order_number || "Order")}</strong>
+          <button class="mini-btn" type="button" data-close>Close</button>
         </div>
-        <div id="occPhotoModalGrid" class="pod-photo-modal-grid"></div>
-      </div>
+        <div class="occ-memo-modal-text">${escapeHtml(getMemo(order) || "No memo available.")}</div>
+      </section>
     `;
 
-    document.body.appendChild(modal);
-    byId("btnCloseOccPhotoModal")?.addEventListener("click", closePhotoModal);
     modal.addEventListener("click", event => {
-      if (event.target === modal) closePhotoModal();
+      if (event.target === modal || event.target.hasAttribute("data-close")) {
+        modal.remove();
+      }
     });
+
+    document.body.appendChild(modal);
   }
 
   function openPhotoModal(orderId) {
-    const order = allOrders.find(o => String(o.id) === String(orderId));
+    ensurePageStyles();
+
+    const order = allOrders.find(row => String(row.id) === String(orderId));
     if (!order) return;
 
     const photos = getPodPhotos(order);
 
-    if (!photos.length) {
-      showToast("No POD photos found for this order.", "err");
+    const modal = document.createElement("div");
+    modal.className = "occ-memo-modal-backdrop";
+    modal.innerHTML = `
+      <section class="occ-memo-modal-card">
+        <div class="occ-memo-modal-head">
+          <strong>POD Photos · ${escapeHtml(order.order_number || "Order")}</strong>
+          <button class="mini-btn" type="button" data-close>Close</button>
+        </div>
+
+        ${
+          photos.length
+            ? `<div class="occ-photo-grid">${photos.map(url => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"><img src="${escapeHtml(url)}" alt="POD photo"/></a>`).join("")}</div>`
+            : `<div class="occ-memo-modal-text">No POD photos available.</div>`
+        }
+      </section>
+    `;
+
+    modal.addEventListener("click", event => {
+      if (event.target === modal || event.target.hasAttribute("data-close")) {
+        modal.remove();
+      }
+    });
+
+    document.body.appendChild(modal);
+  }
+
+  function openManualOpsModal(orderId) {
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order) {
+      showToast("Order not found.", "err");
       return;
     }
 
-    setText("occPhotoModalTitle", `Delivery Photos - ${order.order_number || "order"}`);
-
-    const grid = byId("occPhotoModalGrid");
-    if (grid) {
-      grid.innerHTML = photos.map((url, index) => `
-        <a href="${escapeHtml(url)}" target="_blank" rel="noopener">
-          <img src="${escapeHtml(url)}" alt="Delivery photo ${index + 1}">
-        </a>
-      `).join("");
+    if (!isTenantRole()) {
+      showToast("Only Sofa2U users can manually update delivery/POD.", "err");
+      return;
     }
 
-    const modal = byId("occPhotoModal");
-    if (modal) modal.style.display = "flex";
+    if (byId("manualOpsOrderId")) byId("manualOpsOrderId").value = order.id;
+
+    setText(
+      "manualOpsOrderLabel",
+      `${order.order_number || "Order"} · ${order.retailer_name || ""} · ${order.delivery_postcode || ""}`
+    );
+
+    if (byId("manualConfirmedDate")) {
+      byId("manualConfirmedDate").value = order.confirmed_delivery_date
+        ? String(order.confirmed_delivery_date).slice(0, 10)
+        : "";
+    }
+
+    if (byId("manualEtaFrom")) byId("manualEtaFrom").value = formatTime(order.delivery_eta_from || "");
+    if (byId("manualEtaTo")) byId("manualEtaTo").value = formatTime(order.delivery_eta_to || "");
+    if (byId("manualPodPhotos")) byId("manualPodPhotos").value = "";
+    if (byId("manualSignedPodFile")) byId("manualSignedPodFile").value = "";
+    if (byId("manualPodPhotoNotes")) byId("manualPodPhotoNotes").value = "";
+    if (byId("manualSignedBy")) byId("manualSignedBy").value = "";
+    if (byId("manualDeliveredTo")) byId("manualDeliveredTo").value = "";
+    if (byId("manualDeliveryNotes")) byId("manualDeliveryNotes").value = "";
+
+    byId("manualOpsModal")?.classList.add("open");
+    byId("manualOpsModal")?.setAttribute("aria-hidden", "false");
   }
 
-  function closePhotoModal() {
-    const modal = byId("occPhotoModal");
-    if (modal) modal.style.display = "none";
+  function closeManualOpsModal() {
+    byId("manualOpsModal")?.classList.remove("open");
+    byId("manualOpsModal")?.setAttribute("aria-hidden", "true");
   }
 
-  async function generateAcknowledgement(orderId) {
+  function getManualOpsOrder() {
+    const orderId = byId("manualOpsOrderId")?.value || "";
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order?.id) {
+      throw new Error("No order selected.");
+    }
+
+    return order;
+  }
+
+  async function insertOrderActivity(orderId, description, type = "manual_update") {
     try {
-      const order = allOrders.find(o => String(o.id) === String(orderId));
-      if (!order) throw new Error("Order not found.");
-
-      if (!window.AcknowledgementGenerator?.generate) {
-        throw new Error("AcknowledgementGenerator is not loaded.");
-      }
-
-      showToast(`Generating ACK for ${order.order_number}...`, "ok");
-
-      await window.AcknowledgementGenerator.generate(order, client, await getCompanyId());
-      await loadOrders();
-
-      showToast(`ACK generated for ${order.order_number}.`, "ok");
+      await client
+        .from("order_activity_log")
+        .insert({
+          order_id: orderId,
+          activity_type: type,
+          description,
+          created_by: currentUser?.id || currentProfile?.id || null,
+          created_at: new Date().toISOString()
+        });
     } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not generate ACK.", "err");
+      console.warn("Activity log skipped:", error.message);
     }
   }
 
-  async function generateDeliveryNote(orderId) {
+  async function safeUpdateOrder(orderId, payload) {
+    const cid = await getCompanyId();
+
+    const { error } = await client
+      .from("orders")
+      .update(payload)
+      .eq("id", orderId)
+      .eq("company_id", cid);
+
+    if (error) throw error;
+  }
+
+  async function saveManualDeliveryDate() {
+    const order = getManualOpsOrder();
+
+    const confirmedDate = byId("manualConfirmedDate")?.value || "";
+    const etaFrom = byId("manualEtaFrom")?.value || "";
+    const etaTo = byId("manualEtaTo")?.value || "";
+
+    if (!confirmedDate) {
+      throw new Error("Choose a confirmed delivery date first.");
+    }
+
+    const payload = {
+      confirmed_delivery_date: confirmedDate,
+      status: "planned",
+      transport_status: "planned",
+      overall_status: "planned",
+      last_activity_at: new Date().toISOString()
+    };
+
     try {
-      const order = allOrders.find(o => String(o.id) === String(orderId));
-      if (!order) throw new Error("Order not found.");
-
-      if (!window.DeliveryNoteGenerator?.generate) {
-        throw new Error("DeliveryNoteGenerator is not loaded.");
-      }
-
-      showToast(`Generating delivery note for ${order.order_number}...`, "ok");
-
-      await window.DeliveryNoteGenerator.generate(order, client, await getCompanyId());
-      await loadOrders();
-
-      showToast(`Delivery note generated for ${order.order_number}.`, "ok");
+      if (etaFrom) payload.delivery_eta_from = etaFrom;
+      if (etaTo) payload.delivery_eta_to = etaTo;
+      await safeUpdateOrder(order.id, payload);
     } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not generate delivery note.", "err");
+      delete payload.delivery_eta_from;
+      delete payload.delivery_eta_to;
+      await safeUpdateOrder(order.id, payload);
     }
+
+    await insertOrderActivity(
+      order.id,
+      `Confirmed delivery date set manually to ${confirmedDate}${etaFrom ? `, ETA ${etaFrom}${etaTo ? ` - ${etaTo}` : ""}` : ""}.`,
+      "manual_delivery_date"
+    );
+
+    await loadOrders();
+    showToast("Confirmed delivery date saved. Lifecycle moved to Planned / Transport.", "ok");
   }
 
-  async function generateCombinedInvoice() {
-    try {
-      const selectedOrders = getSelectedOrders();
-
-      if (!selectedOrders.length) {
-        showToast("Select at least one order first.", "err");
-        return;
-      }
-
-      const productOwnerIds = [...new Set(selectedOrders.map(order => String(order.customer_id || "")).filter(Boolean))];
-
-      if (productOwnerIds.length > 1) {
-        showToast("Select orders from one product owner only.", "err");
-        return;
-      }
-
-      if (!window.InvoiceGenerator?.generate) {
-        showToast("Invoice generator is not loaded.", "err");
-        return;
-      }
-
-      showToast(`Generating combined invoice for ${selectedOrders.length} order(s)...`, "ok");
-
-      await window.InvoiceGenerator.generate(selectedOrders, client, await getCompanyId());
-
-      selectedOrderIds.clear();
-
-      await loadOrders();
-
-      showToast("Combined invoice generated.", "ok");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not generate combined invoice.", "err");
-    }
+  function safeFileName(name) {
+    return String(name || "file")
+      .replace(/[^a-zA-Z0-9._-]/g, "_")
+      .replace(/_+/g, "_");
   }
 
-  async function createPlaceholderDocument(orderId, docType) {
-    try {
-      const order = allOrders.find(o => String(o.id) === String(orderId));
-      if (!order) return;
+  async function uploadToPodBucket(order, file, folder) {
+    const cid = await getCompanyId();
 
-      const cid = await getCompanyId();
-      const documentNumber = `${String(docType).toUpperCase()}-${order.order_number || order.id.slice(0, 8)}`;
+    const ext = file.name.includes(".")
+      ? file.name.split(".").pop()
+      : "bin";
+
+    const path = [
+      cid,
+      order.id,
+      folder,
+      `${Date.now()}_${Math.random().toString(16).slice(2)}_${safeFileName(file.name || `upload.${ext}`)}`
+    ].join("/");
+
+    const { error: uploadError } = await client
+      .storage
+      .from(POD_BUCKET)
+      .upload(path, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: file.type || undefined
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data } = client
+      .storage
+      .from(POD_BUCKET)
+      .getPublicUrl(path);
+
+    return {
+      storage_path: path,
+      file_url: data?.publicUrl || "",
+      file_name: file.name || path.split("/").pop(),
+      mime_type: file.type || ""
+    };
+  }
+
+  async function uploadManualPodPhotos() {
+    const order = getManualOpsOrder();
+    const files = Array.from(byId("manualPodPhotos")?.files || []);
+    const notes = byId("manualPodPhotoNotes")?.value || "";
+
+    if (!files.length) {
+      throw new Error("Choose one or more POD photos first.");
+    }
+
+    const cid = await getCompanyId();
+
+    for (const file of files) {
+      const uploaded = await uploadToPodBucket(order, file, "photos");
 
       const { error } = await client
-        .from("order_documents")
+        .from("order_pod_assets")
         .insert({
           company_id: cid,
-          customer_id: order.customer_id || null,
           order_id: order.id,
-          document_type: docType,
-          document_number: documentNumber,
-          document_status: "generated",
-          customer_visible: false
+          asset_type: "photo",
+          file_name: uploaded.file_name,
+          file_url: uploaded.file_url,
+          storage_path: uploaded.storage_path,
+          mime_type: uploaded.mime_type,
+          notes,
+          captured_at: new Date().toISOString(),
+          captured_by_name: currentProfile?.full_name || currentUser?.email || "Sofa2U"
         });
 
       if (error) throw error;
-
-      await loadOrders();
-
-      showToast(`${statusLabel(docType)} generated as document record.`, "ok");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not create document record.", "err");
     }
+
+    await insertOrderActivity(
+      order.id,
+      `${files.length} POD photo(s) uploaded manually by Sofa2U.`,
+      "manual_pod_photos"
+    );
+
+    await loadOrders();
+    showToast(`${files.length} POD photo(s) uploaded.`, "ok");
+  }
+
+  async function uploadManualSignedPod() {
+    const order = getManualOpsOrder();
+    const file = byId("manualSignedPodFile")?.files?.[0] || null;
+    const signedBy = byId("manualSignedBy")?.value || "";
+
+    if (!file) {
+      throw new Error("Choose a signed POD PDF first.");
+    }
+
+    if (!String(file.type || "").includes("pdf") && !String(file.name || "").toLowerCase().endsWith(".pdf")) {
+      throw new Error("Signed POD must be a PDF file.");
+    }
+
+    const cid = await getCompanyId();
+    const uploaded = await uploadToPodBucket(order, file, "signed-pod");
+
+    const documentNumber = `POD-${order.order_number || order.id}`;
+
+    const { error: docError } = await client
+      .from("order_documents")
+      .insert({
+        company_id: cid,
+        customer_id: order.customer_id || null,
+        order_id: order.id,
+        document_type: "pod",
+        document_number: documentNumber,
+        document_status: "signed",
+        file_url: uploaded.file_url,
+        storage_path: uploaded.storage_path,
+        customer_visible: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+    if (docError) throw docError;
+
+    const { error: assetError } = await client
+      .from("order_pod_assets")
+      .insert({
+        company_id: cid,
+        order_id: order.id,
+        asset_type: "signed_pod_pdf",
+        file_name: uploaded.file_name,
+        file_url: uploaded.file_url,
+        storage_path: uploaded.storage_path,
+        mime_type: uploaded.mime_type || "application/pdf",
+        notes: signedBy ? `Signed by: ${signedBy}` : "",
+        captured_at: new Date().toISOString(),
+        captured_by_name: currentProfile?.full_name || currentUser?.email || "Sofa2U"
+      });
+
+    if (assetError) throw assetError;
+
+    await safeUpdateOrder(order.id, {
+      pod_status: "signed",
+      pod_document_url: uploaded.file_url,
+      pod_signed_by: signedBy || null,
+      pod_signed_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString()
+    });
+
+    await insertOrderActivity(
+      order.id,
+      `Signed POD PDF uploaded manually${signedBy ? `, signed by ${signedBy}` : ""}.`,
+      "manual_signed_pod"
+    );
+
+    await loadOrders();
+    showToast("Signed POD uploaded and made visible for Bellstone.", "ok");
+  }
+
+  async function manualMarkDelivered() {
+    const order = getManualOpsOrder();
+
+    const deliveredTo = byId("manualDeliveredTo")?.value || "";
+    const notes = byId("manualDeliveryNotes")?.value || "";
+    const today = new Date().toISOString().slice(0, 10);
+
+    const payload = {
+      status: "delivered",
+      transport_status: "delivered",
+      warehouse_status: "delivered",
+      overall_status: "delivered",
+      confirmed_delivery_date: order.confirmed_delivery_date || today,
+      pod_status: "signed",
+      pod_signed_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString()
+    };
+
+    if (deliveredTo) payload.pod_signed_by = deliveredTo;
+
+    await safeUpdateOrder(order.id, payload);
+
+    await insertOrderActivity(
+      order.id,
+      `Order marked delivered manually by Sofa2U${deliveredTo ? `, received by ${deliveredTo}` : ""}.${notes ? ` Notes: ${notes}` : ""}`,
+      "manual_mark_delivered"
+    );
+
+    await loadOrders();
+    showToast("Order marked delivered. Lifecycle moved to Delivered.", "ok");
+  }
+
+  async function createPlaceholderDocument(orderId, docType) {
+    showToast(`${statusLabel(docType)} generation is not configured here yet.`, "err");
+  }
+
+  async function generateAcknowledgement(orderId) {
+    if (window.VeynorAcknowledgementGenerator?.generate) {
+      await window.VeynorAcknowledgementGenerator.generate(orderId);
+      await loadOrders();
+      showToast("Acknowledgement generated.", "ok");
+      return;
+    }
+
+    showToast("Acknowledgement generator not available.", "err");
+  }
+
+  async function generateDeliveryNote(orderId) {
+    if (window.VeynorDeliveryNoteGenerator?.generate) {
+      await window.VeynorDeliveryNoteGenerator.generate(orderId);
+      await loadOrders();
+      showToast("Delivery note generated.", "ok");
+      return;
+    }
+
+    showToast("Delivery note generator not available.", "err");
   }
 
   async function syncStatuses() {
@@ -1744,6 +1977,24 @@
 
     await loadOrders();
     showToast(`${formatNumber(updated)} order status record(s) synced.`, "ok");
+  }
+
+  async function generateCombinedInvoice() {
+    const orders = getSelectedOrders();
+
+    if (!orders.length) {
+      showToast("Select at least one order first.", "err");
+      return;
+    }
+
+    if (window.VeynorInvoiceGenerator?.generateCombinedInvoice) {
+      await window.VeynorInvoiceGenerator.generateCombinedInvoice(orders);
+      await loadOrders();
+      showToast("Combined invoice generated.", "ok");
+      return;
+    }
+
+    showToast("Combined invoice generator not available.", "err");
   }
 
   function resetFilters() {
@@ -1820,7 +2071,14 @@
       showToast("Selection cleared.", "ok");
     });
 
-    byId("btnGenerateCombinedInvoice")?.addEventListener("click", generateCombinedInvoice);
+    byId("btnGenerateCombinedInvoice")?.addEventListener("click", async () => {
+      try {
+        await generateCombinedInvoice();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not generate combined invoice.", "err");
+      }
+    });
 
     byId("btnRefresh")?.addEventListener("click", async () => {
       try {
@@ -1828,7 +2086,7 @@
         showToast("Operations refreshed.", "ok");
       } catch (error) {
         console.error(error);
-        showToast(error.message || "Refresh failed.", "err");
+        showToast(error.message || "Could not refresh operations.", "err");
       }
     });
 
@@ -1839,31 +2097,69 @@
         await syncStatuses();
       } catch (error) {
         console.error(error);
-        showToast(error.message || "Status sync failed.", "err");
+        showToast(error.message || "Could not sync statuses.", "err");
+      }
+    });
+
+    byId("manualOpsCloseBtn")?.addEventListener("click", closeManualOpsModal);
+    byId("manualOpsCancelBtn")?.addEventListener("click", closeManualOpsModal);
+
+    byId("manualOpsModal")?.addEventListener("click", event => {
+      if (event.target === byId("manualOpsModal")) closeManualOpsModal();
+    });
+
+    byId("btnSaveManualDeliveryDate")?.addEventListener("click", async () => {
+      try {
+        await saveManualDeliveryDate();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not save delivery date.", "err");
+      }
+    });
+
+    byId("btnUploadManualPodPhotos")?.addEventListener("click", async () => {
+      try {
+        await uploadManualPodPhotos();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not upload POD photos.", "err");
+      }
+    });
+
+    byId("btnUploadManualSignedPod")?.addEventListener("click", async () => {
+      try {
+        await uploadManualSignedPod();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not upload signed POD.", "err");
+      }
+    });
+
+    byId("btnManualMarkDelivered")?.addEventListener("click", async () => {
+      try {
+        await manualMarkDelivered();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not mark delivered.", "err");
       }
     });
   }
 
   async function init() {
     try {
-      if (typeof sb !== "function") {
-        throw new Error("Supabase helper sb() is not available.");
-      }
-
-      client = sb();
-
-      ensurePageStyles();
-      ensureMemoModal();
-      ensurePhotoModal();
-
-      await loadCurrentProfileFallback();
+      ensureClient();
+      await loadCurrentProfile();
       bindEvents();
       await loadOrders();
-
-      showToast("Operations Control Center loaded.", "ok");
+      showToast("Operations loaded.", "ok");
     } catch (error) {
       console.error(error);
-      showToast(error.message || "Could not load Operations Control Center.", "err");
+      showToast(error.message || "Operations Control Center failed to load.", "err");
+
+      const tbody = byId("ordersBody");
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="13">${escapeHtml(error.message || "Operations Control Center failed to load.")}</td></tr>`;
+      }
     }
   }
 
