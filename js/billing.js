@@ -6,6 +6,8 @@
 
   let client = null;
   let companyId = null;
+  let currentUser = null;
+  let currentProfile = null;
 
   let customers = [];
   let invoiceRows = [];
@@ -20,6 +22,9 @@
     key: "date",
     direction: "desc"
   };
+
+  const TENANT_ROLES = ["veynor_admin", "tenant_admin", "tenant_user"];
+  const PRODUCT_OWNER_ROLES = ["product_owner_admin", "product_owner_user"];
 
   function byId(id) {
     return document.getElementById(id);
@@ -120,8 +125,49 @@
     return client;
   }
 
+  async function loadProfile() {
+    const db = ensureClient();
+
+    const { data: sessionData, error: sessionError } = await db.auth.getSession();
+    if (sessionError) throw sessionError;
+
+    currentUser = sessionData?.session?.user || null;
+
+    if (!currentUser?.id) {
+      window.location.replace("/login.html");
+      throw new Error("Not authenticated.");
+    }
+
+    let result = await db
+      .from("user_profiles")
+      .select("id, auth_user_id, role, is_active, company_id, customer_id, email")
+      .eq("id", currentUser.id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!result.data && !result.error) {
+      result = await db
+        .from("user_profiles")
+        .select("id, auth_user_id, role, is_active, company_id, customer_id, email")
+        .eq("auth_user_id", currentUser.id)
+        .eq("is_active", true)
+        .maybeSingle();
+    }
+
+    if (result.error) throw result.error;
+    if (!result.data?.id) throw new Error("No active user profile found.");
+
+    currentProfile = result.data;
+    companyId = currentProfile.company_id || null;
+  }
+
   async function getCompanyId() {
     if (companyId) return companyId;
+
+    if (currentProfile?.company_id) {
+      companyId = currentProfile.company_id;
+      return companyId;
+    }
 
     const db = ensureClient();
 
@@ -136,6 +182,163 @@
 
     companyId = data.id;
     return companyId;
+  }
+
+  function role() {
+    return normalize(currentProfile?.role || "");
+  }
+
+  function isTenantRole() {
+    return TENANT_ROLES.includes(role());
+  }
+
+  function isProductOwnerRole() {
+    return PRODUCT_OWNER_ROLES.includes(role());
+  }
+
+  function isCustomerView() {
+    return isProductOwnerRole();
+  }
+
+  function getProfileCustomerId() {
+    return currentProfile?.customer_id || "";
+  }
+
+  function emptyTotals() {
+    return {
+      pick: 0,
+      warehouse: 0,
+      admin: 0,
+      transport: 0,
+      net: 0,
+      vat: 0,
+      gross: 0,
+      colli: 0,
+      volume: 0
+    };
+  }
+
+  function addTotals(a, b) {
+    return {
+      pick: round2(a.pick + b.pick),
+      warehouse: round2(a.warehouse + b.warehouse),
+      admin: round2(a.admin + b.admin),
+      transport: round2(a.transport + b.transport),
+      net: round2(a.net + b.net),
+      vat: round2(a.vat + b.vat),
+      gross: round2(a.gross + b.gross),
+      colli: round2(a.colli + b.colli),
+      volume: round2(a.volume + b.volume)
+    };
+  }
+
+  function warehouseTotal(totals) {
+    return round2(
+      toNumber(totals?.pick, 0) +
+      toNumber(totals?.warehouse, 0) +
+      toNumber(totals?.admin, 0)
+    );
+  }
+
+  function getDisplayTotals(totals) {
+    const source = totals || emptyTotals();
+
+    return {
+      pick: source.pick,
+      warehouse: isCustomerView() ? warehouseTotal(source) : source.warehouse,
+      admin: source.admin,
+      transport: source.transport,
+      net: source.net,
+      vat: source.vat,
+      gross: source.gross,
+      colli: source.colli,
+      volume: source.volume
+    };
+  }
+
+  function calculateOrderRevenue(order) {
+    const pick = round2(toNumber(order?.total_handling_tariff, 0));
+    const warehouse = round2(toNumber(order?.total_storage_tariff, 0));
+    const admin = round2(toNumber(order?.total_admin_tariff, 0));
+    const transport = round2(toNumber(order?.total_transport_tariff, 0));
+
+    const calculatedNet = round2(pick + warehouse + admin + transport);
+    const explicitNet = round2(toNumber(order?.total_customer_charge, 0));
+    const net = explicitNet > 0 ? explicitNet : calculatedNet;
+
+    const vat = round2(net * VAT_RATE);
+    const gross = round2(net + vat);
+
+    return {
+      pick,
+      warehouse,
+      admin,
+      transport,
+      net,
+      vat,
+      gross,
+      colli: toNumber(order?.total_order_colli, 0) || toNumber(order?.planning_colli, 0),
+      volume: toNumber(order?.total_order_volume_m3, 0) || toNumber(order?.planning_volume_m3, 0)
+    };
+  }
+
+  function nearestCardForId(id) {
+    const el = byId(id);
+    if (!el) return null;
+
+    return (
+      el.closest(".billing-kpi") ||
+      el.closest(".kpi-card") ||
+      el.closest(".card") ||
+      el.parentElement
+    );
+  }
+
+  function setKpiVisible(id, visible) {
+    const card = nearestCardForId(id);
+    if (card) card.style.display = visible ? "" : "none";
+  }
+
+  function hideColumnsForCustomerView() {
+    if (!isCustomerView()) return;
+
+    document.querySelectorAll('[data-sort-key="pick"], [data-sort-key="admin"]').forEach(el => {
+      el.style.display = "none";
+    });
+
+    document.querySelectorAll("[data-sort-indicator]").forEach(el => {
+      const key = el.getAttribute("data-sort-indicator");
+      if (key === "pick" || key === "admin") {
+        const parent = el.closest("th");
+        if (parent) parent.style.display = "none";
+      }
+    });
+
+    const table = byId("billingBody")?.closest("table");
+    if (table) {
+      const headers = [...table.querySelectorAll("thead th")];
+
+      headers.forEach(th => {
+        const txt = normalize(th.textContent);
+        if (txt === "pick" || txt === "admin") th.style.display = "none";
+        if (txt.includes("warehouse")) th.textContent = "Warehouse";
+      });
+    }
+  }
+
+  function applyRoleVisibility() {
+    const customerView = isCustomerView();
+
+    setKpiVisible("kpiPick", !customerView);
+    setKpiVisible("kpiAdmin", !customerView);
+
+    const filterCustomer = byId("filterCustomer");
+    if (filterCustomer && customerView) {
+      const wrap = filterCustomer.closest(".field") || filterCustomer.parentElement;
+      if (wrap) wrap.style.display = "none";
+    }
+
+    hideColumnsForCustomerView();
   }
 
   function getProductOwnerNameById(customerId) {
@@ -199,6 +402,17 @@
     return map[v] || String(value || "Generated").replaceAll("_", " ");
   }
 
+  function customerPaymentLabel(value) {
+    const v = normalizeStatus(value);
+
+    if (v === "paid") return "Payment processed";
+    if (v === "sent") return "Awaiting payment";
+    if (v === "overdue") return "Payment overdue";
+    if (v === "partially_paid") return "Partly paid";
+
+    return "Invoice generated";
+  }
+
   function statusClass(value) {
     const v = normalizeStatus(value);
 
@@ -215,58 +429,10 @@
     return `<span class="${statusClass(value)}">${escapeHtml(statusLabel(value))}</span>`;
   }
 
-  function emptyTotals() {
-    return {
-      pick: 0,
-      warehouse: 0,
-      admin: 0,
-      transport: 0,
-      net: 0,
-      vat: 0,
-      gross: 0,
-      colli: 0,
-      volume: 0
-    };
-  }
-
-  function addTotals(a, b) {
-    return {
-      pick: round2(a.pick + b.pick),
-      warehouse: round2(a.warehouse + b.warehouse),
-      admin: round2(a.admin + b.admin),
-      transport: round2(a.transport + b.transport),
-      net: round2(a.net + b.net),
-      vat: round2(a.vat + b.vat),
-      gross: round2(a.gross + b.gross),
-      colli: round2(a.colli + b.colli),
-      volume: round2(a.volume + b.volume)
-    };
-  }
-
-  function calculateOrderRevenue(order) {
-    const pick = round2(toNumber(order?.total_handling_tariff, 0));
-    const warehouse = round2(toNumber(order?.total_storage_tariff, 0));
-    const admin = round2(toNumber(order?.total_admin_tariff, 0));
-    const transport = round2(toNumber(order?.total_transport_tariff, 0));
-
-    const calculatedNet = round2(pick + warehouse + admin + transport);
-    const explicitNet = round2(toNumber(order?.total_customer_charge, 0));
-    const net = explicitNet > 0 ? explicitNet : calculatedNet;
-
-    const vat = round2(net * VAT_RATE);
-    const gross = round2(net + vat);
-
-    return {
-      pick,
-      warehouse,
-      admin,
-      transport,
-      net,
-      vat,
-      gross,
-      colli: toNumber(order?.total_order_colli, 0) || toNumber(order?.planning_colli, 0),
-      volume: toNumber(order?.total_order_volume_m3, 0) || toNumber(order?.planning_volume_m3, 0)
-    };
+  function customerPaymentPill(value) {
+    const v = normalizeStatus(value);
+    const cls = v === "paid" ? "green" : v === "overdue" ? "red" : "orange";
+    return `<span class="soft-pill ${cls}">${escapeHtml(customerPaymentLabel(v))}</span>`;
   }
 
   function isProductOwner(customer) {
@@ -277,11 +443,17 @@
     const db = ensureClient();
     const cid = await getCompanyId();
 
-    const { data, error } = await db
+    let query = db
       .from("customers")
       .select("id, name, customer_code, customer_type, vat_number, billing_email")
       .eq("company_id", cid)
       .order("name", { ascending: true });
+
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      query = query.eq("id", getProfileCustomerId());
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.warn("Customer filter skipped:", error.message);
@@ -307,6 +479,12 @@
         return `<option value="${escapeHtml(c.id)}">${escapeHtml(label)}</option>`;
       }).join("");
 
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      select.value = getProfileCustomerId();
+      select.disabled = true;
+      return;
+    }
+
     if (current && customers.some(c => String(c.id) === String(current))) {
       select.value = current;
     }
@@ -316,7 +494,7 @@
     const db = ensureClient();
     const cid = await getCompanyId();
 
-    const { data, error } = await db
+    let query = db
       .from("invoices")
       .select(`
         id,
@@ -337,6 +515,11 @@
       .eq("company_id", cid)
       .order("created_at", { ascending: false });
 
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      query = query.eq("customer_id", getProfileCustomerId());
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
 
     invoiceRows = data || [];
@@ -346,7 +529,7 @@
     const db = ensureClient();
     const cid = await getCompanyId();
 
-    const { data, error } = await db
+    let query = db
       .from("order_documents")
       .select(`
         id,
@@ -368,6 +551,11 @@
       .eq("document_type", "invoice")
       .order("created_at", { ascending: false });
 
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      query = query.eq("customer_id", getProfileCustomerId());
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
 
     documentRows = data || [];
@@ -387,7 +575,7 @@
     const db = ensureClient();
     const cid = await getCompanyId();
 
-    const { data, error } = await db
+    let query = db
       .from("orders")
       .select(`
         id,
@@ -460,6 +648,11 @@
       .eq("company_id", cid)
       .in("id", orderIds);
 
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      query = query.eq("customer_id", getProfileCustomerId());
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
 
     ordersById = new Map((data || []).map(order => [String(order.id), order]));
@@ -484,7 +677,6 @@
 
     invoiceRows.forEach(inv => {
       const key = String(inv.invoice_number || inv.id);
-
       const docs = documentRows.filter(doc => invoiceDocumentMatchesInvoice(doc, inv));
 
       const orders = docs
@@ -603,6 +795,10 @@
     const fromDocs = buildInvoicesFromUnmatchedDocuments(existingKeys);
 
     allInvoices = [...fromInvoices, ...fromDocs];
+
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      allInvoices = allInvoices.filter(row => String(row.customer_id) === String(getProfileCustomerId()));
+    }
   }
 
   async function loadBilling() {
@@ -610,6 +806,7 @@
 
     await getCompanyId();
     await loadCustomers();
+
     await Promise.all([
       loadInvoicesRows(),
       loadInvoiceDocuments()
@@ -629,9 +826,6 @@
     return [
       invoice.invoice_number,
       invoice.customer_name,
-      invoice.file_url,
-      invoice.pdf_url,
-      invoice.storage_path,
       invoice.status,
       ...invoice.orders.map(order => [
         getOrderNumber(order),
@@ -646,10 +840,14 @@
 
   function applyFilters(render = true) {
     const q = normalize(byId("filterSearch")?.value || "");
-    const customerId = byId("filterCustomer")?.value || "";
+    let customerId = byId("filterCustomer")?.value || "";
     const status = normalizeStatus(byId("filterStatus")?.value || "");
     const from = byId("filterDateFrom")?.value || "";
     const to = byId("filterDateTo")?.value || "";
+
+    if (isProductOwnerRole() && getProfileCustomerId()) {
+      customerId = getProfileCustomerId();
+    }
 
     filteredInvoices = allInvoices.filter(invoice => {
       if (customerId && String(invoice.customer_id) !== String(customerId)) return false;
@@ -671,16 +869,18 @@
   }
 
   function getSortValue(invoice, key) {
+    const t = getDisplayTotals(invoice.totals);
+
     if (key === "invoice") return normalize(invoice.invoice_number);
     if (key === "customer") return normalize(invoice.customer_name);
     if (key === "orders") return invoice.order_count || 0;
     if (key === "date") return new Date(invoice.invoice_date || invoice.created_at || 0).getTime();
-    if (key === "pick") return invoice.totals.pick;
-    if (key === "warehouse") return invoice.totals.warehouse;
-    if (key === "admin") return invoice.totals.admin;
-    if (key === "transport") return invoice.totals.transport;
-    if (key === "net") return invoice.totals.net;
-    if (key === "gross") return invoice.totals.gross;
+    if (key === "pick") return t.pick;
+    if (key === "warehouse") return t.warehouse;
+    if (key === "admin") return t.admin;
+    if (key === "transport") return t.transport;
+    if (key === "net") return t.net;
+    if (key === "gross") return t.gross;
     if (key === "status") return normalize(invoice.status);
 
     return "";
@@ -718,33 +918,57 @@
   }
 
   function renderKpis() {
-    const totals = visibleTotals();
+    const rawTotals = visibleTotals();
+    const displayTotals = getDisplayTotals(rawTotals);
 
     setText("kpiInvoices", formatNumber(filteredInvoices.length));
-    setText("kpiPick", formatMoney(totals.pick));
-    setText("kpiWarehouse", formatMoney(totals.warehouse));
-    setText("kpiAdmin", formatMoney(totals.admin));
-    setText("kpiTransport", formatMoney(totals.transport));
-    setText("kpiTotalExVat", formatMoney(totals.net));
-    setText("kpiTotalIncVat", formatMoney(totals.gross));
 
-    setText("footPick", formatMoney(totals.pick));
-    setText("footWarehouse", formatMoney(totals.warehouse));
-    setText("footAdmin", formatMoney(totals.admin));
-    setText("footTransport", formatMoney(totals.transport));
-    setText("footNet", formatMoney(totals.net));
-    setText("footVat", formatMoney(totals.vat));
-    setText("footGross", formatMoney(totals.gross));
+    if (!isCustomerView()) {
+      setText("kpiPick", formatMoney(rawTotals.pick));
+      setText("kpiWarehouse", formatMoney(rawTotals.warehouse));
+      setText("kpiAdmin", formatMoney(rawTotals.admin));
+    } else {
+      setText("kpiWarehouse", formatMoney(displayTotals.warehouse));
+    }
+
+    setText("kpiTransport", formatMoney(rawTotals.transport));
+    setText("kpiTotalExVat", formatMoney(rawTotals.net));
+    setText("kpiTotalIncVat", formatMoney(rawTotals.gross));
+
+    setText("footPick", formatMoney(rawTotals.pick));
+    setText("footWarehouse", formatMoney(displayTotals.warehouse));
+    setText("footAdmin", formatMoney(rawTotals.admin));
+    setText("footTransport", formatMoney(rawTotals.transport));
+    setText("footNet", formatMoney(rawTotals.net));
+    setText("footVat", formatMoney(rawTotals.vat));
+    setText("footGross", formatMoney(rawTotals.gross));
 
     setText("resultsMeta", `${formatNumber(filteredInvoices.length)} invoice(s) shown`);
+
+    applyRoleVisibility();
   }
 
   function renderInvoiceDetail(invoice) {
-    const totals = invoice.totals;
+    const totals = getDisplayTotals(invoice.totals);
 
     const ordersHtml = invoice.orders.length
       ? invoice.orders.map(order => {
-          const t = calculateOrderRevenue(order);
+          const raw = calculateOrderRevenue(order);
+          const t = getDisplayTotals(raw);
+
+          const internalCostsHtml = isCustomerView()
+            ? ""
+            : `
+              <div class="money-cell">
+                ${formatMoney(raw.pick)}
+                <span class="subline">Pick</span>
+              </div>
+
+              <div class="money-cell">
+                ${formatMoney(raw.admin)}
+                <span class="subline">Admin</span>
+              </div>
+            `;
 
           return `
             <div class="order-line">
@@ -759,19 +983,11 @@
                 <div class="order-line-sub">${escapeHtml(getAddressText(order))}</div>
               </div>
 
-              <div class="money-cell">
-                ${formatMoney(t.pick)}
-                <span class="subline">Pick</span>
-              </div>
+              ${internalCostsHtml}
 
               <div class="money-cell">
                 ${formatMoney(t.warehouse)}
                 <span class="subline">Warehouse</span>
-              </div>
-
-              <div class="money-cell">
-                ${formatMoney(t.admin)}
-                <span class="subline">Admin</span>
               </div>
 
               <div class="money-cell">
@@ -823,10 +1039,12 @@
                 <div class="detail-value">${escapeHtml(formatDate(invoice.due_date))}</div>
               </div>
 
-              <div class="detail-box">
-                <div class="detail-label">Storage Path</div>
-                <div class="detail-value">${escapeHtml(invoice.storage_path || "—")}</div>
-              </div>
+              ${isTenantRole() ? `
+                <div class="detail-box">
+                  <div class="detail-label">Storage Path</div>
+                  <div class="detail-value">${escapeHtml(invoice.storage_path || "—")}</div>
+                </div>
+              ` : ""}
             </div>
 
             <div>
@@ -848,17 +1066,48 @@
     if (!filteredInvoices.length) {
       tbody.innerHTML = `<tr><td colspan="14">No invoices found.</td></tr>`;
       renderSortIndicators();
+      applyRoleVisibility();
       return;
     }
 
     tbody.innerHTML = filteredInvoices.map(invoice => {
-      const t = invoice.totals;
+      const raw = invoice.totals;
+      const t = getDisplayTotals(raw);
       const isOpen = expandedInvoiceKeys.has(invoice.key);
       const downloadUrl = invoice.file_url || invoice.pdf_url || "";
 
       const downloadHtml = downloadUrl
         ? `<a class="mini-btn" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download</a>`
         : `<span class="mini-btn" style="opacity:.55;cursor:not-allowed;">No PDF</span>`;
+
+      const internalCellsHtml = isCustomerView()
+        ? ""
+        : `
+          <td class="money-cell">${formatMoney(raw.pick)}</td>
+          <td class="money-cell">${formatMoney(raw.admin)}</td>
+        `;
+
+      const invoiceSubline = isTenantRole()
+        ? `<span class="subline">${escapeHtml(invoice.storage_path || "")}</span>`
+        : "";
+
+      const customerSubline = isTenantRole()
+        ? `
+          <span class="subline">Product owner</span>
+          <span class="subline">${escapeHtml(invoice.customer_id || "")}</span>
+        `
+        : "";
+
+      const actionHtml = isTenantRole()
+        ? `
+          ${downloadHtml}
+          <button class="mini-btn" type="button" data-action="sent" data-invoice-key="${escapeHtml(invoice.key)}">Mark sent</button>
+          <button class="mini-btn" type="button" data-action="paid" data-invoice-key="${escapeHtml(invoice.key)}">Mark paid</button>
+        `
+        : `
+          ${downloadHtml}
+          ${customerPaymentPill(invoice.status)}
+        `;
 
       return `
         <tr data-invoice-key="${escapeHtml(invoice.key)}">
@@ -870,13 +1119,12 @@
 
           <td>
             <div class="invoice-main">${escapeHtml(invoice.invoice_number || "—")}</div>
-            <span class="subline">${escapeHtml(invoice.storage_path || "")}</span>
+            ${invoiceSubline}
           </td>
 
           <td>
             <strong>${escapeHtml(invoice.customer_name || "—")}</strong>
-            <span class="subline">Product owner</span>
-            <span class="subline">${escapeHtml(invoice.customer_id || "")}</span>
+            ${customerSubline}
           </td>
 
           <td>
@@ -889,9 +1137,9 @@
             <span class="subline">Due: ${escapeHtml(formatDate(invoice.due_date))}</span>
           </td>
 
-          <td class="money-cell">${formatMoney(t.pick)}</td>
+          ${internalCellsHtml}
+
           <td class="money-cell">${formatMoney(t.warehouse)}</td>
-          <td class="money-cell">${formatMoney(t.admin)}</td>
           <td class="money-cell">${formatMoney(t.transport)}</td>
           <td class="total-cell">${formatMoney(t.net)}</td>
           <td class="money-cell">${formatMoney(t.vat)}</td>
@@ -901,9 +1149,7 @@
 
           <td>
             <div class="mini-actions">
-              ${downloadHtml}
-              <button class="mini-btn" type="button" data-action="sent" data-invoice-key="${escapeHtml(invoice.key)}">Mark sent</button>
-              <button class="mini-btn" type="button" data-action="paid" data-invoice-key="${escapeHtml(invoice.key)}">Mark paid</button>
+              ${actionHtml}
             </div>
           </td>
         </tr>
@@ -951,6 +1197,7 @@
     });
 
     renderSortIndicators();
+    applyRoleVisibility();
   }
 
   function toggleInvoice(key) {
@@ -964,6 +1211,11 @@
   }
 
   async function markInvoiceSent(invoice) {
+    if (!isTenantRole()) {
+      showToast("Only Sofa2U users can update invoice status.", "err");
+      return;
+    }
+
     const db = ensureClient();
     const cid = await getCompanyId();
 
@@ -1014,6 +1266,11 @@
   }
 
   async function markInvoicePaid(invoice) {
+    if (!isTenantRole()) {
+      showToast("Only Sofa2U users can update invoice status.", "err");
+      return;
+    }
+
     const db = ensureClient();
     const cid = await getCompanyId();
 
@@ -1060,42 +1317,79 @@
       return;
     }
 
-    const rows = [
-      [
-        "Invoice",
-        "Product Owner",
-        "Orders",
-        "Invoice Date",
-        "Due Date",
-        "Status",
-        "Pick",
-        "Warehouse",
-        "Admin",
-        "Transport",
-        "Total Excl VAT",
-        "VAT",
-        "Total Incl VAT",
-        "PDF URL"
-      ]
-    ];
+    const customerView = isCustomerView();
+
+    const headers = customerView
+      ? [
+          "Invoice",
+          "Product Owner",
+          "Orders",
+          "Invoice Date",
+          "Due Date",
+          "Status",
+          "Warehouse",
+          "Transport",
+          "Total Excl VAT",
+          "VAT",
+          "Total Incl VAT",
+          "PDF URL"
+        ]
+      : [
+          "Invoice",
+          "Product Owner",
+          "Orders",
+          "Invoice Date",
+          "Due Date",
+          "Status",
+          "Pick",
+          "Warehouse",
+          "Admin",
+          "Transport",
+          "Total Excl VAT",
+          "VAT",
+          "Total Incl VAT",
+          "PDF URL"
+        ];
+
+    const rows = [headers];
 
     filteredInvoices.forEach(invoice => {
-      rows.push([
-        invoice.invoice_number,
-        invoice.customer_name,
-        invoice.orders.map(getOrderNumber).join(" | "),
-        dateKey(invoice.invoice_date || invoice.created_at),
-        dateKey(invoice.due_date),
-        statusLabel(invoice.status),
-        invoice.totals.pick,
-        invoice.totals.warehouse,
-        invoice.totals.admin,
-        invoice.totals.transport,
-        invoice.totals.net,
-        invoice.totals.vat,
-        invoice.totals.gross,
-        invoice.file_url || invoice.pdf_url || ""
-      ]);
+      const raw = invoice.totals;
+      const t = getDisplayTotals(raw);
+
+      if (customerView) {
+        rows.push([
+          invoice.invoice_number,
+          invoice.customer_name,
+          invoice.orders.map(getOrderNumber).join(" | "),
+          dateKey(invoice.invoice_date || invoice.created_at),
+          dateKey(invoice.due_date),
+          statusLabel(invoice.status),
+          t.warehouse,
+          t.transport,
+          t.net,
+          t.vat,
+          t.gross,
+          invoice.file_url || invoice.pdf_url || ""
+        ]);
+      } else {
+        rows.push([
+          invoice.invoice_number,
+          invoice.customer_name,
+          invoice.orders.map(getOrderNumber).join(" | "),
+          dateKey(invoice.invoice_date || invoice.created_at),
+          dateKey(invoice.due_date),
+          statusLabel(invoice.status),
+          raw.pick,
+          raw.warehouse,
+          raw.admin,
+          raw.transport,
+          raw.net,
+          raw.vat,
+          raw.gross,
+          invoice.file_url || invoice.pdf_url || ""
+        ]);
+      }
     });
 
     const csv = rows.map(row => row.map(csvEscape).join(",")).join("\n");
@@ -1123,6 +1417,10 @@
       const el = byId(id);
       if (el) el.value = "";
     });
+
+    if (isProductOwnerRole() && getProfileCustomerId() && byId("filterCustomer")) {
+      byId("filterCustomer").value = getProfileCustomerId();
+    }
 
     applyFilters();
   }
@@ -1179,8 +1477,10 @@
   async function init() {
     try {
       ensureClient();
+      await loadProfile();
       bindEvents();
       await loadBilling();
+      applyRoleVisibility();
     } catch (error) {
       console.error(error);
       showToast(error.message || "Billing page failed to load.", "err");
