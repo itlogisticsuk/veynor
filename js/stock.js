@@ -420,7 +420,7 @@
       loadLocations()
     ]);
 
-    let query = db
+    const { data, error } = await db
       .from("items")
       .select(`
         id,
@@ -456,12 +456,6 @@
       `)
       .eq("company_id", cid)
       .order("created_at", { ascending: false });
-
-    if (isProductOwnerRole() && currentProfile?.customer_id) {
-      query = query.eq("products.customer_id", currentProfile.customer_id);
-    }
-
-    const { data, error } = await query;
 
     if (error) throw error;
 
@@ -537,21 +531,7 @@
 
     const { data: lines, error: lineError } = await db
       .from("order_lines")
-      .select(`
-        id,
-        order_id,
-        orders (
-          id,
-          order_number,
-          external_reference,
-          purchase_order,
-          retail_name,
-          delivery_name,
-          delivery_company,
-          recipient_name,
-          customer_id
-        )
-      `)
+      .select("id, order_id")
       .in("id", orderLineIds);
 
     if (lineError) {
@@ -559,7 +539,31 @@
       return;
     }
 
+    const orderIds = [...new Set((lines || []).map(l => l.order_id).filter(Boolean))];
+    if (!orderIds.length) return;
+
+    const { data: orders, error: orderError } = await db
+      .from("orders")
+      .select(`
+        id,
+        order_number,
+        external_reference,
+        purchase_order,
+        retail_name,
+        delivery_name,
+        delivery_company,
+        recipient_name
+      `)
+      .in("id", orderIds);
+
+    if (orderError) {
+      console.warn("Order lookup skipped:", orderError.message);
+      return;
+    }
+
     const lineById = new Map((lines || []).map(line => [String(line.id), line]));
+    const orderById = new Map((orders || []).map(order => [String(order.id), order]));
+
     const allocationByItem = new Map();
 
     (allocations || []).forEach(alloc => {
@@ -585,14 +589,14 @@
       if (!alloc) return item;
 
       const line = lineById.get(String(alloc.order_line_id));
-      const order = line?.orders || {};
+      const order = orderById.get(String(line?.order_id || ""));
 
-      const orderId = line?.order_id || order.id || "";
+      if (!line || !order) return item;
 
       const orderNo =
         order.order_number ||
         order.external_reference ||
-        orderId ||
+        order.id ||
         "";
 
       const retailer =
@@ -604,7 +608,7 @@
 
       return {
         ...item,
-        linked_order_id: orderId,
+        linked_order_id: order.id,
         order_number: orderNo,
         retailer_name: retailer,
         purchase_order: order.purchase_order || "",
