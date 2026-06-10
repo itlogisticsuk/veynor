@@ -10,8 +10,9 @@
   let settingsMap = new Map();
   let ownerProfiles = [];
   let selectedOwnerKey = "";
-  let vehiclesCache = [];
-  let driverUsersCache = [];
+let vehiclesCache = [];
+let driverUsersCache = [];
+let portalUsersCache = [];
 
   const DEFAULT_OWNER_PROFILES = [
     {
@@ -154,13 +155,18 @@
     max_route_duration_hours: "9",
     max_orders_per_route: "12",
     default_transport_type: "own_transport",
-    labour_cost_per_hour_gbp: "38.50",
-    vehicle_cost_per_mile_gbp: "0.55",
+   labour_cost_per_hour_gbp: "38.50",
+vehicle_cost_per_mile_gbp: "0.55",
+diesel_price_per_litre_gbp_inc_vat: "1.55",
 
-    doc_default_payment_terms: "14",
-    doc_vat_rate: "0.20",
-    doc_ack_lead_days: "21",
-    doc_bucket: "order-documents",
+   doc_default_payment_terms: "14",
+doc_vat_rate: "0.20",
+doc_ack_lead_days: "21",
+doc_bucket: "order-documents",
+
+sales_order_prefix: "SO-",
+sales_order_padding: "5",
+next_sales_order_number: "3246",
 
     email_sender_name: "Sofa2U",
     email_sender_address: "sales@sofa2u.co.uk",
@@ -233,6 +239,8 @@
     const n = Number(String(value ?? "").replace(",", "."));
     return Number.isFinite(n) ? n : fallback;
   }
+
+
 
   function parseBool(value, fallback = false) {
     if (value === true || value === false) return value;
@@ -568,6 +576,118 @@
     }).join("");
   }
 
+async function loadPortalUsers() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const { data, error } = await db
+    .from("user_profiles")
+    .select(`
+      id,
+      auth_user_id,
+      company_id,
+      full_name,
+      email,
+      role,
+      customer_id,
+      retailer_code,
+      is_driver,
+      is_active,
+      use_in_planning
+    `)
+    .eq("company_id", cid)
+    .order("full_name", { ascending: true });
+
+  if (error) throw error;
+
+  portalUsersCache = data || [];
+  renderPortalUsersTable();
+}
+
+function renderPortalUsersTable() {
+  const tbody = byId("portalUsersBody");
+  if (!tbody) return;
+
+  if (!portalUsersCache.length) {
+    tbody.innerHTML = `<tr><td colspan="7">No users found.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = portalUsersCache.map(user => `
+    <tr>
+      <td>
+        <strong>${escapeHtml(user.full_name || "—")}</strong>
+        <span class="subline">${escapeHtml(user.auth_user_id || "")}</span>
+      </td>
+      <td>${escapeHtml(user.email || "—")}</td>
+      <td>${escapeHtml(user.role || "—")}</td>
+      <td>${escapeHtml(user.customer_id || "—")}</td>
+      <td>${escapeHtml(user.retailer_code || "—")}</td>
+      <td>
+        <span class="pill ${user.is_driver ? "pill-green" : "pill-gray"}">
+          ${user.is_driver ? "Yes" : "No"}
+        </span>
+      </td>
+      <td>
+        <span class="pill ${user.is_active !== false ? "pill-green" : "pill-gray"}">
+          ${user.is_active !== false ? "Active" : "Inactive"}
+        </span>
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function createPortalUser() {
+  const payload = {
+    full_name: getFieldValue("newUserFullName"),
+    email: getFieldValue("newUserEmail"),
+    password: getFieldValue("newUserPassword"),
+    role: getFieldValue("newUserRole", "tenant_user"),
+    customer_id: getFieldValue("newUserCustomerId") || null,
+    retailer_code: getFieldValue("newUserRetailerCode") || null,
+    is_driver: parseBool(getFieldValue("newUserIsDriver", "false"), false),
+    is_active: parseBool(getFieldValue("newUserActive", "true"), true)
+  };
+
+  if (!payload.email) throw new Error("Email is required.");
+  if (!payload.password || payload.password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+
+  const db = ensureClient();
+
+  const { data, error } = await db.functions.invoke("create-portal-user", {
+  body: payload
+});
+
+console.log("FUNCTION DATA:", data);
+console.log("FUNCTION ERROR:", error);
+
+ if (error) {
+  console.log("FULL ERROR:", error);
+  alert(JSON.stringify(error));
+  throw error;
+}
+  if (data?.error) throw new Error(data.error);
+
+  showToast("User created successfully.", "ok");
+
+  [
+    "newUserFullName",
+    "newUserEmail",
+    "newUserPassword",
+    "newUserCustomerId",
+    "newUserRetailerCode"
+  ].forEach(id => setFieldValue(id, ""));
+
+  setFieldValue("newUserRole", "tenant_user");
+  setFieldValue("newUserIsDriver", "false");
+  setFieldValue("newUserActive", "true");
+
+  await loadPortalUsers();
+  await loadDriverUsers();
+}
+
   async function addOrLinkDriver() {
     const db = ensureClient();
     const cid = await getCompanyId();
@@ -666,8 +786,9 @@
     loadOwnerProfiles();
     renderOwnerList();
     renderOwnerEditor();
-    renderLogoPreview();
-    updateSummary();
+   renderLogoPreview();
+updateSalesOrderPreview();
+updateSummary();
   }
 
   async function saveSettingsByIds(ids, successMessage = "Settings saved.") {
@@ -1137,21 +1258,34 @@
     return true;
   }
 
-  function updateSummary() {
-    const labour = toNumber(getFieldValue("labour_cost_per_hour_gbp"), 38.5);
-    const vehicle = toNumber(getFieldValue("vehicle_cost_per_mile_gbp"), 0.55);
-    const speed = toNumber(getFieldValue("average_speed_kmh"), 50);
-    const stopTime = toNumber(getFieldValue("stop_time_minutes"), 15);
-    const maxHours = toNumber(getFieldValue("max_route_duration_hours"), 9);
-    const activeCount = vehiclesCache.filter(vehicleIsActive).length;
+function updateSalesOrderPreview() {
+  const prefix = getFieldValue("sales_order_prefix", "SO-") || "SO-";
+  const padding = Math.max(1, Math.round(toNumber(getFieldValue("sales_order_padding", "5"), 5)));
+  const nextNumber = Math.max(1, Math.round(toNumber(getFieldValue("next_sales_order_number", "1"), 1)));
 
-    if (byId("summaryLabour")) byId("summaryLabour").textContent = `${formatMoney(labour)} / hour`;
-    if (byId("summaryVehicle")) byId("summaryVehicle").textContent = `${formatMoney(vehicle)} / mile`;
-    if (byId("summarySpeed")) byId("summarySpeed").textContent = `${formatNumber(speed, 0)} km/h`;
-    if (byId("summaryStopTime")) byId("summaryStopTime").textContent = `${formatNumber(stopTime, 0)} min`;
-    if (byId("summaryMaxHours")) byId("summaryMaxHours").textContent = `${formatNumber(maxHours, 1)} h`;
-    if (byId("summaryActiveVehicles")) byId("summaryActiveVehicles").textContent = formatNumber(activeCount);
-  }
+  setFieldValue(
+    "next_sales_order_preview",
+    `${prefix}${String(nextNumber).padStart(padding, "0")}`
+  );
+}
+
+ function updateSummary() {
+  const labour = toNumber(getFieldValue("labour_cost_per_hour_gbp"), 38.5);
+  const vehicle = toNumber(getFieldValue("vehicle_cost_per_mile_gbp"), 0.55);
+  const diesel = toNumber(getFieldValue("diesel_price_per_litre_gbp_inc_vat"), 1.55);
+  const speed = toNumber(getFieldValue("average_speed_kmh"), 50);
+  const stopTime = toNumber(getFieldValue("stop_time_minutes"), 15);
+  const maxHours = toNumber(getFieldValue("max_route_duration_hours"), 9);
+  const activeCount = vehiclesCache.filter(vehicleIsActive).length;
+
+  if (byId("summaryLabour")) byId("summaryLabour").textContent = `${formatMoney(labour)} / hour`;
+  if (byId("summaryVehicle")) byId("summaryVehicle").textContent = `${formatMoney(vehicle)} / mile`;
+  if (byId("summaryDiesel")) byId("summaryDiesel").textContent = `£${diesel.toFixed(3)} / litre`;
+  if (byId("summarySpeed")) byId("summarySpeed").textContent = `${formatNumber(speed, 0)} km/h`;
+  if (byId("summaryStopTime")) byId("summaryStopTime").textContent = `${formatNumber(stopTime, 0)} min`;
+  if (byId("summaryMaxHours")) byId("summaryMaxHours").textContent = `${formatNumber(maxHours, 1)} h`;
+  if (byId("summaryActiveVehicles")) byId("summaryActiveVehicles").textContent = formatNumber(activeCount);
+}
 
   async function loadVehicles() {
     const db = ensureClient();
@@ -1266,6 +1400,16 @@
               <div class="field"><label>Max Hours</label><input class="input" type="number" step="0.1" data-field="max_route_hours" value="${escapeHtml(toNumber(vehicle.max_route_hours, 9))}"></div>
               <div class="field"><label>Average Speed</label><input class="input" type="number" step="0.1" data-field="average_speed_kmh" value="${escapeHtml(speed)}"></div>
               <div class="field"><label>Cost / Mile</label><input class="input" type="number" step="0.01" data-field="cost_per_mile_gbp" value="${escapeHtml(toNumber(vehicle.cost_per_mile_gbp, 0.55))}"></div>
+<div class="field">
+  <label>Fuel Usage (L / 100 km)</label>
+  <input
+    class="input"
+    type="number"
+    step="0.1"
+    data-field="fuel_litres_per_100km"
+    value="${escapeHtml(toNumber(vehicle.fuel_litres_per_100km, 10.0))}"
+  >
+</div>
               <div class="field"><label>Labour / Hour</label><input class="input" type="number" step="0.01" data-field="labour_cost_per_hour_gbp" value="${escapeHtml(toNumber(vehicle.labour_cost_per_hour_gbp, 38.5))}"></div>
 
               <div class="field">
@@ -1314,16 +1458,27 @@
       default_driver_name: driverName || null,
 
       capacity_m3: volume,
-      max_volume_m3: volume,
-      max_stops: toNumber(read("max_stops"), 12),
-      max_route_hours: toNumber(read("max_route_hours"), 9),
-      average_speed_kmh: toNumber(read("average_speed_kmh"), 50),
-      cost_per_mile_gbp: toNumber(read("cost_per_mile_gbp"), 0.55),
-      labour_cost_per_hour_gbp: toNumber(read("labour_cost_per_hour_gbp"), 38.5),
+max_volume_m3: volume,
+max_stops: toNumber(read("max_stops"), 12),
+max_route_hours: toNumber(read("max_route_hours"), 9),
 
-      active,
-      is_active: active,
-      use_in_planning: active
+average_speed_kmh: toNumber(read("average_speed_kmh"), 50),
+
+cost_per_mile_gbp: toNumber(read("cost_per_mile_gbp"), 0.55),
+
+fuel_litres_per_100km: toNumber(
+  read("fuel_litres_per_100km"),
+  10
+),
+
+labour_cost_per_hour_gbp: toNumber(
+  read("labour_cost_per_hour_gbp"),
+  38.5
+),
+
+active,
+is_active: active,
+use_in_planning: active
     };
   }
 
@@ -1391,8 +1546,9 @@
       max_stops: toNumber(getFieldValue("newVehicleMaxStops"), 12),
       max_route_hours: toNumber(getFieldValue("newVehicleMaxHours"), 9),
       average_speed_kmh: toNumber(getFieldValue("newVehicleAverageSpeed"), 50),
-      cost_per_mile_gbp: toNumber(getFieldValue("newVehicleCostPerMile"), 0.55),
-      labour_cost_per_hour_gbp: toNumber(getFieldValue("newVehicleLabourPerHour"), 38.5),
+	cost_per_mile_gbp: toNumber(getFieldValue("newVehicleCostPerMile"), 0.55),
+	fuel_litres_per_100km: toNumber(getFieldValue("newVehicleFuelLitresPer100km"), 10),
+	labour_cost_per_hour_gbp: toNumber(getFieldValue("newVehicleLabourPerHour"), 38.5),
 
       active: true,
       is_active: true,
@@ -1404,19 +1560,20 @@
     const { error } = await db.from("vehicles").insert(payload);
     if (error) throw error;
 
-    [
-      "newVehicleName",
-      "newVehicleCode",
-      "newVehicleRegistration",
-      "newVehicleDriverUserId",
-      "newVehicleDriverEmail",
-      "newVehicleMaxVolume",
-      "newVehicleMaxStops",
-      "newVehicleMaxHours",
-      "newVehicleAverageSpeed",
-      "newVehicleCostPerMile",
-      "newVehicleLabourPerHour"
-    ].forEach(fieldId => setFieldValue(fieldId, ""));
+   [
+  "newVehicleName",
+  "newVehicleCode",
+  "newVehicleRegistration",
+  "newVehicleDriverUserId",
+  "newVehicleDriverEmail",
+  "newVehicleMaxVolume",
+  "newVehicleMaxStops",
+  "newVehicleMaxHours",
+  "newVehicleAverageSpeed",
+  "newVehicleCostPerMile",
+  "newVehicleFuelLitresPer100km",
+  "newVehicleLabourPerHour"
+].forEach(fieldId => setFieldValue(fieldId, ""));
 
     setFieldValue("newVehicleType", "van");
 
@@ -1455,6 +1612,19 @@
     });
   }
 
+function extractEmailFromText(value) {
+  const match = String(value || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match ? match[0] : "";
+}
+
+function extractPhoneFromText(value) {
+  const match = String(value || "").match(/(?:\+?\d[\d\s().-]{7,}\d)/);
+  if (!match) return "";
+
+  const digits = match[0].replace(/\D/g, "");
+  return digits.length >= 9 ? match[0].trim() : "";
+}
+
   async function loadShops() {
     const tbody = byId("shopsBody");
     if (!tbody) return;
@@ -1473,10 +1643,11 @@
           customer_id,
           order_number,
           retail_name,
-          customer_name,
-          delivery_city,
-          delivery_postcode,
-          last_activity_at,
+         delivery_city,
+delivery_postcode,
+notes,
+memo,
+last_activity_at,
           created_at,
           customers (
             id,
@@ -1493,7 +1664,7 @@
       const map = new Map();
 
       (data || []).forEach(order => {
-        const retailerName = String(order.retail_name || order.customer_name || "").trim();
+        const retailerName = String(order.retail_name || "").trim();
         const city = String(order.delivery_city || "").trim();
         const postcode = String(order.delivery_postcode || "").trim();
         const ownerName = order.customers?.name || "—";
@@ -1516,8 +1687,10 @@
             postcode,
             ownerName,
             ownerCode,
-            orders: 0,
-            lastActivity
+           email: extractEmailFromText(`${order.notes || ""} ${order.memo || ""}`),
+phone: extractPhoneFromText(`${order.notes || ""} ${order.memo || ""}`),
+orders: 0,
+lastActivity
           });
         }
 
@@ -1555,14 +1728,16 @@
             <span class="subline">${escapeHtml(row.ownerCode || "")}</span>
           </td>
           <td>${escapeHtml(row.city || "—")}</td>
-          <td>${escapeHtml(row.postcode || "—")}</td>
-          <td>${formatNumber(row.orders)}</td>
-          <td>${escapeHtml(formatDateTime(row.lastActivity))}</td>
+<td>${escapeHtml(row.postcode || "—")}</td>
+<td>${escapeHtml(row.email || "—")}</td>
+<td>${escapeHtml(row.phone || "—")}</td>
+<td>${formatNumber(row.orders || 0)}</td>
+<td>${escapeHtml(formatDateTime(row.lastActivity))}</td>
         </tr>
       `).join("");
     } catch (error) {
       console.error(error);
-      tbody.innerHTML = `<tr><td colspan="8">Could not load retailers: ${escapeHtml(error.message || "Unknown error")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10">Could not load retailers: ${escapeHtml(error.message || "Unknown error")}</td></tr>`;
     }
   }
 
@@ -1588,7 +1763,12 @@
     bindTabs();
 
     byId("main_logo_file")?.addEventListener("change", previewSelectedLogoFile);
-    byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile);
+byId("main_logo_file")?.addEventListener("change", previewSelectedLogoFile);
+byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile);
+
+["sales_order_prefix", "sales_order_padding", "next_sales_order_number"].forEach(id => {
+  byId(id)?.addEventListener("input", updateSalesOrderPreview);
+});
 
     byId("btnSaveMain")?.addEventListener("click", async () => {
       try {
@@ -1642,7 +1822,8 @@
       });
 
       renderLogoPreview();
-      updateSummary();
+updateSalesOrderPreview();
+updateSummary();
       showToast("Default values loaded.", "ok");
     });
 
@@ -1691,6 +1872,26 @@
         showToast(error.message || "Could not add vehicle.", "err");
       }
     });
+
+byId("btnCreatePortalUser")?.addEventListener("click", async () => {
+  try {
+    await createPortalUser();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not create user.", "err");
+  }
+});
+
+byId("btnRefreshPortalUsers")?.addEventListener("click", async () => {
+  try {
+    await loadPortalUsers();
+    showToast("Users refreshed.", "ok");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not refresh users.", "err");
+  }
+});
+
 
     byId("btnResetNewVehicle")?.addEventListener("click", () => {
       [
@@ -1770,10 +1971,11 @@
       bindEvents();
 
       await getCompanyId();
-      await loadSettings();
-      await loadVehicles();
-      await loadDriverUsers();
-      await loadShops();
+     await loadSettings();
+await loadVehicles();
+await loadDriverUsers();
+await loadPortalUsers();
+await loadShops();
 
       renderDriverDropdowns();
       renderDriversTable();
