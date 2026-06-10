@@ -83,6 +83,13 @@ function dedupeAddressLines(lines) {
   function getMemo(order) {
     return cleanText(order?.memo || "");
   }
+function getSupplierReference(order) {
+  const so = cleanText(order?.order_number || "");
+  const ref = cleanText(order?.external_reference || "");
+
+  if (!ref || ref === so) return "";
+  return ref;
+}
 
   function getOrderLines(order) {
     return Array.isArray(order?.order_lines) ? order.order_lines : [];
@@ -283,11 +290,23 @@ function dedupeAddressLines(lines) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
 
-    doc.text(`Order No: ${order.order_number || "—"}`, 196, 33, { align: "right" });
-    doc.text(`Order Date: ${formatDate(ackDate)}`, 196, 40, { align: "right" });
-    doc.text(`Expected Delivery Date: ${formatDate(expectedDate)}`, 196, 47, { align: "right" });
-    doc.text(`Your Reference: ${order.purchase_order || "Unknown"} / ${order.order_number || "—"}`, 196, 54, { align: "right" });
+    const supplierRef = getSupplierReference(order);
 
+doc.setFont("helvetica", "bold");
+doc.text(`Order No: ${order.order_number || "—"}`, 196, 33, { align: "right" });
+
+doc.setFont("helvetica", "normal");
+
+if (supplierRef) {
+  doc.text(`Supplier Ref: ${supplierRef}`, 196, 40, { align: "right" });
+  doc.text(`Purchase Order: ${order.purchase_order || "Unknown"}`, 196, 47, { align: "right" });
+  doc.text(`Order Date: ${formatDate(ackDate)}`, 196, 54, { align: "right" });
+  doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, 61, { align: "right" });
+} else {
+  doc.text(`Purchase Order: ${order.purchase_order || "Unknown"}`, 196, 40, { align: "right" });
+  doc.text(`Order Date: ${formatDate(ackDate)}`, 196, 47, { align: "right" });
+  doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, 54, { align: "right" });
+}
     const infoY = logoAdded ? 45 : 34;
 
     doc.setFont("helvetica", "bold");
@@ -613,7 +632,7 @@ function dedupeAddressLines(lines) {
       customer_id: order.customer_id || null,
       order_id: order.id,
       document_type: "acknowledgement",
-      document_number: `ACK-${order.order_number || String(order.id).slice(0, 8)}`,
+      document_number: order.order_number || String(order.id).slice(0, 8),
       document_status: "generated",
       file_url: uploaded.fileUrl,
       storage_path: uploaded.storagePath,

@@ -12,7 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
   <script src="/js/supabase.js"></script>
-<script src="/js/page-guard.js" defer></script>
+  <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
   <script src="/js/order-import.js" defer></script>
 
@@ -24,35 +24,32 @@
     .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
     .section-title{margin:0;font-size:16px;font-weight:900}
     .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
-
     .flow-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
     .flow-card{border:1px solid var(--border);background:#fff;border-radius:14px;padding:14px;display:grid;gap:5px}
     .flow-kicker{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.04em}
     .flow-title{font-size:15px;font-weight:900;color:var(--text)}
     .flow-sub{font-size:12px;color:var(--muted);line-height:1.45}
-
     .upload-box{border:1px dashed var(--border);border-radius:14px;background:#fafafa;padding:14px;display:grid;gap:12px}
     .drop-zone{border:2px dashed var(--border);border-radius:14px;background:#fff;padding:18px;display:grid;gap:10px;text-align:center;transition:.15s ease}
-    .drop-zone:hover,.drop-zone.drag-over{border-color:var(--gold);background:#fffaf2}
+    .drop-zone:hover,.drop-zone.drag-over{border-color:var(--primary);background:#f7fbff}
     .drop-zone-title{font-size:14px;font-weight:900;color:#111827}
     .drop-zone-sub{font-size:12px;color:var(--muted);line-height:1.5}
-
     .field-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
     .field-grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .field-grid.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .field-grid.four{grid-template-columns:repeat(4,minmax(0,1fr))}
     .field{display:grid;gap:6px}
     .field label{font-size:12px;font-weight:800;color:#374151}
-    .input,.select{width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:38px}
-
+    .input,.select,.textarea{width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:38px}
+    .textarea{min-height:84px;resize:vertical}
     .actions-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .actions-between{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
     .checkbox-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;line-height:1.45;color:#374151}
     .checkbox-row input{margin-top:3px}
-
     .kpi-grid-local{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
     .kpi-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px;display:grid;gap:5px}
     .kpi-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
     .kpi-value{font-size:22px;font-weight:900;line-height:1.1}
-
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px;background:#fff}
     .orders-table{width:100%;min-width:1900px;border-collapse:collapse}
     .orders-table th,.orders-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:12.5px}
@@ -60,16 +57,13 @@
     .orders-table tbody tr:hover{background:#fafcff;cursor:pointer}
     .orders-table tbody tr.active{background:#f7fbff}
     .subline{display:block;margin-top:3px;color:var(--muted);font-size:11px;line-height:1.35}
-
     .address-cell{max-width:380px;white-space:normal;line-height:1.45}
     .date-cell{white-space:nowrap}
-
     .pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:900;border:1px solid var(--gray-bd);background:var(--gray-bg);color:var(--gray-tx);white-space:nowrap}
     .pill-ok{background:var(--green-bg);color:var(--green-tx);border-color:var(--green-bd)}
     .pill-warn{background:var(--orange-bg);color:var(--orange-tx);border-color:var(--orange-bd)}
     .pill-err{background:var(--danger-bg);color:var(--danger-tx);border-color:var(--danger-bd)}
     .pill-blue{background:var(--blue-bg);color:var(--blue-tx);border-color:var(--blue-bd)}
-
     .detail-card{padding:16px;display:grid;gap:14px;position:sticky;top:16px}
     .detail-empty{font-size:12.5px;color:var(--muted);line-height:1.6}
     .detail-title{font-size:16px;font-weight:900}
@@ -81,29 +75,53 @@
     .line-card{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;display:grid;gap:4px}
     .line-title{font-size:12.5px;font-weight:900}
     .line-sub{font-size:11.5px;color:var(--muted);line-height:1.45}
-
     .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:700;font-size:12.5px}
     .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
     .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
-
     .progress-wrap{display:none;gap:10px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px}
     .progress-wrap.open{display:grid}
     .progress-bar{height:14px;border-radius:999px;background:#f3f4f6;border:1px solid var(--border);overflow:hidden}
-    .progress-bar > div{height:100%;width:0%;background:var(--gold);transition:width .2s ease}
-
+    .progress-bar > div{height:100%;width:0%;background:var(--primary);transition:width .2s ease}
     .note-box{border:1px solid var(--blue-bd);background:var(--blue-bg);color:var(--blue-tx);border-radius:12px;padding:12px 14px;font-size:12px;font-weight:700;line-height:1.5}
+
+    .custom-file{display:grid;gap:8px}
+    .custom-file input[type=file]{display:none}
+    .custom-file-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .custom-file-name{font-size:12px;color:var(--muted);font-weight:700}
+
+    .modal-backdrop{position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;background:rgba(7,21,47,.55);backdrop-filter:blur(8px);padding:22px}
+    .modal-backdrop.open{display:flex}
+    .manual-modal{width:min(1120px,100%);max-height:92vh;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:22px;box-shadow:0 30px 90px rgba(7,21,47,.28)}
+    .manual-modal-head{position:sticky;top:0;background:#fff;z-index:2;padding:18px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+    .manual-modal-title{margin:0;font-size:20px;font-weight:950;color:var(--text)}
+    .manual-modal-sub{margin:5px 0 0;color:var(--muted);font-size:12.5px;line-height:1.45}
+    .manual-modal-body{padding:18px 20px;display:grid;gap:18px}
+    .manual-section{border:1px solid var(--border);border-radius:16px;padding:14px;background:#fbfdff;display:grid;gap:12px}
+    .manual-section-title{margin:0;font-size:14px;font-weight:950;color:var(--text)}
+    .manual-section-sub{margin:0;color:var(--muted);font-size:12px;line-height:1.45}
+    .manual-lines{display:grid;gap:12px}
+    .manual-line-row{border:1px solid var(--border);border-radius:14px;background:#fff;padding:12px;display:grid;gap:12px}
+    .manual-line-main{display:grid;grid-template-columns:1.2fr 1.4fr 80px 100px 100px 42px;gap:10px;align-items:end}
+    .manual-line-finance{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .manual-line-flags{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+    .icon-btn{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:950}
+    .manual-modal-foot{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);padding:14px 20px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .hidden{display:none!important}
 
     @media(max-width:1350px){
       .import-layout{grid-template-columns:1fr}
       .detail-card{position:static}
       .kpi-grid-local{grid-template-columns:repeat(3,1fr)}
-      .field-grid{grid-template-columns:repeat(2,1fr)}
+      .field-grid,.field-grid.four{grid-template-columns:repeat(2,1fr)}
       .import-method-grid{grid-template-columns:1fr}
       .flow-grid{grid-template-columns:repeat(2,1fr)}
+      .manual-line-main{grid-template-columns:1fr 1fr}
+      .manual-line-finance{grid-template-columns:1fr 1fr}
     }
 
     @media(max-width:760px){
-      .field-grid,.field-grid.two,.detail-grid,.kpi-grid-local,.flow-grid{grid-template-columns:1fr}
+      .field-grid,.field-grid.two,.field-grid.three,.field-grid.four,.detail-grid,.kpi-grid-local,.flow-grid,.manual-line-main,.manual-line-finance{grid-template-columns:1fr}
+      .manual-modal{max-height:96vh}
     }
   </style>
 </head>
@@ -117,6 +135,9 @@
       <div class="page-title">
         <h1>Order Import</h1>
         <p>Import orders into the Sofa2U tenant while keeping product owners and retailers separated.</p>
+      </div>
+      <div class="topbar-actions">
+        <button id="btnOpenManualOrder" class="btn btn-primary" type="button">+ Manual Order</button>
       </div>
     </section>
 
@@ -152,10 +173,7 @@
       <div class="section-head">
         <div>
           <h2 class="section-title">Import Settings</h2>
-          <p class="section-sub">
-            These settings apply to both Excel and PDF imports. The product owner is the contract customer such as Bellstone or Zoy.
-            Retailers are delivery locations and are not created as Sofa2U billing customers.
-          </p>
+          <p class="section-sub">These settings apply to Excel, PDF and manual orders.</p>
         </div>
       </div>
 
@@ -163,8 +181,8 @@
         <div class="field">
           <label for="productOwnerName">Product Owner / Contract Customer</label>
           <select id="productOwnerName" class="select">
-  <option value="">Loading product owners...</option>
-</select>
+            <option value="">Loading product owners...</option>
+          </select>
         </div>
 
         <div class="field">
@@ -189,24 +207,17 @@
       <div class="field-grid two">
         <label class="checkbox-row">
           <input type="checkbox" id="optCreateRetailCustomers" disabled/>
-          <span>
-            Do not create retailers as Sofa2U customers.
-            Retailers are stored on the order as delivery name and address.
-          </span>
+          <span>Do not create retailers as Sofa2U customers. Retailers are stored on the order as delivery name and address.</span>
         </label>
 
         <label class="checkbox-row">
           <input type="checkbox" id="optCreateProductOwner" checked/>
-          <span>
-            Create or update the selected product owner as a contract customer if needed.
-          </span>
+          <span>Create or update the selected product owner as a contract customer if needed.</span>
         </label>
 
         <label class="checkbox-row">
           <input type="checkbox" id="optCreateProducts" disabled/>
-          <span>
-            Do not create missing products automatically. Missing SKUs are shown as warnings.
-          </span>
+          <span>Do not create missing products automatically. Missing SKUs are shown as warnings.</span>
         </label>
 
         <label class="checkbox-row">
@@ -244,8 +255,13 @@
         </div>
 
         <div class="upload-box">
-          <input id="ordersImportFile" class="input" type="file" accept=".xlsx,.xls,.csv"/>
-          <div class="section-sub" id="excelFileStatus">No Excel file selected.</div>
+          <div class="custom-file">
+            <input id="ordersImportFile" type="file" accept=".xlsx,.xls,.csv"/>
+            <div class="custom-file-row">
+              <label for="ordersImportFile" class="btn" role="button">Choose File</label>
+              <span class="custom-file-name" id="excelFileStatus">No file selected</span>
+            </div>
+          </div>
 
           <div class="field">
             <label for="excelSourceType">Excel Source Type</label>
@@ -262,7 +278,7 @@
         <div class="section-head">
           <div>
             <h2 class="section-title">Packing Slip PDF Import</h2>
-            <p class="section-sub">Drag a Bellstone packing slip PDF into the box or select it manually.</p>
+            <p class="section-sub">Drag a packing slip PDF into the box or select it manually.</p>
           </div>
         </div>
 
@@ -272,12 +288,17 @@
             <div class="drop-zone-sub">Drag a PDF into this area, or choose a PDF manually below.</div>
           </div>
 
-          <input id="packingSlipPdfFile" class="input" type="file" accept=".pdf"/>
-          <div class="section-sub" id="pdfFileStatus">No PDF file selected.</div>
+          <div class="custom-file">
+            <input id="packingSlipPdfFile" type="file" accept=".pdf"/>
+            <div class="custom-file-row">
+              <label for="packingSlipPdfFile" class="btn" role="button">Choose File</label>
+              <span class="custom-file-name" id="pdfFileStatus">No file selected</span>
+            </div>
+          </div>
 
           <div class="field">
             <label for="pdfSourceType">PDF Source Type</label>
-            <input id="pdfSourceType" class="input" value="bellstone_packing_slip_pdf"/>
+            <input id="pdfSourceType" class="input" value="packing_slip_pdf"/>
           </div>
 
           <div class="actions-row">
@@ -330,9 +351,7 @@
         <div class="section-head">
           <div>
             <h2 class="section-title">Import Preview</h2>
-            <p class="section-sub">
-              Grouped by order number. Select an order to inspect product owner, retailer, delivery address and product lines.
-            </p>
+            <p class="section-sub">Grouped by order number. Select an order to inspect product owner, retailer, delivery address and product lines.</p>
           </div>
           <div class="section-sub" id="previewSourceLabel">Source: —</div>
         </div>
@@ -425,5 +444,260 @@
     </section>
   </main>
 </div>
+
+<div id="manualOrderModal" class="modal-backdrop">
+  <section class="manual-modal">
+    <div class="manual-modal-head">
+      <div>
+        <h2 class="manual-modal-title">Manual Order</h2>
+        <p class="manual-modal-sub">Create an order manually while keeping the order owner, retailer and product lines separated.</p>
+      </div>
+      <button id="btnCloseManualOrder" class="icon-btn" type="button">×</button>
+    </div>
+
+    <div class="manual-modal-body">
+      <section class="manual-section">
+        <h3 class="manual-section-title">Order Owner</h3>
+        <p class="manual-section-sub">By default this uses the selected Product Owner from Import Settings. Use another customer only for one-off or unknown contract customers.</p>
+
+        <div class="field-grid two">
+          <div class="field">
+            <label for="manualOwnerSelect">Contract Customer</label>
+            <select id="manualOwnerSelect" class="select">
+              <option value="">Use Import Settings selection</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>&nbsp;</label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="manualUnknownOwner"/>
+              <span>Order for another customer</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="manualUnknownOwnerFields" class="hidden">
+          <div class="field-grid two">
+            <div class="field">
+              <label for="manualOwnerName">Customer Name</label>
+              <input id="manualOwnerName" class="input" placeholder="Customer name"/>
+            </div>
+
+            <div class="field">
+              <label for="manualOwnerCode">Customer Code</label>
+              <input id="manualOwnerCode" class="input" placeholder="Optional"/>
+            </div>
+          </div>
+
+          <div class="field-grid two">
+            <div class="field">
+              <label for="manualOwnerEmail">Invoice Email</label>
+              <input id="manualOwnerEmail" class="input" type="email" placeholder="accounts@example.com"/>
+            </div>
+
+            <div class="field">
+              <label for="manualOwnerPhone">Phone</label>
+              <input id="manualOwnerPhone" class="input" placeholder="Optional"/>
+            </div>
+          </div>
+
+          <div class="field-grid two">
+            <div class="field">
+              <label for="manualOwnerAddress1">Address Line 1</label>
+              <input id="manualOwnerAddress1" class="input"/>
+            </div>
+
+            <div class="field">
+              <label for="manualOwnerAddress2">Address Line 2</label>
+              <input id="manualOwnerAddress2" class="input"/>
+            </div>
+          </div>
+
+          <div class="field-grid three">
+            <div class="field">
+              <label for="manualOwnerCity">City</label>
+              <input id="manualOwnerCity" class="input"/>
+            </div>
+
+            <div class="field">
+              <label for="manualOwnerPostcode">Postcode</label>
+              <input id="manualOwnerPostcode" class="input"/>
+            </div>
+
+            <div class="field">
+              <label for="manualOwnerCountry">Country</label>
+              <input id="manualOwnerCountry" class="input" value="United Kingdom"/>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="manual-section">
+        <h3 class="manual-section-title">Order Details</h3>
+
+        <div class="field-grid three">
+          <div class="field">
+            <label for="manualOrderNumber">Order Number</label>
+            <input id="manualOrderNumber" class="input" placeholder="e.g. MAN-0001"/>
+          </div>
+
+          <div class="field">
+            <label for="manualPurchaseOrder">Purchase Order</label>
+            <input id="manualPurchaseOrder" class="input" placeholder="Optional"/>
+          </div>
+
+          <div class="field">
+            <label for="manualRequestedDate">Requested Delivery Date</label>
+            <input id="manualRequestedDate" class="input" type="date"/>
+          </div>
+        </div>
+      </section>
+
+      <section class="manual-section">
+        <h3 class="manual-section-title">Delivery Customer / Retailer</h3>
+        <p class="manual-section-sub">Select an existing retailer to fill the address automatically, or leave it as New Retailer and enter the details manually.</p>
+
+        <div class="field">
+          <label for="manualRetailerSelect">Existing Retailer</label>
+          <select id="manualRetailerSelect" class="select">
+            <option value="">New Retailer / Manual Entry</option>
+          </select>
+        </div>
+
+        <div class="field-grid two">
+          <div class="field">
+            <label for="manualRetailerName">Retailer / Shop Name</label>
+            <input id="manualRetailerName" class="input" placeholder="Retailer name"/>
+          </div>
+
+          <div class="field">
+            <label for="manualContactName">Contact Name</label>
+            <input id="manualContactName" class="input" placeholder="Optional"/>
+          </div>
+        </div>
+
+        <div class="field-grid two">
+          <div class="field">
+            <label for="manualAddress1">Address Line 1</label>
+            <input id="manualAddress1" class="input"/>
+          </div>
+
+          <div class="field">
+            <label for="manualAddress2">Address Line 2</label>
+            <input id="manualAddress2" class="input"/>
+          </div>
+        </div>
+
+        <div class="field-grid three">
+          <div class="field">
+            <label for="manualCity">City</label>
+            <input id="manualCity" class="input"/>
+          </div>
+
+          <div class="field">
+            <label for="manualPostcode">Postcode</label>
+            <input id="manualPostcode" class="input"/>
+          </div>
+
+          <div class="field">
+            <label for="manualCountry">Country</label>
+            <input id="manualCountry" class="input" value="United Kingdom"/>
+          </div>
+        </div>
+      </section>
+
+      <section class="manual-section">
+        <div class="actions-between">
+          <div>
+            <h3 class="manual-section-title">Product Lines</h3>
+            <p class="manual-section-sub">Products are filtered by the selected contract customer. Existing product data can be overwritten manually.</p>
+          </div>
+          <button id="btnAddManualLine" class="btn" type="button">+ Add Product</button>
+        </div>
+
+        <div id="manualLines" class="manual-lines">
+          <div class="manual-line-row">
+            <div class="manual-line-main">
+              <div class="field">
+                <label>SKU</label>
+                <input class="input manualSku" list="manualProductOptions" placeholder="Search or enter SKU"/>
+              </div>
+
+              <div class="field">
+                <label>Description</label>
+                <input class="input manualDescription" placeholder="Description"/>
+              </div>
+
+              <div class="field">
+                <label>Qty</label>
+                <input class="input manualQty" type="number" min="1" value="1"/>
+              </div>
+
+              <div class="field">
+                <label>Volume m³</label>
+                <input class="input manualVolume" type="number" step="0.001" min="0" value="0"/>
+              </div>
+
+              <div class="field">
+                <label>Weight kg</label>
+                <input class="input manualWeight" type="number" step="0.001" min="0" value="0"/>
+              </div>
+
+              <button class="icon-btn btnRemoveManualLine" type="button">×</button>
+            </div>
+
+            <div class="manual-line-finance">
+              <div class="field">
+                <label>Storage Tariff</label>
+                <input class="input manualStorageTariff" type="number" step="0.01" min="0" value="0"/>
+              </div>
+
+              <div class="field">
+                <label>Admin Tariff</label>
+                <input class="input manualAdminTariff" type="number" step="0.01" min="0" value="0"/>
+              </div>
+
+              <div class="field">
+                <label>Handling Tariff</label>
+                <input class="input manualHandlingTariff" type="number" step="0.01" min="0" value="0"/>
+              </div>
+
+              <div class="field">
+                <label>Transport Tariff</label>
+                <input class="input manualTransportTariff" type="number" step="0.01" min="0" value="0"/>
+              </div>
+            </div>
+
+            <div class="manual-line-flags">
+              <label class="checkbox-row">
+                <input type="checkbox" class="manualProductMissing"/>
+                <span>Product not in master data</span>
+              </label>
+
+              <span class="section-sub manualProductHint">Select an existing SKU or enter a new SKU manually.</span>
+            </div>
+          </div>
+        </div>
+
+        <datalist id="manualProductOptions"></datalist>
+      </section>
+
+      <section class="manual-section">
+        <h3 class="manual-section-title">Notes</h3>
+        <textarea id="manualMemo" class="textarea" placeholder="Optional order notes"></textarea>
+      </section>
+    </div>
+
+    <div class="manual-modal-foot">
+      <div class="section-sub">Manual orders are added to the preview first. Click Import Previewed Orders to write them to Supabase.</div>
+      <div class="actions-row">
+        <button id="btnCancelManualOrder" class="btn" type="button">Cancel</button>
+        <button id="btnSaveManualOrder" class="btn btn-primary" type="button">Save Manual Order</button>
+      </div>
+    </div>
+  </section>
+</div>
+
 </body>
 </html>

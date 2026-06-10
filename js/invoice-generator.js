@@ -91,10 +91,17 @@
   function setMuted(doc) {
     doc.setTextColor(90, 90, 90);
   }
+function getOrderNumber(order) {
+  return cleanText(order.order_number || order.external_reference || order.id || "—");
+}
 
-  function getOrderNumber(order) {
-    return cleanText(order.order_number || order.external_reference || order.id || "—");
-  }
+ function getSupplierReference(order) {
+  const so = cleanText(order?.order_number || "");
+  const ref = cleanText(order?.external_reference || "");
+
+  if (!ref || ref === so) return "";
+  return ref;
+}
 
   function getProductOwnerName(order) {
     return cleanText(
@@ -569,7 +576,7 @@
     doc.setFont("helvetica", "bold");
     doc.setFontSize(6.8);
 
-    doc.text("ACK / Order", COL.order, y);
+    doc.text("Order / Ref", COL.order, y);
     doc.text("Retailer", COL.retailer, y);
     doc.text("Delivery Address", COL.address, y);
     doc.text("Delivery Date", COL.date, y);
@@ -623,26 +630,30 @@
   }
 
   function drawSpecificationPage(doc, orders, invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl) {
-    doc.addPage();
+  doc.addPage();
 
-    drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
+  drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
 
-    let y = 82;
-    y = drawSpecificationHeader(doc, y);
+  let y = 88;
+  y = drawSpecificationHeader(doc, y);
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6.5);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(6.5);
 
-    orders.forEach(order => {
-      if (y > 258) {
-        doc.addPage();
-        drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
-        y = drawSpecificationHeader(doc, 82);
-        doc.setFont("helvetica", "normal");
-        doc.setFontSize(6.5);
-      }
+  orders.forEach(order => {
+    if (y > 258) {
+      doc.addPage();
+      drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
+      y = drawSpecificationHeader(doc, 88);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+    }
 
-      const orderNo = getOrderNumber(order);
+    const orderNo = getOrderNumber(order);
+    const supplierRef = getSupplierReference(order);
+const orderRefLines = supplierRef
+  ? [orderNo, supplierRef]
+  : [orderNo];
       const retailer = getRetailerName(order);
       const address = getDeliveryAddress(order);
       const deliveryDate = formatDate(getDeliveryDate(order));
@@ -657,7 +668,15 @@
       const rowHeight = Math.max(8, retailerLines.length * 3.8, addressLines.length * 3.8);
 
       setDark(doc);
-      doc.text(orderNo, COL.order, y);
+      doc.setFont("helvetica", "bold");
+doc.text(orderRefLines[0], COL.order, y);
+
+if (orderRefLines[1]) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.8);
+  doc.text(orderRefLines[1], COL.order, y + 4);
+  doc.setFontSize(6.5);
+}
       doc.text(retailerLines, COL.retailer, y);
       doc.text(addressLines, COL.address, y);
       doc.text(deliveryDate, COL.date, y);

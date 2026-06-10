@@ -1123,8 +1123,16 @@
           </td>
 
           <td>
-            <strong>${escapeHtml(order.order_number || "—")}</strong>
-            <span class="subline">PO: ${escapeHtml(order.purchase_order || "Unknown")}</span>
+<td>
+  <strong>${escapeHtml(order.order_number || "—")}</strong>
+
+  ${
+    order.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
+      : ""
+  }
+
+  <span class="subline">PO: ${escapeHtml(order.purchase_order || "Unknown")}</span>
             ${
               memo
                 ? `<span class="subline memo-link" data-memo-order-id="${escapeHtml(order.id)}">Memo: ${escapeHtml(shortMemo(memo))}</span>`
@@ -1251,9 +1259,14 @@
               </div>
 
               <div class="detail-box">
-                <div class="detail-label">Purchase Order</div>
-                <div class="detail-value">${escapeHtml(order.purchase_order || "Unknown")}</div>
-              </div>
+  <div class="detail-label">Supplier Reference</div>
+  <div class="detail-value">${escapeHtml(order.external_reference || "—")}</div>
+</div>
+
+<div class="detail-box">
+  <div class="detail-label">Purchase Order</div>
+  <div class="detail-value">${escapeHtml(order.purchase_order || "Unknown")}</div>
+</div>
 
               <div class="detail-box">
                 <div class="detail-label">Match</div>
@@ -1690,9 +1703,10 @@
       return;
     }
 
-    const header = [
-      "Order Number",
-      "Customer",
+   const header = [
+  "SO Number",
+  "Supplier Reference",
+  "Customer",
       "Memo",
       "Purchase Order",
       "Ship To",
@@ -1721,8 +1735,9 @@
       const c = getTotalCosts(order);
 
       return [
-        order.order_number || "",
-        order.customer_name || "",
+       order.order_number || "",
+order.external_reference || "",
+order.customer_name || "",
         getMemo(order),
         order.purchase_order || "",
         order.ship_to_address || getAddressText(order),

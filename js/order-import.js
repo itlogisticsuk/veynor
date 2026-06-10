@@ -9,6 +9,8 @@
 
   let settingsMap = new Map();
   let ownerProfiles = [];
+let retailerList = [];
+let productList = [];
 
   let selectedExcelFile = null;
   let selectedPdfFile = null;
@@ -17,6 +19,8 @@
   let selectedOrderNo = null;
   let currentSourceKind = "";
   let lastPdfText = "";
+let manualProducts = [];
+let manualRetailers = [];
 
   function byId(id) {
     return document.getElementById(id);
@@ -85,7 +89,37 @@
 
     return text;
   }
+function splitContactFromAddressParts(parts = []) {
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+  const phoneRegex = /(?:\+?\d[\d\s().-]{7,}\d)/;
 
+  const addressParts = [];
+  let email = "";
+  let phone = "";
+
+  (parts || []).forEach(part => {
+    const text = cleanText(part).replace(/,$/, "");
+    if (!text) return;
+
+    const emailMatch = text.match(emailRegex);
+    const phoneMatch = text.match(phoneRegex);
+    const digitCount = text.replace(/\D/g, "").length;
+
+    if (emailMatch) {
+      email = email || emailMatch[0];
+      return;
+    }
+
+    if (phoneMatch && digitCount >= 9) {
+      phone = phone || phoneMatch[0];
+      return;
+    }
+
+    addressParts.push(text);
+  });
+
+  return { addressParts, email, phone };
+}
   function dedupeAddressParts(parts) {
     const seen = new Set();
     const result = [];
@@ -379,20 +413,25 @@
   }
 
   function buildEmptyAddress() {
-    return {
-      contactName: "",
-      companyName: "",
-      address1: "",
-      address2: "",
-      address3: "",
-      city: "",
-      county: "",
-      postcode: "",
-      country: getDefaultCountry(),
-      email: "",
-      phone: ""
-    };
-  }
+  return {
+    contactName: "",
+    companyName: "",
+
+    address1: "",
+    address2: "",
+    address3: "",
+    address4: "",
+
+    city: "",
+    county: "",
+
+    postcode: "",
+    country: getDefaultCountry(),
+
+    email: "",
+    phone: ""
+  };
+}
 
   function ownerToBillingAddress(owner) {
     return {
@@ -413,15 +452,17 @@
   function formatAddress(address) {
     if (!address) return "";
 
-    return dedupeAddressParts([
-      address.address1,
-      address.address2,
-      address.address3,
-      address.city,
-      address.county,
-      address.postcode,
-      address.country
-    ]).join(", ");
+    const cleaned = splitContactFromAddressParts([
+  address.address1,
+  address.address2,
+  address.address3,
+  address.city,
+  address.county,
+  address.postcode,
+  address.country
+]);
+
+return dedupeAddressParts(cleaned.addressParts).join(", ");
   }
 
   function buildEmptyOrder() {
@@ -679,61 +720,167 @@
     showToast(`${groupedOrders.length} unique order(s) found from ${rawRows.length} Excel row(s).${warningText}`, missingCount ? "err" : "ok");
   }
 
-  async function extractPdfText(file) {
-    if (!window.pdfjsLib) throw new Error("PDF.js is not loaded.");
+ async function extractPdfText(file) {
+  if (!window.pdfjsLib) throw new Error("PDF.js is not loaded.");
 
-    if (pdfjsLib.GlobalWorkerOptions) {
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-    }
-
-    const buffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-    const pages = [];
-
-    for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
-      const page = await pdf.getPage(pageNo);
-      const content = await page.getTextContent();
-
-      const items = (content.items || [])
-        .map(item => ({
-          str: item.str || "",
-          x: item.transform?.[4] || 0,
-          y: item.transform?.[5] || 0
-        }))
-        .filter(item => String(item.str).trim());
-
-      items.sort((a, b) => {
-        if (Math.abs(b.y - a.y) > 3) return b.y - a.y;
-        return a.x - b.x;
-      });
-
-      const lines = [];
-      let currentY = null;
-      let currentLine = [];
-
-      items.forEach(item => {
-        if (currentY === null || Math.abs(item.y - currentY) <= 3) {
-          currentLine.push(item.str);
-          currentY = currentY === null ? item.y : currentY;
-        } else {
-          lines.push(currentLine.join(" ").replace(/\s+/g, " ").trim());
-          currentLine = [item.str];
-          currentY = item.y;
-        }
-      });
-
-      if (currentLine.length) {
-        lines.push(currentLine.join(" ").replace(/\s+/g, " ").trim());
-      }
-
-      pages.push(lines.join("\n"));
-    }
-
-    return pages.join("\n");
+  if (pdfjsLib.GlobalWorkerOptions) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 
-  function findLine(lines, regex) {
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages = [];
+
+  for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
+    const page = await pdf.getPage(pageNo);
+    const content = await page.getTextContent();
+
+    const items = (content.items || [])
+      .map(item => ({
+        str: item.str || "",
+        x: item.transform?.[4] || 0,
+        y: item.transform?.[5] || 0
+      }))
+      .filter(item => String(item.str).trim());
+
+    items.sort((a, b) => {
+      if (Math.abs(b.y - a.y) > 3) return b.y - a.y;
+      return a.x - b.x;
+    });
+
+    const lines = [];
+    let currentY = null;
+    let currentLine = [];
+
+    items.forEach(item => {
+      if (currentY === null || Math.abs(item.y - currentY) <= 3) {
+        currentLine.push(item.str);
+        currentY = currentY === null ? item.y : currentY;
+      } else {
+        lines.push(currentLine.join(" ").replace(/\s+/g, " ").trim());
+        currentLine = [item.str];
+        currentY = item.y;
+      }
+    });
+
+    if (currentLine.length) {
+      lines.push(currentLine.join(" ").replace(/\s+/g, " ").trim());
+    }
+
+    pages.push(lines.join("\n"));
+  }
+
+  return pages.join("\n");
+}
+
+async function extractPdfStructured(file) {
+  if (!window.pdfjsLib) throw new Error("PDF.js is not loaded.");
+
+  if (pdfjsLib.GlobalWorkerOptions) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
+
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const page = await pdf.getPage(1);
+  const content = await page.getTextContent();
+
+  return (content.items || [])
+    .map(item => ({
+      text: cleanText(item.str || ""),
+      x: item.transform?.[4] || 0,
+      y: item.transform?.[5] || 0
+    }))
+    .filter(item => item.text);
+}
+
+function splitPdfAddressesByPosition(items) {
+  items = items || [];
+
+  const combinedHeader = items.find(item =>
+    /BILL\s+TO\s+SHIP\s+TO/i.test(item.text)
+  );
+
+  const billHeader = items.find(item =>
+    /^BILL\s+TO$/i.test(item.text) || /BILL\s+TO/i.test(item.text)
+  );
+
+  const shipHeader = items.find(item =>
+    /^SHIP\s+TO$/i.test(item.text) || /SHIP\s+TO/i.test(item.text)
+  );
+
+  const header = combinedHeader || billHeader || shipHeader;
+
+  const itemHeader = items.find(item =>
+    /^Item/i.test(item.text) || /Item\s+Description\s+Shipped\s+Volume/i.test(item.text)
+  );
+
+  if (!header || !itemHeader) {
+    return { billLines: [], shipLines: [] };
+  }
+
+  const topY = header.y;
+  const bottomY = itemHeader.y;
+
+  const addressItems = items.filter(item =>
+    item.y < topY - 2 &&
+    item.y > bottomY + 2
+  );
+
+  if (!addressItems.length) {
+    return { billLines: [], shipLines: [] };
+  }
+
+  const minX = Math.min(...addressItems.map(item => item.x));
+  const maxX = Math.max(...addressItems.map(item => item.x));
+  const splitX = (minX + maxX) / 2;
+
+  const billItems = addressItems.filter(item => item.x < splitX);
+  const shipItems = addressItems.filter(item => item.x >= splitX);
+
+  function groupLines(list) {
+    const rows = [];
+
+    list
+      .slice()
+      .sort((a, b) => {
+        if (Math.abs(b.y - a.y) > 3) return b.y - a.y;
+        return a.x - b.x;
+      })
+      .forEach(item => {
+        let row = rows.find(r => Math.abs(r.y - item.y) <= 3);
+
+        if (!row) {
+          row = { y: item.y, parts: [] };
+          rows.push(row);
+        }
+
+        row.parts.push(item);
+      });
+
+    return rows
+      .sort((a, b) => b.y - a.y)
+      .map(row =>
+        row.parts
+          .sort((a, b) => a.x - b.x)
+          .map(p => p.text)
+          .join(" ")
+          .replace(/^,\s*/, "")
+          .replace(/,$/, "")
+          .trim()
+      )
+      .filter(Boolean);
+  }
+
+  return {
+    billLines: groupLines(billItems),
+    shipLines: groupLines(shipItems)
+  };
+}
+
+function findLine(lines, regex) {
     return lines.find(line => regex.test(line)) || "";
   }
 
@@ -765,114 +912,157 @@
     return match ? match[1].replace(/\s+/, " ").trim().toUpperCase() : "";
   }
 
-  function splitBillShipBlock(lines) {
-    const start = lines.findIndex(line => /BILL\s+TO\s+SHIP\s+TO/i.test(cleanText(line)));
-    const end = lines.findIndex(line => /^Item\s+Description\s+Shipped\s+Volume/i.test(cleanText(line)));
+function splitBillShipBlock(lines) {
+  const start = lines.findIndex(line =>
+    /BILL\s+TO\s+SHIP\s+TO/i.test(cleanText(line))
+  );
 
-    if (start < 0 || end <= start) {
-      return { billLines: [], shipLines: [] };
-    }
+  const end = lines.findIndex(line =>
+    /^Item\s+Description\s+Shipped\s+Volume/i.test(cleanText(line))
+  );
 
-    const block = lines
-      .slice(start + 1, end)
-      .map(line => cleanText(line).replace(/,$/, ""))
-      .filter(Boolean)
-      .filter(line => !/^accounts@/i.test(line))
-      .filter(line => !/^\+?\d[\d\s().-]{5,}$/i.test(line));
-
-    const ukIndexes = block
-      .map((line, index) => /^UK$/i.test(line) ? index : -1)
-      .filter(index => index >= 0);
-
-    if (ukIndexes.length >= 2) {
-      return {
-        billLines: block.slice(0, ukIndexes[0] + 1),
-        shipLines: block.slice(ukIndexes[0] + 1, ukIndexes[1] + 1)
-      };
-    }
-
-    return { billLines: block, shipLines: block };
+  if (start < 0 || end <= start) {
+    return { billLines: [], shipLines: [] };
   }
 
-  function parseAddressBlock(blockLines, allLines) {
-    const address = buildEmptyAddress();
+  const block = lines
+    .slice(start + 1, end)
+    .map(line => cleanText(line).replace(/^,\s*/, "").replace(/,$/, ""))
+    .filter(Boolean);
 
-    const lines = (blockLines || [])
-      .map(line => cleanText(line).replace(/,$/, ""))
-      .filter(Boolean);
+  const firstLine = block[0] || "";
 
-    const emailLine = allLines.find(line =>
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(cleanText(line))
-    ) || "";
+  const secondStart = block.findIndex((line, index) =>
+    index > 0 && normalize(line) === normalize(firstLine)
+  );
 
-    const phoneLine = allLines.find(line =>
-      /^\+?\d[\d\s().-]{5,}$/i.test(cleanText(line))
-    ) || "";
+  if (secondStart > 0) {
+    return {
+      billLines: block.slice(0, secondStart),
+      shipLines: block.slice(secondStart).filter(line => {
+        const txt = cleanText(line);
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(txt)) return false;
+        if (/^\+?\d[\d\s().-]{7,}\d$/i.test(txt)) return false;
+        return true;
+      })
+    };
+  }
 
-    address.email = cleanText(emailLine);
-    address.phone = cleanText(phoneLine);
+  return {
+    billLines: [],
+    shipLines: block
+  };
+}
+function parseAddressBlock(blockLines, allLines) {
+  const address = buildEmptyAddress();
 
-    address.contactName = dedupeRepeatedWords(lines[0] || "");
-    address.companyName = dedupeRepeatedWords(lines[1] || lines[0] || "");
+  const lines = (blockLines || [])
+    .map(line => cleanText(line).replace(/^,\s*/, "").replace(/,$/, ""))
+    .filter(Boolean);
 
-    const addressOnly = lines
-      .slice(2)
-      .filter(line => !/^UK$/i.test(line));
+  const split = splitContactFromAddressParts(lines);
+  const addressLinesOnly = split.addressParts;
 
-    const uniqueAddressLines = [];
-    const seen = new Set();
+  const emailLine = allLines.find(line =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/i.test(cleanText(line))
+  ) || "";
 
-    addressOnly.forEach(line => {
-      const cleaned = cleanText(line).replace(/,+$/g, "").trim();
-      const key = dedupeKey(cleaned);
+  const phoneLine = allLines.find(line =>
+    /^\+?\d[\d\s().-]{5,}$/i.test(cleanText(line))
+  ) || "";
 
-      if (!cleaned || !key || seen.has(key)) return;
+  address.email = cleanText(emailLine || split.email);
+  address.phone = cleanText(phoneLine || split.phone);
 
-      seen.add(key);
-      uniqueAddressLines.push(cleaned);
-    });
+  address.contactName =
+    dedupeRepeatedWords(addressLinesOnly[0] || "");
+
+  address.companyName =
+    dedupeRepeatedWords(addressLinesOnly[1] || addressLinesOnly[0] || "");
+
+  const addressOnly = addressLinesOnly
+    .slice(2)
+    .filter(line => !/^(UK|United Kingdom)$/i.test(line));
+
+  const uniqueAddressLines = [];
+  const seen = new Set();
+
+const billToRejectKeys = new Set([
+  "277wenningtonrd",
+  "pr97tw",
+  "southport",
+  "essex",
+  "southportessexpr97tw"
+]);
+
+  addressOnly.forEach(line => {
+    const cleaned = cleanText(line)
+  .replace(/^United Kingdom\s*/i, "")
+  .replace(/\s*United Kingdom$/i, "")
+  .trim();
+    const key = dedupeKey(cleaned);
+
+  if (!cleaned || !key || seen.has(key) || billToRejectKeys.has(key)) return;
+
+    seen.add(key);
+    uniqueAddressLines.push(cleaned);
+  });
+
+  const postcodeLineIndex =
+    uniqueAddressLines.findIndex(line => extractPostcode(line));
+
+  const postcodeLine =
+    postcodeLineIndex >= 0
+      ? uniqueAddressLines[postcodeLineIndex]
+      : "";
+
+  address.postcode =
+    extractPostcode(
+      postcodeLine || uniqueAddressLines.join(" ")
+    );
+
+  if (postcodeLineIndex > 0) {
+
+    address.city =
+      uniqueAddressLines[postcodeLineIndex - 1] || "";
+
+    const remaining = uniqueAddressLines.filter((_, idx) =>
+      idx !== postcodeLineIndex &&
+      idx !== postcodeLineIndex - 1
+    );
+
+   address.address1 = remaining[0] || "";
+address.address2 = remaining[1] || "";
+address.address3 = remaining[2] || "";
+address.address4 = remaining.slice(3).join(", ");
+
+  } else {
 
     address.address1 = uniqueAddressLines[0] || "";
-    address.address2 = uniqueAddressLines[1] || "";
+address.address2 = uniqueAddressLines[1] || "";
+address.address3 = uniqueAddressLines[2] || "";
+address.address4 = uniqueAddressLines.slice(3).join(", ");
 
-    const postcodeLine = uniqueAddressLines.find(line => extractPostcode(line)) || "";
-    const postcode = extractPostcode(postcodeLine || uniqueAddressLines.join(" "));
-
-    address.postcode = postcode;
-
-    if (postcodeLine && postcode) {
-      const withoutPostcode = postcodeLine
-        .replace(new RegExp(postcode, "i"), "")
-        .trim()
-        .replace(/,$/, "");
-
-      const parts = withoutPostcode
-        .split(",")
-        .map(cleanText)
-        .filter(Boolean);
-
-      address.city = parts[0] || "";
-      address.county = parts[1] || "";
-    }
-
-    address.address3 = uniqueAddressLines
-      .slice(2)
-      .filter(line => !extractPostcode(line))
-      .join(", ");
-
-    address.country = getDefaultCountry();
-
-    return address;
   }
 
-  function parsePdfAddresses(lines) {
-    const split = splitBillShipBlock(lines);
-    const billToFromPdf = parseAddressBlock(split.billLines, lines);
-    const shipTo = parseAddressBlock(split.shipLines.length ? split.shipLines : split.billLines, lines);
+  address.country = getDefaultCountry();
 
-    return { billToFromPdf, shipTo };
+  return address;
+}
+
+function parsePdfAddresses(lines) {
+  const structuredItems = window.__lastPdfStructuredItems || [];
+  const split = splitPdfAddressesByPosition(structuredItems);
+
+  if (!split.shipLines.length) {
+    throw new Error("SHIP TO block could not be read by PDF position.");
   }
 
+  return {
+    billToFromPdf: parseAddressBlock(split.billLines, lines),
+    shipTo: parseAddressBlock(split.shipLines, lines)
+  };
+}
   function extractItemLines(lines) {
     const start = lines.findIndex(line => /^Item\s+Description\s+Shipped\s+Volume/i.test(cleanText(line)));
     if (start < 0) return [];
@@ -997,6 +1187,17 @@ if (/All deliveries must/i.test(line)) break;
       .filter(Boolean);
 
     const { billToFromPdf, shipTo } = parsePdfAddresses(lines);
+console.log("=== BILL TO ===");
+console.log(billToFromPdf);
+
+console.log("=== SHIP TO ===");
+console.log(shipTo);
+
+console.log("=== PDF LINES ===");
+console.log(lines);
+console.log("BILL TO", billToFromPdf);
+console.log("SHIP TO", shipTo);
+console.log(lines);
     const orderNumber = extractOrderNumber(lines, text);
     const orderDate = extractOrderDate(lines, text);
     const purchaseOrder = extractPurchaseOrder(text);
@@ -1058,7 +1259,8 @@ if (/All deliveries must/i.test(line)) break;
     currentSourceKind = "pdf";
     setProgress(true, 10, "Reading PDF...");
 
-    lastPdfText = await extractPdfText(selectedPdfFile);
+  window.__lastPdfStructuredItems = await extractPdfStructured(selectedPdfFile);
+lastPdfText = await extractPdfText(selectedPdfFile);
 
     const textArea = byId("pdfExtractedText");
     if (textArea) textArea.value = lastPdfText;
@@ -1084,31 +1286,79 @@ if (/All deliveries must/i.test(line)) break;
     showToast(`${groupedOrders.length} order(s) found from PDF ${selectedPdfFile.name}.${warningText}`, missingCount ? "err" : "ok");
   }
 
+function getSalesOrderPrefix() {
+  return settingsMap.get("sales_order_prefix") || "SO-";
+}
+
+function getSalesOrderPadding() {
+  return Math.max(1, Math.round(toNumber(settingsMap.get("sales_order_padding"), 5)));
+}
+
+function getNextSalesOrderNumber() {
+  return Math.max(1, Math.round(toNumber(settingsMap.get("next_sales_order_number"), 1)));
+}
+
+function formatSalesOrderNumber(number) {
+  return `${getSalesOrderPrefix()}${String(number).padStart(getSalesOrderPadding(), "0")}`;
+}
+
+async function reserveSalesOrderNumber() {
+  const cid = await getCompanyId();
+  const current = getNextSalesOrderNumber();
+  const soNumber = formatSalesOrderNumber(current);
+  const next = String(current + 1);
+
+  const { error } = await client
+    .from("settings")
+    .upsert({
+      company_id: cid,
+      setting_key: "next_sales_order_number",
+      setting_value: next
+    }, { onConflict: "company_id,setting_key" });
+
+  if (error) throw error;
+
+  settingsMap.set("next_sales_order_number", next);
+
+  return soNumber;
+}
+
   async function markExistingOrders() {
-    if (!groupedOrders.length) return;
+  if (!groupedOrders.length) return;
 
-    const cid = await getCompanyId();
-    const orderNumbers = groupedOrders.map(o => o.orderNumber).filter(Boolean);
+  const cid = await getCompanyId();
 
-    if (!orderNumbers.length) return;
+  const refs = groupedOrders
+    .map(o => o.externalReference || o.orderNumber)
+    .filter(Boolean);
 
-    const { data, error } = await client
-      .from("orders")
-      .select("id, order_number")
-      .eq("company_id", cid)
-      .in("order_number", orderNumbers);
+  if (!refs.length) return;
 
-    if (error) throw error;
+  const { data, error } = await client
+    .from("orders")
+    .select("id, order_number, external_reference")
+    .eq("company_id", cid)
+    .in("external_reference", refs);
 
-    const existingMap = new Map((data || []).map(r => [String(r.order_number), r.id]));
+  if (error) throw error;
 
-    groupedOrders = groupedOrders.map(o => ({
+  const existingMap = new Map(
+    (data || []).map(r => [String(r.external_reference), r])
+  );
+
+  groupedOrders = groupedOrders.map(o => {
+    const ref = String(o.externalReference || o.orderNumber || "");
+    const existing = existingMap.get(ref);
+
+    return {
       ...o,
-      existing: existingMap.has(String(o.orderNumber)),
-      existingOrderId: existingMap.get(String(o.orderNumber)) || null,
+      existing: !!existing,
+      existingOrderId: existing?.id || null,
+      existingOrderNumber: existing?.order_number || null,
       importAnyway: false
-    }));
-  }
+    };
+  });
+}
 
   async function markMissingProducts() {
     if (!groupedOrders.length) return;
@@ -1597,7 +1847,7 @@ if (/All deliveries must/i.test(line)) break;
       customer_id: productOwnerId,
       retail_name: retailerName || null,
 
-      order_number: order.orderNumber,
+     order_number: await reserveSalesOrderNumber(),
       external_reference: order.externalReference || order.orderNumber,
       purchase_order: order.purchaseOrder || null,
       source_type: order.sourceType || getFieldValue("defaultSourceType", "manual_import"),
@@ -1633,11 +1883,13 @@ if (/All deliveries must/i.test(line)) break;
       billing_address_id: billingAddressId,
 
       delivery_address_1: dedupeRepeatedWords(order.shipTo.address1) || null,
-      delivery_address_2: dedupeAddressParts([order.shipTo.address2, order.shipTo.address3]).join(", ") || null,
-      delivery_city: dedupeRepeatedWords(order.shipTo.city) || null,
-      delivery_postcode: dedupeRepeatedWords(order.shipTo.postcode) || null,
-      delivery_country: dedupeRepeatedWords(order.shipTo.country || getDefaultCountry()),
-      delivery_region: dedupeRepeatedWords(order.shipTo.county) || null,
+delivery_address_2: dedupeRepeatedWords(order.shipTo.address2) || null,
+delivery_address_3: dedupeRepeatedWords(order.shipTo.address3) || null,
+delivery_address_4: dedupeRepeatedWords(order.shipTo.address4) || null,
+delivery_city: dedupeRepeatedWords(order.shipTo.city) || null,
+delivery_postcode: dedupeRepeatedWords(order.shipTo.postcode) || null,
+delivery_country: dedupeRepeatedWords(order.shipTo.country || getDefaultCountry()),
+delivery_region: null,
 
       transport_type: "own_transport",
       memo: order.memo || null,
@@ -2014,74 +2266,514 @@ if (/All deliveries must/i.test(line)) break;
     }
   }
 
+async function loadManualProducts() {
+  const cid = await getCompanyId();
+  const owner = getSelectedProductOwner();
+  if (!owner) return;
+
+  const ownerId = await getOrCreateProductOwnerCustomer(owner, cid);
+
+  const { data, error } = await client
+    .from("products")
+    .select("*")
+    .eq("company_id", cid)
+    .eq("customer_id", ownerId)
+    .order("sku_base", { ascending: true });
+
+  if (error) {
+    console.warn("Manual products skipped:", error.message);
+    manualProducts = [];
+    return;
+  }
+
+  manualProducts = data || [];
+  renderManualProductOptions();
+}
+
+function renderManualProductOptions() {
+  const list = byId("manualProductOptions");
+  if (!list) return;
+
+  list.innerHTML = manualProducts.map(p => `
+    <option value="${escapeHtml(p.sku_base || "")}">
+      ${escapeHtml(p.name || p.description || "")}
+    </option>
+  `).join("");
+}
+
+function findManualProduct(sku) {
+  return manualProducts.find(p => normalize(p.sku_base) === normalize(sku)) || null;
+}
+
+function fillManualLineFromSku(input) {
+  const row = input.closest(".manual-line-row");
+  if (!row) return;
+
+  const product = findManualProduct(input.value);
+  if (!product) return;
+
+  const desc = row.querySelector(".manualDescription");
+  const volume = row.querySelector(".manualVolume");
+  const weight = row.querySelector(".manualWeight");
+  const storage = row.querySelector(".manualStorageTariff");
+  const admin = row.querySelector(".manualAdminTariff");
+  const handling = row.querySelector(".manualHandlingTariff");
+  const transport = row.querySelector(".manualTransportTariff");
+  const missing = row.querySelector(".manualProductMissing");
+  const hint = row.querySelector(".manualProductHint");
+
+  if (desc) desc.value = product.description || product.name || "";
+  if (volume) volume.value = product.volume_m3 || 0;
+  if (weight) weight.value = product.weight_kg || product.net_weight_kg || 0;
+  if (storage) storage.value = product.storage_tariff || 0;
+  if (admin) admin.value = product.admin_tariff || 0;
+  if (handling) handling.value = product.handling_tariff || 0;
+  if (transport) transport.value = product.transport_tariff || 0;
+  if (missing) missing.checked = false;
+  if (hint) hint.textContent = "Product found in master data.";
+}
+
+async function loadManualRetailers() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("orders")
+    .select(`
+  retail_name,
+  delivery_address_1,
+  delivery_address_2,
+  delivery_city,
+  delivery_postcode,
+  delivery_country
+`)
+    .eq("company_id", cid)
+    .not("retail_name", "is", null)
+    .order("retail_name", { ascending: true })
+    .limit(1000);
+
+  if (error) {
+    console.warn("Manual retailers skipped:", error.message);
+    manualRetailers = [];
+    return;
+  }
+
+  const map = new Map();
+
+  (data || []).forEach(row => {
+    const key = normalize(`${row.retail_name}|${row.delivery_postcode}`);
+    if (!key || map.has(key)) return;
+
+    map.set(key, {
+      name: row.retail_name || "",
+      contact: "",
+      address1: row.delivery_address_1 || "",
+      address2: row.delivery_address_2 || "",
+      city: row.delivery_city || "",
+      postcode: row.delivery_postcode || "",
+      country: row.delivery_country || getDefaultCountry()
+    });
+  });
+
+  manualRetailers = Array.from(map.values()).sort((a, b) =>
+    String(a.name).localeCompare(String(b.name), "en-GB")
+  );
+
+  renderManualRetailerOptions();
+}
+
+function renderManualRetailerOptions() {
+  const select = byId("manualRetailerSelect");
+  if (!select) return;
+
+  select.innerHTML =
+    `<option value="">New Retailer / Manual Entry</option>` +
+    manualRetailers.map((r, index) => `
+      <option value="${index}">
+        ${escapeHtml(r.name)}${r.postcode ? ` · ${escapeHtml(r.postcode)}` : ""}
+      </option>
+    `).join("");
+}
+
+function fillManualRetailerFromSelect() {
+  const select = byId("manualRetailerSelect");
+  if (!select || select.value === "") return;
+
+  const retailer = manualRetailers[Number(select.value)];
+  if (!retailer) return;
+
+  byId("manualRetailerName").value = retailer.name || "";
+  byId("manualContactName").value = retailer.contact || "";
+  byId("manualAddress1").value = retailer.address1 || "";
+  byId("manualAddress2").value = retailer.address2 || "";
+  byId("manualCity").value = retailer.city || "";
+  byId("manualPostcode").value = retailer.postcode || "";
+  byId("manualCountry").value = retailer.country || getDefaultCountry();
+}
+
+
+function syncManualOwnerSelect() {
+  const select = byId("manualOwnerSelect");
+  const owner = getSelectedProductOwner();
+
+  if (!select || !owner) return;
+
+  const label =
+    owner.trading_name ||
+    owner.name ||
+    owner.customer_code ||
+    owner.key ||
+    "Product owner";
+
+  const value =
+    owner.key ||
+    owner.customer_code ||
+    owner.trading_name ||
+    owner.name ||
+    "";
+
+  select.innerHTML = `
+    <option value="${escapeHtml(value)}">${escapeHtml(label)}</option>
+  `;
+
+  select.value = value;
+}
+
+function toggleManualUnknownOwnerFields() {
+  const checkbox = byId("manualUnknownOwner");
+  const fields = byId("manualUnknownOwnerFields");
+
+  if (!checkbox || !fields) return;
+
+  fields.classList.toggle("hidden", !checkbox.checked);
+}
+
+function openManualOrderModal() {
+
+  syncManualOwnerSelect();
+  toggleManualUnknownOwnerFields();
+
+  byId("manualOrderModal")?.classList.add("open");
+
+  const dateInput = byId("manualRequestedDate");
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().slice(0, 10);
+  }
+
+  const orderInput = byId("manualOrderNumber");
+  if (orderInput && !orderInput.value) {
+    orderInput.value = `MAN-${Date.now().toString().slice(-6)}`;
+  }
+}
+
+function closeManualOrderModal() {
+  byId("manualOrderModal")?.classList.remove("open");
+}
+
+function addManualLine() {
+  const wrap = byId("manualLines");
+  if (!wrap) return;
+
+  wrap.insertAdjacentHTML("beforeend", `
+    <div class="manual-line-row">
+      <div class="manual-line-main">
+        <div class="field">
+          <label>SKU</label>
+          <input class="input manualSku" list="manualProductOptions" placeholder="Search or enter SKU"/>
+        </div>
+
+        <div class="field">
+          <label>Description</label>
+          <input class="input manualDescription" placeholder="Description"/>
+        </div>
+
+        <div class="field">
+          <label>Qty</label>
+          <input class="input manualQty" type="number" min="1" value="1"/>
+        </div>
+
+        <div class="field">
+          <label>Volume m³</label>
+          <input class="input manualVolume" type="number" step="0.001" min="0" value="0"/>
+        </div>
+
+        <div class="field">
+          <label>Weight kg</label>
+          <input class="input manualWeight" type="number" step="0.001" min="0" value="0"/>
+        </div>
+
+        <button class="icon-btn btnRemoveManualLine" type="button">×</button>
+      </div>
+
+      <div class="manual-line-finance">
+        <div class="field">
+          <label>Storage Tariff</label>
+          <input class="input manualStorageTariff" type="number" step="0.01" min="0" value="0"/>
+        </div>
+
+        <div class="field">
+          <label>Admin Tariff</label>
+          <input class="input manualAdminTariff" type="number" step="0.01" min="0" value="0"/>
+        </div>
+
+        <div class="field">
+          <label>Handling Tariff</label>
+          <input class="input manualHandlingTariff" type="number" step="0.01" min="0" value="0"/>
+        </div>
+
+        <div class="field">
+          <label>Transport Tariff</label>
+          <input class="input manualTransportTariff" type="number" step="0.01" min="0" value="0"/>
+        </div>
+      </div>
+
+      <div class="manual-line-flags">
+        <label class="checkbox-row">
+          <input type="checkbox" class="manualProductMissing"/>
+          <span>Product not in master data</span>
+        </label>
+
+        <span class="section-sub manualProductHint">Select an existing SKU or enter a new SKU manually.</span>
+      </div>
+    </div>
+  `);
+}
+
+function getManualLines() {
+  return Array.from(document.querySelectorAll("#manualLines .manual-line-row"))
+    .map((row, index) => {
+      const sku = row.querySelector(".manualSku")?.value.trim() || "";
+      const description = row.querySelector(".manualDescription")?.value.trim() || "";
+      const qty = Math.max(1, Math.round(toNumber(row.querySelector(".manualQty")?.value, 1)));
+
+      const unitVolume = toNumber(row.querySelector(".manualVolume")?.value, 0);
+      const unitWeight = toNumber(row.querySelector(".manualWeight")?.value, 0);
+
+      return {
+        itemRaw: sku,
+        itemBrand: "",
+        itemCode: sku,
+        description,
+        quantity: qty,
+        unitVolume,
+        totalVolume: qty * unitVolume,
+        unitWeight,
+        totalWeight: qty * unitWeight,
+        tariff_storage: toNumber(row.querySelector(".manualStorageTariff")?.value, 0),
+        tariff_admin: toNumber(row.querySelector(".manualAdminTariff")?.value, 0),
+        tariff_handling: toNumber(row.querySelector(".manualHandlingTariff")?.value, 0),
+        tariff_transport: toNumber(row.querySelector(".manualTransportTariff")?.value, 0),
+        productMissingManual: !!row.querySelector(".manualProductMissing")?.checked,
+        sourceRow: index + 1
+      };
+    })
+    .filter(line => line.itemCode || line.description);
+}
+
+async function saveManualOrder() {
+  if (!getSelectedProductOwner()) {
+    showToast("Select a product owner first.", "err");
+    return;
+  }
+
+  const orderNumber = getFieldValue("manualOrderNumber", "");
+  const retailerName = getFieldValue("manualRetailerName", "");
+  const postcode = getFieldValue("manualPostcode", "");
+  const city = getFieldValue("manualCity", "");
+  const lines = getManualLines();
+
+  if (!orderNumber) {
+    showToast("Manual order number is required.", "err");
+    return;
+  }
+
+  if (!retailerName) {
+    showToast("Retailer / shop name is required.", "err");
+    return;
+  }
+
+  if (!postcode && !city) {
+    showToast("City or postcode is required.", "err");
+    return;
+  }
+
+  if (!lines.length) {
+    showToast("Add at least one product line.", "err");
+    return;
+  }
+
+  currentSourceKind = "manual";
+
+ const shipTo = {
+  ...buildEmptyAddress(),
+  contactName: getFieldValue("manualContactName", ""),
+  companyName: retailerName,
+
+  address1: getFieldValue("manualAddress1", ""),
+  address2: getFieldValue("manualAddress2", ""),
+  address3: getFieldValue("manualAddress3", ""),
+  address4: getFieldValue("manualAddress4", ""),
+
+  city: getFieldValue("manualCity", ""),
+  postcode,
+  country: getFieldValue("manualCountry", getDefaultCountry())
+};
+
+  let manualOrder = {
+    ...buildEmptyOrder(),
+    sourceKind: "manual",
+    sourceType: "manual_order",
+    orderNumber,
+    externalReference: orderNumber,
+    purchaseOrder: getFieldValue("manualPurchaseOrder", ""),
+    orderDate: new Date().toISOString().slice(0, 10),
+    dueDate: getFieldValue("manualRequestedDate", ""),
+    retailName: retailerName,
+    customerName: retailerName,
+    contactName: getFieldValue("manualContactName", ""),
+    address1: shipTo.address1,
+    address2: shipTo.address2,
+    city: shipTo.city,
+    postcode: shipTo.postcode,
+    country: shipTo.country,
+    shipTo,
+    memo: getFieldValue("manualMemo", ""),
+    lines
+  };
+
+  manualOrder = finalizeOrder(manualOrder);
+
+  groupedOrders = [manualOrder];
+  rawRows = lines;
+  selectedOrderNo = manualOrder.orderNumber;
+
+  await markExistingOrders();
+  await markMissingProducts();
+
+  renderAll();
+  closeManualOrderModal();
+
+  showToast("Manual order added to preview. Click Import Previewed Orders to save it.", "ok");
+}
   function bindEvents() {
-    const excelInput = byId("ordersImportFile");
-    if (excelInput) {
-      excelInput.addEventListener("change", e => {
-        selectedExcelFile = e.target.files?.[0] || null;
-        setText("excelFileStatus", selectedExcelFile ? `${selectedExcelFile.name} selected` : "No Excel file selected.");
-      });
+  const excelInput = byId("ordersImportFile");
+
+  if (excelInput) {
+    excelInput.addEventListener("change", e => {
+      selectedExcelFile = e.target.files?.[0] || null;
+      setText(
+        "excelFileStatus",
+        selectedExcelFile ? `${selectedExcelFile.name} selected` : "No Excel file selected."
+      );
+    });
+  }
+
+byId("manualLines")?.addEventListener("change", event => {
+  const input = event.target.closest(".manualSku");
+  if (!input) return;
+  fillManualLineFromSku(input);
+});
+
+byId("manualRetailerSelect")?.addEventListener("change", () => {
+  fillManualRetailerFromSelect();
+});
+
+byId("manualUnknownOwner")?.addEventListener("change", () => {
+  toggleManualUnknownOwnerFields();
+});
+
+byId("productOwnerName")?.addEventListener("change", async () => {
+  groupedOrders = groupedOrders.map(finalizeOrder);
+
+  await loadManualProducts();
+
+  if (groupedOrders.length) {
+    try {
+      await markMissingProducts();
+    } catch (error) {
+      console.warn("Product check after owner change skipped:", error.message);
     }
+  }
 
-    byId("productOwnerName")?.addEventListener("change", async () => {
-      groupedOrders = groupedOrders.map(finalizeOrder);
+  renderAll();
+});
 
-      if (groupedOrders.length) {
-        try {
-          await markMissingProducts();
-        } catch (error) {
-          console.warn("Product check after owner change skipped:", error.message);
-        }
+  bindPdfDropZone();
+
+  firstEl(["btnReadExcelFile", "btnReadFile"])?.addEventListener("click", async () => {
+    try {
+      if (!getSelectedProductOwner()) {
+        showToast("Select a product owner first.", "err");
+        return;
       }
 
-      renderAll();
-    });
+      await readExcelFile();
+    } catch (error) {
+      console.error(error);
+      setProgress(false);
+      showToast(error.message || "Could not read Excel file.", "err");
+    }
+  });
 
-    bindPdfDropZone();
+  byId("btnReadPdfFile")?.addEventListener("click", async () => {
+    try {
+      await readPdfFile();
+    } catch (error) {
+      console.error(error);
+      setProgress(false);
+      showToast(error.message || "Could not read PDF file.", "err");
+    }
+  });
 
-    firstEl(["btnReadExcelFile", "btnReadFile"])?.addEventListener("click", async () => {
-      try {
-        if (!getSelectedProductOwner()) {
-          showToast("Select a product owner first.", "err");
-          return;
-        }
+  byId("btnShowPdfText")?.addEventListener("click", togglePdfTextPanel);
 
-        await readExcelFile();
-      } catch (error) {
-        console.error(error);
-        setProgress(false);
-        showToast(error.message || "Could not read Excel file.", "err");
-      }
-    });
+  byId("btnImportOrders")?.addEventListener("click", async () => {
+    try {
+      await importOrders();
+    } catch (error) {
+      console.error(error);
+      setProgress(false);
+      showToast(error.message || "Import failed.", "err");
+    }
+  });
 
-    byId("btnReadPdfFile")?.addEventListener("click", async () => {
-      try {
-        await readPdfFile();
-      } catch (error) {
-        console.error(error);
-        setProgress(false);
-        showToast(error.message || "Could not read PDF file.", "err");
-      }
-    });
+  byId("btnClearPreview")?.addEventListener("click", clearPreview);
 
-    byId("btnShowPdfText")?.addEventListener("click", togglePdfTextPanel);
+  ["optSkipExisting", "optSkipZeroQtyPdfLines", "optUsePdfTotalVolume"].forEach(id => {
+    byId(id)?.addEventListener("change", renderAll);
+  });
 
-    byId("btnImportOrders")?.addEventListener("click", async () => {
-      try {
-        await importOrders();
-      } catch (error) {
-        console.error(error);
-        setProgress(false);
-        showToast(error.message || "Import failed.", "err");
-      }
-    });
+  byId("btnOpenManualOrder")?.addEventListener("click", openManualOrderModal);
+  byId("btnCloseManualOrder")?.addEventListener("click", closeManualOrderModal);
+  byId("btnCancelManualOrder")?.addEventListener("click", closeManualOrderModal);
+  byId("btnAddManualLine")?.addEventListener("click", addManualLine);
 
-    byId("btnClearPreview")?.addEventListener("click", clearPreview);
+  byId("manualOrderModal")?.addEventListener("click", event => {
+    if (event.target.id === "manualOrderModal") {
+      closeManualOrderModal();
+    }
+  });
 
-    ["optSkipExisting", "optSkipZeroQtyPdfLines", "optUsePdfTotalVolume"].forEach(id => {
-      byId(id)?.addEventListener("change", renderAll);
-    });
+  byId("manualLines")?.addEventListener("click", event => {
+  const btn = event.target.closest(".btnRemoveManualLine");
+  if (!btn) return;
 
+  const rows = document.querySelectorAll("#manualLines .manual-line-row");
+  if (rows.length <= 1) {
+    showToast("At least one product line is required.", "err");
+    return;
+  }
+
+  btn.closest(".manual-line-row")?.remove();
+});
+
+byId("btnSaveManualOrder")?.addEventListener("click", async () => {
+  try {
+    await saveManualOrder();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Manual order could not be created.", "err");
+  }
+});
     hideDeprecatedOptions();
   }
 
@@ -2093,11 +2785,13 @@ if (/All deliveries must/i.test(line)) break;
 
       client = sb();
 
-      await getCompanyId();
-      await loadSettings();
+     await getCompanyId();
+await loadSettings();
+await loadManualProducts();
+await loadManualRetailers();
 
-      bindEvents();
-      renderAll();
+bindEvents();
+renderAll();
     } catch (error) {
       console.error(error);
       showToast(error.message || "Order import page failed to load.", "err");

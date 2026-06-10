@@ -337,17 +337,21 @@
         toNumber(route?.estimated_service_hours, 0)
       );
 
-    const revenue =
-      toNumber(route?.estimated_revenue_gbp, 0) ||
-      orders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
+   const revenue =
+  toNumber(route?.estimated_revenue_gbp, 0) ||
+  orders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
 
-    const cost =
-      toNumber(route?.estimated_cost_total_gbp, 0) ||
-      toNumber(route?.total_cost_gbp, 0);
+const fuelCost =
+  toNumber(route?.estimated_cost_fuel_gbp, 0);
 
-    const result =
-      toNumber(route?.estimated_profit_gbp, 0) ||
-      revenue - cost;
+const fuelLitres =
+  toNumber(route?.estimated_fuel_litres, 0);
+
+const cost =
+  toNumber(route?.estimated_cost_total_gbp, 0) ||
+  toNumber(route?.total_cost_gbp, 0);
+
+const result = revenue - cost;
 
     return {
       totalStops,
@@ -357,6 +361,8 @@
       distanceKm,
       distanceMiles,
       totalHours,
+	fuelCost,
+	fuelLitres,
       revenue,
       cost,
       result
@@ -600,56 +606,66 @@
   }
 
   function render() {
-    injectStyles();
-    syncFromPlannerData();
+  injectStyles();
+  syncFromPlannerData();
 
-    const mount =
-      byId("availableVehiclesModule") ||
-      byId("availableVehiclesList");
+  const mount =
+    byId("availableVehiclesModule") ||
+    byId("availableVehiclesList");
 
-    if (!mount) return;
+  if (!mount) return;
 
-    if (!activeVehicles.length) {
-      mount.innerHTML = `
-        <div class="av-empty">
-          No vehicles available. Check Settings → Transport and make sure vehicles are active and enabled for planning.
-        </div>
-      `;
-      return;
-    }
-
-    const selectedSummary = getSelectedOrdersSummary();
-
-    const dayRoutes = allRoutes.filter(route => {
-      const date = getRouteDate(route);
-      return !selectedPlanningDate || !date || date === selectedPlanningDate;
-    });
-
+  if (!activeVehicles.length) {
     mount.innerHTML = `
-      <div class="av-stack">
-        <div class="av-day-head">
-          <div>
-            <div class="av-day-title">Available Vehicles</div>
-            <div class="av-day-sub">
-              Planning date: ${escapeHtml(formatDate(selectedPlanningDate))}
-              · ${formatNumber(dayRoutes.length)} route(s)
-              · ${formatNumber(selectedSummary.count)} selected order(s)
-            </div>
-          </div>
-
-          <div class="av-summary">
-            <div class="av-mini"><span>Selected</span><strong>${formatNumber(selectedSummary.count)}</strong></div>
-            <div class="av-mini"><span>Volume</span><strong>${formatNumber(selectedSummary.volume, 2)} m³</strong></div>
-            <div class="av-mini"><span>Colli</span><strong>${formatNumber(selectedSummary.colli)}</strong></div>
-          </div>
-        </div>
-
-        ${activeVehicles.map(renderVehicle).join("")}
+      <div class="av-empty">
+        No vehicles available. Check Settings → Transport and make sure vehicles are active and enabled for planning.
       </div>
     `;
-
-    bindEvents(mount);
+    return;
   }
+
+  const selectedSummary = getSelectedOrdersSummary();
+
+  const dayRoutes = allRoutes.filter(route => {
+    const date = getRouteDate(route);
+    return !selectedPlanningDate || !date || date === selectedPlanningDate;
+  });
+
+  mount.innerHTML = `
+    <div class="av-stack">
+      <div class="av-day-head">
+        <div>
+          <div class="av-day-title">Available Vehicles</div>
+          <div class="av-day-sub">
+            ${formatNumber(dayRoutes.length)} route(s)
+            · ${formatNumber(selectedSummary.count)} selected order(s)
+          </div>
+        </div>
+
+        <div class="av-summary">
+          <div class="av-mini">
+            <span>Selected</span>
+            <strong>${formatNumber(selectedSummary.count)}</strong>
+          </div>
+
+          <div class="av-mini">
+            <span>Volume</span>
+            <strong>${formatNumber(selectedSummary.volume, 2)} m³</strong>
+          </div>
+
+          <div class="av-mini">
+            <span>Colli</span>
+            <strong>${formatNumber(selectedSummary.colli)}</strong>
+          </div>
+        </div>
+      </div>
+
+      ${activeVehicles.map(renderVehicle).join("")}
+    </div>
+  `;
+
+  bindEvents(mount);
+}
 
   function renderVehicle(vehicle) {
     const vehicleId = String(vehicle.id);
@@ -733,17 +749,94 @@
 
           <div class="av-actions">
             <button class="av-btn" type="button" data-toggle-route="${escapeHtml(routeId)}">${open ? "Close" : "Details"}</button>
-            <button class="av-btn success" type="button" data-send-driver="${escapeHtml(routeId)}">Send</button>
-            <button class="av-btn danger" type="button" data-remove-route="${escapeHtml(routeId)}">Remove</button>
+            <button class="av-btn primary" type="button" data-add-selected-route="${escapeHtml(routeId)}">Add selected</button>
+<button class="av-btn success" type="button" data-send-driver="${escapeHtml(routeId)}">Send</button>
+<button class="av-btn danger" type="button" data-remove-route="${escapeHtml(routeId)}">Remove</button>
           </div>
         </div>
 
         <div class="av-route-kpis">
-          <div class="av-kpi"><span>Stops</span><strong>${formatNumber(summary.totalStops)}</strong></div>
-          <div class="av-kpi"><span>Volume</span><strong>${formatNumber(summary.totalVolume, 1)} m³</strong></div>
-          <div class="av-kpi"><span>Revenue</span><strong>${formatMoney(summary.revenue)}</strong></div>
-          <div class="av-kpi"><span>Result</span><strong>${formatMoney(summary.result)}</strong></div>
-        </div>
+  <div class="av-kpi">
+    <span>Stops</span>
+    <strong>${formatNumber(summary.totalStops)}</strong>
+  </div>
+
+  <div class="av-kpi">
+    <span>Volume</span>
+    <strong>${formatNumber(summary.totalVolume, 1)} m³</strong>
+  </div>
+
+  <div class="av-kpi">
+    <span>Miles</span>
+    <strong>${formatNumber(summary.distanceMiles, 1)} mi</strong>
+  </div>
+
+  <div class="av-kpi">
+    <span>Hours</span>
+    <strong>${formatNumber(summary.totalHours, 1)} h</strong>
+  </div>
+
+  <div class="av-kpi">
+    <span>Revenue</span>
+    <strong>${formatMoney(summary.revenue)}</strong>
+  </div>
+
+  <div class="av-kpi av-cost-breakdown-toggle"
+       data-route-cost="${route.id}"
+       style="cursor:pointer;">
+    <span>Cost ▼</span>
+    <strong>${formatMoney(summary.cost)}</strong>
+  </div>
+
+  <div class="av-kpi">
+    <span>Result</span>
+    <strong>${formatMoney(summary.result)}</strong>
+  </div>
+</div>
+
+<div class="av-cost-breakdown"
+     id="cost-breakdown-${route.id}"
+     style="display:none;margin:10px;padding:12px;border:1px solid var(--border);border-radius:8px;background:#fafafa;">
+
+  <div style="font-weight:900;margin-bottom:10px;">
+    Route Cost Breakdown
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr auto;gap:4px;">
+   <div>Fuel Cost</div>
+<div>${formatMoney(route.estimated_cost_fuel_gbp || 0)}</div>
+
+<div>Fuel Used</div>
+<div>${formatNumber(route.estimated_fuel_litres || 0, 1)} L</div>
+
+<div>Vehicle Cost</div>
+<div>${formatMoney(route.estimated_cost_vehicle_gbp || 0)}</div>
+
+<div>Driver Cost</div>
+<div>${formatMoney(route.estimated_cost_labour_gbp || 0)}</div>
+
+    <div>Total Miles</div>
+    <div>${formatNumber(summary.distanceMiles, 1)} mi</div>
+
+    <div>Total Hours</div>
+    <div>${formatNumber(summary.totalHours, 1)} h</div>
+
+    <div style="font-weight:900;margin-top:8px;">Total Cost</div>
+    <div style="font-weight:900;margin-top:8px;">
+      ${formatMoney(summary.cost)}
+    </div>
+
+    <div style="font-weight:900;">Revenue</div>
+    <div style="font-weight:900;">
+      ${formatMoney(summary.revenue)}
+    </div>
+
+    <div style="font-weight:900;">Result</div>
+    <div style="font-weight:900;color:${summary.result >= 0 ? '#16a34a' : '#dc2626'};">
+      ${formatMoney(summary.result)}
+    </div>
+  </div>
+</div>
 
         <div class="av-route-extra">
           ${renderRouteAssignment(route, vehicle)}
@@ -834,134 +927,202 @@
   }
 
   function renderStop(stop) {
-    const order = getOrderById(stop.order_id);
-    const statusValue = getStatusValueFromStop(stop, order);
-    const cls = statusClassFromValue(statusValue);
-    const stopNumber = stop.stop_sequence || stop.stop_number || "—";
-    const eta = formatTime(stop.planned_arrival_time || stop.arrival_eta || stop.eta || stop.planned_time);
-    const city = stop.city || order?.delivery_city || "—";
-    const postcode = stop.postcode || order?.delivery_postcode || "—";
-    const title = order?.order_number || stop.stop_name || "Stop";
-    const retailer = getRetailerName(order, stop);
+  const order = getOrderById(stop.order_id);
+  const statusValue = getStatusValueFromStop(stop, order);
+  const cls = statusClassFromValue(statusValue);
+  const stopNumber = stop.stop_sequence || stop.stop_number || "—";
+  const eta = formatTime(
+    stop.planned_arrival_time ||
+    stop.arrival_eta ||
+    stop.eta ||
+    stop.planned_time
+  );
 
-    return `
-      <div
-        class="av-stop ${escapeHtml(cls)}"
-        draggable="true"
-        data-stop-id="${escapeHtml(stop.id)}"
-        data-route-id="${escapeHtml(stop.route_id)}"
-      >
-        <div class="av-stop-no ${escapeHtml(cls)}">${escapeHtml(stopNumber)}</div>
+  const city = stop.city || order?.delivery_city || "—";
+  const postcode = stop.postcode || order?.delivery_postcode || "—";
+  const title = order?.order_number || stop.stop_name || "Stop";
+  const retailer = getRetailerName(order, stop);
 
-        <div>
-          <div class="av-stop-title">
-            ${escapeHtml(title)} · ${escapeHtml(retailer)}
-          </div>
+  return `
+    <div
+      class="av-stop ${escapeHtml(cls)}"
+      draggable="true"
+      data-stop-id="${escapeHtml(stop.id)}"
+      data-route-id="${escapeHtml(stop.route_id)}"
+    >
+      <div class="av-stop-no ${escapeHtml(cls)}">
+        ${escapeHtml(stopNumber)}
+      </div>
 
-          <div class="av-stop-sub">
-            ${escapeHtml(city)}
-            · ${escapeHtml(postcode)}
-            · ETA ${escapeHtml(eta)}
-          </div>
-
-          <div class="av-stop-sub">
-            Status:
-            <span class="av-status ${escapeHtml(cls)}">
-              ${escapeHtml(titleCase(statusValue))}
-            </span>
-          </div>
+      <div>
+        <div class="av-stop-title">
+          ${escapeHtml(title)} · ${escapeHtml(retailer)}
         </div>
 
-        <div class="av-stop-actions">
-          <button class="av-btn small success" type="button" data-manual-delivered="${escapeHtml(stop.id)}">Delivered</button>
-          <button class="av-btn small warning" type="button" data-manual-issue="${escapeHtml(stop.id)}">Issue</button>
-          <button class="av-btn small danger" type="button" data-manual-failed="${escapeHtml(stop.id)}">Failed</button>
+        <div class="av-stop-sub">
+          ${escapeHtml(city)}
+          · ${escapeHtml(postcode)}
+          · ETA ${escapeHtml(eta)}
+        </div>
+
+        <div class="av-stop-sub">
+          Status:
+          <span class="av-status ${escapeHtml(cls)}">
+            ${escapeHtml(titleCase(statusValue))}
+          </span>
         </div>
       </div>
-    `;
-  }
 
-  function bindEvents(mount) {
-    mount.querySelectorAll("[data-select-vehicle]").forEach(button => {
-      button.addEventListener("click", () => {
-        const vehicleId = button.dataset.selectVehicle || "";
+      <div class="av-stop-actions">
+        <button
+          class="av-btn small success"
+          type="button"
+          data-manual-delivered="${escapeHtml(stop.id)}"
+        >
+          Delivered
+        </button>
 
-        window.dispatchEvent(new CustomEvent("veynor:vehicle-selected", {
-          detail: { vehicleId }
-        }));
+        <button
+          class="av-btn small warning"
+          type="button"
+          data-manual-issue="${escapeHtml(stop.id)}"
+        >
+          Issue
+        </button>
 
-        showToast("Vehicle selected for new planning.", "ok");
-      });
+        <button
+          class="av-btn small danger"
+          type="button"
+          data-manual-failed="${escapeHtml(stop.id)}"
+        >
+          Failed
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function bindEvents(mount) {
+
+  mount.querySelectorAll("[data-select-vehicle]").forEach(button => {
+    button.addEventListener("click", () => {
+      const vehicleId = button.dataset.selectVehicle || "";
+
+      window.dispatchEvent(new CustomEvent("veynor:vehicle-selected", {
+        detail: { vehicleId }
+      }));
+
+      showToast("Vehicle selected for new planning.", "ok");
     });
+  });
 
-    mount.querySelectorAll("[data-toggle-vehicle]").forEach(button => {
-      button.addEventListener("click", () => {
-        const id = String(button.dataset.toggleVehicle || "");
-        if (!id) return;
-
-        if (expandedVehicleIds.has(id)) expandedVehicleIds.delete(id);
-        else expandedVehicleIds.add(id);
-
-        render();
-      });
+  mount.querySelectorAll("[data-add-selected-route]").forEach(button => {
+    button.addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("veynor:add-selected-to-route", {
+        detail: {
+          routeId: button.dataset.addSelectedRoute
+        }
+      }));
     });
+  });
 
-    mount.querySelectorAll("[data-toggle-route]").forEach(button => {
-      button.addEventListener("click", () => {
-        const id = String(button.dataset.toggleRoute || "");
-        if (!id) return;
+  mount.querySelectorAll("[data-toggle-vehicle]").forEach(button => {
+    button.addEventListener("click", () => {
+      const id = String(button.dataset.toggleVehicle || "");
+      if (!id) return;
 
-        if (expandedRouteIds.has(id)) expandedRouteIds.delete(id);
-        else expandedRouteIds.add(id);
+      if (expandedVehicleIds.has(id)) {
+        expandedVehicleIds.delete(id);
+      } else {
+        expandedVehicleIds.add(id);
+      }
 
-        render();
-      });
+      render();
     });
+  });
 
-    mount.querySelectorAll("[data-save-route]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await saveRouteAssignment(button.dataset.saveRoute);
-      });
+  mount.querySelectorAll("[data-toggle-route]").forEach(button => {
+    button.addEventListener("click", () => {
+      const id = String(button.dataset.toggleRoute || "");
+      if (!id) return;
+
+      if (expandedRouteIds.has(id)) {
+        expandedRouteIds.delete(id);
+      } else {
+        expandedRouteIds.add(id);
+      }
+
+      render();
     });
+  });
 
-    mount.querySelectorAll("[data-send-driver]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await sendRouteToDriver(button.dataset.sendDriver);
-      });
+  mount.querySelectorAll("[data-route-cost]").forEach(card => {
+    card.addEventListener("click", () => {
+      const routeId = card.dataset.routeCost;
+      const panel = document.getElementById(`cost-breakdown-${routeId}`);
+
+      if (!panel) return;
+
+      panel.style.display =
+        panel.style.display === "none"
+          ? "block"
+          : "none";
     });
+  });
 
-    mount.querySelectorAll("[data-remove-route]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await removeRoute(button.dataset.removeRoute);
-      });
+  mount.querySelectorAll("[data-save-route]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await saveRouteAssignment(button.dataset.saveRoute);
     });
+  });
 
-    mount.querySelectorAll("[data-save-stop-order]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await saveStopOrder(button.dataset.saveStopOrder);
-      });
+  mount.querySelectorAll("[data-send-driver]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await sendRouteToDriver(button.dataset.sendDriver);
     });
+  });
 
-    mount.querySelectorAll("[data-manual-delivered]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await manuallyCompleteStop(button.dataset.manualDelivered, "delivered");
-      });
+  mount.querySelectorAll("[data-remove-route]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await removeRoute(button.dataset.removeRoute);
     });
+  });
 
-    mount.querySelectorAll("[data-manual-issue]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await manuallyCompleteStop(button.dataset.manualIssue, "delivery_issue");
-      });
+  mount.querySelectorAll("[data-save-stop-order]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await saveStopOrder(button.dataset.saveStopOrder);
     });
+  });
 
-    mount.querySelectorAll("[data-manual-failed]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await manuallyCompleteStop(button.dataset.manualFailed, "failed_delivery");
-      });
+  mount.querySelectorAll("[data-manual-delivered]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await manuallyCompleteStop(
+        button.dataset.manualDelivered,
+        "delivered"
+      );
     });
+  });
 
-    bindDragAndDrop(mount);
-  }
+  mount.querySelectorAll("[data-manual-issue]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await manuallyCompleteStop(
+        button.dataset.manualIssue,
+        "delivery_issue"
+      );
+    });
+  });
+
+  mount.querySelectorAll("[data-manual-failed]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await manuallyCompleteStop(
+        button.dataset.manualFailed,
+        "failed_delivery"
+      );
+    });
+  });
+
+  bindDragAndDrop(mount);
+}
 
   function bindDragAndDrop(mount) {
     mount.querySelectorAll(".av-stop[draggable='true']").forEach(stopEl => {

@@ -77,6 +77,14 @@
     return cleanText(order.purchase_order || order.po_number || "—");
   }
 
+function getSupplierReference(order) {
+  const so = cleanText(order?.order_number || "");
+  const ref = cleanText(order?.external_reference || "");
+
+  if (!ref || ref === so) return "";
+  return ref;
+}
+
   function getProductOwnerName(order) {
     return cleanText(
       order.customers?.name ||
@@ -96,18 +104,19 @@
   }
 
   function getShipToLines(order) {
-    return [
-      getRetailerName(order),
-      order.delivery_address_1,
-      order.delivery_address_2,
-      order.delivery_city,
-      order.delivery_region,
-      order.delivery_postcode,
-      order.delivery_country || "United Kingdom",
-      order.delivery_email || order.email || "",
-      order.delivery_phone || order.phone || ""
-    ].filter(Boolean).map(cleanText);
-  }
+  return [
+    getRetailerName(order),
+    order.delivery_address_1,
+    order.delivery_address_2,
+    order.delivery_address_3,
+    order.delivery_address_4,
+    order.delivery_city,
+    order.delivery_postcode,
+    order.delivery_country || "United Kingdom",
+    order.delivery_email || order.email || "",
+    order.delivery_phone || order.phone || ""
+  ].filter(Boolean).map(cleanText);
+}
 
   function getOrderLines(order) {
     return Array.isArray(order?.order_lines) ? order.order_lines : [];
@@ -360,9 +369,21 @@
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-    doc.text(`Date: ${formatDate(new Date())}`, 196, 41, { align: "right" });
-    doc.text(`Order #: ${getOrderNumber(order)}`, 196, 48, { align: "right" });
-    doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 55, { align: "right" });
+const supplierRef = getSupplierReference(order);
+
+doc.text(`Date: ${formatDate(new Date())}`, 196, 41, { align: "right" });
+
+doc.setFont("helvetica", "bold");
+doc.text(`Order #: ${getOrderNumber(order)}`, 196, 48, { align: "right" });
+
+doc.setFont("helvetica", "normal");
+
+if (supplierRef) {
+  doc.text(`Supplier Ref: ${supplierRef}`, 196, 55, { align: "right" });
+  doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 62, { align: "right" });
+} else {
+  doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 55, { align: "right" });
+}
 
     const infoY = logoAdded ? 47 : 40;
 
@@ -637,7 +658,7 @@
       customer_id: order.customer_id || null,
       order_id: order.id,
       document_type: "delivery_note",
-      document_number: `DN-${order.order_number || String(order.id).slice(0, 8)}`,
+     document_number: order.order_number || String(order.id).slice(0, 8),
       document_status: "generated",
       file_url: uploaded.fileUrl,
       storage_path: uploaded.storagePath,

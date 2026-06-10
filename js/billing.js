@@ -204,6 +204,36 @@
     return currentProfile?.customer_id || "";
   }
 
+  function getBillingView() {
+    return byId("billingView")?.value || "open";
+  }
+
+  function setBillingView(view) {
+    const safeView = view === "paid" ? "paid" : "open";
+
+    if (byId("billingView")) {
+      byId("billingView").value = safeView;
+    }
+
+    document.querySelectorAll("[data-billing-tab]").forEach(btn => {
+      const active = btn.getAttribute("data-billing-tab") === safeView;
+      btn.classList.toggle("active", active);
+      btn.classList.toggle("is-active", active);
+    });
+
+    if (safeView === "paid") {
+      setText("billingListTitle", "Paid invoices");
+      setText("billingListSubtitle", "Invoices that have been marked as paid / payment processed.");
+    } else {
+      setText("billingListTitle", "Open invoices");
+      setText("billingListSubtitle", "Generated, sent, overdue and partially paid invoices.");
+    }
+  }
+
+  function isPaidStatus(value) {
+    return normalizeStatus(value) === "paid";
+  }
+
   function emptyTotals() {
     return {
       pick: 0,
@@ -241,20 +271,20 @@
   }
 
   function getDisplayTotals(totals) {
-    const source = totals || emptyTotals();
+  const source = totals || emptyTotals();
 
-    return {
-      pick: source.pick,
-      warehouse: isCustomerView() ? warehouseTotal(source) : source.warehouse,
-      admin: source.admin,
-      transport: source.transport,
-      net: source.net,
-      vat: source.vat,
-      gross: source.gross,
-      colli: source.colli,
-      volume: source.volume
-    };
-  }
+  return {
+    pick: source.pick,
+    warehouse: warehouseTotal(source),
+    admin: source.admin,
+    transport: source.transport,
+    net: source.net,
+    vat: source.vat,
+    gross: source.gross,
+    colli: source.colli,
+    volume: source.volume
+  };
+}
 
   function calculateOrderRevenue(order) {
     const pick = round2(toNumber(order?.total_handling_tariff, 0));
@@ -365,6 +395,13 @@
   function getOrderNumber(order) {
     return order?.order_number || order?.external_reference || "—";
   }
+function getSupplierReference(order) {
+  const so = String(order?.order_number || "").trim();
+  const ref = String(order?.external_reference || "").trim();
+
+  if (!ref || ref === so) return "";
+  return ref;
+}
 
   function getAddressText(order) {
     return [
@@ -384,6 +421,8 @@
     if (v === "invoice_sent") return "sent";
     if (v === "not_invoiced") return "generated";
     if (v === "part_paid") return "partially_paid";
+    if (v === "part-paid") return "partially_paid";
+    if (v === "partial_paid") return "partially_paid";
 
     return v || "generated";
   }
@@ -411,6 +450,28 @@
     if (v === "partially_paid") return "Partly paid";
 
     return "Invoice generated";
+  }
+
+  function paymentNote(value) {
+    const v = normalizeStatus(value);
+
+    if (v === "paid") {
+      return `<span class="billing-payment-note">Payment processed</span>`;
+    }
+
+    if (v === "sent") {
+      return `<span class="billing-payment-note sent">Awaiting payment</span>`;
+    }
+
+    if (v === "overdue") {
+      return `<span class="billing-payment-note overdue">Payment overdue</span>`;
+    }
+
+    if (v === "partially_paid") {
+      return `<span class="billing-payment-note sent">Partly paid</span>`;
+    }
+
+    return `<span class="billing-payment-note generated">Invoice generated</span>`;
   }
 
   function statusClass(value) {
@@ -828,8 +889,10 @@
       invoice.customer_name,
       invoice.status,
       ...invoice.orders.map(order => [
-        getOrderNumber(order),
-        getProductOwnerName(order),
+       getOrderNumber(order),
+getSupplierReference(order),
+order.purchase_order,
+getProductOwnerName(order),
         getRetailerName(order),
         getAddressText(order),
         order.delivery_postcode,
@@ -841,7 +904,9 @@
   function applyFilters(render = true) {
     const q = normalize(byId("filterSearch")?.value || "");
     let customerId = byId("filterCustomer")?.value || "";
-    const status = normalizeStatus(byId("filterStatus")?.value || "");
+    const rawStatus = byId("filterStatus")?.value || "";
+    const manualStatus = rawStatus ? normalizeStatus(rawStatus) : "";
+    const view = getBillingView();
     const from = byId("filterDateFrom")?.value || "";
     const to = byId("filterDateTo")?.value || "";
 
@@ -850,8 +915,13 @@
     }
 
     filteredInvoices = allInvoices.filter(invoice => {
+      const invoiceStatus = normalizeStatus(invoice.status);
+
+      if (view === "paid" && invoiceStatus !== "paid") return false;
+      if (view === "open" && invoiceStatus === "paid") return false;
+
       if (customerId && String(invoice.customer_id) !== String(customerId)) return false;
-      if (status && normalizeStatus(invoice.status) !== status) return false;
+      if (manualStatus && invoiceStatus !== manualStatus) return false;
 
       const invDate = dateKey(invoice.invoice_date || invoice.created_at);
 
@@ -918,35 +988,28 @@
   }
 
   function renderKpis() {
-    const rawTotals = visibleTotals();
-    const displayTotals = getDisplayTotals(rawTotals);
+  const rawTotals = visibleTotals();
+  const displayTotals = getDisplayTotals(rawTotals);
 
-    setText("kpiInvoices", formatNumber(filteredInvoices.length));
+  setText("kpiInvoices", formatNumber(filteredInvoices.length));
 
-    if (!isCustomerView()) {
-      setText("kpiPick", formatMoney(rawTotals.pick));
-      setText("kpiWarehouse", formatMoney(rawTotals.warehouse));
-      setText("kpiAdmin", formatMoney(rawTotals.admin));
-    } else {
-      setText("kpiWarehouse", formatMoney(displayTotals.warehouse));
-    }
+  setText("kpiPick", formatMoney(rawTotals.pick));
+  setText("kpiWarehouse", formatMoney(displayTotals.warehouse));
+  setText("kpiAdmin", formatMoney(rawTotals.admin));
+  setText("kpiTransport", formatMoney(displayTotals.transport));
+  setText("kpiTotalExVat", formatMoney(displayTotals.net));
+  setText("kpiTotalIncVat", formatMoney(displayTotals.gross));
 
-    setText("kpiTransport", formatMoney(rawTotals.transport));
-    setText("kpiTotalExVat", formatMoney(rawTotals.net));
-    setText("kpiTotalIncVat", formatMoney(rawTotals.gross));
+  setText("footWarehouse", formatMoney(displayTotals.warehouse));
+  setText("footTransport", formatMoney(displayTotals.transport));
+  setText("footNet", formatMoney(displayTotals.net));
+  setText("footVat", formatMoney(displayTotals.vat));
+  setText("footGross", formatMoney(displayTotals.gross));
 
-    setText("footPick", formatMoney(rawTotals.pick));
-    setText("footWarehouse", formatMoney(displayTotals.warehouse));
-    setText("footAdmin", formatMoney(rawTotals.admin));
-    setText("footTransport", formatMoney(rawTotals.transport));
-    setText("footNet", formatMoney(rawTotals.net));
-    setText("footVat", formatMoney(rawTotals.vat));
-    setText("footGross", formatMoney(rawTotals.gross));
+  setText("resultsMeta", `${formatNumber(filteredInvoices.length)} invoice(s) shown`);
 
-    setText("resultsMeta", `${formatNumber(filteredInvoices.length)} invoice(s) shown`);
-
-    applyRoleVisibility();
-  }
+  applyRoleVisibility();
+}
 
   function renderInvoiceDetail(invoice) {
     const totals = getDisplayTotals(invoice.totals);
@@ -974,6 +1037,12 @@
             <div class="order-line">
               <div>
                 <div class="order-line-title">${escapeHtml(getOrderNumber(order))}</div>
+${
+  getSupplierReference(order)
+    ? `<div class="order-line-sub">Supplier Ref: ${escapeHtml(getSupplierReference(order))}</div>`
+    : ""
+}
+<div class="order-line-sub">PO: ${escapeHtml(order.purchase_order || "—")}</div>
                 <div class="order-line-sub">
                   Product Owner: ${escapeHtml(getProductOwnerName(order, invoice.customer_id))}
                 </div>
@@ -1075,6 +1144,7 @@
       const t = getDisplayTotals(raw);
       const isOpen = expandedInvoiceKeys.has(invoice.key);
       const downloadUrl = invoice.file_url || invoice.pdf_url || "";
+      const paid = isPaidStatus(invoice.status);
 
       const downloadHtml = downloadUrl
         ? `<a class="mini-btn" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download</a>`
@@ -1099,18 +1169,23 @@
         : "";
 
       const actionHtml = isTenantRole()
-        ? `
-          ${downloadHtml}
-          <button class="mini-btn" type="button" data-action="sent" data-invoice-key="${escapeHtml(invoice.key)}">Mark sent</button>
-          <button class="mini-btn" type="button" data-action="paid" data-invoice-key="${escapeHtml(invoice.key)}">Mark paid</button>
-        `
+        ? paid
+          ? `
+            ${downloadHtml}
+            <span class="soft-pill green">Payment processed</span>
+          `
+          : `
+            ${downloadHtml}
+            <button class="mini-btn" type="button" data-action="sent" data-invoice-key="${escapeHtml(invoice.key)}">Mark sent</button>
+            <button class="mini-btn primary" type="button" data-action="paid" data-invoice-key="${escapeHtml(invoice.key)}">Mark paid</button>
+          `
         : `
           ${downloadHtml}
           ${customerPaymentPill(invoice.status)}
         `;
 
       return `
-        <tr data-invoice-key="${escapeHtml(invoice.key)}">
+        <tr class="${paid ? "billing-row-paid" : ""}" data-invoice-key="${escapeHtml(invoice.key)}">
           <td>
             <button class="mini-btn" type="button" data-action="toggle" data-invoice-key="${escapeHtml(invoice.key)}">
               ${isOpen ? "−" : "+"}
@@ -1129,7 +1204,12 @@
 
           <td>
             <strong>${formatNumber(invoice.order_count)}</strong>
-            <span class="subline">${escapeHtml(invoice.orders.map(getOrderNumber).join(", "))}</span>
+            <span class="subline">
+  ${escapeHtml(invoice.orders.map(order => {
+    const ref = getSupplierReference(order);
+    return ref ? `${getOrderNumber(order)} / ${ref}` : getOrderNumber(order);
+  }).join(", "))}
+</span>
           </td>
 
           <td>
@@ -1145,7 +1225,10 @@
           <td class="money-cell">${formatMoney(t.vat)}</td>
           <td class="total-cell">${formatMoney(t.gross)}</td>
 
-          <td>${pill(invoice.status)}</td>
+          <td>
+            ${pill(invoice.status)}
+            ${paymentNote(invoice.status)}
+          </td>
 
           <td>
             <div class="mini-actions">
@@ -1218,6 +1301,7 @@
 
     const db = ensureClient();
     const cid = await getCompanyId();
+    const sentAt = nowIso();
 
     const invoiceIds = invoice.invoices.map(row => row.id).filter(Boolean);
     const docIds = invoice.docs.map(row => row.id).filter(Boolean);
@@ -1238,8 +1322,9 @@
         .from("order_documents")
         .update({
           document_status: "sent",
-          sent_at: nowIso(),
-          updated_at: nowIso()
+          customer_visible: true,
+          sent_at: sentAt,
+          updated_at: sentAt
         })
         .in("id", docIds)
         .eq("company_id", cid);
@@ -1253,7 +1338,7 @@
         .update({
           finance_status: "invoice_sent",
           overall_status: "invoiced",
-          last_activity_at: nowIso()
+          last_activity_at: sentAt
         })
         .in("id", orderIds)
         .eq("company_id", cid);
@@ -1273,8 +1358,10 @@
 
     const db = ensureClient();
     const cid = await getCompanyId();
+    const paidAt = nowIso();
 
     const invoiceIds = invoice.invoices.map(row => row.id).filter(Boolean);
+    const docIds = invoice.docs.map(row => row.id).filter(Boolean);
     const orderIds = invoice.orders.map(row => row.id).filter(Boolean);
 
     if (invoiceIds.length) {
@@ -1287,13 +1374,27 @@
       if (error) throw error;
     }
 
+    if (docIds.length) {
+      const { error } = await db
+        .from("order_documents")
+        .update({
+          document_status: "paid",
+          customer_visible: true,
+          updated_at: paidAt
+        })
+        .in("id", docIds)
+        .eq("company_id", cid);
+
+      if (error) throw error;
+    }
+
     if (orderIds.length) {
       const { error } = await db
         .from("orders")
         .update({
           finance_status: "paid",
           overall_status: "closed",
-          last_activity_at: nowIso()
+          last_activity_at: paidAt
         })
         .in("id", orderIds)
         .eq("company_id", cid);
@@ -1301,6 +1402,7 @@
       if (error) throw error;
     }
 
+    setBillingView("paid");
     await loadBilling();
     showToast(`Invoice ${invoice.invoice_number} marked as paid.`, "ok");
   }
@@ -1361,7 +1463,10 @@
         rows.push([
           invoice.invoice_number,
           invoice.customer_name,
-          invoice.orders.map(getOrderNumber).join(" | "),
+          invoice.orders.map(order => {
+  const ref = getSupplierReference(order);
+  return ref ? `${getOrderNumber(order)} / ${ref}` : getOrderNumber(order);
+}).join(" | "),
           dateKey(invoice.invoice_date || invoice.created_at),
           dateKey(invoice.due_date),
           statusLabel(invoice.status),
@@ -1376,7 +1481,10 @@
         rows.push([
           invoice.invoice_number,
           invoice.customer_name,
-          invoice.orders.map(getOrderNumber).join(" | "),
+          invoice.orders.map(order => {
+  const ref = getSupplierReference(order);
+  return ref ? `${getOrderNumber(order)} / ${ref}` : getOrderNumber(order);
+}).join(" | "),
           dateKey(invoice.invoice_date || invoice.created_at),
           dateKey(invoice.due_date),
           statusLabel(invoice.status),
@@ -1398,7 +1506,7 @@
 
     const a = document.createElement("a");
     a.href = url;
-    a.download = `billing-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `billing-export-${getBillingView()}-${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1425,7 +1533,20 @@
     applyFilters();
   }
 
+  function bindBillingTabs() {
+    document.querySelectorAll("[data-billing-tab]").forEach(button => {
+      button.addEventListener("click", () => {
+        const view = button.getAttribute("data-billing-tab") || "open";
+        setBillingView(view);
+        expandedInvoiceKeys.clear();
+        applyFilters();
+      });
+    });
+  }
+
   function bindEvents() {
+    bindBillingTabs();
+
     [
       "filterSearch",
       "filterCustomer",
@@ -1470,6 +1591,7 @@
   }
 
   function renderAll() {
+    setBillingView(getBillingView());
     renderKpis();
     renderTable();
   }
@@ -1478,6 +1600,7 @@
     try {
       ensureClient();
       await loadProfile();
+      setBillingView("open");
       bindEvents();
       await loadBilling();
       applyRoleVisibility();

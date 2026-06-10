@@ -57,7 +57,7 @@
 
   function setText(id, value) {
     const el = byId(id);
-    if (el) el.textContent = value;
+    if (el) el.textContent = value ?? "";
   }
 
   function escapeHtml(value) {
@@ -86,6 +86,10 @@
   function toNumber(value, fallback = 0) {
     const num = Number(String(value ?? "").replace(",", "."));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function round2(value) {
+    return Number(toNumber(value, 0).toFixed(2));
   }
 
   function formatNumber(value, digits = 0) {
@@ -179,8 +183,8 @@
     el.textContent = message || "";
     el.className = "notice " + type;
 
-    window.clearTimeout(window.__occToastTimer);
-    window.__occToastTimer = window.setTimeout(() => {
+    clearTimeout(window.__occToastTimer);
+    window.__occToastTimer = setTimeout(() => {
       el.textContent = "";
       el.className = "notice";
     }, 6500);
@@ -235,11 +239,11 @@
     if (isTenantRole()) return true;
 
     if (isProductOwnerRole()) {
-      return ["supplier_packing_slip", "delivery_note", "pod", "invoice"].includes(docType);
+      return ["supplier_packing_slip", "delivery_note", "pod", "signed_delivery_note", "invoice"].includes(docType);
     }
 
     if (isRetailerRole()) {
-      return ["delivery_note", "pod"].includes(docType);
+      return ["delivery_note", "pod", "signed_delivery_note"].includes(docType);
     }
 
     return false;
@@ -365,19 +369,63 @@
   function getMemo(order) {
     return cleanText(order?.memo || "");
   }
+function removeContactLinesFromAddress(parts = []) {
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+  const phoneRegex = /(?:\+?\d[\d\s().-]{7,}\d)/;
 
-  function getAddressText(order) {
-    return [
-      order.delivery_address_1,
-      order.delivery_address_2,
-      order.delivery_city,
-      order.delivery_region,
-      order.delivery_postcode,
-      order.delivery_country
-    ].filter(Boolean).map(cleanText).join(", ") || "—";
+  return (parts || [])
+    .map(cleanText)
+    .filter(Boolean)
+    .filter(part => !emailRegex.test(part))
+    .filter(part => {
+      const digitCount = part.replace(/\D/g, "").length;
+      return !(phoneRegex.test(part) && digitCount >= 9);
+    });
+}
+ function getAddressText(order) {
+  const postcode = cleanText(order.delivery_postcode || "");
+  const country = cleanText(order.delivery_country || "");
+
+  let parts = removeContactLinesFromAddress([
+    order.delivery_address_1,
+    order.delivery_address_2,
+    order.delivery_address_3,
+    order.delivery_address_4,
+    order.delivery_city,
+    order.delivery_postcode,
+    order.delivery_country
+  ]);
+
+  parts = parts
+    .flatMap(part => String(part || "").split(","))
+    .map(cleanText)
+    .filter(Boolean);
+
+  const seen = new Set();
+
+  parts = parts.filter(part => {
+    const key = normalize(part).replace(/[^a-z0-9]/g, "");
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (postcode && !parts.some(part =>
+    normalize(part).replace(/\s+/g, "").includes(normalize(postcode).replace(/\s+/g, ""))
+  )) {
+    parts.push(postcode);
   }
 
-  function getProductOwnerName(order) {
+  if (country && !parts.some(part =>
+    normalize(part).includes(normalize(country))
+  )) {
+    parts.push(country);
+  }
+
+  return parts.join(", ") || "—";
+}
+
+function getProductOwnerName(order) {
     return cleanText(order.customers?.name || order.product_owner_name || order.customer_name || "—");
   }
 
@@ -549,10 +597,10 @@
   }
 
   function getLineRevenue(line) {
-    const qty = getLineRequiredQty(line) || 1;
     const direct = toNumber(line.total_customer_charge, 0);
-
     if (direct > 0) return direct;
+
+    const qty = getLineRequiredQty(line) || 1;
 
     const tariffTotal =
       toNumber(line.tariff_storage, 0) +
@@ -1270,7 +1318,17 @@
 
         ${
           isTenantRole()
-            ? `<button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}"><span>Manual delivery / POD</span><span>Open</span></button>`
+            ? `
+              <button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}">
+                <span>Manual delivery / POD</span>
+                <span>Open</span>
+              </button>
+
+              <button class="quick-action" type="button" data-open-tariff-modal="${escapeHtml(order.id)}">
+                <span>Finance / Tariffs</span>
+                <span>Edit</span>
+              </button>
+            `
             : ""
         }
       </div>
@@ -1296,8 +1354,9 @@
             <div class="expanded-grid">
               <section class="detail-box">
                 <h3>Order Details</h3>
-                <div class="detail-line"><span class="detail-label">Order</span><span class="detail-value">${escapeHtml(order.order_number || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">PO</span><span class="detail-value">${escapeHtml(order.purchase_order || "—")}</span></div>
+              <div class="detail-line"><span class="detail-label">Order</span><span class="detail-value">${escapeHtml(order.order_number || "—")}</span></div>
+<div class="detail-line"><span class="detail-label">Supplier ref</span><span class="detail-value">${escapeHtml(order.external_reference || "—")}</span></div>
+<div class="detail-line"><span class="detail-label">PO</span><span class="detail-value">${escapeHtml(order.purchase_order || "—")}</span></div>
                 <div class="detail-line"><span class="detail-label">Owner</span><span class="detail-value">${escapeHtml(order.product_owner_name || "—")}</span></div>
                 <div class="detail-line"><span class="detail-label">Retailer</span><span class="detail-value">${escapeHtml(order.retailer_name || "—")}</span></div>
                 <div class="detail-line"><span class="detail-label">Ship to</span><span class="detail-value">${escapeHtml(order.ship_to_address || "—")}</span></div>
@@ -1374,11 +1433,16 @@
             </button>
           </td>
 
-          <td>
-            <span class="order-ref">${escapeHtml(order.order_number || "—")}</span>
-            <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
-            ${isRetailerRole() ? "" : renderMemoLink(order, 55)}
-          </td>
+       <td>
+  <span class="order-ref">${escapeHtml(order.order_number || "—")}</span>
+  <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
+  ${isRetailerRole() ? "" : renderMemoLink(order, 55)}
+</td>
+
+<td>
+  <strong>${escapeHtml(order.external_reference || "—")}</strong>
+  <span class="subline">Supplier / ACK ref</span>
+</td>
 
           ${
             !isRetailerRole()
@@ -1459,6 +1523,13 @@
       });
     });
 
+    tbody.querySelectorAll("[data-open-tariff-modal]").forEach(button => {
+      button.addEventListener("click", event => {
+        event.stopPropagation();
+        openTariffModal(button.getAttribute("data-open-tariff-modal"));
+      });
+    });
+
     tbody.querySelectorAll("[data-doc-action]").forEach(button => {
       button.addEventListener("click", async event => {
         event.stopPropagation();
@@ -1469,6 +1540,7 @@
         try {
           if (docType === "acknowledgement") return generateAcknowledgement(orderId);
           if (docType === "delivery_note") return generateDeliveryNote(orderId);
+          if (docType === "invoice") return generateSingleInvoice(orderId);
 
           return createPlaceholderDocument(orderId, docType);
         } catch (error) {
@@ -1504,13 +1576,119 @@
 
     const style = document.createElement("style");
     style.id = "occGeneratedStyles";
+
     style.textContent = `
-      .occ-memo-modal-backdrop{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:24px}
-      .occ-memo-modal-card{width:min(760px,96vw);background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(15,23,42,.25);padding:18px}
-      .occ-memo-modal-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}
-      .occ-memo-modal-text{white-space:pre-wrap;border:1px solid #d1d5db;border-radius:12px;padding:12px;min-height:140px;max-height:60vh;overflow:auto;background:#f8fafc}
-      .occ-photo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
-      .occ-photo-grid img{width:100%;height:140px;object-fit:cover;border-radius:12px;border:1px solid #d1d5db}
+      .occ-memo-modal-backdrop{
+        position:fixed;
+        inset:0;
+        z-index:9999;
+        background:rgba(15,23,42,.45);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:24px
+      }
+
+      .occ-memo-modal-card{
+        width:min(760px,96vw);
+        background:#fff;
+        border-radius:18px;
+        box-shadow:0 24px 60px rgba(15,23,42,.25);
+        padding:18px
+      }
+
+      .occ-memo-modal-head{
+        display:flex;
+        justify-content:space-between;
+        gap:12px;
+        align-items:center;
+        margin-bottom:12px
+      }
+
+      .occ-memo-modal-text{
+        white-space:pre-wrap;
+        border:1px solid #d1d5db;
+        border-radius:12px;
+        padding:12px;
+        min-height:140px;
+        max-height:60vh;
+        overflow:auto;
+        background:#f8fafc
+      }
+
+      .occ-photo-grid{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+        gap:12px
+      }
+
+      .occ-photo-grid img{
+        width:100%;
+        height:140px;
+        object-fit:cover;
+        border-radius:12px;
+        border:1px solid #d1d5db
+      }
+
+      .manual-tariff-table-wrap{
+        overflow:auto;
+        border:1px solid #dce5f2;
+        border-radius:12px;
+        background:#fff
+      }
+
+      .manual-tariff-table{
+        width:100%;
+        min-width:980px;
+        border-collapse:collapse
+      }
+
+      .manual-tariff-table th,
+      .manual-tariff-table td{
+        padding:9px 10px;
+        border-bottom:1px solid #e5edf7;
+        text-align:left;
+        vertical-align:middle;
+        font-size:12px
+      }
+
+      .manual-tariff-table th{
+        background:#f8fafc;
+        color:#334155;
+        font-size:10px;
+        font-weight:950;
+        text-transform:uppercase;
+        letter-spacing:.04em
+      }
+
+      .manual-tariff-table input{
+        width:100%;
+        min-height:34px;
+        border:1px solid #dce5f2;
+        border-radius:9px;
+        padding:7px 9px;
+        font-size:12px
+      }
+
+      .manual-tariff-total{
+        font-weight:950;
+        color:#07152f;
+        white-space:nowrap
+      }
+
+      .manual-tariff-footer{
+        display:flex;
+        justify-content:space-between;
+        gap:12px;
+        align-items:center;
+        flex-wrap:wrap
+      }
+
+      .manual-tariff-summary{
+        font-size:12px;
+        color:#334155;
+        font-weight:850
+      }
     `;
 
     document.head.appendChild(style);
@@ -1630,6 +1808,215 @@
     }
 
     return order;
+  }
+
+  function openTariffModal(orderId) {
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order) {
+      showToast("Order not found.", "err");
+      return;
+    }
+
+    if (!isTenantRole()) {
+      showToast("Only Sofa2U users can update tariffs.", "err");
+      return;
+    }
+
+    ensurePageStyles();
+
+    document.querySelector("#tariffModal")?.remove();
+
+    const lines = Array.isArray(order.order_lines) ? order.order_lines : [];
+
+    const modal = document.createElement("div");
+    modal.id = "tariffModal";
+    modal.className = "occ-memo-modal-backdrop";
+
+    modal.innerHTML = `
+      <section class="occ-memo-modal-card" style="width:min(980px,96vw);">
+        <div class="occ-memo-modal-head">
+          <div>
+            <strong>Finance / Tariffs · ${escapeHtml(order.order_number || "Order")}</strong>
+            <div class="subline">${escapeHtml(order.retailer_name || "")}</div>
+          </div>
+          <button class="mini-btn" type="button" data-close-tariff>Close</button>
+        </div>
+
+        ${
+          !lines.length
+            ? `<div class="occ-memo-modal-text">No order lines found.</div>`
+            : `
+              <div class="manual-tariff-table-wrap">
+                <table class="manual-tariff-table">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Description</th>
+                      <th>Qty</th>
+                      <th>Storage</th>
+                      <th>Admin</th>
+                      <th>Handling</th>
+                      <th>Transport</th>
+                      <th>Customer charge</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tariffModalBody">
+                    ${lines.map(line => `
+                      <tr data-line-id="${escapeHtml(line.id)}">
+                        <td><strong>${escapeHtml(getLineSku(line))}</strong></td>
+                        <td>${escapeHtml(shortText(getLineDescription(line), 48))}</td>
+                        <td>${formatNumber(getLineRequiredQty(line), 0)}</td>
+                        <td><input type="number" step="0.01" min="0" data-tariff-field="tariff_storage" value="${escapeHtml(round2(line.tariff_storage || 0))}"></td>
+                        <td><input type="number" step="0.01" min="0" data-tariff-field="tariff_admin" value="${escapeHtml(round2(line.tariff_admin || 0))}"></td>
+                        <td><input type="number" step="0.01" min="0" data-tariff-field="tariff_handling" value="${escapeHtml(round2(line.tariff_handling || 0))}"></td>
+                        <td><input type="number" step="0.01" min="0" data-tariff-field="tariff_transport" value="${escapeHtml(round2(line.tariff_transport || 0))}"></td>
+                        <td><input type="number" step="0.01" min="0" data-tariff-field="total_customer_charge" value="${escapeHtml(round2(line.total_customer_charge || getLineRevenue(line) || 0))}"></td>
+                        <td class="manual-tariff-total" data-line-total>${formatMoney(getLineRevenue(line))}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="manual-tariff-footer" style="margin-top:12px;">
+                <div id="tariffModalSummary" class="manual-tariff-summary">Customer charge total: £0.00</div>
+                <button id="btnSaveTariffModal" class="btn btn-primary" type="button">Save tariffs</button>
+              </div>
+            `
+        }
+      </section>
+    `;
+
+    modal.addEventListener("click", event => {
+      if (event.target === modal || event.target.hasAttribute("data-close-tariff")) {
+        modal.remove();
+      }
+    });
+
+    document.body.appendChild(modal);
+
+    modal.querySelectorAll("input").forEach(input => {
+      input.addEventListener("input", refreshTariffModalSummary);
+      input.addEventListener("change", refreshTariffModalSummary);
+    });
+
+    byId("btnSaveTariffModal")?.addEventListener("click", async () => {
+      try {
+        await saveTariffModal(order.id);
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || "Could not save tariffs.", "err");
+      }
+    });
+
+    refreshTariffModalSummary();
+  }
+
+  function tariffModalTotalsFromRow(row) {
+    const storage = toNumber(row.querySelector("[data-tariff-field='tariff_storage']")?.value, 0);
+    const admin = toNumber(row.querySelector("[data-tariff-field='tariff_admin']")?.value, 0);
+    const handling = toNumber(row.querySelector("[data-tariff-field='tariff_handling']")?.value, 0);
+    const transport = toNumber(row.querySelector("[data-tariff-field='tariff_transport']")?.value, 0);
+    const chargeInput = toNumber(row.querySelector("[data-tariff-field='total_customer_charge']")?.value, 0);
+    const calculated = storage + admin + handling + transport;
+
+    return {
+      storage,
+      admin,
+      handling,
+      transport,
+      customerCharge: chargeInput > 0 ? chargeInput : calculated
+    };
+  }
+
+  function refreshTariffModalSummary() {
+    const rows = Array.from(document.querySelectorAll("#tariffModalBody tr[data-line-id]"));
+    let total = 0;
+
+    rows.forEach(row => {
+      const t = tariffModalTotalsFromRow(row);
+      total += t.customerCharge;
+
+      const totalCell = row.querySelector("[data-line-total]");
+      if (totalCell) totalCell.textContent = formatMoney(t.customerCharge);
+    });
+
+    setText("tariffModalSummary", `Customer charge total: ${formatMoney(total)}`);
+  }
+
+  async function saveTariffModal(orderId) {
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+    if (!order) throw new Error("Order not found.");
+
+    const rows = Array.from(document.querySelectorAll("#tariffModalBody tr[data-line-id]"));
+    if (!rows.length) throw new Error("No tariff lines found.");
+
+    let totalStorage = 0;
+    let totalAdmin = 0;
+    let totalHandling = 0;
+    let totalTransport = 0;
+    let totalCustomerCharge = 0;
+
+    for (const row of rows) {
+      const lineId = row.dataset.lineId;
+      const t = tariffModalTotalsFromRow(row);
+
+      const payload = {
+        tariff_storage: round2(t.storage),
+        tariff_admin: round2(t.admin),
+        tariff_handling: round2(t.handling),
+        tariff_transport: round2(t.transport),
+        total_customer_charge: round2(t.customerCharge)
+      };
+
+      const { error } = await client
+        .from("order_lines")
+        .update(payload)
+        .eq("id", lineId)
+        .eq("order_id", order.id);
+
+      if (error) throw error;
+
+      totalStorage += payload.tariff_storage;
+      totalAdmin += payload.tariff_admin;
+      totalHandling += payload.tariff_handling;
+      totalTransport += payload.tariff_transport;
+      totalCustomerCharge += payload.total_customer_charge;
+    }
+
+    const orderPayload = {
+      total_storage_tariff: round2(totalStorage),
+      total_admin_tariff: round2(totalAdmin),
+      total_handling_tariff: round2(totalHandling),
+      total_transport_tariff: round2(totalTransport),
+      total_customer_charge: round2(totalCustomerCharge),
+      customer_charge_gbp: round2(totalCustomerCharge),
+      estimated_revenue_gbp: round2(totalCustomerCharge),
+      finance_status: "not_invoiced",
+      last_activity_at: new Date().toISOString()
+    };
+
+    try {
+      await safeUpdateOrder(order.id, orderPayload);
+    } catch (error) {
+      const fallback = { ...orderPayload };
+      delete fallback.customer_charge_gbp;
+      delete fallback.estimated_revenue_gbp;
+      await safeUpdateOrder(order.id, fallback);
+    }
+
+    await insertOrderActivity(
+      order.id,
+      `Manual tariffs updated. Customer charge ${formatMoney(totalCustomerCharge)}.`,
+      "manual_tariff_update"
+    );
+
+    document.querySelector("#tariffModal")?.remove();
+    await loadOrders();
+
+    showToast(`Tariffs saved: ${formatMoney(totalCustomerCharge)}.`, "ok");
   }
 
   async function insertOrderActivity(orderId, description, type = "manual_update") {
@@ -1826,7 +2213,7 @@
       .insert({
         company_id: cid,
         order_id: order.id,
-        asset_type: "signed_pod_pdf",
+       asset_type: "signed_delivery_note",
         file_name: uploaded.file_name,
         file_url: uploaded.file_url,
         storage_path: uploaded.storage_path,
@@ -1893,8 +2280,16 @@
   }
 
   async function generateAcknowledgement(orderId) {
-    if (window.VeynorAcknowledgementGenerator?.generate) {
-      await window.VeynorAcknowledgementGenerator.generate(orderId);
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order) {
+      showToast("Order not found for acknowledgement.", "err");
+      return;
+    }
+
+    if (window.AcknowledgementGenerator?.generate) {
+      const cid = await getCompanyId();
+      await window.AcknowledgementGenerator.generate(order, client, cid);
       await loadOrders();
       showToast("Acknowledgement generated.", "ok");
       return;
@@ -1904,14 +2299,69 @@
   }
 
   async function generateDeliveryNote(orderId) {
-    if (window.VeynorDeliveryNoteGenerator?.generate) {
-      await window.VeynorDeliveryNoteGenerator.generate(orderId);
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order) {
+      showToast("Order not found for delivery note.", "err");
+      return;
+    }
+
+    if (window.DeliveryNoteGenerator?.generate) {
+      const cid = await getCompanyId();
+      await window.DeliveryNoteGenerator.generate(order, client, cid);
       await loadOrders();
       showToast("Delivery note generated.", "ok");
       return;
     }
 
     showToast("Delivery note generator not available.", "err");
+  }
+
+  async function generateSingleInvoice(orderId) {
+    const order = allOrders.find(row => String(row.id) === String(orderId));
+
+    if (!order) {
+      showToast("Order not found for invoice.", "err");
+      return;
+    }
+
+    const cid = await getCompanyId();
+
+    if (window.InvoiceGenerator?.generate) {
+      await window.InvoiceGenerator.generate([order], client, cid);
+      await loadOrders();
+      showToast("Invoice generated.", "ok");
+      return;
+    }
+
+    showToast("Invoice generator not available.", "err");
+  }
+
+  async function generateCombinedInvoice() {
+    const orders = getSelectedOrders();
+
+    if (!orders.length) {
+      showToast("Select at least one order first.", "err");
+      return;
+    }
+
+    const cid = await getCompanyId();
+
+    if (window.InvoiceGenerator?.generateCombinedInvoice) {
+      await window.InvoiceGenerator.generateCombinedInvoice(orders, client, cid);
+      await loadOrders();
+      showToast("Combined invoice generated.", "ok");
+      return;
+    }
+
+    if (window.InvoiceGenerator?.generate) {
+      await window.InvoiceGenerator.generate(orders, client, cid);
+      await loadOrders();
+      showToast("Combined invoice generated.", "ok");
+      return;
+    }
+
+    showToast("Combined invoice generator not available.", "err");
   }
 
   async function syncStatuses() {
@@ -1977,24 +2427,6 @@
 
     await loadOrders();
     showToast(`${formatNumber(updated)} order status record(s) synced.`, "ok");
-  }
-
-  async function generateCombinedInvoice() {
-    const orders = getSelectedOrders();
-
-    if (!orders.length) {
-      showToast("Select at least one order first.", "err");
-      return;
-    }
-
-    if (window.VeynorInvoiceGenerator?.generateCombinedInvoice) {
-      await window.VeynorInvoiceGenerator.generateCombinedInvoice(orders);
-      await loadOrders();
-      showToast("Combined invoice generated.", "ok");
-      return;
-    }
-
-    showToast("Combined invoice generator not available.", "err");
   }
 
   function resetFilters() {
@@ -2158,7 +2590,7 @@
 
       const tbody = byId("ordersBody");
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="13">${escapeHtml(error.message || "Operations Control Center failed to load.")}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="14">${escapeHtml(error.message || "Operations Control Center failed to load.")}</td></tr>`;
       }
     }
   }

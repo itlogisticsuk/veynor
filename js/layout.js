@@ -2,7 +2,8 @@
   "use strict";
 
   const SIDEBAR_KEY = "veynor_sidebar_collapsed";
-  const APP_VERSION = "v1.4.7";
+  const APP_VERSION = "v1.4.8";
+  const PORTAL_EVENTS_SRC = "/js/portal-events.js";
 
   let currentProfile = null;
 
@@ -40,6 +41,7 @@
     { href: "./analytics.html", label: "Analytics & Reports", icon: "analytics", group: "Analytics", roles: TENANT_ROLES },
 
     { href: "./support.html", label: "Support Center", icon: "support", group: "System", roles: ALL_ROLES },
+    { href: "./customer-activity.html", label: "Customer Activity", icon: "activity", group: "System", roles: TENANT_ROLES },
     { href: "./events.html", label: "Warehouse Events", icon: "pulse", group: "System", roles: TENANT_ROLES },
     { href: "./settings.html", label: "Settings", icon: "settings", group: "System", roles: [ROLES.VEYNOR_ADMIN, ROLES.TENANT_ADMIN] }
   ];
@@ -59,6 +61,7 @@
     pound: `<svg viewBox="0 0 24 24"><path d="M16 6a4 4 0 0 0-8 2v10"/><path d="M6 13h8"/><path d="M6 18h12"/></svg>`,
     support: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.2 9a3 3 0 1 1 5.6 1.5c-.7 1-2 1.4-2.4 2.7-.1.3-.2.7-.2 1.1"/><path d="M12 18h.01"/></svg>`,
     pulse: `<svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>`,
+    activity: `<svg viewBox="0 0 24 24"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 16v-5"/><path d="M12 16V8"/><path d="M16 16v-3"/><path d="M19 7l-4 4-3-3-4 4"/></svg>`,
     settings: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5l-.3 3a7 7 0 0 0-1.7 1l-2.4-1-2 3.5L5.1 11a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 1.7 1l.3 3h5l.3-3a7 7 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5a7 7 0 0 0 .1-1z"/></svg>`
   };
 
@@ -83,6 +86,18 @@
     document.body.classList.toggle("sidebar-collapsed", value);
   }
 
+  function injectPortalEventsScript() {
+    if (isLoginPage()) return;
+    if (document.querySelector(`script[src="${PORTAL_EVENTS_SRC}"]`)) return;
+    if (document.getElementById("portalEventsScript")) return;
+
+    const script = document.createElement("script");
+    script.id = "portalEventsScript";
+    script.src = PORTAL_EVENTS_SRC;
+    script.defer = true;
+    document.head.appendChild(script);
+  }
+
   async function loadProfile() {
     try {
       if (typeof sb !== "function") return null;
@@ -92,7 +107,7 @@
 
       if (!userData?.user?.id) return null;
 
-      const { data, error } = await db
+      let result = await db
         .from("user_profiles")
         .select(`
           *,
@@ -103,12 +118,25 @@
         .eq("is_active", true)
         .maybeSingle();
 
-      if (error) {
-        console.warn("Layout profile query failed:", error.message);
+      if (!result.data && !result.error) {
+        result = await db
+          .from("user_profiles")
+          .select(`
+            *,
+            companies ( id, name ),
+            customers ( id, name, customer_code )
+          `)
+          .eq("auth_user_id", userData.user.id)
+          .eq("is_active", true)
+          .maybeSingle();
+      }
+
+      if (result.error) {
+        console.warn("Layout profile query failed:", result.error.message);
         return null;
       }
 
-      currentProfile = data || null;
+      currentProfile = result.data || null;
       return currentProfile;
     } catch (error) {
       console.warn("Layout profile load failed:", error);
@@ -230,16 +258,6 @@
             <div><strong>User profile</strong><small>Account and tenant details</small></div>
           </a>
 
-          <a href="./settings.html">
-            <span>💳</span>
-            <div><strong>My subscription</strong><small>Plan and billing settings</small></div>
-          </a>
-
-          <a href="./settings.html">
-            <span>🔐</span>
-            <div><strong>Change password</strong><small>Security settings</small></div>
-          </a>
-
           <a href="./support.html#release-notes">
             <span>📝</span>
             <div><strong>Release notes</strong><small>Version ${APP_VERSION}</small></div>
@@ -250,7 +268,7 @@
             <div><strong>Get support</strong><small>Help center and support tickets</small></div>
           </a>
 
-          <button id="globalLogoutBtn" type="button">
+          <button id="globalLogoutBtn" type="button" data-logout="true">
             <span>⎋</span>
             <div><strong>Log out</strong><small>End current session</small></div>
           </button>
@@ -270,7 +288,7 @@
           <p>Are you sure you want to log out of Veynor?</p>
           <div class="logout-modal-actions">
             <button id="cancelLogoutBtn" class="logout-cancel-btn" type="button">Cancel</button>
-            <button id="confirmLogoutBtn" class="logout-confirm-btn" type="button">Log out</button>
+            <button id="confirmLogoutBtn" class="logout-confirm-btn" type="button" data-logout="true">Log out</button>
           </div>
         </div>
       </div>
@@ -283,457 +301,60 @@
     const style = document.createElement("style");
     style.id = "veynorLayoutStyles";
     style.textContent = `
-      .sidebar{
-        position:sticky;
-        top:0;
-        height:100vh;
-        overflow:visible!important;
-        padding:18px 10px 16px;
-        display:flex;
-        flex-direction:column;
-        gap:12px;
-      }
-
-      .veynor-brand{
-        position:relative;
-        padding:0 0 4px;
-        display:grid;
-        justify-items:center;
-      }
-
-      .veynor-top-logo{
-        width:112px;
-        height:112px;
-        border-radius:32px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        background:rgba(255,255,255,.055);
-        border:1px solid rgba(255,255,255,.10);
-        box-shadow:0 20px 44px rgba(0,0,0,.24);
-      }
-
-      .veynor-icon-large{
-        width:88px;
-        height:88px;
-        object-fit:contain;
-        border-radius:23px;
-        background:#fff;
-        padding:8px;
-        box-shadow:0 12px 26px rgba(0,0,0,.22);
-      }
-
-      .sidebar-toggle{
-        position:absolute!important;
-        top:116px!important;
-        right:-30px!important;
-        width:44px!important;
-        height:44px!important;
-        border-radius:999px!important;
-        border:1px solid rgba(125,211,252,.45)!important;
-        background:linear-gradient(135deg,#1267ff,#38bdf8)!important;
-        color:#fff!important;
-        display:flex!important;
-        align-items:center!important;
-        justify-content:center!important;
-        cursor:pointer!important;
-        z-index:5000!important;
-        box-shadow:0 18px 38px rgba(18,103,255,.35);
-      }
-
-      .sidebar-toggle-icon{
-        font-size:28px;
-        font-weight:950;
-        line-height:1;
-        transform:rotate(180deg);
-      }
-
-      body.sidebar-collapsed .sidebar-toggle-icon{
-        transform:rotate(0deg);
-      }
-
-      .sidebar-system-status{
-        margin:8px 8px 2px;
-        padding:12px;
-        border-radius:18px;
-        background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));
-        border:1px solid rgba(125,211,252,.16);
-      }
-
-      .system-status-top{
-        display:flex;
-        align-items:center;
-        gap:8px;
-        color:#fff;
-        font-size:11.5px;
-        font-weight:950;
-        margin-bottom:10px;
-      }
-
-      .system-pulse{
-        width:8px;
-        height:8px;
-        border-radius:999px;
-        background:#22c55e;
-        box-shadow:0 0 0 5px rgba(34,197,94,.13);
-      }
-
-      .system-status-grid{
-        display:grid;
-        grid-template-columns:1fr 1fr;
-        gap:8px;
-      }
-
-      .system-status-grid div{
-        border:1px solid rgba(255,255,255,.075);
-        background:rgba(255,255,255,.045);
-        border-radius:12px;
-        padding:8px;
-        display:grid;
-        gap:3px;
-      }
-
-      .system-label{
-        font-size:9px;
-        font-weight:900;
-        text-transform:uppercase;
-        letter-spacing:.08em;
-        color:rgba(219,234,254,.58);
-      }
-
-      .system-status-grid strong{
-        font-size:11px;
-        color:#fff;
-        font-weight:950;
-      }
-
-      .system-status-foot{
-        margin-top:9px;
-        font-size:10px;
-        line-height:1.35;
-        color:rgba(219,234,254,.62);
-        font-weight:800;
-      }
-
-      .sidebar-logout-wrap{
-        padding:8px 12px 0;
-        margin-top:auto;
-      }
-
-      .sidebar-logout-btn{
-        width:100%;
-        min-height:42px;
-        border:1px solid rgba(255,255,255,.10);
-        border-radius:14px;
-        background:rgba(255,255,255,.055);
-        color:rgba(255,255,255,.88);
-        font-weight:900;
-        cursor:pointer;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        gap:9px;
-        transition:.16s ease;
-      }
-
-      .sidebar-logout-btn:hover{
-        background:rgba(239,68,68,.18);
-        border-color:rgba(248,113,113,.35);
-        color:#fff;
-        transform:translateY(-1px);
-      }
-
-      .sidebar-wordmark{
-        padding:14px 12px 4px;
-        margin-top:0;
-      }
-
-      .veynor-wordmark-bottom{
-        width:112px;
-        border-radius:22px;
-        background:rgba(255,255,255,.92);
-        padding:9px 16px;
-        box-shadow:0 16px 34px rgba(0,0,0,.22);
-      }
-
-      body.sidebar-collapsed .veynor-top-logo{
-        width:54px;
-        height:54px;
-        border-radius:18px;
-      }
-
-      body.sidebar-collapsed .veynor-icon-large{
-        width:44px;
-        height:44px;
-        border-radius:13px;
-        padding:4px;
-      }
-
-      body.sidebar-collapsed .sidebar-toggle{
-        top:82px!important;
-        right:-25px!important;
-        width:38px!important;
-        height:38px!important;
-      }
-
-      body.sidebar-collapsed .sidebar-system-status{
-        padding:8px;
-        display:flex;
-        justify-content:center;
-      }
-
-      body.sidebar-collapsed .system-status-grid,
-      body.sidebar-collapsed .system-status-foot,
-      body.sidebar-collapsed .system-status-top span:not(.system-pulse),
-      body.sidebar-collapsed .sidebar-wordmark,
-      body.sidebar-collapsed .sidebar-logout-text{
-        display:none;
-      }
-
-      body.sidebar-collapsed .sidebar-logout-btn{
-        padding:0;
-      }
-
-      .page-topbar{
-        position:relative;
-        align-items:flex-start;
-      }
-
-      .topbar-actions{
-        display:flex;
-        align-items:center;
-        justify-content:flex-end;
-        gap:10px;
-        flex-wrap:wrap;
-        margin-left:auto;
-        padding-right:0;
-      }
-
-      .global-account-menu{
-        position:relative;
-        z-index:50;
-      }
-
-      .global-account-btn{
-        min-height:46px;
-        border:1px solid #dce5f2;
-        border-radius:999px;
-        background:rgba(255,255,255,.96);
-        box-shadow:0 12px 28px rgba(15,23,42,.10);
-        display:flex;
-        align-items:center;
-        gap:10px;
-        padding:6px 10px 6px 7px;
-        cursor:pointer;
-        color:#07152f;
-      }
-
-      .global-account-avatar{
-        width:34px;
-        height:34px;
-        border-radius:999px;
-        background:linear-gradient(135deg,#1267ff,#38bdf8);
-        color:#fff;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        font-size:12px;
-        font-weight:950;
-      }
-
-      .global-account-text{
-        display:grid;
-        text-align:left;
-        line-height:1.1;
-      }
-
-      .global-account-text strong{
-        font-size:12.5px;
-        font-weight:950;
-        max-width:150px;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-      }
-
-      .global-account-text small{
-        font-size:10.5px;
-        color:#667085;
-        font-weight:800;
-      }
-
-      .global-account-chevron{
-        font-size:16px;
-        color:#667085;
-        transition:.16s ease;
-      }
-
-      .global-account-menu.open .global-account-chevron{
-        transform:rotate(180deg);
-      }
-
-      .global-account-dropdown{
-        position:absolute;
-        right:0;
-        top:54px;
-        width:300px;
-        background:#fff;
-        border:1px solid #dce5f2;
-        border-radius:18px;
-        box-shadow:0 28px 70px rgba(7,21,47,.22);
-        padding:8px;
-        display:none;
-      }
-
-      .global-account-menu.open .global-account-dropdown{
-        display:grid;
-        gap:4px;
-        animation:accountDrop .14s ease-out;
-      }
-
-      @keyframes accountDrop{
-        from{opacity:0;transform:translateY(-6px)}
-        to{opacity:1;transform:translateY(0)}
-      }
-
-      .global-account-dropdown a,
-      .global-account-dropdown button{
-        width:100%;
-        border:0;
-        background:transparent;
-        text-decoration:none;
-        color:#07152f;
-        border-radius:13px;
-        padding:11px;
-        display:flex;
-        gap:11px;
-        align-items:flex-start;
-        text-align:left;
-        cursor:pointer;
-        font-family:inherit;
-      }
-
-      .global-account-dropdown a:hover,
-      .global-account-dropdown button:hover{
-        background:#f3f7ff;
-      }
-
-      .global-account-dropdown span{
-        width:22px;
-        text-align:center;
-        font-size:16px;
-      }
-
-      .global-account-dropdown strong{
-        display:block;
-        font-size:13px;
-        font-weight:950;
-      }
-
-      .global-account-dropdown small{
-        display:block;
-        margin-top:3px;
-        font-size:11px;
-        color:#667085;
-        font-weight:750;
-      }
-
-      .logout-modal-backdrop{
-        position:fixed;
-        inset:0;
-        z-index:1000000;
-        background:rgba(7,21,47,.54);
-        backdrop-filter:blur(8px);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:24px;
-      }
-
-      .logout-modal-card{
-        width:min(420px,100%);
-        background:#fff;
-        border-radius:24px;
-        border:1px solid #dce5f2;
-        box-shadow:0 30px 80px rgba(7,21,47,.28);
-        padding:28px;
-        text-align:center;
-      }
-
-      .logout-modal-icon{
-        width:56px;
-        height:56px;
-        margin:0 auto 14px;
-        border-radius:18px;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        color:#fff;
-        font-size:24px;
-        background:linear-gradient(135deg,#1267ff,#38bdf8);
-      }
-
-      .logout-modal-card h2{
-        margin:0;
-        color:#07152f;
-        font-size:24px;
-        font-weight:950;
-      }
-
-      .logout-modal-card p{
-        margin:10px 0 22px;
-        color:#667085;
-        line-height:1.5;
-        font-size:13.5px;
-      }
-
-      .logout-modal-actions{
-        display:flex;
-        gap:10px;
-        justify-content:center;
-      }
-
-      .logout-cancel-btn,
-      .logout-confirm-btn{
-        min-height:42px;
-        border-radius:12px;
-        padding:0 18px;
-        font-weight:900;
-        cursor:pointer;
-      }
-
-      .logout-cancel-btn{
-        background:#fff;
-        color:#07152f;
-        border:1px solid #dce5f2;
-      }
-
-      .logout-confirm-btn{
-        background:#ef4444;
-        color:#fff;
-        border:1px solid #ef4444;
-      }
-
-      @media(max-width:760px){
-        .page-topbar{
-          flex-direction:column;
-        }
-
-        .topbar-actions{
-          width:100%;
-          justify-content:flex-start;
-        }
-
-        .global-account-text{
-          display:none;
-        }
-
-        .global-account-dropdown{
-          left:0;
-          right:auto;
-          width:280px;
-        }
-      }
+      .sidebar{position:sticky;top:0;height:100vh;overflow:visible!important;padding:18px 10px 16px;display:flex;flex-direction:column;gap:12px;}
+      .veynor-brand{position:relative;padding:0 0 4px;display:grid;justify-items:center;}
+      .veynor-top-logo{width:112px;height:112px;border-radius:32px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 44px rgba(0,0,0,.24);}
+      .veynor-icon-large{width:88px;height:88px;object-fit:contain;border-radius:23px;background:#fff;padding:8px;box-shadow:0 12px 26px rgba(0,0,0,.22);}
+      .sidebar-toggle{position:absolute!important;top:116px!important;right:-30px!important;width:44px!important;height:44px!important;border-radius:999px!important;border:1px solid rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf8)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:pointer!important;z-index:5000!important;box-shadow:0 18px 38px rgba(18,103,255,.35);}
+      .sidebar-toggle-icon{font-size:28px;font-weight:950;line-height:1;transform:rotate(180deg);}
+      body.sidebar-collapsed .sidebar-toggle-icon{transform:rotate(0deg);}
+      .sidebar-system-status{margin:8px 8px 2px;padding:12px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));border:1px solid rgba(125,211,252,.16);}
+      .system-status-top{display:flex;align-items:center;gap:8px;color:#fff;font-size:11.5px;font-weight:950;margin-bottom:10px;}
+      .system-pulse{width:8px;height:8px;border-radius:999px;background:#22c55e;box-shadow:0 0 0 5px rgba(34,197,94,.13);}
+      .system-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+      .system-status-grid div{border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.045);border-radius:12px;padding:8px;display:grid;gap:3px;}
+      .system-label{font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:rgba(219,234,254,.58);}
+      .system-status-grid strong{font-size:11px;color:#fff;font-weight:950;}
+      .system-status-foot{margin-top:9px;font-size:10px;line-height:1.35;color:rgba(219,234,254,.62);font-weight:800;}
+      .sidebar-logout-wrap{padding:8px 12px 0;margin-top:auto;}
+      .sidebar-logout-btn{width:100%;min-height:42px;border:1px solid rgba(255,255,255,.10);border-radius:14px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.88);font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;transition:.16s ease;}
+      .sidebar-logout-btn:hover{background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.35);color:#fff;transform:translateY(-1px);}
+      .sidebar-wordmark{padding:14px 12px 4px;margin-top:0;}
+      .veynor-wordmark-bottom{width:112px;border-radius:22px;background:rgba(255,255,255,.92);padding:9px 16px;box-shadow:0 16px 34px rgba(0,0,0,.22);}
+      body.sidebar-collapsed .veynor-top-logo{width:54px;height:54px;border-radius:18px;}
+      body.sidebar-collapsed .veynor-icon-large{width:44px;height:44px;border-radius:13px;padding:4px;}
+      body.sidebar-collapsed .sidebar-toggle{top:82px!important;right:-25px!important;width:38px!important;height:38px!important;}
+      body.sidebar-collapsed .sidebar-system-status{padding:8px;display:flex;justify-content:center;}
+      body.sidebar-collapsed .system-status-grid,body.sidebar-collapsed .system-status-foot,body.sidebar-collapsed .system-status-top span:not(.system-pulse),body.sidebar-collapsed .sidebar-wordmark,body.sidebar-collapsed .sidebar-logout-text{display:none;}
+      body.sidebar-collapsed .sidebar-logout-btn{padding:0;}
+      .page-topbar{position:relative;align-items:flex-start;}
+      .topbar-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-left:auto;padding-right:0;}
+      .global-account-menu{position:relative;z-index:50;}
+      .global-account-btn{min-height:46px;border:1px solid #dce5f2;border-radius:999px;background:rgba(255,255,255,.96);box-shadow:0 12px 28px rgba(15,23,42,.10);display:flex;align-items:center;gap:10px;padding:6px 10px 6px 7px;cursor:pointer;color:#07152f;}
+      .global-account-avatar{width:34px;height:34px;border-radius:999px;background:linear-gradient(135deg,#1267ff,#38bdf8);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:950;}
+      .global-account-text{display:grid;text-align:left;line-height:1.1;}
+      .global-account-text strong{font-size:12.5px;font-weight:950;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .global-account-text small{font-size:10.5px;color:#667085;font-weight:800;}
+      .global-account-chevron{font-size:16px;color:#667085;transition:.16s ease;}
+      .global-account-menu.open .global-account-chevron{transform:rotate(180deg);}
+      .global-account-dropdown{position:absolute;right:0;top:54px;width:300px;background:#fff;border:1px solid #dce5f2;border-radius:18px;box-shadow:0 28px 70px rgba(7,21,47,.22);padding:8px;display:none;}
+      .global-account-menu.open .global-account-dropdown{display:grid;gap:4px;animation:accountDrop .14s ease-out;}
+      @keyframes accountDrop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+      .global-account-dropdown a,.global-account-dropdown button{width:100%;border:0;background:transparent;text-decoration:none;color:#07152f;border-radius:13px;padding:11px;display:flex;gap:11px;align-items:flex-start;text-align:left;cursor:pointer;font-family:inherit;}
+      .global-account-dropdown a:hover,.global-account-dropdown button:hover{background:#f3f7ff;}
+      .global-account-dropdown span{width:22px;text-align:center;font-size:16px;}
+      .global-account-dropdown strong{display:block;font-size:13px;font-weight:950;}
+      .global-account-dropdown small{display:block;margin-top:3px;font-size:11px;color:#667085;font-weight:750;}
+      .logout-modal-backdrop{position:fixed;inset:0;z-index:1000000;background:rgba(7,21,47,.54);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:24px;}
+      .logout-modal-card{width:min(420px,100%);background:#fff;border-radius:24px;border:1px solid #dce5f2;box-shadow:0 30px 80px rgba(7,21,47,.28);padding:28px;text-align:center;}
+      .logout-modal-icon{width:56px;height:56px;margin:0 auto 14px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px;background:linear-gradient(135deg,#1267ff,#38bdf8);}
+      .logout-modal-card h2{margin:0;color:#07152f;font-size:24px;font-weight:950;}
+      .logout-modal-card p{margin:10px 0 22px;color:#667085;line-height:1.5;font-size:13.5px;}
+      .logout-modal-actions{display:flex;gap:10px;justify-content:center;}
+      .logout-cancel-btn,.logout-confirm-btn{min-height:42px;border-radius:12px;padding:0 18px;font-weight:900;cursor:pointer;}
+      .logout-cancel-btn{background:#fff;color:#07152f;border:1px solid #dce5f2;}
+      .logout-confirm-btn{background:#ef4444;color:#fff;border:1px solid #ef4444;}
+      @media(max-width:760px){.page-topbar{flex-direction:column;}.topbar-actions{width:100%;justify-content:flex-start;}.global-account-text{display:none;}.global-account-dropdown{left:0;right:auto;width:280px;}}
     `;
 
     document.head.appendChild(style);
@@ -767,7 +388,24 @@
     if (modal) modal.style.display = "none";
   }
 
+  async function trackLogoutBeforeSignOut() {
+    try {
+      if (window.PortalEvents?.trackLogout) {
+        await window.PortalEvents.trackLogout();
+      } else if (window.PortalEvents?.track) {
+        await window.PortalEvents.track({
+          eventType: "logout",
+          description: "User logged out"
+        });
+      }
+    } catch (error) {
+      console.warn("Logout tracking skipped:", error.message);
+    }
+  }
+
   async function logout() {
+    await trackLogoutBeforeSignOut();
+
     try {
       if (typeof sb === "function") await sb().auth.signOut();
     } catch (error) {
@@ -855,7 +493,7 @@
       </nav>
 
       <div class="sidebar-logout-wrap">
-        <button id="sidebarLogoutBtn" class="sidebar-logout-btn" type="button">
+        <button id="sidebarLogoutBtn" class="sidebar-logout-btn" type="button" data-logout="true">
           <span class="sidebar-logout-icon">⎋</span>
           <span class="sidebar-logout-text">Log out</span>
         </button>
@@ -872,6 +510,8 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
+    injectPortalEventsScript();
+
     await loadProfile();
 
     renderSidebar();

@@ -868,7 +868,14 @@
     body.innerHTML = rows.length
       ? rows.map(order => `
           <tr>
-            <td><strong>${escapeHtml(order.order_number || "—")}</strong></td>
+            <td>
+  <strong>${escapeHtml(order.order_number || "—")}</strong>
+  ${
+    order.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
+      : ""
+  }
+</td>
             <td>${escapeHtml(order.retailer_display || "—")}</td>
             <td>${statusPill(order.lifecycle_status)}</td>
             <td>${formatNumber(order.product_completeness?.missing || 0)}</td>
@@ -896,8 +903,15 @@
 
           return `
             <tr>
-              <td><strong>${escapeHtml(order.order_number || "—")}</strong></td>
-              <td>${escapeHtml(order.purchase_order || order.external_reference || "—")}</td>
+            <td>
+  <strong>${escapeHtml(order.order_number || "—")}</strong>
+  ${
+    order.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
+      : ""
+  }
+</td>
+<td>${escapeHtml(order.purchase_order || "—")}</td>
               <td>${escapeHtml(order.retailer_display || "—")}</td>
               <td>${escapeHtml(order.postcode_display || "—")}</td>
               <td>${statusPill(order.lifecycle_status)}</td>
@@ -981,7 +995,14 @@
     body.innerHTML = rows.length
       ? rows.map(order => `
           <tr>
-            <td><strong>${escapeHtml(order.order_number || "—")}</strong></td>
+           <td>
+  <strong>${escapeHtml(order.order_number || "—")}</strong>
+  ${
+    order.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
+      : ""
+  }
+</td>
             <td>${hasDocument(order, "packing_slip") ? `<span class="pill green">Available</span>` : `<span class="pill gray">Pending</span>`}</td>
             <td>${hasDocument(order, "pod") ? `<span class="pill green">Available</span>` : `<span class="pill gray">Pending</span>`}</td>
             <td>${hasDocument(order, "invoice") ? `<span class="pill green">Available</span>` : `<span class="pill gray">Pending</span>`}</td>

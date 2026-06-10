@@ -51,7 +51,11 @@
     .order-select-checkbox,#selectAllVisibleOrders{width:16px;height:16px;cursor:pointer}
 
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:16px;background:#fff}
-    .occ-table{width:100%;min-width:1720px;border-collapse:collapse}
+   .occ-table{
+  width:100%;
+  min-width:1840px;
+  border-collapse:collapse
+}
     .occ-table th,.occ-table td{padding:12px 13px;border-bottom:1px solid var(--border);font-size:12.2px;text-align:left;vertical-align:middle}
     .occ-table th{background:#fbfdff;font-size:10.3px;font-weight:900;text-transform:uppercase;color:#374151;letter-spacing:.04em;white-space:nowrap}
     .occ-table tbody tr:hover{background:#fafcff}
@@ -376,12 +380,14 @@
         <table class="occ-table">
           <thead>
             <tr>
-              <th class="order-select-cell select-column tenant-only">Select</th>
-              <th class="expand-cell"></th>
-              <th class="sortable-th" data-sort-key="order">Order <span class="sort-indicator" data-sort-indicator="order"></span></th>
-              <th class="sortable-th product-owner-only" data-sort-key="customer">Product Owner <span class="sort-indicator" data-sort-indicator="customer"></span></th>
-              <th>Retailer</th>
-              <th class="sortable-th" data-sort-key="ship_to">Ship To <span class="sort-indicator" data-sort-indicator="ship_to"></span></th>
+              <tr>
+  <th class="order-select-cell select-column tenant-only">Select</th>
+  <th class="expand-cell"></th>
+  <th class="sortable-th" data-sort-key="order">Order <span class="sort-indicator" data-sort-indicator="order"></span></th>
+  <th>Reference</th>
+  <th class="sortable-th product-owner-only" data-sort-key="customer">Product Owner <span class="sort-indicator" data-sort-indicator="customer"></span></th>
+  <th>Retailer</th>
+  <th class="sortable-th" data-sort-key="ship_to">Ship To <span class="sort-indicator" data-sort-indicator="ship_to"></span></th>
               <th class="sortable-th" data-sort-key="progress">Lifecycle <span class="sort-indicator" data-sort-indicator="progress"></span></th>
               <th class="sortable-th" data-sort-key="products">Completeness <span class="sort-indicator" data-sort-indicator="products"></span></th>
               <th>Documents</th>
@@ -394,7 +400,7 @@
 
           <tbody id="ordersBody">
             <tr>
-              <td colspan="13">Loading operations.</td>
+<td colspan="14">Loading operations.</td>
             </tr>
           </tbody>
         </table>

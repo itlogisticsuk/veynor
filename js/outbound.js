@@ -150,6 +150,7 @@
     );
   }
 
+
   function getOutboundType(item) {
     const status = normalize(item.status);
 
@@ -301,7 +302,6 @@
         loaded_at,
         shipped_at,
         created_at,
-        updated_at,
         linked_order_id,
         shipment_id,
         inbound_reference,
@@ -417,7 +417,7 @@
 
       const order = alloc.order_lines?.orders || {};
       const orderId = alloc.order_lines?.order_id || order.id || item.linked_order_id || "";
-      const orderNo = order.order_number || order.external_reference || order.purchase_order || orderId || "";
+const orderNo = order.order_number || "";
 
       return {
         ...item,
@@ -583,7 +583,19 @@
 
           <td>${escapeHtml(item.customer_name || "—")}</td>
           <td>${outboundTypePill(item)}</td>
-          <td>${escapeHtml(item.order_number || item.external_reference || item.linked_order_id || "—")}</td>
+          <td>
+  <strong>${escapeHtml(item.order_number || "—")}</strong>
+  ${
+    item.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(item.external_reference)}</span>`
+      : ""
+  }
+  ${
+    item.purchase_order
+      ? `<span class="subline">PO: ${escapeHtml(item.purchase_order)}</span>`
+      : ""
+  }
+</td>
           <td>${escapeHtml(item.inbound_reference || "—")}</td>
           <td>${formatNumber(item.volume_m3, 3)}</td>
           <td>${formatNumber(item.weight_kg, 1)}</td>
@@ -642,9 +654,19 @@
 
         <div class="detail-box">
           <div class="detail-label">Linked Order</div>
-          <div class="detail-value">${escapeHtml(item.order_number || item.external_reference || item.linked_order_id || "—")}</div>
-        </div>
-
+<div class="detail-value">
+  ${escapeHtml(item.order_number || "—")}
+  ${
+    item.external_reference
+      ? `<div class="subline">Supplier Ref: ${escapeHtml(item.external_reference)}</div>`
+      : ""
+  }
+  ${
+    item.purchase_order
+      ? `<div class="subline">PO: ${escapeHtml(item.purchase_order)}</div>`
+      : ""
+  }
+</div>
         <div class="detail-box">
           <div class="detail-label">Reference</div>
           <div class="detail-value">${escapeHtml(item.inbound_reference || "—")}</div>
@@ -703,7 +725,9 @@
       "Original Unique SKU": item.sku_unique || "",
       "Outbound Type": getOutboundType(item),
       "Status": item.status || "",
-      "Linked Order": item.order_number || item.external_reference || item.linked_order_id || "",
+     "Linked Order": item.order_number || "",
+"Supplier Reference": item.external_reference || "",
+"Purchase Order": item.purchase_order || "",
       "Reference": item.inbound_reference || "",
       "Warehouse": item.warehouse_name || "",
       "Location": item.location_code || "",

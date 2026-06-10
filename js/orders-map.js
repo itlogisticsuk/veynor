@@ -720,8 +720,40 @@
 
     return points;
   }
+async function drawOsrmRouteLine(points, color, weight = 4, opacity = 0.85) {
+  if (!routeLineLayer || !Array.isArray(points) || points.length < 2) return false;
 
-  function renderRoutesToMap() {
+  try {
+    const coords = points
+      .map(point => `${point[1]},${point[0]}`)
+      .join(";");
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`OSRM map route failed: ${res.status}`);
+
+    const json = await res.json();
+    const geometry = json.routes?.[0]?.geometry;
+
+    if (!geometry) throw new Error("No OSRM geometry found.");
+
+    routeLineLayer.addLayer(L.geoJSON(geometry, {
+      style: {
+        color,
+        weight,
+        opacity
+      }
+    }));
+
+    return true;
+  } catch (error) {
+    console.warn("[orders-map.js] OSRM route line fallback:", error.message || error);
+    return false;
+  }
+}
+
+async function renderRoutesToMap() {
     if (!routeLineLayer || !routeStopLayer) return;
     if (!getShowRouteLines()) return;
 
@@ -738,15 +770,19 @@
 
       const points = buildRoutePolylinePoints(selectedStops, depot);
 
-      if (points.length >= 2) {
-        routeLineLayer.addLayer(L.polyline(points, {
-          color: routeColor(0),
-          weight: 5,
-          opacity: 0.95
-        }));
-      }
+     if (points.length >= 2) {
+  const drawn = await drawOsrmRouteLine(points, routeColor(0), 5, 0.95);
 
-      selectedStops.forEach((stop, index) => {
+  if (!drawn) {
+    routeLineLayer.addLayer(L.polyline(points, {
+      color: routeColor(0),
+      weight: 5,
+      opacity: 0.95
+    }));
+  }
+}
+
+selectedStops.forEach((stop, index) => {
         const lat = toNumber(stop.latitude);
         const lng = toNumber(stop.longitude);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -789,12 +825,17 @@
       const points = buildRoutePolylinePoints(ordered, depot);
 
       if (points.length >= 2) {
-        routeLineLayer.addLayer(L.polyline(points, {
-          color: routeColor(routeIndex),
-          weight: 4,
-          opacity: 0.82
-        }));
-        allLatLngs.push(...points);
+        drawOsrmRouteLine(points, routeColor(routeIndex), 4, 0.82).then(drawn => {
+  if (!drawn) {
+    routeLineLayer.addLayer(L.polyline(points, {
+      color: routeColor(routeIndex),
+      weight: 4,
+      opacity: 0.82
+    }));
+  }
+});
+
+allLatLngs.push(...points);
       }
 
       ordered.forEach((stop, stopIndex) => {

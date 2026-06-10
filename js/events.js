@@ -54,7 +54,19 @@ function renderEvents(rows){
     <td>${time}</td>
     <td>${row.event_type}</td>
     <td>${row.entity_type}</td>
-    <td>${row.reference_no ?? "-"}</td>
+  <td>
+  ${row.reference_no ?? "-"}
+  ${
+    row.payload?.order_number
+      ? `<span class="subline">Order: ${row.payload.order_number}</span>`
+      : ""
+  }
+  ${
+    row.payload?.supplier_reference || row.payload?.external_reference
+      ? `<span class="subline">Supplier Ref: ${row.payload.supplier_reference || row.payload.external_reference}</span>`
+      : ""
+  }
+</td>
     <td>${row.source_module ?? "-"}</td>
     <td>${row.old_status ?? ""} → ${row.new_status ?? ""}</td>
     `

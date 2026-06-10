@@ -3,6 +3,7 @@
 
   const TENANT_NAME = "Sofa2U";
   const DEBUG = true;
+  const OSRM_BASE_URL = "https://router.project-osrm.org";
 
   const DEFAULT_SETTINGS = {
     average_speed_kmh: 50,
@@ -15,6 +16,7 @@
     max_cost_per_order_gbp: 125,
     labour_cost_per_hour_gbp: 38.5,
     vehicle_cost_per_mile_gbp: 0.55,
+    diesel_price_per_litre_gbp_inc_vat: 1.55,
     default_departure_time: "08:00",
     default_transport_type: "own_transport",
     min_fill_rate_default: 0.75,
@@ -89,6 +91,10 @@
     return `RT-${String(dateIso || todayIso()).replaceAll("-", "")}-${String(index).padStart(3, "0")}`;
   }
 
+  function isUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+  }
+
   async function getCompanyId(client) {
     const { data, error } = await client
       .from("companies")
@@ -126,6 +132,11 @@
     settings.max_cost_per_order_gbp = toNumber(settings.max_cost_per_order_gbp, DEFAULT_SETTINGS.max_cost_per_order_gbp);
     settings.labour_cost_per_hour_gbp = toNumber(settings.labour_cost_per_hour_gbp, DEFAULT_SETTINGS.labour_cost_per_hour_gbp);
     settings.vehicle_cost_per_mile_gbp = toNumber(settings.vehicle_cost_per_mile_gbp, DEFAULT_SETTINGS.vehicle_cost_per_mile_gbp);
+    settings.diesel_price_per_litre_gbp_inc_vat = toNumber(
+      settings.diesel_price_per_litre_gbp_inc_vat,
+      DEFAULT_SETTINGS.diesel_price_per_litre_gbp_inc_vat
+    );
+
     settings.default_departure_time = settings.default_departure_time || settings.planner_default_departure_time || DEFAULT_SETTINGS.default_departure_time;
     settings.default_transport_type = settings.default_transport_type || DEFAULT_SETTINGS.default_transport_type;
 
@@ -201,7 +212,8 @@
         max_route_hours: toNumber(v.max_route_hours, DEFAULT_SETTINGS.max_route_duration_hours),
         cost_per_mile_gbp: toNumber(v.cost_per_mile_gbp, DEFAULT_SETTINGS.vehicle_cost_per_mile_gbp),
         labour_cost_per_hour_gbp: toNumber(v.labour_cost_per_hour_gbp, DEFAULT_SETTINGS.labour_cost_per_hour_gbp),
-        average_speed_kmh: toNumber(v.average_speed_kmh, DEFAULT_SETTINGS.average_speed_kmh)
+        average_speed_kmh: toNumber(v.average_speed_kmh, DEFAULT_SETTINGS.average_speed_kmh),
+        fuel_litres_per_100km: toNumber(v.fuel_litres_per_100km, 10)
       }))
       .sort((a, b) => getVehicleCapacity(a) - getVehicleCapacity(b));
   }
@@ -268,11 +280,16 @@
       order_id: order.id,
       order_number: order.order_number || "",
       stop_name: order.retailer_name || order.delivery_name || order.customer_name || order.order_number || "Stop",
+
       address_1: order.delivery_address_1 || "",
       address_2: order.delivery_address_2 || "",
+      address_3: order.delivery_address_3 || "",
+      address_4: order.delivery_address_4 || "",
+
       city: order.delivery_city || "",
       postcode: order.delivery_postcode || "",
       country: order.delivery_country || "United Kingdom",
+
       latitude: getLat(order),
       longitude: getLng(order),
       service_minutes: toNumber(order.service_minutes, settings.stop_time_minutes),
@@ -322,7 +339,7 @@
     return ordered;
   }
 
-  function routeDistanceKm(stops, settings, depot) {
+  function routeDistanceKmFallback(stops, settings, depot) {
     if (!stops.length) return 0;
 
     let total = 0;
@@ -344,38 +361,99 @@
     return total;
   }
 
-  function summarizeRoute(orders, settings, depot, vehicle = null) {
+  async function fetchOsrmRoute(stops, depot) {
+    if (!Array.isArray(stops) || !stops.length) return null;
+
+    const points = [depot, ...stops, depot];
+
+    const coords = points
+      .map(p => `${Number(p.longitude)},${Number(p.latitude)}`)
+      .join(";");
+
+    const url = `${OSRM_BASE_URL}/route/v1/driving/${coords}?overview=false&steps=false`;
+
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`OSRM request failed: ${res.status}`);
+
+    const json = await res.json();
+
+    if (json.code !== "Ok" || !json.routes?.length) {
+      throw new Error(`OSRM route failed: ${json.code || "Unknown error"}`);
+    }
+
+    const route = json.routes[0];
+
+    return {
+      distanceKm: route.distance / 1000,
+      distanceMiles: kmToMiles(route.distance / 1000),
+      driveHours: route.duration / 3600,
+      legs: route.legs || []
+    };
+  }
+
+  async function summarizeRoute(orders, settings, depot, vehicle = null) {
     const stops = nearestNeighbour(
       orders.map(order => makeStop(order, settings)),
       settings,
       depot
     );
 
-    const distanceKm = routeDistanceKm(stops, settings, depot);
-    const distanceMiles = kmToMiles(distanceKm);
-    const speed = vehicle ? getVehicleSpeed(vehicle, settings) : settings.average_speed_kmh;
+    let distanceKm = routeDistanceKmFallback(stops, settings, depot);
+    let distanceMiles = kmToMiles(distanceKm);
+    let driveHours = distanceKm / Math.max(
+      1,
+      vehicle ? getVehicleSpeed(vehicle, settings) : settings.average_speed_kmh
+    );
 
-    const driveHours = distanceKm / Math.max(1, speed);
-    const serviceHours = stops.reduce((sum, stop) => sum + toNumber(stop.service_minutes, settings.stop_time_minutes) / 60, 0);
+    let osrm = null;
+
+    try {
+      osrm = await fetchOsrmRoute(stops, depot);
+      if (osrm) {
+        distanceKm = osrm.distanceKm;
+        distanceMiles = osrm.distanceMiles;
+        driveHours = osrm.driveHours;
+      }
+    } catch (err) {
+      console.warn("[planning-engine.js] OSRM fallback to haversine:", err.message || err);
+    }
+
+    const serviceHours = stops.reduce(
+      (sum, stop) => sum + toNumber(stop.service_minutes, settings.stop_time_minutes) / 60,
+      0
+    );
+
     const totalHours = driveHours + serviceHours;
-
     const totalVolume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
     const totalColli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
     const totalOrders = orders.length;
     const totalStops = stops.length;
 
-    const labourRate = vehicle ? toNumber(vehicle.labour_cost_per_hour_gbp, settings.labour_cost_per_hour_gbp) : settings.labour_cost_per_hour_gbp;
-    const vehicleRate = vehicle ? toNumber(vehicle.cost_per_mile_gbp, settings.vehicle_cost_per_mile_gbp) : settings.vehicle_cost_per_mile_gbp;
+    const labourRate = vehicle
+      ? toNumber(vehicle.labour_cost_per_hour_gbp, settings.labour_cost_per_hour_gbp)
+      : settings.labour_cost_per_hour_gbp;
+
+    const vehicleRate = vehicle
+      ? toNumber(vehicle.cost_per_mile_gbp, settings.vehicle_cost_per_mile_gbp)
+      : settings.vehicle_cost_per_mile_gbp;
+
+    const dieselPriceExVat =
+      toNumber(settings.diesel_price_per_litre_gbp_inc_vat, 1.55) / 1.20;
+
+    const fuelUsage = toNumber(vehicle?.fuel_litres_per_100km, 10);
+    const fuelLitres = (distanceKm / 100) * fuelUsage;
+    const fuelCost = fuelLitres * dieselPriceExVat;
 
     const labourCost = totalHours * labourRate;
     const vehicleCost = distanceMiles * vehicleRate;
-    const totalCost = labourCost + vehicleCost;
+    const totalCost = labourCost + vehicleCost + fuelCost;
 
     const capacity = vehicle ? getVehicleCapacity(vehicle) : 0;
     const fillRate = capacity > 0 ? totalVolume / capacity : 0;
 
     return {
       stops,
+      osrm,
       totalVolume,
       totalColli,
       totalOrders,
@@ -385,12 +463,33 @@
       driveHours,
       serviceHours,
       totalHours,
+      fuelCost,
+      fuelLitres,
       labourCost,
       vehicleCost,
       totalCost,
       costPerOrder: totalOrders ? totalCost / totalOrders : 0,
       costPerStop: totalStops ? totalCost / totalStops : 0,
       fillRate
+    };
+  }
+
+  async function quickSummaryForLimits(orders, settings, depot) {
+    const stops = nearestNeighbour(
+      orders.map(order => makeStop(order, settings)),
+      settings,
+      depot
+    );
+
+    const distanceKm = routeDistanceKmFallback(stops, settings, depot);
+    const driveHours = distanceKm / Math.max(1, settings.average_speed_kmh);
+    const serviceHours = stops.reduce((sum, stop) => sum + toNumber(stop.service_minutes, settings.stop_time_minutes) / 60, 0);
+
+    return {
+      totalVolume: orders.reduce((sum, order) => sum + getOrderVolume(order), 0),
+      totalOrders: orders.length,
+      totalStops: stops.length,
+      totalHours: driveHours + serviceHours
     };
   }
 
@@ -422,21 +521,23 @@
     return summary.totalCost + penalty + ((1 - fill) * 100);
   }
 
-  function chooseVehicle(vehicles, orders, settings, depot, preferredVehicleId = null) {
+  async function chooseVehicle(vehicles, orders, settings, depot, preferredVehicleId = null) {
     if (preferredVehicleId) {
       const preferred = vehicles.find(v => String(v.id) === String(preferredVehicleId));
       if (preferred) return preferred;
     }
 
-    return vehicles
-      .map(vehicle => {
-        const summary = summarizeRoute(orders, settings, depot, vehicle);
+    const scored = await Promise.all(
+      vehicles.map(async vehicle => {
+        const summary = await summarizeRoute(orders, settings, depot, vehicle);
         return { vehicle, summary, score: vehicleScore(vehicle, summary, settings) };
       })
-      .sort((a, b) => a.score - b.score)[0]?.vehicle || null;
+    );
+
+    return scored.sort((a, b) => a.score - b.score)[0]?.vehicle || null;
   }
 
-  function buildClusters(orders, settings, routeDate, depot, manualOnly = false) {
+  async function buildClusters(orders, settings, routeDate, depot, manualOnly = false) {
     if (manualOnly) {
       return [{
         routeCode: buildRouteCode(routeDate, 1),
@@ -454,7 +555,7 @@
 
       for (let i = 0; i < remaining.length;) {
         const test = [...cluster, remaining[i]];
-        const summary = summarizeRoute(test, settings, depot);
+        const summary = await quickSummaryForLimits(test, settings, depot);
 
         if (!cluster.length || withinSettingsLimits(summary, settings)) {
           cluster = test;
@@ -492,18 +593,35 @@
     };
   }
 
-  function buildTiming(stops, settings, vehicle, depot, routeDate, startTime) {
+  async function buildTiming(stops, settings, vehicle, depot, routeDate, startTime) {
     let currentMinutes = timeToMinutes(startTime || settings.default_departure_time);
+
+    let legs = [];
+
+    try {
+      const osrm = await fetchOsrmRoute(stops, depot);
+      legs = osrm?.legs || [];
+    } catch (err) {
+      console.warn("[planning-engine.js] OSRM timing fallback:", err.message || err);
+    }
+
     let currentLat = depot.latitude;
     let currentLng = depot.longitude;
 
-    return stops.map((stop, index) => {
-      const km = estimateRoadKm(
-        haversineKm(currentLat, currentLng, stop.latitude, stop.longitude),
-        settings
-      );
+    const rows = stops.map((stop, index) => {
+      let driveMinutes;
 
-      const driveMinutes = Math.round((km / getVehicleSpeed(vehicle || {}, settings)) * 60);
+      if (legs[index]?.duration) {
+        driveMinutes = Math.round(legs[index].duration / 60);
+      } else {
+        const km = estimateRoadKm(
+          haversineKm(currentLat, currentLng, stop.latitude, stop.longitude),
+          settings
+        );
+
+        driveMinutes = Math.round((km / getVehicleSpeed(vehicle || {}, settings)) * 60);
+      }
+
       currentMinutes += driveMinutes;
 
       const arrival = minutesToHHMM(currentMinutes);
@@ -530,6 +648,30 @@
         service_minutes: serviceMinutes
       };
     });
+
+    let returnMinutes = 0;
+
+    if (stops.length) {
+      const returnLeg = legs[stops.length];
+
+      if (returnLeg?.duration) {
+        returnMinutes = Math.round(returnLeg.duration / 60);
+      } else {
+        const lastStop = stops[stops.length - 1];
+        const returnKm = estimateRoadKm(
+          haversineKm(lastStop.latitude, lastStop.longitude, depot.latitude, depot.longitude),
+          settings
+        );
+
+        returnMinutes = Math.round((returnKm / getVehicleSpeed(vehicle || {}, settings)) * 60);
+      }
+    }
+
+    return {
+      stops: rows,
+      return_minutes: returnMinutes,
+      route_end_time: minutesToHHMM(currentMinutes + returnMinutes)
+    };
   }
 
   function etaWindow(arrival, before = 60, after = 60) {
@@ -550,12 +692,10 @@
     for (const route of routes) {
       const vehicle = route.vehicle;
       const summary = route.summary;
-      const timing = buildTiming(route.stops, settings, vehicle, depot, routeDate, startTime);
+      const timingResult = await buildTiming(route.stops, settings, vehicle, depot, routeDate, startTime);
+      const timing = timingResult.stops;
+      const endTime = timingResult.route_end_time || startTime;
       const driver = resolveDriver(vehicle, drivers, args);
-
-      const endTime = timing.length
-        ? timing[timing.length - 1].planned_departure_time
-        : startTime;
 
       const routePayload = {
         company_id: companyId,
@@ -600,6 +740,8 @@
         estimated_drive_hours: Number(summary.driveHours.toFixed(2)),
         estimated_service_hours: Number(summary.serviceHours.toFixed(2)),
         estimated_total_hours: Number(summary.totalHours.toFixed(2)),
+        estimated_cost_fuel_gbp: Number(summary.fuelCost.toFixed(2)),
+        estimated_fuel_litres: Number(summary.fuelLitres.toFixed(2)),
         estimated_cost_labour_gbp: Number(summary.labourCost.toFixed(2)),
         estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
         estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
@@ -632,9 +774,13 @@
 
           address_1: stop.address_1 || null,
           address_2: stop.address_2 || null,
+          address_3: stop.address_3 || null,
+          address_4: stop.address_4 || null,
+
           city: stop.city || null,
           postcode: stop.postcode || null,
           country: stop.country || null,
+
           latitude: stop.latitude,
           longitude: stop.longitude,
 
@@ -727,10 +873,10 @@
     const routeDate = args.planned_delivery_date || args.route_delivery_date || args.delivery_date || todayIso();
     const manualOnly = Array.isArray(args.order_ids) && args.order_ids.length > 0;
 
-    const clusters = buildClusters(orders, settings, routeDate, depot, manualOnly);
+    const clusters = await buildClusters(orders, settings, routeDate, depot, manualOnly);
 
-    const plannedRoutes = clusters.map(cluster => {
-      const vehicle = chooseVehicle(
+    const plannedRoutes = await Promise.all(clusters.map(async cluster => {
+      const vehicle = await chooseVehicle(
         vehicles,
         cluster.orders,
         settings,
@@ -740,7 +886,7 @@
 
       if (!vehicle) throw new Error("No suitable vehicle found for selected orders.");
 
-      const summary = summarizeRoute(cluster.orders, settings, depot, vehicle);
+      const summary = await summarizeRoute(cluster.orders, settings, depot, vehicle);
 
       return {
         ...cluster,
@@ -748,7 +894,7 @@
         summary,
         stops: summary.stops
       };
-    });
+    }));
 
     const created = await insertRoutes(client, companyId, plannedRoutes, settings, depot, drivers, args);
 
@@ -770,7 +916,7 @@
     const vehicles = await loadVehicles(client, companyId);
     const orders = await loadOrders(client, companyId, args);
 
-    const vehicle = chooseVehicle(
+    const vehicle = await chooseVehicle(
       vehicles,
       orders,
       settings,
@@ -778,7 +924,7 @@
       args.preferred_vehicle_id || args.vehicle_id || null
     );
 
-    const summary = summarizeRoute(orders, settings, depot, vehicle);
+    const summary = await summarizeRoute(orders, settings, depot, vehicle);
 
     return {
       ok: true,
@@ -840,16 +986,244 @@
     };
   }
 
+  async function replanExistingRoute(args = {}) {
+    const routeRef = args.route_id || args.routeId || args.route_code || args.routeCode;
+    if (!routeRef) throw new Error("Route id or route code missing.");
+
+    const client = db();
+    const companyId = await getCompanyId(client);
+    const settings = await loadSettings(client, companyId);
+    const depot = depotPoint(settings);
+
+    let routeQuery = client
+      .from("routes")
+      .select("*")
+      .eq("company_id", companyId)
+      .limit(1);
+
+    routeQuery = isUuid(routeRef)
+      ? routeQuery.eq("id", routeRef)
+      : routeQuery.eq("route_code", routeRef);
+
+    const { data: routesFound, error: routeError } = await routeQuery;
+    if (routeError) throw routeError;
+
+    const route = routesFound?.[0];
+    if (!route) throw new Error("Route not found.");
+
+    const routeId = route.id;
+
+    const { data: stops, error: stopError } = await client
+      .from("route_stops")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("route_id", routeId);
+
+    if (stopError) throw stopError;
+    if (!stops?.length) return { ok: true, message: "Route has no stops." };
+
+    const { data: routeVehicle } = await client
+      .from("vehicles")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", route.vehicle_id || route.assigned_vehicle_id)
+      .maybeSingle();
+
+    const vehicle = {
+      ...(routeVehicle || {}),
+      id: route.vehicle_id || route.assigned_vehicle_id || routeVehicle?.id || null,
+      name: route.vehicle_name || route.assigned_vehicle_name || routeVehicle?.name || null,
+      capacity_m3: route.assigned_vehicle_capacity_m3 || routeVehicle?.capacity_m3 || routeVehicle?.max_volume_m3 || settings.max_route_volume_m3,
+      average_speed_kmh: route.assigned_vehicle_speed_kmh || routeVehicle?.average_speed_kmh || settings.average_speed_kmh,
+      cost_per_mile_gbp: routeVehicle?.cost_per_mile_gbp || route.cost_per_mile_gbp || settings.vehicle_cost_per_mile_gbp,
+      labour_cost_per_hour_gbp: routeVehicle?.labour_cost_per_hour_gbp || route.labour_cost_per_hour_gbp || settings.labour_cost_per_hour_gbp,
+      fuel_litres_per_100km: routeVehicle?.fuel_litres_per_100km || route.fuel_litres_per_100km || 10
+    };
+
+    const routeDate = route.planned_delivery_date || route.route_date || todayIso();
+    const startTime = route.planned_start_time || settings.default_departure_time;
+    const finalizeEta = args.finalize_eta === true || args.eta_finalized === true;
+
+    const cleanStops = stops
+      .filter(stop => Number.isFinite(Number(stop.latitude)) && Number.isFinite(Number(stop.longitude)))
+      .map(stop => ({
+        ...stop,
+        latitude: Number(stop.latitude),
+        longitude: Number(stop.longitude),
+        service_minutes: toNumber(stop.service_minutes, settings.stop_time_minutes),
+        planning_volume_m3: toNumber(stop.planned_volume_m3, 0),
+        planning_colli: toNumber(stop.planned_colli, 0)
+      }));
+
+    const orderedStops = nearestNeighbour(cleanStops, settings, depot);
+    const timingResult = await buildTiming(orderedStops, settings, vehicle, depot, routeDate, startTime);
+    const timing = timingResult.stops;
+    const plannedEndTime = timingResult.route_end_time || startTime;
+
+    const { error: deleteStopsError } = await client
+      .from("route_stops")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("route_id", routeId);
+
+    if (deleteStopsError) throw deleteStopsError;
+
+    const newStopRows = orderedStops.map((stop, index) => {
+      const t = timing[index] || {};
+
+      return {
+        company_id: companyId,
+        route_id: routeId,
+        order_id: stop.order_id,
+        stop_sequence: index + 1,
+        stop_number: index + 1,
+        stop_name: stop.stop_name || stop.order_number || "Stop",
+
+        address_1: stop.address_1 || null,
+        address_2: stop.address_2 || null,
+        address_3: stop.address_3 || null,
+        address_4: stop.address_4 || null,
+        city: stop.city || null,
+        postcode: stop.postcode || null,
+        country: stop.country || "United Kingdom",
+
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+
+        eta: t.eta || null,
+        etd: t.etd || null,
+        arrival_eta: t.arrival_eta || null,
+        departure_eta: t.departure_eta || null,
+        planned_arrival_time: t.planned_arrival_time || null,
+        planned_departure_time: t.planned_departure_time || null,
+        planned_time: t.planned_time || null,
+
+        estimated_drive_minutes: t.estimated_drive_minutes || 0,
+        service_minutes: t.service_minutes || settings.stop_time_minutes,
+
+        planned_volume_m3: stop.planning_volume_m3 || 0,
+        planned_colli: stop.planning_colli || 0,
+
+        status: "planned",
+        delivery_status: "planned"
+      };
+    });
+
+    if (newStopRows.length) {
+      const { error: insertStopsError } = await client
+        .from("route_stops")
+        .insert(newStopRows);
+
+      if (insertStopsError) throw insertStopsError;
+    }
+
+    for (let i = 0; i < orderedStops.length; i++) {
+      const stop = orderedStops[i];
+      const t = timing[i] || {};
+      const windowEta = t.planned_arrival_time
+        ? etaWindow(t.planned_arrival_time, 60, 60)
+        : { from: null, to: null };
+
+      if (!stop.order_id) continue;
+
+      const { error: orderError } = await client
+        .from("orders")
+        .update({
+          route_id: routeId,
+          status: "planned",
+          transport_status: "planned",
+          planned_route_date: routeDate,
+          expected_delivery_date: routeDate,
+          delivery_eta_status: finalizeEta ? "confirmed" : "planned",
+          delivery_eta_from: finalizeEta ? windowEta.from : null,
+          delivery_eta_to: finalizeEta ? windowEta.to : null,
+          last_activity_at: new Date().toISOString()
+        })
+        .eq("company_id", companyId)
+        .eq("id", stop.order_id);
+
+      if (orderError) throw orderError;
+    }
+
+    const summary = await summarizeRoute(
+      orderedStops.map(stop => ({
+        id: stop.order_id,
+        delivery_lat: stop.latitude,
+        delivery_lng: stop.longitude,
+        planning_volume_m3: stop.planning_volume_m3,
+        planning_colli: stop.planning_colli,
+        service_minutes: stop.service_minutes
+      })),
+      settings,
+      depot,
+      vehicle
+    );
+
+    const { error: updateRouteError } = await client
+      .from("routes")
+      .update({
+        planned_end_time: plannedEndTime,
+        planned_volume_m3: Number(summary.totalVolume.toFixed(2)),
+        total_volume_m3: Number(summary.totalVolume.toFixed(2)),
+        planned_orders: orderedStops.length,
+        planned_stops: orderedStops.length,
+        total_stops: orderedStops.length,
+
+        estimated_distance_km: Number(summary.distanceKm.toFixed(2)),
+        estimated_distance_miles: Number(summary.distanceMiles.toFixed(2)),
+        estimated_drive_hours: Number(summary.driveHours.toFixed(2)),
+        estimated_service_hours: Number(summary.serviceHours.toFixed(2)),
+        estimated_total_hours: Number(summary.totalHours.toFixed(2)),
+
+        estimated_cost_fuel_gbp: Number(summary.fuelCost.toFixed(2)),
+        estimated_fuel_litres: Number(summary.fuelLitres.toFixed(2)),
+        estimated_cost_labour_gbp: Number(summary.labourCost.toFixed(2)),
+        estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
+        estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
+        cost_per_order_gbp: Number(summary.costPerOrder.toFixed(2)),
+        cost_per_stop_gbp: Number(summary.costPerStop.toFixed(2)),
+
+        route_status: "planned",
+        eta_finalized: finalizeEta
+      })
+      .eq("company_id", companyId)
+      .eq("id", routeId);
+
+    if (updateRouteError) throw updateRouteError;
+
+    return {
+      ok: true,
+      message: `${orderedStops.length} stop(s) replanned.`,
+      before: {
+        miles: Number(route.estimated_distance_miles || 0),
+        hours: Number(route.estimated_total_hours || 0),
+        cost: Number(route.estimated_cost_total_gbp || 0)
+      },
+      after: {
+        miles: Number(summary.distanceMiles.toFixed(2)),
+        hours: Number(summary.totalHours.toFixed(2)),
+        cost: Number(summary.totalCost.toFixed(2))
+      },
+      difference: {
+        miles: Number((summary.distanceMiles - Number(route.estimated_distance_miles || 0)).toFixed(2)),
+        hours: Number((summary.totalHours - Number(route.estimated_total_hours || 0)).toFixed(2)),
+        cost: Number((summary.totalCost - Number(route.estimated_cost_total_gbp || 0)).toFixed(2))
+      }
+    };
+  }
+
   window.PlanningEngine = {
     run,
     previewSelection,
-    syncRouteDeliveryData
+    syncRouteDeliveryData,
+    replanExistingRoute
   };
 
   window.VeynorPlanningEngine = {
     planRoutes: run,
     run,
     previewSelection,
-    syncRouteDeliveryData
+    syncRouteDeliveryData,
+    replanExistingRoute
   };
 })();

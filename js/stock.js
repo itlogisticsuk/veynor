@@ -314,12 +314,14 @@
     const orderNo = item.order_number || item.linked_order_id || "Order";
     const retailer = item.retailer_name || "";
     const po = item.purchase_order || "";
+const supplierRef = item.supplier_reference || "";
 
     return `
-      <span class="stock-link">${escapeHtml(orderNo)}</span>
-      ${retailer ? `<span class="subline">${escapeHtml(retailer)}</span>` : ""}
-      ${po ? `<span class="subline">PO: ${escapeHtml(po)}</span>` : ""}
-    `;
+  <span class="stock-link">${escapeHtml(orderNo)}</span>
+  ${supplierRef ? `<span class="subline">Supplier Ref: ${escapeHtml(supplierRef)}</span>` : ""}
+  ${retailer ? `<span class="subline">${escapeHtml(retailer)}</span>` : ""}
+  ${po ? `<span class="subline">PO: ${escapeHtml(po)}</span>` : ""}
+`;
   }
 
   async function loadCustomers() {
@@ -600,9 +602,10 @@
     return {
       ...item,
       linked_order_id: order.id,
-      order_number: order.order_number || order.external_reference || order.id || "",
-      retailer_name: order.retail_name || "",
-      purchase_order: order.purchase_order || "",
+     order_number: order.order_number || order.external_reference || order.id || "",
+supplier_reference: order.external_reference || "",
+retailer_name: order.retail_name || "",
+purchase_order: order.purchase_order || "",
       allocation_id: alloc.id,
       allocation_status: alloc.allocation_status || "reserved",
       reserved_at: item.reserved_at || alloc.allocated_at || null,
@@ -760,8 +763,9 @@
           item.warehouse_name,
           item.location_code,
           item.order_number,
-          item.retailer_name,
-          item.purchase_order,
+item.supplier_reference,
+item.retailer_name,
+item.purchase_order,
           item.status,
           item.linked_order_id
         ].join(" ").toLowerCase();
@@ -1354,9 +1358,10 @@
       "Original Mutation ID": item.storage_mutation_id || "",
       "Status": statusLabel(item.status),
       "Availability": exportAvailabilityLabel(item),
-      "Linked Order": item.order_number || "",
-      "Retailer": item.retailer_name || "",
-      "Purchase Order": item.purchase_order || "",
+    "Linked Order": item.order_number || "",
+"Supplier Reference": item.supplier_reference || "",
+"Retailer": item.retailer_name || "",
+"Purchase Order": item.purchase_order || "",
       "Reference": item.inbound_reference || "",
       "Warehouse": item.warehouse_name || "",
       "Location": item.location_code || "",

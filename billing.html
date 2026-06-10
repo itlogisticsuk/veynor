@@ -22,11 +22,11 @@
     .billing-kpi-sub{font-size:11.5px;color:var(--muted);line-height:1.35}
 
     .billing-card{padding:16px;display:grid;gap:14px}
-    .filters-grid{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr .8fr;gap:12px;align-items:end}
+    .filters-grid{display:grid;grid-template-columns:1.4fr .8fr .8fr .8fr;gap:12px;align-items:end}
     .actions-row{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
     .actions-left,.actions-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
-    .billing-table{width:100%;min-width:1560px;border-collapse:collapse}
+    .billing-table{width:100%;min-width:1320px;border-collapse:collapse}
     .billing-table th,.billing-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;vertical-align:top}
     .billing-table th{background:#fbfbfc;font-size:10.5px;font-weight:900;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
     .billing-table tbody tr:hover{background:#fafcff}
@@ -50,9 +50,11 @@
     .detail-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
     .detail-value{font-size:12.5px;font-weight:850;line-height:1.35;word-break:break-word}
     .orders-list{display:grid;gap:8px}
-    .order-line{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;display:grid;grid-template-columns:1fr repeat(5,110px);gap:10px;align-items:center}
+    .order-line{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;display:grid;grid-template-columns:1fr repeat(3,120px);gap:10px;align-items:center}
     .order-line-title{font-weight:950}
     .order-line-sub{font-size:11.5px;color:var(--muted);line-height:1.35}
+
+    #filterStatusWrap{display:none}
 
     @media(max-width:1500px){
       .billing-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -93,54 +95,61 @@
     <div id="toast" class="notice"></div>
 
     <section class="billing-kpis">
-      <article class="card billing-kpi" id="kpiCardInvoices">
+      <article class="card billing-kpi">
         <div class="billing-kpi-label">Invoices</div>
         <div class="billing-kpi-value" id="kpiInvoices">0</div>
         <div class="billing-kpi-sub">Visible invoice groups</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardPick" data-billing-col="pick">
+      <article class="card billing-kpi" id="kpiCardPick">
         <div class="billing-kpi-label">Pick Revenue</div>
         <div class="billing-kpi-value" id="kpiPick">£0.00</div>
         <div class="billing-kpi-sub">Internal picking revenue</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardWarehouse" data-billing-col="warehouse">
+      <article class="card billing-kpi">
         <div class="billing-kpi-label">Warehouse Revenue</div>
         <div class="billing-kpi-value" id="kpiWarehouse">£0.00</div>
         <div class="billing-kpi-sub">Warehouse fees</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardAdmin" data-billing-col="admin">
+      <article class="card billing-kpi" id="kpiCardAdmin">
         <div class="billing-kpi-label">Admin Revenue</div>
         <div class="billing-kpi-value" id="kpiAdmin">£0.00</div>
         <div class="billing-kpi-sub">Internal admin revenue</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardTransport" data-billing-col="transport">
+      <article class="card billing-kpi">
         <div class="billing-kpi-label">Transport Revenue</div>
         <div class="billing-kpi-value" id="kpiTransport">£0.00</div>
         <div class="billing-kpi-sub">Transport fees</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardTotalExVat">
+      <article class="card billing-kpi">
         <div class="billing-kpi-label">Total Excl. VAT</div>
         <div class="billing-kpi-value" id="kpiTotalExVat">£0.00</div>
         <div class="billing-kpi-sub">Net invoice value</div>
       </article>
 
-      <article class="card billing-kpi" id="kpiCardTotalIncVat">
+      <article class="card billing-kpi">
         <div class="billing-kpi-label">Total Incl. VAT</div>
         <div class="billing-kpi-value" id="kpiTotalIncVat">£0.00</div>
         <div class="billing-kpi-sub">Gross invoice value</div>
       </article>
     </section>
 
+    <nav class="billing-tabs page-tabs">
+      <button id="billingTabOpen" class="billing-tab page-tab active" data-billing-tab="open" type="button">Open invoices</button>
+      <button id="billingTabPaid" class="billing-tab page-tab" data-billing-tab="paid" type="button">Paid invoices</button>
+    </nav>
+
+    <input id="billingView" type="hidden" value="open"/>
+
     <section class="card billing-card">
       <div class="section-head">
         <div>
           <h2 class="section-title">Filters</h2>
-          <p class="section-sub">Filter invoices by invoice number, customer, status and date range.</p>
+          <p class="section-sub">Filter invoices by invoice number, customer and date range.</p>
         </div>
       </div>
 
@@ -158,6 +167,16 @@
         </div>
 
         <div class="field">
+          <label for="filterDateFrom">Date from</label>
+          <input id="filterDateFrom" class="input" type="date"/>
+        </div>
+
+        <div class="field">
+          <label for="filterDateTo">Date to</label>
+          <input id="filterDateTo" class="input" type="date"/>
+        </div>
+
+        <div class="field" id="filterStatusWrap">
           <label for="filterStatus">Invoice status</label>
           <select id="filterStatus" class="select">
             <option value="">All statuses</option>
@@ -167,16 +186,6 @@
             <option value="partially_paid">Partially paid</option>
             <option value="overdue">Overdue</option>
           </select>
-        </div>
-
-        <div class="field">
-          <label for="filterDateFrom">Date from</label>
-          <input id="filterDateFrom" class="input" type="date"/>
-        </div>
-
-        <div class="field">
-          <label for="filterDateTo">Date to</label>
-          <input id="filterDateTo" class="input" type="date"/>
         </div>
       </div>
 
@@ -195,8 +204,8 @@
     <section class="card billing-card">
       <div class="section-head">
         <div>
-          <h2 class="section-title">Invoices</h2>
-          <p class="section-sub">Click an invoice row to view the linked orders and revenue split.</p>
+          <h2 class="section-title" id="billingListTitle">Open invoices</h2>
+          <p class="section-sub" id="billingListSubtitle">Generated, sent, overdue and partially paid invoices.</p>
         </div>
         <div class="section-sub" id="resultsMeta">0 invoices shown</div>
       </div>
@@ -210,31 +219,25 @@
               <th class="sortable-th" data-sort-key="customer">Customer <span class="sort-indicator" data-sort-indicator="customer"></span></th>
               <th class="sortable-th" data-sort-key="orders">Orders <span class="sort-indicator" data-sort-indicator="orders"></span></th>
               <th class="sortable-th" data-sort-key="date">Invoice Date <span class="sort-indicator" data-sort-indicator="date"></span></th>
-
-              <th class="sortable-th" data-sort-key="pick" data-billing-col="pick">Pick <span class="sort-indicator" data-sort-indicator="pick"></span></th>
-              <th class="sortable-th" data-sort-key="warehouse" data-billing-col="warehouse">Warehouse <span class="sort-indicator" data-sort-indicator="warehouse"></span></th>
-              <th class="sortable-th" data-sort-key="admin" data-billing-col="admin">Admin <span class="sort-indicator" data-sort-indicator="admin"></span></th>
-              <th class="sortable-th" data-sort-key="transport" data-billing-col="transport">Transport <span class="sort-indicator" data-sort-indicator="transport"></span></th>
-
+              <th class="sortable-th" data-sort-key="warehouse">Warehouse <span class="sort-indicator" data-sort-indicator="warehouse"></span></th>
+              <th class="sortable-th" data-sort-key="transport">Transport <span class="sort-indicator" data-sort-indicator="transport"></span></th>
               <th class="sortable-th" data-sort-key="net">Total Excl. VAT <span class="sort-indicator" data-sort-indicator="net"></span></th>
               <th>VAT 20%</th>
               <th class="sortable-th" data-sort-key="gross">Total Incl. VAT <span class="sort-indicator" data-sort-indicator="gross"></span></th>
               <th class="sortable-th" data-sort-key="status">Status <span class="sort-indicator" data-sort-indicator="status"></span></th>
-              <th data-billing-col="actions">Actions</th>
+              <th>Actions</th>
             </tr>
           </thead>
 
           <tbody id="billingBody">
-            <tr><td colspan="14">Loading invoices...</td></tr>
+            <tr><td colspan="12">Loading invoices...</td></tr>
           </tbody>
 
           <tfoot>
             <tr>
               <td colspan="5">Visible totals</td>
-              <td class="money-cell" id="footPick" data-billing-col="pick">£0.00</td>
-              <td class="money-cell" id="footWarehouse" data-billing-col="warehouse">£0.00</td>
-              <td class="money-cell" id="footAdmin" data-billing-col="admin">£0.00</td>
-              <td class="money-cell" id="footTransport" data-billing-col="transport">£0.00</td>
+              <td class="money-cell" id="footWarehouse">£0.00</td>
+              <td class="money-cell" id="footTransport">£0.00</td>
               <td class="total-cell" id="footNet">£0.00</td>
               <td class="money-cell" id="footVat">£0.00</td>
               <td class="total-cell" id="footGross">£0.00</td>

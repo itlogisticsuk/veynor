@@ -81,7 +81,7 @@
     .mini-btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
 
     .data-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
-    .data-table{width:100%;min-width:1100px;border-collapse:collapse}
+  .data-table{width:100%;min-width:1450px;border-collapse:collapse}
     .data-table th,.data-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:12.5px}
     .data-table th{background:#fbfbfc;font-size:10.5px;font-weight:900;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
     .data-table tbody tr:hover{background:#fafcff}
@@ -144,15 +144,16 @@
     </section>
 
     <nav class="settings-tabs">
-      <button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
-      <button class="settings-tab" data-tab="transport" type="button">Transport</button>
-      <button class="settings-tab" data-tab="personnel" type="button">Personnel / Drivers</button>
-      <button class="settings-tab" data-tab="customers" type="button">Product Owners</button>
-      <button class="settings-tab" data-tab="shops" type="button">Retailers</button>
-      <button class="settings-tab" data-tab="documents" type="button">Documents</button>
-      <button class="settings-tab" data-tab="automation" type="button">Automation</button>
-      <button class="settings-tab" data-tab="system" type="button">System</button>
-    </nav>
+  <button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
+  <button class="settings-tab" data-tab="transport" type="button">Transport</button>
+  <button class="settings-tab" data-tab="personnel" type="button">Personnel / Drivers</button>
+  <button class="settings-tab" data-tab="users" type="button">Users & Access</button>
+  <button class="settings-tab" data-tab="customers" type="button">Product Owners</button>
+  <button class="settings-tab" data-tab="shops" type="button">Retailers</button>
+  <button class="settings-tab" data-tab="documents" type="button">Documents</button>
+  <button class="settings-tab" data-tab="automation" type="button">Automation</button>
+  <button class="settings-tab" data-tab="system" type="button">System</button>
+</nav>
 
     <section id="tab-main" class="settings-panel active">
       <section class="card settings-card">
@@ -289,6 +290,17 @@
           <div class="field"><label for="max_orders_per_route">Max Orders Per Route</label><input id="max_orders_per_route" class="input" type="number" step="1"/></div>
           <div class="field"><label for="labour_cost_per_hour_gbp">Labour Cost / Hour (£)</label><input id="labour_cost_per_hour_gbp" class="input" type="number" step="0.01"/></div>
           <div class="field"><label for="vehicle_cost_per_mile_gbp">Vehicle Cost / Mile (£)</label><input id="vehicle_cost_per_mile_gbp" class="input" type="number" step="0.01"/></div>
+<div class="field">
+  <label for="diesel_price_per_litre_gbp_inc_vat">
+    Diesel Price / Litre incl. VAT (£)
+  </label>
+  <input
+    id="diesel_price_per_litre_gbp_inc_vat"
+    class="input"
+    type="number"
+    step="0.001"
+  />
+</div>
           <div class="field"><label for="default_transport_type">Default Transport Type</label><select id="default_transport_type" class="select"><option value="own_transport">own_transport</option><option value="charter">charter</option><option value="unassigned">unassigned</option></select></div>
         </div>
       </section>
@@ -324,6 +336,17 @@
           <div class="field"><label for="newVehicleMaxHours">Max Hours</label><input id="newVehicleMaxHours" class="input" type="number" step="0.1"/></div>
           <div class="field"><label for="newVehicleAverageSpeed">Average Speed</label><input id="newVehicleAverageSpeed" class="input" type="number" step="0.1"/></div>
           <div class="field"><label for="newVehicleCostPerMile">Cost / Mile (£)</label><input id="newVehicleCostPerMile" class="input" type="number" step="0.01"/></div>
+<div class="field">
+  <label for="newVehicleFuelLitresPer100km">
+    Fuel Usage (L / 100 km)
+  </label>
+  <input
+    id="newVehicleFuelLitresPer100km"
+    class="input"
+    type="number"
+    step="0.1"
+  />
+</div>
           <div class="field"><label for="newVehicleLabourPerHour">Labour / Hour (£)</label><input id="newVehicleLabourPerHour" class="input" type="number" step="0.01"/></div>
         </div>
 
@@ -387,6 +410,78 @@
         </div>
       </section>
     </section>
+
+<section id="tab-users" class="settings-panel">
+  <section class="card settings-card">
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">Users & Access</h2>
+        <p class="section-sub">Create portal users and assign roles securely.</p>
+      </div>
+    </div>
+
+    <div class="field-grid">
+      <div class="field"><label>Full Name</label><input id="newUserFullName" class="input"></div>
+      <div class="field"><label>Email</label><input id="newUserEmail" class="input" type="email"></div>
+      <div class="field"><label>Password</label><input id="newUserPassword" class="input" type="password"></div>
+
+      <div class="field">
+        <label>Role</label>
+        <select id="newUserRole" class="select">
+          <option value="tenant_user">tenant_user</option>
+          <option value="tenant_admin">tenant_admin</option>
+          <option value="product_owner_admin">product_owner_admin</option>
+          <option value="product_owner_user">product_owner_user</option>
+          <option value="retailer_user">retailer_user</option>
+          <option value="driver">driver</option>
+        </select>
+      </div>
+
+      <div class="field"><label>Product Owner ID</label><input id="newUserCustomerId" class="input"></div>
+      <div class="field"><label>Retailer Code</label><input id="newUserRetailerCode" class="input"></div>
+
+      <div class="field">
+        <label>Driver</label>
+        <select id="newUserIsDriver" class="select">
+          <option value="false">false</option>
+          <option value="true">true</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Active</label>
+        <select id="newUserActive" class="select">
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="actions-row">
+      <button id="btnCreatePortalUser" class="btn btn-primary" type="button">Create User</button>
+      <button id="btnRefreshPortalUsers" class="btn" type="button">Refresh Users</button>
+    </div>
+
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Product Owner</th>
+            <th>Retailer Code</th>
+            <th>Driver</th>
+            <th>Active</th>
+          </tr>
+        </thead>
+        <tbody id="portalUsersBody">
+          <tr><td colspan="7">No users loaded yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
 
     <section id="tab-customers" class="settings-panel">
       <section class="card settings-card">
@@ -469,12 +564,14 @@
                 <th>Linked Product Owner</th>
                 <th>City</th>
                 <th>Postcode</th>
-                <th>Orders</th>
-                <th>Last Activity</th>
+<th>Email</th>
+<th>Phone</th>
+<th>Orders</th>
+<th>Last Activity</th>
               </tr>
             </thead>
             <tbody id="shopsBody">
-              <tr><td colspan="8">Loading retailers...</td></tr>
+              <tr><td colspan="10">Loading retailers...</td></tr>
             </tbody>
           </table>
         </div>
@@ -493,11 +590,38 @@
 
         <div class="field-grid">
           <div class="field"><label for="doc_default_payment_terms">Default Payment Terms</label><input id="doc_default_payment_terms" class="input"/></div>
-          <div class="field"><label for="doc_vat_rate">VAT Rate</label><input id="doc_vat_rate" class="input"/></div>
-          <div class="field"><label for="doc_ack_lead_days">ACK Lead Days</label><input id="doc_ack_lead_days" class="input"/></div>
-          <div class="field"><label for="doc_bucket">Document Bucket</label><input id="doc_bucket" class="input"/></div>
-          <div class="field" style="grid-column:1 / -1;"><label for="doc_damage_note">Damage Note</label><textarea id="doc_damage_note" class="textarea"></textarea></div>
-        </div>
+
+<div class="field"><label for="doc_vat_rate">VAT Rate</label><input id="doc_vat_rate" class="input"/></div>
+
+<div class="field"><label for="doc_ack_lead_days">ACK Lead Days</label><input id="doc_ack_lead_days" class="input"/></div>
+
+<div class="field"><label for="doc_bucket">Document Bucket</label><input id="doc_bucket" class="input"/></div>
+
+<div class="field">
+  <label for="sales_order_prefix">Sales Order Prefix</label>
+  <input id="sales_order_prefix" class="input" value="SO-"/>
+</div>
+
+<div class="field">
+  <label for="sales_order_padding">Sales Order Padding</label>
+  <input id="sales_order_padding" class="input" type="number" value="5"/>
+</div>
+
+<div class="field">
+  <label for="next_sales_order_number">Next Sales Order Number</label>
+  <input id="next_sales_order_number" class="input" type="number" value="3246"/>
+</div>
+
+<div class="field">
+  <label for="next_sales_order_preview">Next Generated SO Number</label>
+  <input id="next_sales_order_preview" class="input" readonly value="SO-03246"/>
+</div>
+<div class="field" style="grid-column:1 / -1;">
+  <label for="doc_damage_note">Damage Note</label>
+  <textarea id="doc_damage_note" class="textarea"></textarea>
+</div>
+
+</div>
       </section>
     </section>
 

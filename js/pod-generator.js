@@ -92,6 +92,13 @@
   function getOrderNumber(order) {
     return cleanText(order.order_number || order.external_reference || order.id || "—");
   }
+function getSupplierReference(order) {
+  const so = cleanText(order?.order_number || "");
+  const ref = cleanText(order?.external_reference || "");
+
+  if (!ref || ref === so) return "";
+  return ref;
+}
 
   function getProductOwnerName(order) {
     return cleanText(order.customers?.name || order.customer_name || "Product Owner");
@@ -109,16 +116,19 @@
   }
 
   function getShipToLines(order) {
-    return [
-      getRetailerName(order),
-      order.delivery_address_1,
-      order.delivery_address_2,
-      order.delivery_city,
-      order.delivery_region,
-      order.delivery_postcode,
-      order.delivery_country || "United Kingdom"
-    ].filter(Boolean).map(cleanText);
-  }
+  return [
+    getRetailerName(order),
+
+    order.delivery_address_1,
+    order.delivery_address_2,
+    order.delivery_address_3,
+    order.delivery_address_4,
+
+    order.delivery_city,
+    order.delivery_postcode,
+    order.delivery_country || "United Kingdom"
+  ].filter(Boolean).map(cleanText);
+}
 
   function getOrderLines(order) {
     return Array.isArray(order.order_lines) ? order.order_lines : [];
@@ -367,8 +377,19 @@
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.text("Final proof of delivery document", 196, 38, { align: "right" });
-    doc.text(`Order: ${getOrderNumber(order)}`, 196, 47, { align: "right" });
-    doc.text(`Generated: ${formatDateTime(new Date())}`, 196, 54, { align: "right" });
+    const supplierRef = getSupplierReference(order);
+
+doc.setFont("helvetica", "bold");
+doc.text(`Order: ${getOrderNumber(order)}`, 196, 47, { align: "right" });
+
+doc.setFont("helvetica", "normal");
+
+if (supplierRef) {
+  doc.text(`Supplier Ref: ${supplierRef}`, 196, 54, { align: "right" });
+  doc.text(`Generated: ${formatDateTime(new Date())}`, 196, 61, { align: "right" });
+} else {
+  doc.text(`Generated: ${formatDateTime(new Date())}`, 196, 54, { align: "right" });
+}
 
     const infoY = logoAdded ? 47 : 40;
 

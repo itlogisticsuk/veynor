@@ -3,27 +3,37 @@
 
   document.documentElement.classList.add("auth-loading");
 
+  const SOFA2U_ROLES = ["veynor_admin", "tenant_admin", "tenant_user"];
+  const PRODUCT_OWNER_ROLES = ["product_owner_admin", "product_owner_user"];
+  const RETAILER_ROLES = ["retailer_user"];
+  const CUSTOMER_ROLES = [...PRODUCT_OWNER_ROLES, ...RETAILER_ROLES];
+  const ALL_ROLES = [...SOFA2U_ROLES, ...CUSTOMER_ROLES];
+
   const PAGE_RULES = {
-    index: ["veynor_admin", "tenant_admin", "tenant_user"],
-    "customer-dashboard": ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user"],
+    index: SOFA2U_ROLES,
+    "customer-dashboard": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
 
-    "order-import": ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user"],
-    "order-matching": ["veynor_admin", "tenant_admin", "tenant_user"],
-    "operations-control-center": ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user", "retailer_user"],
-    orders: ["veynor_admin", "tenant_admin", "tenant_user"],
+    "order-import": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+    "order-matching": SOFA2U_ROLES,
+    "operations-control-center": ALL_ROLES,
+    orders: SOFA2U_ROLES,
 
-    products: ["veynor_admin", "tenant_admin", "tenant_user"],
-    scan: ["veynor_admin", "tenant_admin", "tenant_user"],
-    stock: ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user"],
-    outbound: ["veynor_admin", "tenant_admin", "tenant_user"],
-    inventory: ["veynor_admin", "tenant_admin", "tenant_user"],
+    products: SOFA2U_ROLES,
+    scan: SOFA2U_ROLES,
+    stock: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+    outbound: SOFA2U_ROLES,
+    inventory: SOFA2U_ROLES,
 
-    pod: ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user", "retailer_user"],
-    billing: ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user"],
-    analytics: ["veynor_admin", "tenant_admin", "tenant_user"],
-    reports: ["veynor_admin", "tenant_admin", "tenant_user"],
-    events: ["veynor_admin", "tenant_admin", "tenant_user"],
-    support: ["veynor_admin", "tenant_admin", "tenant_user", "product_owner_admin", "product_owner_user", "retailer_user"],
+    pod: ALL_ROLES,
+    billing: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+
+    analytics: SOFA2U_ROLES,
+    reports: SOFA2U_ROLES,
+
+    events: SOFA2U_ROLES,
+    "customer-activity": SOFA2U_ROLES,
+
+    support: ALL_ROLES,
     settings: ["veynor_admin", "tenant_admin"]
   };
 
@@ -48,15 +58,23 @@
     window.location.replace(`/login.html?next=${next}`);
   }
 
-  function blockPage(message) {
+  function defaultBackUrl(role) {
+    if (SOFA2U_ROLES.includes(role)) return "/operations-control-center.html";
+    if (PRODUCT_OWNER_ROLES.includes(role)) return "/customer-dashboard.html";
+    if (RETAILER_ROLES.includes(role)) return "/operations-control-center.html";
+    return "/login.html";
+  }
+
+  function blockPage(message, role = "") {
     showPage();
+
     document.body.innerHTML = `
       <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f3f6fb;font-family:Inter,Segoe UI,Arial,sans-serif;padding:24px;">
         <section style="width:min(520px,100%);background:#fff;border:1px solid #dce5f2;border-radius:22px;padding:28px;text-align:center;box-shadow:0 20px 50px rgba(15,23,42,.10);">
           <h1 style="margin:0 0 10px;color:#07152f;">Access denied</h1>
           <p style="margin:0 0 22px;color:#667085;">${message}</p>
-          <a href="/operations-control-center.html" style="display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:12px;background:#1267ff;color:#fff;font-weight:900;text-decoration:none;">
-            Back to Operations Control
+          <a href="${defaultBackUrl(role)}" style="display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 18px;border-radius:12px;background:#1267ff;color:#fff;font-weight:900;text-decoration:none;">
+            Back to portal
           </a>
         </section>
       </main>
@@ -66,7 +84,7 @@
   async function loadProfile(client, userId) {
     let result = await client
       .from("user_profiles")
-      .select("id, auth_user_id, role, is_active, company_id, customer_id")
+      .select("id, auth_user_id, role, is_active, company_id, customer_id, retailer_code")
       .eq("id", userId)
       .eq("is_active", true)
       .maybeSingle();
@@ -74,7 +92,7 @@
     if (!result.data && !result.error) {
       result = await client
         .from("user_profiles")
-        .select("id, auth_user_id, role, is_active, company_id, customer_id")
+        .select("id, auth_user_id, role, is_active, company_id, customer_id, retailer_code")
         .eq("auth_user_id", userId)
         .eq("is_active", true)
         .maybeSingle();
@@ -125,7 +143,7 @@
     const role = String(profile.role || "").trim().toLowerCase();
 
     if (!allowedRoles.includes(role)) {
-      blockPage("Your account does not have permission to open this page.");
+      blockPage("Your account does not have permission to open this page.", role);
       return;
     }
 

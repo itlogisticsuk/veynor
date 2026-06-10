@@ -735,8 +735,10 @@
     filteredOrders = allOrders.filter(order => {
       if (q) {
         const haystack = [
-          order.order_number,
-          getProductOwnerName(order),
+  order.order_number,
+  order.external_reference,
+  order.purchase_order,
+  getProductOwnerName(order),
           getRetailerName(order),
           order.delivery_city,
           order.delivery_postcode,
@@ -794,15 +796,42 @@
   }
 
   function renderKpis() {
-    setText("kpiReleasedOrders", formatNumber(allOrders.filter(row => row.planning_release).length));
-    setText("kpiStockComplete", formatNumber(allOrders.filter(isStockComplete).length));
-    setText("kpiCoordsOrders", formatNumber(allOrders.filter(hasCoordinates).length));
-    setText("kpiPlannedOrders", formatNumber(allOrders.filter(row => row.route_id).length));
-    setText("kpiDelivered", formatNumber(allOrders.filter(isDelivered).length));
-    setText("kpiDeliveryIssues", formatNumber(allOrders.filter(isIssue).length));
-    setText("kpiFailedDeliveries", formatNumber(allOrders.filter(isFailed).length));
-    setText("kpiSelectedOrders", formatNumber(selectedOrderIds.size));
-  }
+  const today = todayIso();
+
+  const futureRoutes = allRoutes.filter(route => {
+    const date = getRouteDateValue(route);
+    return date && date >= today;
+  });
+
+  const futureRouteIds = new Set(
+    futureRoutes.map(route => String(route.id))
+  );
+
+  const futureStops = allStops.filter(stop =>
+    futureRouteIds.has(String(stop.route_id))
+  );
+
+  const revenue = futureRoutes.reduce((sum, route) => sum + getRouteRevenue(route), 0);
+  const cost = futureRoutes.reduce((sum, route) => sum + getRouteCost(route), 0);
+  const result = revenue - cost;
+  const margin = revenue ? (result / revenue) * 100 : 0;
+
+  setText("kpiReleasedOrders", formatNumber(allOrders.filter(row => row.planning_release).length));
+  setText("kpiCoordsOrders", formatNumber(allOrders.filter(hasCoordinates).length));
+
+  setText("kpiPlannedOrders", formatNumber(futureRoutes.length));
+  setText("kpiRoutes", formatNumber(futureRoutes.length));
+
+  setText("kpiStops", formatNumber(futureStops.length));
+  setText("kpiRevenue", formatMoney(revenue));
+  setText("kpiResult", formatMoney(result));
+  setText("kpiMargin", `${formatNumber(margin, 1)}%`);
+
+  setText("kpiDelivered", formatNumber(allOrders.filter(isDelivered).length));
+  setText("kpiDeliveryIssues", formatNumber(allOrders.filter(isIssue).length));
+  setText("kpiFailedDeliveries", formatNumber(allOrders.filter(isFailed).length));
+  setText("kpiSelectedOrders", formatNumber(selectedOrderIds.size));
+}
 
   function renderSelectionSummary() {
     const selectedOrders = [...selectedOrderIds].map(id => getOrderById(id)).filter(Boolean);
@@ -854,9 +883,16 @@
           </td>
 
           <td>
-            <strong>${escapeHtml(order.order_number || "—")}</strong>
-            <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
-          </td>
+  <strong>${escapeHtml(order.order_number || "—")}</strong>
+
+  ${
+    order.external_reference
+      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
+      : ""
+  }
+
+  <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
+</td>
 
           <td>
             ${escapeHtml(getProductOwnerName(order))}
@@ -942,6 +978,7 @@
   }
 
   function renderAll() {
+	updatePlanningDateHeader();
     applyFilters();
     renderKpis();
     renderSelectionSummary();
@@ -951,8 +988,26 @@
   }
 
   function renderMap() {
-    window.ordersMapRows = filteredOrders;
-    window.allRouteStopsMapRows = allStops;
+    window.ordersMapRows = filteredOrders.filter(order => {
+  if (!order.route_id) return true;
+
+  const route = getRouteById(order.route_id);
+  return getRouteDateValue(route) === selectedPlanningDate;
+});
+   const selectedDateRoutes = allRoutes.filter(route =>
+  getRouteDateValue(route) === selectedPlanningDate
+);
+
+const selectedDateRouteIds = new Set(
+  selectedDateRoutes.map(route => String(route.id))
+);
+
+const selectedDateStops = allStops.filter(stop =>
+  selectedDateRouteIds.has(String(stop.route_id))
+);
+
+window.allRouteStopsMapRows = selectedDateStops;
+window.visibleRoutesMapRows = selectedDateRoutes;
     window.activeVehiclesMapRows = activeVehicles;
     window.selectedOrderIdsForMap = [...selectedOrderIds];
     window.selectedRouteIdForMap = null;
@@ -1019,6 +1074,137 @@
       window.VeynorAvailableVehicles.refresh();
     }
   }
+
+function closePlanningModal() {
+  const modal = byId("planningConfirmModal");
+  if (modal) modal.remove();
+}
+
+function openPlanningConfirmModal() {
+  const selectedIds = [...selectedOrderIds];
+
+  if (!selectedIds.length) {
+    showToast("Select at least one order first.", "err");
+    return;
+  }
+
+  const selectedOrders = selectedIds
+    .map(id => getOrderById(id))
+    .filter(Boolean);
+
+  const vehicle = activeVehicles.find(v => String(v.id) === String(selectedVehicleId));
+
+  const volume = selectedOrders.reduce((sum, order) => sum + getOrderVolume(order), 0);
+  const colli = selectedOrders.reduce((sum, order) => sum + getOrderColli(order), 0);
+  const revenue = selectedOrders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
+
+  const capacity = vehicle
+    ? toNumber(vehicle.capacity_m3 ?? vehicle.max_volume_m3 ?? vehicle.volume_capacity_m3, 0)
+    : 0;
+
+  const remaining = capacity - volume;
+  const fillPct = capacity ? (volume / capacity) * 100 : 0;
+
+  closePlanningModal();
+
+  const modal = document.createElement("div");
+  modal.id = "planningConfirmModal";
+  modal.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div style="width:min(560px,100%);background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(15,23,42,.32);overflow:hidden;">
+        
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border);background:#f8fafc;">
+          <h2 style="margin:0;font-size:18px;font-weight:950;">Confirm Route Planning</h2>
+          <p style="margin:6px 0 0;color:var(--muted);font-size:12.5px;">
+            Check date, time and vehicle capacity before creating the route.
+          </p>
+        </div>
+
+        <div style="padding:18px 20px;display:grid;gap:14px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="field">
+              <label>Route Date</label>
+              <input id="modalRouteDate" class="input" type="date" value="${escapeHtml(getManualRouteDeliveryDate())}">
+            </div>
+
+            <div class="field">
+              <label>Start Time</label>
+              <input id="modalRouteStartTime" class="input" type="time" value="${escapeHtml(getManualRouteStartTime())}">
+            </div>
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:#fbfdff;display:grid;gap:8px;">
+            <strong>${escapeHtml(vehicle ? (vehicle.name || vehicle.vehicle_name || "Vehicle") : "No vehicle selected")}</strong>
+
+            <div>Capacity: <strong>${capacity ? formatNumber(capacity, 2) + " m³" : "Unknown"}</strong></div>
+            <div>Selected volume: <strong>${formatNumber(volume, 2)} m³</strong></div>
+            <div>
+              ${
+                capacity
+                  ? remaining >= 0
+                    ? `Remaining: <strong style="color:#16a34a;">${formatNumber(remaining, 2)} m³</strong>`
+                    : `Over capacity: <strong style="color:#dc2626;">${formatNumber(Math.abs(remaining), 2)} m³</strong>`
+                  : `<strong style="color:#dc2626;">No vehicle capacity found</strong>`
+              }
+            </div>
+            <div>Fill rate: <strong>${capacity ? formatNumber(fillPct, 1) + "%" : "—"}</strong></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+            <div class="mini-card">
+              <div class="mini-label">Orders</div>
+              <div class="mini-value">${formatNumber(selectedOrders.length)}</div>
+            </div>
+            <div class="mini-card">
+              <div class="mini-label">Colli</div>
+              <div class="mini-value">${formatNumber(colli)}</div>
+            </div>
+            <div class="mini-card">
+              <div class="mini-label">Revenue</div>
+              <div class="mini-value">${formatMoney(revenue)}</div>
+            </div>
+          </div>
+
+          ${
+            capacity && remaining < 0
+              ? `<div class="notice err" style="display:block;">Warning: selected volume is over vehicle capacity.</div>`
+              : ""
+          }
+        </div>
+
+        <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:#fff;">
+          <button id="modalCancelPlanning" class="planner-btn" type="button">Cancel</button>
+          <button id="modalConfirmPlanning" class="planner-btn primary" type="button">Create Route</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  byId("modalCancelPlanning")?.addEventListener("click", closePlanningModal);
+
+  byId("modalConfirmPlanning")?.addEventListener("click", async () => {
+    const date = byId("modalRouteDate")?.value || todayIso();
+    const time = byId("modalRouteStartTime")?.value || "08:00";
+
+    const dateInput = byId("manualRouteDeliveryDate");
+    const timeInput = byId("manualRouteStartTime");
+
+    if (dateInput) dateInput.value = date;
+    if (timeInput) timeInput.value = time;
+
+    selectedPlanningDate = date;
+
+    closePlanningModal();
+
+    renderSelectionSummary();
+    notifySelectionChanged();
+    notifyDataChanged();
+
+    await planSelectedOrders();
+  });
+}
 
   async function planSelectedOrders() {
     try {
@@ -1099,7 +1285,463 @@
     }
   }
 
-  function bindEvents() {
+
+function getRouteDateValue(route) {
+  return route?.planned_delivery_date || route?.route_date || "";
+}
+
+function getRoutesForPlanningDate(date) {
+  return allRoutes.filter(route => getRouteDateValue(route) === date);
+}
+
+function getRouteCost(route) {
+  return Math.max(
+    toNumber(route?.estimated_cost_total_gbp, 0),
+    toNumber(route?.total_cost_gbp, 0)
+  );
+}
+
+function getRouteRevenue(route) {
+  return Math.max(
+    toNumber(route?.estimated_revenue_gbp, 0),
+    toNumber(route?.total_revenue_gbp, 0),
+    toNumber(route?.revenue_gbp, 0)
+  );
+}
+
+function getRouteVolume(route) {
+  return Math.max(
+    toNumber(route?.planned_volume_m3, 0),
+    toNumber(route?.total_volume_m3, 0)
+  );
+}
+
+function updatePlanningDateHeader() {
+  const routes = getRoutesForPlanningDate(selectedPlanningDate);
+
+  const revenue = routes.reduce((sum, route) => sum + getRouteRevenue(route), 0);
+  const cost = routes.reduce((sum, route) => sum + getRouteCost(route), 0);
+  const result = revenue - cost;
+  const volume = routes.reduce((sum, route) => sum + getRouteVolume(route), 0);
+
+  setText("planningDateLabel", formatDate(selectedPlanningDate));
+  setText("planningRoutesCount", formatNumber(routes.length));
+  setText("planningRevenue", formatMoney(revenue));
+  setText("planningCost", formatMoney(cost));
+  setText("planningResult", formatMoney(result));
+
+  const volumeEl = byId("planningVolume");
+  if (volumeEl) volumeEl.textContent = `${formatNumber(volume, 2)} m³`;
+}
+
+function timeToMinutes(value) {
+  const m = String(value || "08:00").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return 480;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+function minutesToHHMM(total) {
+  const mins = Math.max(0, Math.round(total));
+  const h = Math.floor(mins / 60) % 24;
+  const m = mins % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function closeReplanRouteModal() {
+  const modal = byId("replanRouteModal");
+  if (modal) modal.remove();
+}
+
+function askRecalculateRoute(routeId) {
+  openReplanRouteModal(routeId);
+}
+
+function openReplanRouteModal(routeId) {
+  const route = getRouteById(routeId);
+
+  if (!route) {
+    showToast("Route not found.", "err");
+    return;
+  }
+
+  closeReplanRouteModal();
+
+  const beforeMiles = toNumber(route.estimated_distance_miles, 0);
+  const beforeCost = getRouteCost(route);
+  const beforeHours = toNumber(route.estimated_total_hours, 0);
+  const beforeResult = getRouteRevenue(route) - beforeCost;
+
+  const modal = document.createElement("div");
+  modal.id = "replanRouteModal";
+  modal.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div style="width:min(620px,100%);background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(15,23,42,.32);overflow:hidden;">
+        
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border);background:#f8fafc;">
+          <h2 style="margin:0;font-size:18px;font-weight:950;">Replan Route?</h2>
+          <p id="replanStatusText" style="margin:6px 0 0;color:var(--muted);font-size:12.5px;">
+            Recalculate stop order, ETA, miles and costs.
+          </p>
+        </div>
+
+        <div style="padding:18px 20px;display:grid;gap:12px;">
+          <div class="mini-card">
+            <div class="mini-label">Route</div>
+            <div class="mini-value">${escapeHtml(getRouteLabel(routeId))}</div>
+          </div>
+
+          <div id="replanProgressWrap" style="display:none;width:100%;height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;">
+            <div id="replanProgressBar" style="width:0%;height:100%;background:#2563eb;transition:width .35s ease;"></div>
+          </div>
+
+          <div id="replanResultBox" style="display:none;border:1px solid var(--border);border-radius:14px;padding:14px;background:#fbfdff;line-height:1.8;"></div>
+        </div>
+
+        <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:#fff;">
+          <button id="modalSkipReplan" class="planner-btn" type="button">Skip</button>
+          <button id="modalConfirmReplan" class="planner-btn primary" type="button">Replan Route</button>
+          <button id="modalCloseReplan" class="planner-btn primary" type="button" style="display:none;">Close</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  const skipBtn = byId("modalSkipReplan");
+  const confirmBtn = byId("modalConfirmReplan");
+  const closeBtn = byId("modalCloseReplan");
+  const statusText = byId("replanStatusText");
+  const progressWrap = byId("replanProgressWrap");
+  const progressBar = byId("replanProgressBar");
+  const resultBox = byId("replanResultBox");
+
+  skipBtn?.addEventListener("click", async () => {
+    closeReplanRouteModal();
+    await refreshAll();
+    showToast("Orders added. Route was not replanned.", "ok");
+  });
+
+  closeBtn?.addEventListener("click", async () => {
+    closeReplanRouteModal();
+    await refreshAll();
+  });
+
+  confirmBtn?.addEventListener("click", async () => {
+    try {
+      if (!window.VeynorPlanningEngine?.replanExistingRoute) {
+        showToast("Planning Engine replan function is not loaded.", "err");
+        return;
+      }
+
+      skipBtn.style.display = "none";
+      confirmBtn.style.display = "none";
+      progressWrap.style.display = "block";
+      progressBar.style.width = "35%";
+      statusText.textContent = "Replanning route...";
+
+      const result = await window.VeynorPlanningEngine.replanExistingRoute({
+        route_id: routeId,
+        finalize_eta: true
+      });
+
+      progressBar.style.width = "100%";
+      statusText.textContent = "Route replanned successfully.";
+
+      const after = result?.after || {};
+      const diff = result?.difference || {};
+
+      const afterMiles = toNumber(after.miles, beforeMiles);
+   const oldCost = toNumber(result?.before?.cost, beforeCost);
+const newCost = toNumber(result?.after?.cost, beforeCost);
+const costDiff = newCost - oldCost;
+
+const afterHours = toNumber(after.hours, beforeHours);
+
+const afterResult = beforeResult - costDiff;
+
+      resultBox.style.display = "block";
+      resultBox.innerHTML = `
+        <strong>Replan result</strong>
+
+        <div>Miles: <strong>${formatNumber(beforeMiles, 2)}</strong> → <strong>${formatNumber(afterMiles, 2)}</strong> 
+          <span>${formatSignedNumber(diff.miles)}</span>
+        </div>
+
+        <div>Hours: <strong>${formatNumber(beforeHours, 2)}</strong> → <strong>${formatNumber(afterHours, 2)}</strong> 
+          <span>${formatSignedNumber(diff.hours)}</span>
+        </div>
+
+        <div>Cost: <strong>${formatMoney(oldCost)}</strong> → <strong>${formatMoney(newCost)}</strong> 
+  <span>${formatSignedMoney(costDiff)}</span>
+</div>
+
+        <div>Result: <strong>${formatMoney(beforeResult)}</strong> → <strong>${formatMoney(afterResult)}</strong></div>
+      `;
+
+      closeBtn.style.display = "inline-flex";
+      showToast(result?.message || "Route replanned.", "ok");
+    } catch (error) {
+      console.error(error);
+
+      progressBar.style.width = "100%";
+      statusText.textContent = "Replan failed.";
+
+      resultBox.style.display = "block";
+      resultBox.innerHTML = `
+        <strong style="color:#b91c1c;">${escapeHtml(error.message || "Could not replan route.")}</strong>
+      `;
+
+      closeBtn.style.display = "inline-flex";
+      showToast(error.message || "Could not replan route.", "err");
+    }
+  });
+}
+
+function formatSignedNumber(value) {
+  const n = Number(value || 0);
+  if (n > 0) return `(+${formatNumber(n, 2)})`;
+  if (n < 0) return `(${formatNumber(n, 2)})`;
+  return `(0.00)`;
+}
+
+function formatSignedMoney(value) {
+  const n = Number(value || 0);
+  if (n > 0) return `(+${formatMoney(n)})`;
+  if (n < 0) return `(-${formatMoney(Math.abs(n))})`;
+  return `(£0.00)`;
+}
+async function addSelectedOrdersToExistingRoute(routeId) {
+  try {
+    const selectedIds = [...selectedOrderIds];
+
+    if (!selectedIds.length) {
+      showToast("Select one or more orders first.", "err");
+      return;
+    }
+
+    if (!routeId) {
+      showToast("Route not found.", "err");
+      return;
+    }
+
+    const cid = await getCompanyId();
+    const route = getRouteById(routeId);
+
+    if (!route) {
+      showToast("Route not found in planner data.", "err");
+      return;
+    }
+
+    const existingStops = allStops.filter(stop =>
+      String(stop.route_id) === String(routeId)
+    );
+
+    const existingOrderIds = new Set(
+      existingStops.map(stop => String(stop.order_id))
+    );
+
+    const ordersToAdd = selectedIds
+      .map(id => getOrderById(id))
+      .filter(Boolean)
+      .filter(order => !existingOrderIds.has(String(order.id)));
+
+    if (!ordersToAdd.length) {
+      showToast("Selected orders are already on this route.", "err");
+      return;
+    }
+
+    const maxStop = existingStops.reduce((max, stop) => {
+      return Math.max(
+        max,
+        toNumber(stop.stop_sequence || stop.stop_number, 0)
+      );
+    }, 0);
+
+const cleanOrdersToAdd = ordersToAdd.filter(order =>
+  !existingOrderIds.has(String(order.id))
+);
+
+if (!cleanOrdersToAdd.length) {
+  showToast("Selected orders are already on this route.", "err");
+  return;
+}
+
+    const stopRows = cleanOrdersToAdd.map((order, index) => ({
+      company_id: cid,
+      route_id: routeId,
+      order_id: order.id,
+      stop_sequence: maxStop + index + 1,
+      stop_number: maxStop + index + 1,
+      stop_name: getRetailerName(order),
+      city: order.delivery_city || null,
+      postcode: order.delivery_postcode || null,
+      latitude: order.delivery_lat || null,
+      longitude: order.delivery_lng || null,
+      planned_volume_m3: getOrderVolume(order),
+      planned_colli: getOrderColli(order),
+      status: "planned"
+    }));
+
+    if (stopRows.length) {
+  const { error: stopError } = await client
+    .from("route_stops")
+    .insert(stopRows);
+
+  if (stopError) throw stopError;
+}
+
+    const routeDate = getRouteDateValue(route);
+
+    const { error: orderError } = await client
+      .from("orders")
+      .update({
+        route_id: routeId,
+        status: "planned",
+        transport_status: "planned",
+        transport_type: "own_transport",
+        planned_route_date: routeDate || null,
+        expected_delivery_date: routeDate || null
+      })
+      .eq("company_id", cid)
+      .in("id", cleanOrdersToAdd.map(order => order.id));
+
+    if (orderError) throw orderError;
+
+   const { data: routeTotals, error: totalsError } = await client
+  .from("route_stops")
+  .select("planned_volume_m3, planned_colli")
+  .eq("company_id", cid)
+  .eq("route_id", routeId);
+
+if (totalsError) throw totalsError;
+
+const realStops = (routeTotals || []).length;
+
+const realVolume = (routeTotals || []).reduce(
+  (sum, row) => sum + toNumber(row.planned_volume_m3, 0),
+  0
+);
+
+const realColli = (routeTotals || []).reduce(
+  (sum, row) => sum + toNumber(row.planned_colli, 0),
+  0
+);
+
+const allRouteOrders = [
+  ...existingStops
+    .map(stop => getOrderById(stop.order_id))
+    .filter(Boolean),
+  ...cleanOrdersToAdd
+];
+
+const realRevenue = allRouteOrders.reduce(
+  (sum, order) => sum + getOrderRevenue(order),
+  0
+);
+
+const realCost = getRouteCost(route);
+const realProfit = realRevenue - realCost;
+
+const { error: routeError } = await client
+  .from("routes")
+  .update({
+    total_stops: realStops,
+    planned_stops: realStops,
+    total_volume_m3: Number(realVolume.toFixed(3)),
+    planned_volume_m3: Number(realVolume.toFixed(3)),
+    planned_colli: Number(realColli),
+    estimated_revenue_gbp: Number(realRevenue.toFixed(2)),
+    estimated_profit_gbp: Number(realProfit.toFixed(2))
+  })
+  .eq("company_id", cid)
+  .eq("id", routeId);
+
+if (routeError) throw routeError;
+
+    selectedOrderIds.clear();
+
+    await refreshAll();
+
+await refreshAll();
+
+showToast(`${cleanOrdersToAdd.length} order(s) added to route.`, "ok");
+askRecalculateRoute(routeId);
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not add orders to route.", "err");
+  }
+}
+  
+function openPlanningCalendarModal() {
+  const routesByDate = new Map();
+
+  allRoutes.forEach(route => {
+    const date = getRouteDateValue(route);
+    if (!date) return;
+
+    if (!routesByDate.has(date)) {
+      routesByDate.set(date, { routes: 0, volume: 0, revenue: 0, cost: 0 });
+    }
+
+    const row = routesByDate.get(date);
+    row.routes += 1;
+    row.volume += getRouteVolume(route);
+    row.revenue += getRouteRevenue(route);
+    row.cost += getRouteCost(route);
+  });
+
+  const rows = [...routesByDate.entries()]
+    .filter(([date]) => date >= todayIso())
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const modal = document.createElement("div");
+  modal.id = "planningCalendarModal";
+  modal.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div style="width:min(720px,100%);background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(15,23,42,.32);overflow:hidden;">
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border);background:#f8fafc;display:flex;justify-content:space-between;gap:12px;">
+          <div>
+            <h2 style="margin:0;font-size:18px;font-weight:950;">Planning Calendar</h2>
+            <p style="margin:6px 0 0;color:var(--muted);font-size:12.5px;">Future planned routes by day.</p>
+          </div>
+          <button id="closePlanningCalendar" class="planner-btn" type="button">Close</button>
+        </div>
+
+        <div style="padding:14px 20px;max-height:520px;overflow:auto;">
+          ${
+            rows.length
+              ? rows.map(([date, row]) => `
+                <button
+                  type="button"
+                  data-calendar-date="${escapeHtml(date)}"
+                  style="width:100%;text-align:left;border:1px solid var(--border);background:#fff;border-radius:12px;padding:12px;margin-bottom:8px;cursor:pointer;display:grid;grid-template-columns:1.2fr .7fr .8fr .8fr;gap:10px;align-items:center;"
+                >
+                  <strong>${escapeHtml(formatDate(date))}</strong>
+                  <span>${formatNumber(row.routes)} route(s)</span>
+                  <span>${formatNumber(row.volume, 2)} m³</span>
+                  <span>${formatMoney(row.revenue - row.cost)}</span>
+                </button>
+              `).join("")
+              : `<div class="notice err" style="display:block;">No future planned routes found.</div>`
+          }
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  byId("closePlanningCalendar")?.addEventListener("click", () => modal.remove());
+
+  modal.querySelectorAll("[data-calendar-date]").forEach(button => {
+    button.addEventListener("click", () => {
+      setPlanningDate(button.dataset.calendarDate);
+      modal.remove();
+    });
+  });
+}
+    function bindEvents() {
     [
       "orderSearch",
       "filterStatus",
@@ -1137,7 +1779,35 @@
 
     byId("manualRouteStartTime")?.addEventListener("change", notifySelectionChanged);
     byId("manualFinalizeEta")?.addEventListener("change", notifySelectionChanged);
+function setPlanningDate(date) {
+  selectedPlanningDate = date || todayIso();
 
+  const dateInput = byId("manualRouteDeliveryDate");
+  if (dateInput) dateInput.value = selectedPlanningDate;
+
+  renderAll();
+
+  if (window.VeynorAvailableVehicles?.refresh) {
+    window.VeynorAvailableVehicles.refresh();
+  }
+}
+
+byId("prevPlanningDay")?.addEventListener("click", () => {
+  const d = new Date(`${selectedPlanningDate}T12:00:00`);
+  d.setDate(d.getDate() - 1);
+  setPlanningDate(d.toISOString().slice(0, 10));
+});
+
+byId("nextPlanningDay")?.addEventListener("click", () => {
+  const d = new Date(`${selectedPlanningDate}T12:00:00`);
+  d.setDate(d.getDate() + 1);
+  setPlanningDate(d.toISOString().slice(0, 10));
+});
+
+byId("todayPlanningBtn")?.addEventListener("click", () => {
+  setPlanningDate(todayIso());
+});
+byId("planningCalendarBtn")?.addEventListener("click", openPlanningCalendarModal);
     byId("checkAllOrders")?.addEventListener("change", event => {
       const checked = !!event.target.checked;
 
@@ -1173,7 +1843,7 @@
       }
     });
 
-    byId("btnAutoPlanRoutes")?.addEventListener("click", planSelectedOrders);
+    byId("btnAutoPlanRoutes")?.addEventListener("click", openPlanningConfirmModal);
     byId("btnExportCharter")?.addEventListener("click", exportSelectedForCharter);
 
     byId("btnFitUkMap")?.addEventListener("click", () => {
@@ -1234,24 +1904,30 @@
       notifySelectionChanged();
       notifyDataChanged();
 
-      await planSelectedOrders();
+      openPlanningConfirmModal();
     });
 
     window.addEventListener("veynor:vehicle-selected", event => {
-      selectedVehicleId = event.detail?.vehicleId || "";
-      window.pendingPreferredVehicleId = selectedVehicleId;
+  selectedVehicleId = event.detail?.vehicleId || "";
+  window.pendingPreferredVehicleId = selectedVehicleId;
 
-      const select = byId("manualVehicleSelect");
-      if (select) select.value = selectedVehicleId;
+  const select = byId("manualVehicleSelect");
+  if (select) select.value = selectedVehicleId;
 
-      renderSelectionSummary();
-      notifySelectionChanged();
-      notifyDataChanged();
-    });
+  renderSelectionSummary();
+  notifySelectionChanged();
+  notifyDataChanged();
+});
 
-    window.addEventListener("veynor:routes-changed", async () => {
-      await refreshAll();
-    });
+window.addEventListener("veynor:add-selected-to-route", async event => {
+  await addSelectedOrdersToExistingRoute(
+    event.detail?.routeId
+  );
+});
+
+window.addEventListener("veynor:routes-changed", async () => {
+  await refreshAll();
+});
   }
 
   async function init() {
