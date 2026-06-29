@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Scan In / Out · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js?v=2" defer></script>
+  <script src="/js/event-log.js"></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/scan.js" defer></script>
+
+  <style>
+    .scan-page{display:grid;gap:14px;align-content:start}
+    .scan-kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .scan-kpi-card{padding:16px;display:grid;gap:8px;min-height:86px}
+    .scan-kpi-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.04em}
+    .scan-kpi-value{font-size:24px;font-weight:950;line-height:1;color:#07152f}
+    .scan-kpi-sub{font-size:12px;color:var(--muted);line-height:1.45}
+
+    .scan-tabs{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0}
+    .scan-tab{height:38px;border:1px solid var(--border);background:#fff;border-radius:10px;padding:0 14px;font-size:12.5px;font-weight:800;cursor:pointer;white-space:nowrap;color:var(--text)}
+    .scan-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    .tab-panel{display:none;gap:14px;align-content:start}
+    .tab-panel.active{display:grid}
+
+    .scan-card{padding:16px;display:grid;gap:14px}
+    .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .section-title{margin:0;font-size:16px;font-weight:900;color:var(--text)}
+    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .scan-layout{display:grid;grid-template-columns:minmax(0,1fr) 390px;gap:14px;align-items:start}
+    .scan-main{display:grid;gap:14px}
+    .scan-side{display:grid;gap:14px}
+
+    .scan-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:12px;font-weight:800;color:#374151}
+    .input,.select,.textarea{width:100%;border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 12px;color:var(--text);font-size:12.5px;min-height:38px}
+    .textarea{min-height:90px;resize:vertical}
+
+    .scan-input{font-size:22px;font-weight:900;min-height:58px;border-radius:14px;border:2px solid #bfdbfe;box-shadow:0 0 0 4px rgba(18,103,255,.08)}
+
+    .scan-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .scan-state{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+    .state-box{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px;display:grid;gap:5px}
+    .state-label{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#6b7280;letter-spacing:.03em}
+    .state-value{font-size:14px;font-weight:900;color:var(--text);word-break:break-word}
+
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
+    .scan-table{width:100%;border-collapse:collapse;min-width:960px}
+    .scan-table.compact{min-width:620px}
+    .scan-table th,.scan-table td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;font-size:12.5px;vertical-align:middle}
+    .scan-table th{background:#fbfbfc;color:#374151;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+    .scan-table tbody tr:hover{background:#fafcff}
+
+    .soft-pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:900;white-space:nowrap;border:1px solid transparent}
+    .soft-pill.green{background:var(--green-bg);border-color:var(--green-bd);color:var(--green-tx)}
+    .soft-pill.orange{background:var(--orange-bg);border-color:var(--orange-bd);color:var(--orange-tx)}
+    .soft-pill.blue{background:var(--blue-bg);border-color:var(--blue-bd);color:var(--blue-tx)}
+    .soft-pill.gray{background:var(--gray-bg);border-color:var(--gray-bd);color:var(--gray-tx)}
+
+    .note-box{border:1px solid var(--blue-bd);background:var(--blue-bg);color:var(--blue-tx);border-radius:12px;padding:12px 14px;font-size:12px;font-weight:700;line-height:1.5}
+    .empty-state{border:1px solid var(--border);border-radius:12px;background:#fff;padding:16px;color:var(--muted);font-size:12.5px;line-height:1.5}
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:700;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    @media(max-width:1500px){
+      .scan-layout{grid-template-columns:1fr}
+      .scan-form-grid,.scan-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+
+    @media(max-width:760px){
+      .scan-form-grid,.scan-kpi-grid,.scan-state{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page scan-page">
+    <section class="page-topbar">
+      <div class="page-title">
+        <h1>Scan In / Out</h1>
+        <p>Scan warehouse, location and SKU for inbound. Book out stock manually or through picklists.</p>
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="scan-kpi-grid">
+      <article class="card scan-kpi-card">
+        <div class="scan-kpi-label">Lines Today</div>
+        <div class="scan-kpi-value" id="kpiLinesToday">0</div>
+        <div class="scan-kpi-sub">Scan transactions today</div>
+      </article>
+
+      <article class="card scan-kpi-card">
+        <div class="scan-kpi-label">Units In</div>
+        <div class="scan-kpi-value" id="kpiUnitsIn">0</div>
+        <div class="scan-kpi-sub">Inbound units this session</div>
+      </article>
+
+      <article class="card scan-kpi-card">
+        <div class="scan-kpi-label">Units Out</div>
+        <div class="scan-kpi-value" id="kpiUnitsOut">0</div>
+        <div class="scan-kpi-sub">Outbound units this session</div>
+      </article>
+
+      <article class="card scan-kpi-card">
+        <div class="scan-kpi-label">Mode</div>
+        <div class="scan-kpi-value" id="kpiMode">Scan In</div>
+        <div class="scan-kpi-sub" id="kpiLastScan">No scan yet</div>
+      </article>
+    </section>
+
+    <nav class="scan-tabs">
+      <button class="scan-tab active" type="button" data-scan-tab="scanInPanel">Scan In</button>
+      <button class="scan-tab" type="button" data-scan-tab="scanOutPanel">Scan Out</button>
+      <button class="scan-tab" type="button" data-scan-tab="picklistsPanel">Picklists</button>
+    </nav>
+
+    <section id="scanInPanel" class="tab-panel active">
+      <section class="card scan-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Inbound scan</h2>
+            <p class="section-sub">Scan warehouse first, then location, then SKU. Warehouse stays active until a new warehouse is scanned. After changing warehouse, scan a new location.</p>
+          </div>
+        </div>
+
+        <div class="scan-state">
+          <div class="state-box">
+            <div class="state-label">Active Warehouse</div>
+            <div class="state-value" id="activeWarehouseLabel">No warehouse scanned</div>
+          </div>
+
+          <div class="state-box">
+            <div class="state-label">Active Location</div>
+            <div class="state-value" id="activeLocationLabel">No location scanned</div>
+          </div>
+
+          <div class="state-box">
+            <div class="state-label">Reference / Batch</div>
+            <div class="state-value" id="activeReferenceLabel">No reference</div>
+          </div>
+        </div>
+
+        <div class="scan-layout">
+          <section class="scan-main">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="scan-form-grid">
+                <div class="field">
+                  <label for="productOwnerFilter">Product Owner</label>
+                  <select id="productOwnerFilter" class="select">
+                    <option value="">All product owners</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="referenceInput">Reference / Batch / Container</label>
+                  <input id="referenceInput" class="input" placeholder="Container, batch or inbound reference"/>
+                </div>
+
+                <div class="field">
+                  <label for="manualQty">Quantity</label>
+                  <input id="manualQty" class="input" type="number" min="1" step="1" value="1"/>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="mainScanInput">Scan Warehouse / Location / SKU</label>
+                <input id="mainScanInput" class="input scan-input" autocomplete="off" placeholder="Scan warehouse, location or SKU and press Enter"/>
+              </div>
+
+              <div class="scan-form-grid">
+                <div class="field">
+                  <label for="manualWarehouse">Manual warehouse</label>
+                  <select id="manualWarehouse" class="select">
+                    <option value="">No warehouse selected</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="manualLocation">Manual location</label>
+                  <select id="manualLocation" class="select">
+                    <option value="">No location selected</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label for="manualSku">Manual SKU</label>
+                  <input id="manualSku" class="input" placeholder="SKU code"/>
+                </div>
+              </div>
+
+              <div class="scan-actions">
+                <button id="btnBookInManual" class="btn btn-primary" type="button">Book In Manual</button>
+                <button id="btnClearInboundState" class="btn" type="button">Clear Warehouse / Location</button>
+                <button id="btnRefreshScanData" class="btn" type="button">Refresh Data</button>
+              </div>
+
+              <div class="note-box">
+                Inbound flow: scan warehouse → scan location → scan one or more SKUs. If a new warehouse is scanned, the current location is cleared and must be scanned again.
+              </div>
+            </section>
+
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Inbound history</h2>
+                  <p class="section-sub">Latest inbound scans during this session.</p>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="scan-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Warehouse</th>
+                      <th>Location</th>
+                      <th>SKU</th>
+                      <th>Product</th>
+                      <th>Owner</th>
+                      <th>Mutation</th>
+                      <th>Reference</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="inboundHistoryBody">
+                    <tr><td colspan="9">No inbound scans yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <aside class="scan-side">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Product lookup</h2>
+                  <p class="section-sub">Only product owners from settings should be shown here. Retailers are not needed for inbound.</p>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="productSearch">Search product</label>
+                <input id="productSearch" class="input" placeholder="Search SKU or product name"/>
+              </div>
+
+              <div class="table-wrap">
+                <table class="scan-table compact">
+                  <thead>
+                    <tr>
+                      <th>SKU</th>
+                      <th>Product</th>
+                      <th>Owner</th>
+                      <th>m³</th>
+                    </tr>
+                  </thead>
+                  <tbody id="productsBody">
+                    <tr><td colspan="4">Loading products...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </section>
+
+    <section id="scanOutPanel" class="tab-panel">
+      <section class="card scan-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Scan Out</h2>
+            <p class="section-sub">Manual outbound booking. Scan or enter SKU, then book out available stock. SKU-level matching only, no mutation number required.</p>
+          </div>
+        </div>
+
+        <div class="scan-layout">
+          <section class="scan-main">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="scan-form-grid">
+                <div class="field">
+                  <label for="outboundSku">SKU</label>
+                  <input id="outboundSku" class="input scan-input" placeholder="Scan or type SKU"/>
+                </div>
+
+                <div class="field">
+                  <label for="outboundQty">Quantity</label>
+                  <input id="outboundQty" class="input" type="number" min="1" step="1" value="1"/>
+                </div>
+
+                <div class="field">
+                  <label for="outboundReference">Outbound reference</label>
+                  <input id="outboundReference" class="input" placeholder="Manual reason or reference"/>
+                </div>
+              </div>
+
+              <div class="scan-actions">
+                <button id="btnBookOutManual" class="btn btn-primary" type="button">Book Out Manual</button>
+                <button id="btnClearOutbound" class="btn" type="button">Clear</button>
+              </div>
+
+              <div class="note-box">
+                Manual scan out books out available stock by SKU. The system chooses the physical items internally; no mutation scan is required.
+              </div>
+            </section>
+
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Outbound history</h2>
+                  <p class="section-sub">Latest manual outbound scans during this session.</p>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table class="scan-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>SKU</th>
+                      <th>Product</th>
+                      <th>Qty</th>
+                      <th>Reference</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="outboundHistoryBody">
+                    <tr><td colspan="6">No outbound scans yet.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <aside class="scan-side">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Outbound rules</h2>
+                  <p class="section-sub">How manual outbound works.</p>
+                </div>
+              </div>
+
+              <div class="empty-state">
+                Scan Out searches available stock by SKU only. The oldest available stock items are booked out first and then shown in Outbound History.
+              </div>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </section>
+
+    <section id="picklistsPanel" class="tab-panel">
+      <section class="card scan-card">
+        <div class="section-head">
+          <div>
+            <h2 class="section-title">Picklists</h2>
+            <p class="section-sub">Picklists will be used to book out reserved stock against orders. Matching is done on SKU/product level.</p>
+          </div>
+        </div>
+
+        <div class="scan-layout">
+          <section class="scan-main">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="scan-form-grid">
+                <div class="field">
+                  <label for="picklistSearch">Search order / ACK</label>
+                  <input id="picklistSearch" class="input" placeholder="Search ACK, order number or product owner"/>
+                </div>
+
+                <div class="field">
+                  <label for="picklistStatus">Status</label>
+                  <select id="picklistStatus" class="select">
+                    <option value="">All picklists</option>
+                    <option value="ready">Ready to pick</option>
+                    <option value="partial">Partially picked</option>
+                    <option value="complete">Complete</option>
+                  </select>
+                </div>
+
+                <div class="field">
+                  <label>&nbsp;</label>
+                  <button id="btnRefreshPicklists" class="btn" type="button">Refresh Picklists</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="table-wrap">
+                <table class="scan-table">
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Product Owner</th>
+                      <th>SKU</th>
+                      <th>Required Qty</th>
+                      <th>Picked Qty</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="picklistsBody">
+                    <tr><td colspan="7">Picklist functionality will be connected in scan.js.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+
+          <aside class="scan-side">
+            <section class="card scan-card" style="box-shadow:none;">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">Picklist rules</h2>
+                  <p class="section-sub">How automatic outbound will work.</p>
+                </div>
+              </div>
+
+              <div class="empty-state">
+                Picklists should only match SKU/product quantities. The physical mutation numbers are assigned internally when the stock is picked or loaded.
+              </div>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </section>
+  </main>
+</div>
+</body>
+</html>

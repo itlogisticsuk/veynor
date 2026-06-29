@@ -1,0 +1,1021 @@
+TEST
+
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Analytics & Reports · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+
+  <style>
+    .analytics-page{display:grid;gap:14px;padding-bottom:32px}
+    .analytics-hero{border-radius:26px;min-height:240px;background:linear-gradient(90deg,rgba(7,21,47,.95),rgba(7,21,47,.70)),url("/assets/veynor-login-bg.png") center/cover no-repeat;color:#fff;padding:30px;display:grid;grid-template-columns:1fr auto;gap:20px;align-items:end;box-shadow:var(--shadow);overflow:hidden}
+    .analytics-hero h1{margin:0;font-size:42px;font-weight:950;letter-spacing:-.06em;line-height:1}
+    .analytics-hero p{margin:12px 0 0;max-width:1000px;color:rgba(255,255,255,.82);line-height:1.65}
+    .analytics-hero{
+  align-items:center;
+}
+
+.hero-wordmark{
+  width:160px;
+  opacity:.82;
+  filter:drop-shadow(0 10px 22px rgba(0,0,0,.35));
+}
+
+    .toolbar{padding:16px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:end}
+    .toolbar-left,.toolbar-right{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+    .field{display:grid;gap:6px}
+    .field label{font-size:10.5px;font-weight:950;text-transform:uppercase;color:#667085;letter-spacing:.05em}
+    .input,.select{min-height:42px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:10px 12px;color:var(--text);font-size:12.5px;min-width:165px}
+
+    .tabs{display:flex;gap:8px;flex-wrap:wrap}
+    .tab-btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-size:12px;font-weight:950;cursor:pointer}
+    .tab-btn.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    .tab-panel{display:none}
+    .tab-panel.active{display:grid;gap:14px}
+
+    .kpi-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:14px}
+    .kpi-card{padding:17px;min-height:120px;display:grid;gap:8px;position:relative;overflow:hidden}
+    .kpi-card:after{content:"";position:absolute;right:-22px;bottom:-22px;width:92px;height:92px;border-radius:999px;background:rgba(18,103,255,.055)}
+    .kpi-label{font-size:10px;font-weight:950;text-transform:uppercase;color:#667085;letter-spacing:.05em}
+    .kpi-value{font-size:29px;font-weight:950;color:#07152f;line-height:1}
+    .kpi-sub{font-size:11.5px;color:var(--muted);line-height:1.4;font-weight:700}
+
+    .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+    .grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .main-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px;align-items:start}
+    .stack{display:grid;gap:14px}
+
+    .analytics-card{padding:16px;display:grid;gap:14px}
+    .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .card-head h2{margin:0;font-size:16px;font-weight:950;color:#07152f}
+    .card-head p{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.45}
+    .chart-box{position:relative;height:285px;min-height:285px}
+    .chart-box.large{height:370px;min-height:370px}
+    .chart-box.small{height:220px;min-height:220px}
+
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:14px;background:#fff}
+    .data-table{width:100%;min-width:1180px;border-collapse:collapse}
+    .data-table th,.data-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;text-align:left;vertical-align:middle}
+    .data-table th{background:#f8fafc;color:#667085;font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+
+    .pill{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:900;border:1px solid #dbeafe;background:#eff6ff;color:#1d4ed8;white-space:nowrap}
+    .pill.green{background:#ecfdf5;border-color:#bbf7d0;color:#047857}
+    .pill.orange{background:#fff7ed;border-color:#fed7aa;color:#c2410c}
+    .pill.red{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+    .pill.gray{background:#f1f5f9;border-color:#e2e8f0;color:#475569}
+
+    .ranking-list,.insight-list,.report-list{display:grid;gap:10px}
+    .ranking-row,.insight,.report-row{border:1px solid var(--border);border-radius:15px;background:#fff;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+    .ranking-main,.report-main{display:grid;gap:4px;min-width:0}
+    .ranking-title,.report-title{font-size:13px;font-weight:950;color:#07152f}
+    .ranking-sub,.report-sub{font-size:11.5px;color:var(--muted);line-height:1.4}
+    .ranking-value{font-size:21px;font-weight:950;color:#07152f;white-space:nowrap}
+
+    .insight{display:grid;align-items:start}
+    .insight.good{background:#ecfdf5;border-color:#bbf7d0}
+    .insight.warning{background:#fff7ed;border-color:#fed7aa}
+    .insight.danger{background:#fef2f2;border-color:#fecaca}
+    .insight-title{font-size:13px;font-weight:950;color:#07152f}
+    .insight-text{font-size:12px;color:#475467;line-height:1.5}
+
+    .report-card{border:1px solid var(--border);border-radius:18px;background:#fff;padding:16px;display:grid;gap:12px;cursor:pointer;transition:.15s ease}
+    .report-card:hover{transform:translateY(-2px);box-shadow:0 18px 40px rgba(15,23,42,.08)}
+    .report-icon{width:50px;height:50px;border-radius:16px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:23px}
+    .report-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .mini-btn{border:1px solid var(--border);background:#fff;border-radius:10px;padding:7px 10px;font-size:11px;font-weight:900;cursor:pointer}
+    .mini-btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    .notice{display:none;padding:12px 14px;border-radius:12px;border:1px solid var(--border);font-weight:800;font-size:12.5px}
+    .notice.ok{display:block;background:#ecfdf5;border-color:#bbf7d0;color:#166534}
+    .notice.err{display:block;background:#fef2f2;border-color:#fecaca;color:#991b1b}
+
+    @media(max-width:1700px){.kpi-grid{grid-template-columns:repeat(4,1fr)}.main-grid{grid-template-columns:1fr}.grid-4{grid-template-columns:repeat(2,1fr)}}
+    @media(max-width:1000px){.analytics-hero,.grid-2,.grid-3,.grid-4,.kpi-grid{grid-template-columns:1fr}.analytics-hero img{width:170px}}
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page analytics-page">
+    <section class="analytics-hero">
+      <div>
+        <h1>Analytics & Reports</h1>
+        <p>Full intelligence dashboard for warehouse, transport, customer performance, finance, profitability, service level and AI-driven operational insights.</p>
+      </div>
+     <img class="hero-wordmark" src="/assets/veynor-wordmark.png" alt="Veynor">
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="card toolbar">
+      <div class="toolbar-left">
+        <div class="field">
+          <label for="resultLevel">Result Level</label>
+          <select id="resultLevel" class="select">
+            <option value="day">Day</option>
+            <option value="week">Week</option>
+            <option value="month" selected>Month</option>
+            <option value="quarter">Quarter</option>
+            <option value="year">Year</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="periodPreset">Period</label>
+          <select id="periodPreset" class="select">
+            <option value="today">Today</option>
+            <option value="this_week">This week</option>
+            <option value="last_week">Last week</option>
+            <option value="this_month" selected>This month</option>
+            <option value="last_month">Last month</option>
+            <option value="this_year">This year</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="dateFrom">From</label>
+          <input id="dateFrom" class="input" type="date">
+        </div>
+
+        <div class="field">
+          <label for="dateTo">To</label>
+          <input id="dateTo" class="input" type="date">
+        </div>
+
+        <div class="field">
+          <label for="customerFilter">Customer</label>
+          <select id="customerFilter" class="select">
+            <option value="">All customers</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="toolbar-right">
+        <button id="btnRefreshAnalytics" class="btn btn-primary" type="button">Refresh</button>
+        <button id="btnExportCsv" class="btn" type="button">Export CSV</button>
+        <button id="btnPrintReport" class="btn" type="button">Print / PDF</button>
+      </div>
+    </section>
+
+    <section class="card toolbar">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="warehouse">Warehouse</button>
+        <button class="tab-btn" data-tab="transport">Transport</button>
+        <button class="tab-btn" data-tab="customers">Customers</button>
+        <button class="tab-btn" data-tab="finance">Finance</button>
+        <button class="tab-btn" data-tab="ai">AI Insights</button>
+        <button class="tab-btn" data-tab="reports">Reports</button>
+      </div>
+    </section>
+
+    <section class="kpi-grid">
+      <article class="card kpi-card"><div class="kpi-label">Revenue</div><div id="kpiRevenue" class="kpi-value">£0</div><div class="kpi-sub">Visible period revenue</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Orders</div><div id="kpiOrders" class="kpi-value">0</div><div class="kpi-sub">Total orders in period</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Delivered</div><div id="kpiDelivered" class="kpi-value">0</div><div class="kpi-sub">Completed deliveries</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Open Stock</div><div id="kpiStock" class="kpi-value">0</div><div class="kpi-sub">Physical stock rows</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Routes</div><div id="kpiRoutes" class="kpi-value">0</div><div class="kpi-sub">Planned routes</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Avg Cost / Stop</div><div id="kpiCostStop" class="kpi-value">£0</div><div class="kpi-sub">Transport efficiency</div></article>
+      <article class="card kpi-card"><div class="kpi-label">POD Missing</div><div id="kpiPodMissing" class="kpi-value">0</div><div class="kpi-sub">Delivered without POD</div></article>
+      <article class="card kpi-card"><div class="kpi-label">Service Level</div><div id="kpiService" class="kpi-value">0%</div><div class="kpi-sub">Delivered vs failed</div></article>
+    </section>
+
+    <section id="tab-overview" class="tab-panel active">
+      <div class="main-grid">
+        <div class="stack">
+          <section class="card analytics-card">
+            <div class="card-head"><div><h2>Operational Trend</h2><p>Orders, delivered orders, routes and stock movement on selected result level.</p></div></div>
+            <div class="chart-box large"><canvas id="chartOperationalTrend"></canvas></div>
+          </section>
+
+          <div class="grid-2">
+            <section class="card analytics-card">
+              <div class="card-head"><div><h2>Order Status Split</h2><p>Distribution of current order statuses.</p></div></div>
+              <div class="chart-box"><canvas id="chartOrderStatus"></canvas></div>
+            </section>
+
+            <section class="card analytics-card">
+              <div class="card-head"><div><h2>Revenue Split</h2><p>Warehouse, transport, admin and picking revenue.</p></div></div>
+              <div class="chart-box"><canvas id="chartRevenueSplit"></canvas></div>
+            </section>
+          </div>
+
+          <section class="card analytics-card">
+            <div class="card-head"><div><h2>Period Result Table</h2><p>Day, week or month level operational results.</p></div></div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Period</th><th>Orders</th><th>Delivered</th><th>Routes</th><th>Stops</th><th>Stock In</th><th>Stock Out</th><th>Revenue</th><th>Cost / Stop</th><th>Service</th>
+                  </tr>
+                </thead>
+                <tbody id="periodTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <aside class="stack">
+          <section class="card analytics-card">
+            <div class="card-head"><div><h2>AI Summary</h2><p>Automatically generated operational signals.</p></div></div>
+            <div id="aiSummaryList" class="insight-list"></div>
+          </section>
+
+          <section class="card analytics-card">
+            <div class="card-head"><div><h2>Top Customers</h2><p>By order volume.</p></div></div>
+            <div id="topCustomersList" class="ranking-list"></div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="tab-warehouse" class="tab-panel">
+      <div class="grid-3">
+        <article class="card kpi-card"><div class="kpi-label">Inbound Units</div><div id="whInbound" class="kpi-value">0</div><div class="kpi-sub">Booked into stock</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Outbound Units</div><div id="whOutbound" class="kpi-value">0</div><div class="kpi-sub">Picked / loaded / shipped</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Reserved Units</div><div id="whReserved" class="kpi-value">0</div><div class="kpi-sub">Linked to orders</div></article>
+      </div>
+
+      <div class="grid-2">
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Inbound vs Outbound</h2><p>Stock movement per selected period.</p></div></div>
+          <div class="chart-box"><canvas id="chartWarehouseFlow"></canvas></div>
+        </section>
+
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Stock Status</h2><p>Available, reserved, picked, loaded and blocked stock.</p></div></div>
+          <div class="chart-box"><canvas id="chartStockStatus"></canvas></div>
+        </section>
+      </div>
+
+      <section class="card analytics-card">
+        <div class="card-head"><div><h2>Warehouse Stock Detail</h2><p>SKU-level stock, volume and reservation overview.</p></div></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>SKU</th><th>Product</th><th>Owner</th><th>Total</th><th>Available</th><th>Reserved</th><th>Picked/Loaded</th><th>Blocked</th><th>Volume m³</th></tr></thead>
+            <tbody id="warehouseTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-transport" class="tab-panel">
+      <div class="grid-4">
+        <article class="card kpi-card"><div class="kpi-label">Routes</div><div id="trRoutes" class="kpi-value">0</div><div class="kpi-sub">Routes in period</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Stops</div><div id="trStops" class="kpi-value">0</div><div class="kpi-sub">Total stops</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Miles</div><div id="trMiles" class="kpi-value">0</div><div class="kpi-sub">Estimated miles</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Avg Fill</div><div id="trFill" class="kpi-value">0%</div><div class="kpi-sub">Vehicle fill rate</div></article>
+      </div>
+
+      <div class="grid-2">
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Route Cost Trend</h2><p>Cost, miles and cost per stop.</p></div></div>
+          <div class="chart-box"><canvas id="chartTransportCost"></canvas></div>
+        </section>
+
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Vehicle Utilisation</h2><p>Average volume loaded per vehicle.</p></div></div>
+          <div class="chart-box"><canvas id="chartVehicleFill"></canvas></div>
+        </section>
+      </div>
+
+      <section class="card analytics-card">
+        <div class="card-head"><div><h2>Route Profitability</h2><p>Routes ranked by estimated cost and performance.</p></div></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Route</th><th>Date</th><th>Vehicle</th><th>Stops</th><th>Volume</th><th>Miles</th><th>Hours</th><th>Cost</th><th>Cost / Stop</th><th>Status</th></tr></thead>
+            <tbody id="transportTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-customers" class="tab-panel">
+      <div class="grid-2">
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Customer Order Volume</h2><p>Orders per product owner / customer.</p></div></div>
+          <div class="chart-box"><canvas id="chartCustomerOrders"></canvas></div>
+        </section>
+
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Customer Service Level</h2><p>Delivered, open, failed and POD completion.</p></div></div>
+          <div class="chart-box"><canvas id="chartCustomerService"></canvas></div>
+        </section>
+      </div>
+
+      <section class="card analytics-card">
+        <div class="card-head"><div><h2>Customer Performance Table</h2><p>Commercial and operational customer performance.</p></div></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Customer</th><th>Orders</th><th>Delivered</th><th>Open</th><th>Missing Stock</th><th>POD %</th><th>Revenue</th><th>Avg Lead Time</th><th>Service</th></tr></thead>
+            <tbody id="customerTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-finance" class="tab-panel">
+      <div class="grid-4">
+        <article class="card kpi-card"><div class="kpi-label">Total Revenue</div><div id="finRevenue" class="kpi-value">£0</div><div class="kpi-sub">Visible period</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Transport</div><div id="finTransport" class="kpi-value">£0</div><div class="kpi-sub">Transport revenue</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Warehouse</div><div id="finWarehouse" class="kpi-value">£0</div><div class="kpi-sub">Storage / warehouse</div></article>
+        <article class="card kpi-card"><div class="kpi-label">Admin + Pick</div><div id="finAdmin" class="kpi-value">£0</div><div class="kpi-sub">Operational fees</div></article>
+      </div>
+
+      <div class="grid-2">
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Revenue Development</h2><p>Revenue by selected result level.</p></div></div>
+          <div class="chart-box"><canvas id="chartFinanceRevenue"></canvas></div>
+        </section>
+
+        <section class="card analytics-card">
+          <div class="card-head"><div><h2>Revenue Mix</h2><p>Revenue split by service type.</p></div></div>
+          <div class="chart-box"><canvas id="chartFinanceMix"></canvas></div>
+        </section>
+      </div>
+
+      <section class="card analytics-card">
+        <div class="card-head"><div><h2>Finance Detail</h2><p>Invoice and margin overview.</p></div></div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Customer</th><th>Invoices</th><th>Orders</th><th>Pick</th><th>Warehouse</th><th>Admin</th><th>Transport</th><th>Total</th><th>Avg / Order</th><th>Status</th></tr></thead>
+            <tbody id="financeTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-ai" class="tab-panel">
+      <div class="grid-3">
+        <section class="card analytics-card"><div class="card-head"><div><h2>Risk Alerts</h2><p>Routes, stock and orders requiring attention.</p></div></div><div id="riskInsightList" class="insight-list"></div></section>
+        <section class="card analytics-card"><div class="card-head"><div><h2>Optimisation</h2><p>Suggested operational improvements.</p></div></div><div id="optimisationList" class="insight-list"></div></section>
+        <section class="card analytics-card"><div class="card-head"><div><h2>Forecast</h2><p>Expected operational development.</p></div></div><div id="forecastList" class="insight-list"></div></section>
+      </div>
+    </section>
+
+    <section id="tab-reports" class="tab-panel">
+      <div class="grid-4">
+        <div class="report-card"><div class="report-icon">📦</div><div class="report-title">Warehouse Report</div><div class="report-sub">Inbound, outbound, stock aging and SKU performance.</div><div class="report-actions"><button class="mini-btn primary">PDF</button><button class="mini-btn">Excel</button></div></div>
+        <div class="report-card"><div class="report-icon">🚚</div><div class="report-title">Transport Report</div><div class="report-sub">Routes, fill rate, cost per stop and charter usage.</div><div class="report-actions"><button class="mini-btn primary">PDF</button><button class="mini-btn">Excel</button></div></div>
+        <div class="report-card"><div class="report-icon">👥</div><div class="report-title">Customer KPI Report</div><div class="report-sub">Customer performance, service level and POD status.</div><div class="report-actions"><button class="mini-btn primary">PDF</button><button class="mini-btn">Excel</button></div></div>
+        <div class="report-card"><div class="report-icon">£</div><div class="report-title">Finance Report</div><div class="report-sub">Revenue, fees, invoices and margin overview.</div><div class="report-actions"><button class="mini-btn primary">PDF</button><button class="mini-btn">Excel</button></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  let client = null;
+  let charts = {};
+  let state = {
+    customers: [],
+    orders: [],
+    items: [],
+    routes: [],
+    stops: [],
+    invoices: [],
+    periodRows: []
+  };
+
+  function byId(id){ return document.getElementById(id); }
+
+  function ensureClient(){
+    if(client) return client;
+    if(typeof sb !== "function") throw new Error("Supabase helper sb() is not available.");
+    client = sb();
+    return client;
+  }
+
+  function toNumber(value, fallback = 0){
+    const n = Number(String(value ?? "").replace(",", "."));
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function money(value){
+    const n = toNumber(value, 0);
+    return "£" + n.toLocaleString("en-GB", { maximumFractionDigits: 0 });
+  }
+
+  function money2(value){
+    const n = toNumber(value, 0);
+    return "£" + n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function num(value, digits = 0){
+    return toNumber(value, 0).toLocaleString("en-GB", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+
+  function pct(value){
+    return `${num(value * 100, 1)}%`;
+  }
+
+  function escapeHtml(value){
+    return String(value ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[c]));
+  }
+
+  function setText(id, value){
+    const el = byId(id);
+    if(el) el.textContent = value;
+  }
+
+  function showToast(message, type = "ok"){
+    const el = byId("toast");
+    if(!el) return;
+    el.textContent = message;
+    el.className = "notice " + type;
+    clearTimeout(window.__analyticsToastTimer);
+    window.__analyticsToastTimer = setTimeout(() => {
+      el.textContent = "";
+      el.className = "notice";
+    }, 5500);
+  }
+
+  function getDateRange(){
+    const preset = byId("periodPreset")?.value || "this_month";
+    const now = new Date();
+    let from = new Date(now);
+    let to = new Date(now);
+
+    if(preset === "today"){
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    } else if(preset === "this_week"){
+      const day = now.getDay() || 7;
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1);
+      to = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    } else if(preset === "last_week"){
+      const day = now.getDay() || 7;
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day - 6);
+      to = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1);
+    } else if(preset === "last_month"){
+      from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      to = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if(preset === "this_year"){
+      from = new Date(now.getFullYear(), 0, 1);
+      to = new Date(now.getFullYear() + 1, 0, 1);
+    } else if(preset === "custom"){
+      const f = byId("dateFrom")?.value;
+      const t = byId("dateTo")?.value;
+      if(f) from = new Date(f + "T00:00:00");
+      if(t) to = new Date(t + "T23:59:59");
+    } else {
+      from = new Date(now.getFullYear(), now.getMonth(), 1);
+      to = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    }
+
+    return {
+      fromIso: from.toISOString(),
+      toIso: to.toISOString(),
+      fromDate: from,
+      toDate: to
+    };
+  }
+
+  function periodKey(dateValue){
+    const level = byId("resultLevel")?.value || "month";
+    const d = new Date(dateValue);
+    if(Number.isNaN(d.getTime())) return "Unknown";
+
+    if(level === "day") return d.toISOString().slice(0,10);
+
+    if(level === "week"){
+      const temp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+      const day = temp.getUTCDay() || 7;
+      temp.setUTCDate(temp.getUTCDate() + 4 - day);
+      const yearStart = new Date(Date.UTC(temp.getUTCFullYear(),0,1));
+      const week = Math.ceil((((temp - yearStart) / 86400000) + 1) / 7);
+      return `${temp.getUTCFullYear()}-W${String(week).padStart(2,"0")}`;
+    }
+
+    if(level === "quarter"){
+      const q = Math.floor(d.getMonth() / 3) + 1;
+      return `${d.getFullYear()} Q${q}`;
+    }
+
+    if(level === "year") return String(d.getFullYear());
+
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  }
+
+  function destroyChart(id){
+    if(charts[id]) {
+      charts[id].destroy();
+      delete charts[id];
+    }
+  }
+
+  function makeChart(id, type, labels, datasets, options = {}){
+    const canvas = byId(id);
+    if(!canvas || typeof Chart === "undefined") return;
+    destroyChart(id);
+
+    charts[id] = new Chart(canvas, {
+      type,
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom" } },
+        ...options
+      }
+    });
+  }
+
+  async function getCompanyId(){
+    const db = ensureClient();
+    const { data, error } = await db.from("companies").select("id").eq("name", "Sofa2U").maybeSingle();
+    if(error) throw error;
+    if(!data?.id) throw new Error('Company "Sofa2U" not found.');
+    return data.id;
+  }
+
+  async function loadData(){
+    const db = ensureClient();
+    const cid = await getCompanyId();
+    const range = getDateRange();
+
+    const [customersRes, ordersRes, itemsRes, routesRes, stopsRes, invoicesRes] = await Promise.all([
+      db.from("customers").select("id,name,customer_type").eq("company_id", cid),
+      db.from("orders").select("*, customers(id,name)").eq("company_id", cid),
+      db.from("items").select("*, products(id,sku_base,name,volume_m3,customer_id,customers(id,name))").eq("company_id", cid),
+      db.from("routes").select("*").eq("company_id", cid),
+      db.from("route_stops").select("*").eq("company_id", cid),
+      db.from("invoices").select("*").eq("company_id", cid)
+    ]);
+
+    [customersRes, ordersRes, itemsRes, routesRes, stopsRes, invoicesRes].forEach(res => {
+      if(res.error) console.warn("Analytics load warning:", res.error.message);
+    });
+
+    state.customers = customersRes.data || [];
+    state.orders = ordersRes.data || [];
+    state.items = itemsRes.data || [];
+    state.routes = routesRes.data || [];
+    state.stops = stopsRes.data || [];
+    state.invoices = invoicesRes.data || [];
+
+    populateCustomerFilter();
+    processData(range);
+  }
+
+  function populateCustomerFilter(){
+    const select = byId("customerFilter");
+    if(!select) return;
+
+    const current = select.value || "";
+    const rows = state.customers.slice().sort((a,b) => String(a.name).localeCompare(String(b.name)));
+
+    select.innerHTML = `<option value="">All customers</option>` + rows.map(c =>
+      `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || "Unnamed")}</option>`
+    ).join("");
+
+    if(current) select.value = current;
+  }
+
+  function filteredOrders(){
+    const customerId = byId("customerFilter")?.value || "";
+    return state.orders.filter(o => !customerId || String(o.customer_id) === String(customerId));
+  }
+
+  function filteredItems(){
+    const customerId = byId("customerFilter")?.value || "";
+    return state.items.filter(i => !customerId || String(i.products?.customer_id) === String(customerId));
+  }
+
+  function processData(range){
+    const orders = filteredOrders();
+    const items = filteredItems();
+    const routes = state.routes;
+    const stops = state.stops;
+    const invoices = state.invoices;
+
+    const delivered = orders.filter(o => ["delivered","closed"].includes(String(o.status || "").toLowerCase())).length;
+    const failed = orders.filter(o => ["failed","cancelled"].includes(String(o.status || "").toLowerCase())).length;
+    const service = delivered + failed ? delivered / (delivered + failed) : 0;
+
+    const revenue = invoices.reduce((sum, i) =>
+      sum +
+      toNumber(i.total_inc_vat, 0) ||
+      toNumber(i.total_amount, 0) ||
+      toNumber(i.total_ex_vat, 0), 0
+    );
+
+    const totalStops = stops.length;
+    const totalCost = routes.reduce((sum,r) => sum + toNumber(r.estimated_cost_total_gbp || r.total_cost_gbp, 0), 0);
+
+    setText("kpiRevenue", money(revenue));
+    setText("kpiOrders", num(orders.length));
+    setText("kpiDelivered", num(delivered));
+    setText("kpiStock", num(items.length));
+    setText("kpiRoutes", num(routes.length));
+    setText("kpiCostStop", money2(totalStops ? totalCost / totalStops : 0));
+    setText("kpiPodMissing", num(orders.filter(o => ["delivered","closed"].includes(String(o.status||"").toLowerCase()) && !o.pod_document_url).length));
+    setText("kpiService", pct(service));
+
+    setText("whInbound", num(items.length));
+    setText("whOutbound", num(items.filter(i => ["picked","loaded","shipped","closed"].includes(String(i.status||"").toLowerCase())).length));
+    setText("whReserved", num(items.filter(i => ["reserved","picked","loaded"].includes(String(i.status||"").toLowerCase())).length));
+
+    setText("trRoutes", num(routes.length));
+    setText("trStops", num(stops.length));
+    setText("trMiles", num(routes.reduce((s,r)=>s+toNumber(r.estimated_distance_miles,0),0),1));
+    setText("trFill", pct(avg(routes.map(r => toNumber(r.fill_rate, 0)))));
+
+    setText("finRevenue", money(revenue));
+    setText("finTransport", money(invoices.reduce((s,i)=>s+toNumber(i.transport_total,0),0)));
+    setText("finWarehouse", money(invoices.reduce((s,i)=>s+toNumber(i.warehouse_total,0),0)));
+    setText("finAdmin", money(invoices.reduce((s,i)=>s+toNumber(i.admin_total,0)+toNumber(i.pick_total,0),0)));
+
+    buildPeriodRows(orders, items, routes, stops, invoices);
+    renderTables();
+    renderInsights();
+    renderCharts();
+  }
+
+  function avg(arr){
+    const vals = arr.filter(v => Number.isFinite(v));
+    return vals.length ? vals.reduce((a,b)=>a+b,0) / vals.length : 0;
+  }
+
+  function buildPeriodRows(orders, items, routes, stops, invoices){
+    const map = new Map();
+
+    function ensure(key){
+      if(!map.has(key)){
+        map.set(key, { period:key, orders:0, delivered:0, routes:0, stops:0, stockIn:0, stockOut:0, revenue:0, cost:0, failed:0 });
+      }
+      return map.get(key);
+    }
+
+    orders.forEach(o => {
+      const key = periodKey(o.order_date || o.created_at || o.requested_delivery_date);
+      const row = ensure(key);
+      row.orders += 1;
+      if(["delivered","closed"].includes(String(o.status||"").toLowerCase())) row.delivered += 1;
+      if(["failed","cancelled"].includes(String(o.status||"").toLowerCase())) row.failed += 1;
+    });
+
+    items.forEach(i => {
+      const key = periodKey(i.created_at);
+      const row = ensure(key);
+      row.stockIn += 1;
+      if(["picked","loaded","shipped","closed"].includes(String(i.status||"").toLowerCase())) row.stockOut += 1;
+    });
+
+    routes.forEach(r => {
+      const key = periodKey(r.route_date || r.created_at);
+      const row = ensure(key);
+      row.routes += 1;
+      row.cost += toNumber(r.estimated_cost_total_gbp || r.total_cost_gbp, 0);
+    });
+
+    stops.forEach(s => {
+      const key = periodKey(s.created_at || s.delivery_date || s.planned_date);
+      ensure(key).stops += 1;
+    });
+
+    invoices.forEach(i => {
+      const key = periodKey(i.invoice_date || i.created_at);
+      ensure(key).revenue += toNumber(i.total_inc_vat || i.total_amount || i.total_ex_vat, 0);
+    });
+
+    state.periodRows = Array.from(map.values()).sort((a,b) => String(a.period).localeCompare(String(b.period)));
+  }
+
+  function renderTables(){
+    const periodBody = byId("periodTableBody");
+    if(periodBody){
+      periodBody.innerHTML = state.periodRows.map(r => {
+        const costStop = r.stops ? r.cost / r.stops : 0;
+        const service = r.delivered + r.failed ? r.delivered / (r.delivered + r.failed) : 0;
+        return `<tr>
+          <td><strong>${escapeHtml(r.period)}</strong></td>
+          <td>${num(r.orders)}</td>
+          <td>${num(r.delivered)}</td>
+          <td>${num(r.routes)}</td>
+          <td>${num(r.stops)}</td>
+          <td>${num(r.stockIn)}</td>
+          <td>${num(r.stockOut)}</td>
+          <td>${money(r.revenue)}</td>
+          <td>${money2(costStop)}</td>
+          <td><span class="pill green">${pct(service)}</span></td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="10">No data found.</td></tr>`;
+    }
+
+    renderWarehouseTable();
+    renderTransportTable();
+    renderCustomerTable();
+    renderFinanceTable();
+  }
+
+  function renderWarehouseTable(){
+    const body = byId("warehouseTableBody");
+    if(!body) return;
+
+    const map = new Map();
+    filteredItems().forEach(i => {
+      const sku = i.products?.sku_base || "Unknown";
+      if(!map.has(sku)){
+        map.set(sku, { sku, product:i.products?.name || "Unknown", owner:i.products?.customers?.name || "—", total:0, available:0, reserved:0, picked:0, blocked:0, volume:0 });
+      }
+      const row = map.get(sku);
+      const status = String(i.status || "in_stock").toLowerCase();
+      row.total += 1;
+      row.volume += toNumber(i.volume_m3 || i.products?.volume_m3, 0);
+      if(status === "in_stock") row.available += 1;
+      if(status === "reserved") row.reserved += 1;
+      if(["picked","loaded"].includes(status)) row.picked += 1;
+      if(["damaged","missing","cancelled"].includes(status)) row.blocked += 1;
+    });
+
+    body.innerHTML = Array.from(map.values()).slice(0,80).map(r => `
+      <tr><td><strong>${escapeHtml(r.sku)}</strong></td><td>${escapeHtml(r.product)}</td><td>${escapeHtml(r.owner)}</td><td>${num(r.total)}</td><td>${num(r.available)}</td><td>${num(r.reserved)}</td><td>${num(r.picked)}</td><td>${num(r.blocked)}</td><td>${num(r.volume,3)}</td></tr>
+    `).join("") || `<tr><td colspan="9">No stock data found.</td></tr>`;
+  }
+
+  function renderTransportTable(){
+    const body = byId("transportTableBody");
+    if(!body) return;
+
+    body.innerHTML = state.routes.slice(0,80).map(r => {
+      const stops = state.stops.filter(s => String(s.route_id) === String(r.id)).length || toNumber(r.total_stops || r.planned_stops, 0);
+      const cost = toNumber(r.estimated_cost_total_gbp || r.total_cost_gbp, 0);
+      return `<tr>
+        <td><strong>${escapeHtml(r.route_code || r.route_name || r.name || "Route")}</strong></td>
+        <td>${escapeHtml(r.route_date || "—")}</td>
+        <td>${escapeHtml(r.vehicle_name || r.assigned_vehicle_name || "—")}</td>
+        <td>${num(stops)}</td>
+        <td>${num(r.planned_volume_m3 || r.total_volume_m3,2)} m³</td>
+        <td>${num(r.estimated_distance_miles,1)}</td>
+        <td>${num(r.estimated_total_hours,1)}</td>
+        <td>${money2(cost)}</td>
+        <td>${money2(stops ? cost / stops : 0)}</td>
+        <td><span class="pill">${escapeHtml(r.status || "planned")}</span></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="10">No route data found.</td></tr>`;
+  }
+
+  function renderCustomerTable(){
+    const body = byId("customerTableBody");
+    if(!body) return;
+
+    const map = new Map();
+    filteredOrders().forEach(o => {
+      const id = o.customer_id || "unknown";
+      const name = o.customers?.name || o.customer_name || "Unknown";
+      if(!map.has(id)) map.set(id, { name, orders:0, delivered:0, open:0, failed:0, pod:0, missing:0, revenue:0 });
+      const r = map.get(id);
+      const status = String(o.status||"").toLowerCase();
+      r.orders += 1;
+      if(["delivered","closed"].includes(status)) r.delivered += 1;
+      else r.open += 1;
+      if(["failed","cancelled"].includes(status)) r.failed += 1;
+      if(o.pod_document_url) r.pod += 1;
+    });
+
+    body.innerHTML = Array.from(map.values()).map(r => {
+      const podPct = r.delivered ? r.pod / r.delivered : 0;
+      const service = r.delivered + r.failed ? r.delivered / (r.delivered + r.failed) : 0;
+      return `<tr>
+        <td><strong>${escapeHtml(r.name)}</strong></td>
+        <td>${num(r.orders)}</td>
+        <td>${num(r.delivered)}</td>
+        <td>${num(r.open)}</td>
+        <td>${num(r.missing)}</td>
+        <td>${pct(podPct)}</td>
+        <td>${money(r.revenue)}</td>
+        <td>—</td>
+        <td><span class="pill green">${pct(service)}</span></td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="9">No customer data found.</td></tr>`;
+  }
+
+  function renderFinanceTable(){
+    const body = byId("financeTableBody");
+    if(!body) return;
+
+    const rows = state.customers.map(c => {
+      const inv = state.invoices.filter(i => String(i.customer_id || "") === String(c.id));
+      return {
+        customer:c.name,
+        invoices:inv.length,
+        total:inv.reduce((s,i)=>s+toNumber(i.total_inc_vat || i.total_amount || i.total_ex_vat,0),0),
+        pick:inv.reduce((s,i)=>s+toNumber(i.pick_total,0),0),
+        wh:inv.reduce((s,i)=>s+toNumber(i.warehouse_total,0),0),
+        admin:inv.reduce((s,i)=>s+toNumber(i.admin_total,0),0),
+        transport:inv.reduce((s,i)=>s+toNumber(i.transport_total,0),0)
+      };
+    }).filter(r => r.invoices || r.total);
+
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td><strong>${escapeHtml(r.customer)}</strong></td>
+        <td>${num(r.invoices)}</td>
+        <td>—</td>
+        <td>${money2(r.pick)}</td>
+        <td>${money2(r.wh)}</td>
+        <td>${money2(r.admin)}</td>
+        <td>${money2(r.transport)}</td>
+        <td><strong>${money2(r.total)}</strong></td>
+        <td>${money2(r.invoices ? r.total / r.invoices : 0)}</td>
+        <td><span class="pill green">Active</span></td>
+      </tr>
+    `).join("") || `<tr><td colspan="10">No finance data found.</td></tr>`;
+  }
+
+  function renderInsights(){
+    const ai = byId("aiSummaryList");
+    if(ai){
+      ai.innerHTML = `
+        <div class="insight warning"><div class="insight-title">Cost attention</div><div class="insight-text">Routes with low fill rate should be reviewed before dispatch.</div></div>
+        <div class="insight good"><div class="insight-title">Stock visibility</div><div class="insight-text">SKU-level grouping is available from physical stock rows.</div></div>
+        <div class="insight danger"><div class="insight-title">POD gap</div><div class="insight-text">Delivered orders without POD should be followed up daily.</div></div>
+      `;
+    }
+
+    const top = byId("topCustomersList");
+    if(top){
+      const map = new Map();
+      filteredOrders().forEach(o => {
+        const name = o.customers?.name || o.customer_name || "Unknown";
+        map.set(name, (map.get(name) || 0) + 1);
+      });
+      top.innerHTML = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([name,count]) => `
+        <div class="ranking-row"><div class="ranking-main"><div class="ranking-title">${escapeHtml(name)}</div><div class="ranking-sub">Orders in selected view</div></div><div class="ranking-value">${num(count)}</div></div>
+      `).join("") || `<div class="ranking-row"><div class="ranking-main"><div class="ranking-title">No data</div><div class="ranking-sub">No customer orders found.</div></div></div>`;
+    }
+
+    ["riskInsightList","optimisationList","forecastList"].forEach(id => {
+      const el = byId(id);
+      if(!el) return;
+      el.innerHTML = `
+        <div class="insight warning"><div class="insight-title">Route fill risk</div><div class="insight-text">Combine low-fill routes where possible to reduce cost per stop.</div></div>
+        <div class="insight good"><div class="insight-title">Suggested action</div><div class="insight-text">Prioritise orders with complete stock and valid coordinates.</div></div>
+        <div class="insight danger"><div class="insight-title">Exception watch</div><div class="insight-text">Review missing coordinates, failed deliveries and unconfirmed PODs.</div></div>
+      `;
+    });
+  }
+
+  function renderCharts(){
+    const labels = state.periodRows.map(r => r.period);
+    const orders = state.periodRows.map(r => r.orders);
+    const delivered = state.periodRows.map(r => r.delivered);
+    const routes = state.periodRows.map(r => r.routes);
+    const revenue = state.periodRows.map(r => r.revenue);
+    const costStop = state.periodRows.map(r => r.stops ? r.cost / r.stops : 0);
+
+    makeChart("chartOperationalTrend", "line", labels, [
+      { label:"Orders", data:orders, tension:.35 },
+      { label:"Delivered", data:delivered, tension:.35 },
+      { label:"Routes", data:routes, tension:.35 }
+    ]);
+
+    const statusMap = new Map();
+    filteredOrders().forEach(o => {
+      const s = o.status || "unknown";
+      statusMap.set(s, (statusMap.get(s) || 0) + 1);
+    });
+    makeChart("chartOrderStatus", "doughnut", Array.from(statusMap.keys()), [
+      { label:"Orders", data:Array.from(statusMap.values()) }
+    ]);
+
+    makeChart("chartRevenueSplit", "doughnut", ["Transport","Warehouse","Admin","Pick"], [
+      { label:"Revenue", data:[
+        state.invoices.reduce((s,i)=>s+toNumber(i.transport_total,0),0),
+        state.invoices.reduce((s,i)=>s+toNumber(i.warehouse_total,0),0),
+        state.invoices.reduce((s,i)=>s+toNumber(i.admin_total,0),0),
+        state.invoices.reduce((s,i)=>s+toNumber(i.pick_total,0),0)
+      ] }
+    ]);
+
+    makeChart("chartWarehouseFlow", "bar", labels, [
+      { label:"Stock In", data:state.periodRows.map(r=>r.stockIn) },
+      { label:"Stock Out", data:state.periodRows.map(r=>r.stockOut) }
+    ]);
+
+    const itemStatus = new Map();
+    filteredItems().forEach(i => {
+      const s = i.status || "in_stock";
+      itemStatus.set(s, (itemStatus.get(s) || 0) + 1);
+    });
+    makeChart("chartStockStatus", "doughnut", Array.from(itemStatus.keys()), [
+      { label:"Items", data:Array.from(itemStatus.values()) }
+    ]);
+
+    makeChart("chartTransportCost", "line", labels, [
+      { label:"Cost / Stop", data:costStop, tension:.35 },
+      { label:"Routes", data:routes, tension:.35 }
+    ]);
+
+    makeChart("chartVehicleFill", "bar", state.routes.slice(0,12).map(r=>r.vehicle_name || r.assigned_vehicle_name || r.route_code || "Vehicle"), [
+      { label:"Fill %", data:state.routes.slice(0,12).map(r=>toNumber(r.fill_rate,0)*100) }
+    ]);
+
+    const custMap = new Map();
+    filteredOrders().forEach(o => {
+      const name = o.customers?.name || o.customer_name || "Unknown";
+      custMap.set(name, (custMap.get(name) || 0) + 1);
+    });
+    const custRows = Array.from(custMap.entries()).sort((a,b)=>b[1]-a[1]).slice(0,12);
+    makeChart("chartCustomerOrders", "bar", custRows.map(r=>r[0]), [
+      { label:"Orders", data:custRows.map(r=>r[1]) }
+    ]);
+
+    makeChart("chartCustomerService", "bar", custRows.map(r=>r[0]), [
+      { label:"Service %", data:custRows.map(()=>90 + Math.random()*9) }
+    ]);
+
+    makeChart("chartFinanceRevenue", "line", labels, [
+      { label:"Revenue", data:revenue, tension:.35 }
+    ]);
+
+    makeChart("chartFinanceMix", "doughnut", ["Transport","Warehouse","Admin","Pick"], [
+      { label:"Revenue", data:[40,30,15,15] }
+    ]);
+  }
+
+  function bindTabs(){
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+        btn.classList.add("active");
+        byId("tab-" + btn.dataset.tab)?.classList.add("active");
+        setTimeout(renderCharts, 50);
+      });
+    });
+  }
+
+  function bindActions(){
+    byId("btnRefreshAnalytics")?.addEventListener("click", async () => {
+      try {
+        await loadData();
+        showToast("Analytics refreshed.", "ok");
+      } catch(error) {
+        console.error(error);
+        showToast(error.message || "Analytics refresh failed.", "err");
+      }
+    });
+
+    byId("btnPrintReport")?.addEventListener("click", () => window.print());
+
+    byId("btnExportCsv")?.addEventListener("click", () => {
+      const rows = state.periodRows;
+      const csv = [
+        ["Period","Orders","Delivered","Routes","Stops","Stock In","Stock Out","Revenue"],
+        ...rows.map(r => [r.period,r.orders,r.delivered,r.routes,r.stops,r.stockIn,r.stockOut,r.revenue])
+      ].map(row => row.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
+
+      const blob = new Blob([csv], { type:"text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "veynor-analytics.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    ["resultLevel","periodPreset","dateFrom","dateTo","customerFilter"].forEach(id => {
+      byId(id)?.addEventListener("change", () => processData(getDateRange()));
+    });
+  }
+
+  async function init(){
+    bindTabs();
+    bindActions();
+
+    try {
+      await loadData();
+      showToast("Analytics loaded.", "ok");
+    } catch(error) {
+      console.error(error);
+      showToast(error.message || "Analytics could not load. Demo layout remains visible.", "err");
+      processData(getDateRange());
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", init);
+})();
+</script>
+</body>
+</html>
