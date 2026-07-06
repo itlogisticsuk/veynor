@@ -978,17 +978,15 @@ function getSupportUsers() {
 
 function populateRecipients() {
   const typeSelect = byId("newMessageRecipientType");
-  const recipientSelect = byId("newMessageRecipient");
-  if (!typeSelect || !recipientSelect) return;
+  if (!typeSelect) return;
 
   if (!isTenantRole()) {
     typeSelect.innerHTML = `<option value="tenant">Veynor / Sofa2U</option>`;
-    recipientSelect.innerHTML = `<option value="tenant">Veynor / Sofa2U</option>`;
     populateContactPersons();
     return;
   }
 
-  const currentType = typeSelect.value || "product_owner";
+  const currentType = typeSelect.value || "tenant";
 
   typeSelect.innerHTML = `
     <option value="tenant">Veynor / Sofa2U Internal</option>
@@ -999,59 +997,84 @@ function populateRecipients() {
   `;
 
   typeSelect.value = currentType;
-
-  if (currentType === "product_owner" || currentType === "retailer") {
-    recipientSelect.innerHTML =
-      `<option value="">Select recipient...</option>` +
-      state.customers.map(c => `
-        <option value="${escapeHtml(c.id)}">${escapeHtml(c.name || c.customer_code || c.id)}</option>
-      `).join("");
-  } else if (currentType === "driver") {
-    recipientSelect.innerHTML =
-      `<option value="">Select driver...</option>` +
-      state.users.filter(u => u.role === "driver").map(u => `
-        <option value="${escapeHtml(u.id)}">${escapeHtml(u.full_name || u.email || u.id)}</option>
-      `).join("");
-  } else if (currentType === "user") {
-    recipientSelect.innerHTML =
-      `<option value="">Select user...</option>` +
-      state.users.map(u => `
-        <option value="${escapeHtml(u.id)}">${escapeHtml(u.full_name || u.email || u.id)}</option>
-      `).join("");
-  } else {
-    recipientSelect.innerHTML = `<option value="tenant">Veynor / Sofa2U Internal</option>`;
-  }
-
   populateContactPersons();
 }
-
 function populateContactPersons() {
-  const recipientType = byId("newMessageRecipientType")?.value || "tenant";
-  const recipient = byId("newMessageRecipient")?.value || "";
+  const recipientType =
+    byId("newMessageRecipientType")?.value || "tenant";
+
   const contactSelect = byId("newMessageContact");
   if (!contactSelect) return;
 
   let users = [];
 
   if (!isTenantRole()) {
+
+    // Klanten kunnen alleen Veynor/Sofa2U contacten kiezen
     users = getSupportUsers();
-  } else if (recipientType === "tenant") {
-    users = getSupportUsers();
-  } else if (recipientType === "product_owner" || recipientType === "retailer") {
-    users = state.users.filter(u =>
-      String(u.customer_id || "") === String(recipient || "")
-    );
-  } else if (recipientType === "driver") {
-    users = state.users.filter(u => u.role === "driver");
-  } else if (recipientType === "user") {
-    users = state.users;
+
+  } else {
+
+    switch (recipientType) {
+
+      case "tenant":
+        users = state.users.filter(u =>
+          ["veynor_admin", "tenant_admin", "tenant_user"].includes(
+            String(u.role || "").toLowerCase()
+          )
+        );
+        break;
+
+      case "product_owner":
+        users = state.users.filter(u =>
+          ["product_owner_admin", "product_owner_user"].includes(
+            String(u.role || "").toLowerCase()
+          )
+        );
+        break;
+
+      case "retailer":
+        users = state.users.filter(u =>
+          String(u.role || "").toLowerCase() === "retailer_user"
+        );
+        break;
+
+      case "driver":
+        users = state.users.filter(u =>
+          ["driver", "chauffeur"].includes(
+            String(u.role || "").toLowerCase()
+          )
+        );
+        break;
+
+      case "user":
+        users = state.users;
+        break;
+
+      default:
+        users = [];
+        break;
+    }
   }
+
+  users.sort((a, b) =>
+    String(a.full_name || a.email || "").localeCompare(
+      String(b.full_name || b.email || ""),
+      "en",
+      { sensitivity: "base" }
+    )
+  );
 
   contactSelect.innerHTML =
     `<option value="">All users / general inbox</option>` +
-    users.map(u => `
-      <option value="${escapeHtml(u.id)}">${escapeHtml(u.full_name || u.email || "User")}</option>
+    users.map(user => `
+      <option value="${escapeHtml(user.id)}">
+        ${escapeHtml(user.full_name || user.email || "User")}
+      </option>
     `).join("");
+
+  console.log("Recipient type:", recipientType);
+  console.log("Loaded contacts:", users);
 }
 
 async function sendNewMessage() {
@@ -1131,77 +1154,79 @@ async function sendNewMessage() {
 }
 
   async function sendNewMessage() {
-    const client = ensureClient();
+  const client = ensureClient();
 
-    const subject = clean(byId("newMessageSubject")?.value);
-    const body = clean(byId("newMessageBody")?.value);
-    const recipientType = byId("newMessageRecipientType")?.value || "tenant";
-    const recipient = byId("newMessageRecipient")?.value || null;
-const contactPerson = byId("newMessageContact")?.value || null;
+  const subject = clean(byId("newMessageSubject")?.value);
+  const body = clean(byId("newMessageBody")?.value);
+  const recipientType = byId("newMessageRecipientType")?.value || "tenant";
+  const contactPerson = byId("newMessageContact")?.value || null;
 
-    if (!subject || !body) {
-      showToast("Please enter a subject and message.", "err");
-      return;
-    }
-
- const customerId = isTenantRole()
-  ? (
-      recipientType === "product_owner" || recipientType === "retailer"
-        ? recipient
-        : currentCustomerId()
-    )
-  : currentCustomerId();
-
-    const { data: thread, error: threadError } = await client
-      .from("message_threads")
-      .insert({
-        company_id: profile.company_id,
-        customer_id: customerId || null,
-        subject,
-        thread_type: "direct",
-        status: "open",
-        created_by: profile.id
-      })
-      .select("*")
-      .single();
-
-    if (threadError) throw threadError;
-
-    const { error: msgError } = await client
-      .from("messages")
-      .insert({
-        thread_id: thread.id,
-        company_id: profile.company_id,
-        customer_id: customerId || null,
-        sender_profile_id: profile.id,
-      recipient_profile_id: contactPerson
-  ? contactPerson
-  : (
-      recipientType === "user" || recipientType === "driver"
-        ? recipient
-        : null
-    ),
-
-recipient_role: !isTenantRole()
-  ? "tenant_admin"
-  : (recipientType === "tenant" ? "tenant_admin" : null),
-        message_type: "manual",
-        title: subject,
-        body,
-        is_system: false
-      });
-
-    if (msgError) throw msgError;
-
-    byId("newMessageSubject").value = "";
-    byId("newMessageBody").value = "";
-    byId("newMessagePanel").style.display = "none";
-
-    await refreshAll();
-    await openThread(thread.id);
-
-    showToast("Message sent.", "ok");
+  if (!subject || !body) {
+    showToast("Please enter a subject and message.", "err");
+    return;
   }
+
+  const selectedUser = contactPerson
+    ? state.users.find(u => String(u.id) === String(contactPerson))
+    : null;
+
+  const customerId = selectedUser?.customer_id || (!isTenantRole() ? currentCustomerId() : null);
+
+  const recipientRole = !isTenantRole()
+    ? "tenant_admin"
+    : (
+        recipientType === "tenant"
+          ? "tenant_admin"
+          : recipientType === "product_owner"
+            ? "product_owner_admin"
+            : recipientType === "retailer"
+              ? "retailer_user"
+              : recipientType === "driver"
+                ? "driver"
+                : null
+      );
+
+  const { data: thread, error: threadError } = await client
+    .from("message_threads")
+    .insert({
+      company_id: profile.company_id,
+      customer_id: customerId || null,
+      subject,
+      thread_type: "direct",
+      status: "open",
+      created_by: profile.id
+    })
+    .select("*")
+    .single();
+
+  if (threadError) throw threadError;
+
+  const { error: msgError } = await client
+    .from("messages")
+    .insert({
+      thread_id: thread.id,
+      company_id: profile.company_id,
+      customer_id: customerId || null,
+      sender_profile_id: profile.id,
+      recipient_profile_id: contactPerson || null,
+      recipient_role: contactPerson ? null : recipientRole,
+      message_type: "manual",
+      title: subject,
+      body,
+      is_system: false
+    });
+
+  if (msgError) throw msgError;
+
+  byId("newMessageSubject").value = "";
+  byId("newMessageBody").value = "";
+  byId("newMessagePanel").style.display = "none";
+
+  await refreshAll();
+  await openThread(thread.id);
+
+  showToast("Message sent.", "ok");
+}
 
 function setReplyEnabled(enabled) {
   const textarea = byId("messageReplyBody");
@@ -1411,10 +1436,6 @@ document.addEventListener("click", async event => {
     populateRecipients
   );
 
-  byId("newMessageRecipient")?.addEventListener(
-    "change",
-    populateContactPersons
-  );
 
   byId("btnSendNewMessage")?.addEventListener("click", async () => {
 
