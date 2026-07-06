@@ -115,7 +115,34 @@
     .select-all-wrap{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:900;color:#374151}
     .order-select-checkbox,#selectAllVisibleOrders{width:16px;height:16px;cursor:pointer}
 
-    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:16px;background:#fff}
+.table-wrap{
+  width:100%;
+  max-width:100%;
+  overflow-x:auto;
+  overflow-y:hidden;
+  border:1px solid var(--border);
+  border-radius:16px;
+  background:#fff;
+  -webkit-overflow-scrolling:touch;
+}
+
+.table-wrap::-webkit-scrollbar{
+  height:12px;
+}
+
+.table-wrap::-webkit-scrollbar-track{
+  background:#f1f5f9;
+  border-radius:999px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb{
+  background:#cbd5e1;
+  border-radius:999px;
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover{
+  background:#94a3b8;
+}
    .occ-table{
   width:100%;
   min-width:1840px;
