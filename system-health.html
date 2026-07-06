@@ -1,0 +1,1671 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>System Health · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/system-health.js" defer></script>
+
+  <style>
+    .health-page{
+      display:grid;
+      gap:14px;
+      align-content:start;
+      padding-bottom:34px;
+    }
+
+    .health-hero{
+      border-radius:26px;
+      padding:28px;
+      min-height:210px;
+      background:
+        linear-gradient(90deg,rgba(7,21,47,.96),rgba(7,21,47,.72)),
+        url("/assets/veynor-login-bg.png") center/cover no-repeat;
+      color:#fff;
+      box-shadow:var(--shadow);
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:24px;
+      overflow:hidden;
+    }
+
+    .health-hero h1{
+      margin:0;
+      font-size:40px;
+      font-weight:950;
+      letter-spacing:-.055em;
+      line-height:1;
+    }
+
+    .health-hero p{
+      margin:12px 0 0;
+      max-width:920px;
+      color:rgba(255,255,255,.82);
+      font-size:14px;
+      line-height:1.65;
+    }
+
+    .hero-wordmark{
+      width:154px;
+      opacity:.84;
+      filter:drop-shadow(0 12px 24px rgba(0,0,0,.32));
+    }
+
+    .health-top-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:flex-end;
+    }
+
+    .health-status-dot{
+      width:12px;
+      height:12px;
+      border-radius:999px;
+      background:#16a34a;
+      box-shadow:0 0 0 5px rgba(22,163,74,.16);
+      display:inline-flex;
+      flex:0 0 auto;
+    }
+
+    .health-status-dot.warn{
+      background:#f97316;
+      box-shadow:0 0 0 5px rgba(249,115,22,.16);
+    }
+
+    .health-status-dot.bad{
+      background:#dc2626;
+      box-shadow:0 0 0 5px rgba(220,38,38,.16);
+    }
+
+    .health-toolbar{
+      padding:14px 16px;
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:end;
+    }
+
+    .health-toolbar-left,
+    .health-toolbar-right{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:end;
+    }
+
+    .field{
+      display:grid;
+      gap:6px;
+    }
+
+    .field label{
+      font-size:10.5px;
+      font-weight:950;
+      text-transform:uppercase;
+      color:#667085;
+      letter-spacing:.05em;
+    }
+
+    .input,
+    .select{
+      min-height:42px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+      padding:10px 12px;
+      color:var(--text);
+      font-size:12.5px;
+      min-width:170px;
+    }
+
+    .health-tabs{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .health-tab{
+      min-height:42px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fff;
+      padding:0 16px;
+      font-size:12.5px;
+      font-weight:950;
+      color:#07152f;
+      cursor:pointer;
+    }
+
+    .health-tab.active{
+      background:var(--primary);
+      border-color:var(--primary);
+      color:#fff;
+    }
+
+    .tab-panel{
+      display:none;
+    }
+
+    .tab-panel.active{
+      display:grid;
+      gap:14px;
+    }
+
+    .health-kpis{
+      display:grid;
+      grid-template-columns:repeat(8,minmax(0,1fr));
+      gap:12px;
+    }
+
+    .health-kpi{
+      padding:16px;
+      min-height:112px;
+      display:grid;
+      gap:7px;
+      position:relative;
+      overflow:hidden;
+    }
+
+    .health-kpi::after{
+      content:"";
+      position:absolute;
+      right:-24px;
+      bottom:-24px;
+      width:88px;
+      height:88px;
+      border-radius:999px;
+      background:rgba(18,103,255,.055);
+    }
+
+    .health-kpi-label{
+      font-size:10px;
+      font-weight:950;
+      text-transform:uppercase;
+      color:#667085;
+      letter-spacing:.05em;
+    }
+
+    .health-kpi-value{
+      font-size:26px;
+      font-weight:950;
+      line-height:1;
+      color:#07152f;
+    }
+
+    .health-kpi-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.35;
+      font-weight:750;
+    }
+
+    .health-grid-2{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:14px;
+      align-items:start;
+    }
+
+    .health-grid-3{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:14px;
+      align-items:start;
+    }
+
+    .health-grid-4{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:14px;
+      align-items:start;
+    }
+
+    .health-main-grid{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 380px;
+      gap:14px;
+      align-items:start;
+    }
+
+    .health-card{
+      padding:16px;
+      display:grid;
+      gap:14px;
+    }
+
+    .health-card-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+
+    .health-card-head h2{
+      margin:0;
+      font-size:16px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .health-card-head p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+
+    .chart-box{
+      position:relative;
+      height:280px;
+      min-height:280px;
+    }
+
+    .chart-box.large{
+      height:360px;
+      min-height:360px;
+    }
+
+    .chart-box.small{
+      height:220px;
+      min-height:220px;
+    }
+
+    .health-check-list{
+      display:grid;
+      gap:10px;
+    }
+
+    .health-check-row{
+      border:1px solid var(--border);
+      border-radius:15px;
+      background:#fff;
+      padding:12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+    }
+
+    .health-check-main{
+      display:grid;
+      gap:4px;
+      min-width:0;
+    }
+
+    .health-check-title{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-size:13px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .health-check-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.4;
+    }
+
+    .health-check-value{
+      font-size:12px;
+      font-weight:950;
+      color:#07152f;
+      white-space:nowrap;
+      text-align:right;
+    }
+
+    .mini-status{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      padding:4px 10px;
+      font-size:11px;
+      font-weight:950;
+      border:1px solid transparent;
+      white-space:nowrap;
+    }
+
+    .mini-status.good{
+      background:var(--green-bg);
+      color:var(--green-tx);
+      border-color:var(--green-bd);
+    }
+
+    .mini-status.warn{
+      background:var(--orange-bg);
+      color:var(--orange-tx);
+      border-color:var(--orange-bd);
+    }
+
+    .mini-status.bad{
+      background:var(--danger-bg);
+      color:var(--danger-tx);
+      border-color:var(--danger-bd);
+    }
+
+    .mini-status.info{
+      background:var(--blue-bg);
+      color:var(--blue-tx);
+      border-color:var(--blue-bd);
+    }
+
+    .table-wrap{
+      overflow:auto;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fff;
+    }
+
+    .health-table{
+      width:100%;
+      border-collapse:collapse;
+      min-width:1180px;
+    }
+
+    .health-table.compact{
+      min-width:780px;
+    }
+
+    .health-table.wide{
+      min-width:1650px;
+    }
+
+    .health-table th,
+    .health-table td{
+      padding:10px 12px;
+      border-bottom:1px solid var(--border);
+      text-align:left;
+      vertical-align:top;
+      font-size:12px;
+    }
+
+    .health-table th{
+      background:#f8fafc;
+      color:#334155;
+      font-size:10px;
+      font-weight:950;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+      white-space:nowrap;
+    }
+
+    .health-table tbody tr:hover{
+      background:#fafcff;
+    }
+
+    .mono{
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      font-size:11px;
+    }
+
+    .error-message{
+      color:#b91c1c;
+      font-weight:850;
+      line-height:1.45;
+      max-width:560px;
+      word-break:break-word;
+    }
+
+    .subline{
+      display:block;
+      margin-top:3px;
+      color:var(--muted);
+      font-size:11px;
+      line-height:1.35;
+    }
+
+    .health-summary-list{
+      display:grid;
+      gap:9px;
+    }
+
+    .health-summary-row{
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fff;
+      padding:12px;
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+    }
+
+    .health-summary-main{
+      display:grid;
+      gap:3px;
+      min-width:0;
+    }
+
+    .health-summary-title{
+      font-size:12.5px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .health-summary-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.35;
+    }
+
+    .health-summary-value{
+      font-size:20px;
+      font-weight:950;
+      color:#07152f;
+      white-space:nowrap;
+    }
+
+    .notice{
+      display:none;
+      padding:12px 14px;
+      border-radius:13px;
+      border:1px solid var(--border);
+      font-weight:850;
+      font-size:12.5px;
+    }
+
+    .notice.ok{
+      display:block;
+      background:#ecfdf5;
+      border-color:#bbf7d0;
+      color:#166534;
+    }
+
+    .notice.err{
+      display:block;
+      background:#fef2f2;
+      border-color:#fecaca;
+      color:#991b1b;
+    }
+
+    .raw-json{
+      max-width:520px;
+      white-space:pre-wrap;
+      word-break:break-word;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+      font-size:11px;
+      color:#334155;
+      background:#f8fafc;
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:8px;
+    }
+
+    .live-dot{
+      width:8px;
+      height:8px;
+      border-radius:999px;
+      background:#16a34a;
+      box-shadow:0 0 0 4px rgba(22,163,74,.14);
+      display:inline-flex;
+      margin-right:7px;
+    }
+
+    @media(max-width:1700px){
+      .health-kpis{
+        grid-template-columns:repeat(4,minmax(0,1fr));
+      }
+
+      .health-main-grid{
+        grid-template-columns:1fr;
+      }
+
+      .health-grid-4{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+    }
+
+    @media(max-width:1200px){
+      .health-grid-2,
+      .health-grid-3{
+        grid-template-columns:1fr;
+      }
+    }
+
+    @media(max-width:760px){
+      .health-hero{
+        flex-direction:column;
+        align-items:flex-start;
+      }
+
+      .health-hero h1{
+        font-size:32px;
+      }
+
+      .hero-wordmark{
+        width:132px;
+      }
+
+      .health-kpis,
+      .health-grid-4{
+        grid-template-columns:1fr;
+      }
+
+      .health-toolbar-left,
+      .health-toolbar-right,
+      .field,
+      .input,
+      .select{
+        width:100%;
+        min-width:0;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page health-page">
+
+    <section class="health-hero">
+      <div>
+        <h1>System Health</h1>
+        <p>
+          Internal monitoring for Veynor performance, Supabase response, user activity,
+          clicks, document downloads, JavaScript errors and failed actions.
+        </p>
+      </div>
+
+      <div class="health-top-actions">
+        <span id="systemLiveDot" class="health-status-dot"></span>
+        <div>
+          <div style="font-weight:950;font-size:14px;" id="systemStatusText">Checking system...</div>
+          <div style="font-size:12px;color:rgba(255,255,255,.72);" id="systemStatusSub">Live diagnostics</div>
+        </div>
+        <img class="hero-wordmark" src="/assets/veynor-wordmark.png" alt="Veynor">
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="card health-toolbar">
+      <div class="health-toolbar-left">
+        <div class="field">
+          <label for="periodPreset">Period</label>
+          <select id="periodPreset" class="select">
+            <option value="1h">Last hour</option>
+            <option value="6h">Last 6 hours</option>
+            <option value="24h" selected>Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="dateFrom">From</label>
+          <input id="dateFrom" class="input" type="datetime-local"/>
+        </div>
+
+        <div class="field">
+          <label for="dateTo">To</label>
+          <input id="dateTo" class="input" type="datetime-local"/>
+        </div>
+
+        <div class="field">
+          <label for="pageFilter">Page</label>
+          <select id="pageFilter" class="select">
+            <option value="">All pages</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="eventFilter">Event type</label>
+          <select id="eventFilter" class="select">
+            <option value="">All events</option>
+            <option value="page_view">Page views</option>
+            <option value="ui_click">Clicks</option>
+            <option value="document_download_clicked">Downloads</option>
+            <option value="javascript_error">JavaScript errors</option>
+            <option value="promise_rejection">Promise errors</option>
+            <option value="database_health_check_failed">Database failures</option>
+            <option value="heartbeat">Heartbeats</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="searchInput">Search</label>
+          <input id="searchInput" class="input" placeholder="Page, button, error, document..."/>
+        </div>
+      </div>
+
+      <div class="health-toolbar-right">
+        <button id="btnRefreshHealth" class="btn btn-primary" type="button">Refresh</button>
+        <button id="btnRunHealthCheck" class="btn" type="button">Run Health Check</button>
+        <button id="btnExportHealthCsv" class="btn" type="button">Export CSV</button>
+      </div>
+    </section>
+
+    <section class="card health-toolbar">
+      <nav class="health-tabs">
+        <button class="health-tab active" data-tab="overview" type="button">Overview</button>
+<button class="health-tab" data-tab="management" type="button">Management</button>
+<button class="health-tab" data-tab="optimisation" type="button">Page Optimisation</button>
+<button class="health-tab" data-tab="actions" type="button">Actions</button>
+        <button class="health-tab" data-tab="performance" type="button">Performance</button>
+        <button class="health-tab" data-tab="errors" type="button">Errors</button>
+        <button class="health-tab" data-tab="clicks" type="button">Clicks</button>
+        <button class="health-tab" data-tab="downloads" type="button">Downloads</button>
+        <button class="health-tab" data-tab="users" type="button">User Activity</button>
+        <button class="health-tab" data-tab="database" type="button">Database / Supabase</button>
+        <button class="health-tab" data-tab="raw" type="button">Raw Events</button>
+      </nav>
+    </section>
+
+    <section class="health-kpis">
+      <article class="card health-kpi">
+        <div class="health-kpi-label">System Status</div>
+        <div id="kpiSystemStatus" class="health-kpi-value">—</div>
+        <div id="kpiSystemStatusSub" class="health-kpi-sub">Checking...</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Events</div>
+        <div id="kpiEvents" class="health-kpi-value">0</div>
+        <div class="health-kpi-sub">Total events in period</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Page Views</div>
+        <div id="kpiPageViews" class="health-kpi-value">0</div>
+        <div class="health-kpi-sub">Tracked page loads</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Clicks</div>
+        <div id="kpiClicks" class="health-kpi-value">0</div>
+        <div class="health-kpi-sub">Button and link clicks</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Downloads</div>
+        <div id="kpiDownloads" class="health-kpi-value">0</div>
+        <div class="health-kpi-sub">Documents / exports clicked</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Errors</div>
+        <div id="kpiErrors" class="health-kpi-value">0</div>
+        <div class="health-kpi-sub">JS / promise / DB failures</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Avg Page Load</div>
+        <div id="kpiAvgPageLoad" class="health-kpi-value">—</div>
+        <div class="health-kpi-sub">Browser measured load time</div>
+      </article>
+
+      <article class="card health-kpi">
+        <div class="health-kpi-label">Avg DB Response</div>
+        <div id="kpiAvgDb" class="health-kpi-value">—</div>
+        <div class="health-kpi-sub">Supabase query response</div>
+      </article>
+    </section>
+
+<section id="tab-management" class="tab-panel">
+  <section class="health-grid-4">
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Health Score</div>
+      <div id="mgmtHealthScore" class="health-kpi-value">—</div>
+      <div id="mgmtHealthScoreSub" class="health-kpi-sub">Calculated platform score</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Platform Errors</div>
+      <div id="mgmtPlatformErrors" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">JS / promise / DB errors</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Failed Actions</div>
+      <div id="mgmtFailedActions" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Actions marked as failed</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Active Users</div>
+      <div id="mgmtActiveUsers" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Users active in period</div>
+    </article>
+  </section>
+
+  <section class="health-grid-4">
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Orders Imported</div>
+      <div id="usageOrdersImported" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Orders created in period</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Orders Matched</div>
+      <div id="usageOrdersMatched" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Ready / stock complete / planned</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Orders Delivered</div>
+      <div id="usageOrdersDelivered" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Delivered in period</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Invoices Generated</div>
+      <div id="usageInvoicesGenerated" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Invoice documents created</div>
+    </article>
+  </section>
+
+  <section class="health-grid-4">
+    <article class="card health-kpi">
+      <div class="health-kpi-label">POD Uploads</div>
+      <div id="usagePodUploads" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Signed POD documents</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Downloads</div>
+      <div id="usageDownloads" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Document / export clicks</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Page Views</div>
+      <div id="usagePageViews" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Tracked page loads</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Button Clicks</div>
+      <div id="usageButtonClicks" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Tracked UI clicks</div>
+    </article>
+  </section>
+
+  <section class="health-grid-2">
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Platform Usage</h2>
+          <p>Operational usage across orders, documents, downloads and clicks.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartPlatformUsage"></canvas>
+      </div>
+    </article>
+
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Health Score Breakdown</h2>
+          <p>Score impact from performance, errors and failed actions.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartHealthScoreBreakdown"></canvas>
+      </div>
+    </article>
+  </section>
+</section>
+
+<section id="tab-optimisation" class="tab-panel">
+  <section class="card health-card">
+    <div class="health-card-head">
+      <div>
+        <h2>Page Optimisation Overview</h2>
+        <p>Pages ranked by load time, DB response, errors, usage and optimisation score.</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="health-table wide">
+        <thead>
+          <tr>
+            <th>Page</th>
+            <th>Visits</th>
+            <th>Clicks</th>
+            <th>Downloads</th>
+            <th>Errors</th>
+            <th>Failed</th>
+            <th>Avg Load</th>
+            <th>Avg DB</th>
+            <th>Slowest Load</th>
+            <th>Error Rate</th>
+            <th>Score</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="pageOptimisationBody">
+          <tr><td colspan="12">Loading page optimisation...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="health-grid-2">
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Pages Needing Attention</h2>
+          <p>Lowest optimisation scores first.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartPageOptimisationScores"></canvas>
+      </div>
+    </article>
+
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Page Usage vs Errors</h2>
+          <p>Shows which busy pages generate the most errors.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartPageUsageErrors"></canvas>
+      </div>
+    </article>
+  </section>
+</section>
+
+<section id="tab-actions" class="tab-panel">
+  <section class="health-grid-2">
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Slowest Actions</h2>
+          <p>Slowest tracked action results and performance measurements.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="health-table">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Page</th>
+              <th>User</th>
+              <th>Duration</th>
+              <th>DB</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody id="slowestActionsBody">
+            <tr><td colspan="6">No slow actions found yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Failed Actions</h2>
+          <p>Actions that failed, grouped by action name.</p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="health-table">
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Failed</th>
+              <th>Success</th>
+              <th>Success %</th>
+              <th>Last Error</th>
+            </tr>
+          </thead>
+          <tbody id="failedActionsBody">
+            <tr><td colspan="5">No failed actions found.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="health-grid-2">
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Action Success Rate</h2>
+          <p>Success versus failed action events.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartActionSuccessRate"></canvas>
+      </div>
+    </article>
+
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>Top Failed Actions</h2>
+          <p>Most common failed actions.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartTopFailedActions"></canvas>
+      </div>
+    </article>
+  </section>
+</section>
+
+    <section id="tab-overview" class="tab-panel active">
+      <section class="health-main-grid">
+        <div class="stack">
+          <section class="card health-card">
+            <div class="health-card-head">
+              <div>
+                <h2>System Activity Trend</h2>
+                <p>Events, page views, clicks, downloads and errors over the selected period.</p>
+              </div>
+            </div>
+
+            <div class="chart-box large">
+              <canvas id="chartEventsTrend"></canvas>
+            </div>
+          </section>
+
+          <section class="health-grid-2">
+            <article class="card health-card">
+              <div class="health-card-head">
+                <div>
+                  <h2>Performance Trend</h2>
+                  <p>Average page load and database response time.</p>
+                </div>
+              </div>
+
+              <div class="chart-box">
+                <canvas id="chartPerformanceTrend"></canvas>
+              </div>
+            </article>
+
+            <article class="card health-card">
+              <div class="health-card-head">
+                <div>
+                  <h2>Error Split</h2>
+                  <p>Errors grouped by type.</p>
+                </div>
+              </div>
+
+              <div class="chart-box">
+                <canvas id="chartErrorSplit"></canvas>
+              </div>
+            </article>
+          </section>
+        </div>
+
+        <aside class="stack">
+          <section class="card health-card">
+            <div class="health-card-head">
+              <div>
+                <h2>Live Checks</h2>
+                <p>Current technical status.</p>
+              </div>
+            </div>
+
+            <div class="health-check-list">
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkSupabaseDot" class="health-status-dot"></span>Supabase client</div>
+                  <div class="health-check-sub">Can the frontend reach Supabase?</div>
+                </div>
+                <div id="checkSupabase" class="health-check-value">Checking...</div>
+              </div>
+
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkDbDot" class="health-status-dot"></span>Database response</div>
+                  <div class="health-check-sub">Test query response time.</div>
+                </div>
+                <div id="checkDb" class="health-check-value">Checking...</div>
+              </div>
+
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkAuthDot" class="health-status-dot"></span>Auth session</div>
+                  <div class="health-check-sub">Current authenticated user.</div>
+                </div>
+                <div id="checkAuth" class="health-check-value">Checking...</div>
+              </div>
+
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkEventsDot" class="health-status-dot"></span>System events</div>
+                  <div class="health-check-sub">Can monitoring events be read?</div>
+                </div>
+                <div id="checkEvents" class="health-check-value">Checking...</div>
+              </div>
+
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkStorageDot" class="health-status-dot warn"></span>Storage</div>
+                  <div class="health-check-sub">Bucket availability check.</div>
+                </div>
+                <div id="checkStorage" class="health-check-value">Optional</div>
+              </div>
+
+              <div class="health-check-row">
+                <div class="health-check-main">
+                  <div class="health-check-title"><span id="checkNetlifyDot" class="health-status-dot warn"></span>Netlify</div>
+                  <div class="health-check-sub">Deploy status can be connected later.</div>
+                </div>
+                <div id="checkNetlify" class="health-check-value">Manual</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card health-card">
+            <div class="health-card-head">
+              <div>
+                <h2>Latest Critical Items</h2>
+                <p>Most recent errors and failed events.</p>
+              </div>
+            </div>
+
+            <div id="criticalList" class="health-summary-list">
+              <div class="health-summary-row">
+                <div class="health-summary-main">
+                  <div class="health-summary-title">Loading...</div>
+                  <div class="health-summary-sub">Please wait.</div>
+                </div>
+                <div class="health-summary-value">—</div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section class="health-grid-3">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Top Pages</h2>
+              <p>Most visited pages.</p>
+            </div>
+          </div>
+          <div id="topPagesList" class="health-summary-list"></div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Top Buttons</h2>
+              <p>Most clicked UI actions.</p>
+            </div>
+          </div>
+          <div id="topButtonsList" class="health-summary-list"></div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Slowest Pages</h2>
+              <p>Highest average load time.</p>
+            </div>
+          </div>
+          <div id="slowPagesList" class="health-summary-list"></div>
+        </article>
+      </section>
+    </section>
+
+    <section id="tab-performance" class="tab-panel">
+      <section class="health-grid-4">
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Fastest Page</div>
+          <div id="perfFastestPage" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Lowest measured page load</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Slowest Page</div>
+          <div id="perfSlowestPage" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Highest measured page load</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Fastest DB</div>
+          <div id="perfFastestDb" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Lowest Supabase response</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Slowest DB</div>
+          <div id="perfSlowestDb" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Highest Supabase response</div>
+        </article>
+      </section>
+
+      <section class="health-grid-2">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Page Load by Page</h2>
+              <p>Average browser page load in milliseconds.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartPageLoadByPage"></canvas>
+          </div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Database Response by Page</h2>
+              <p>Average Supabase response time by page.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartDbByPage"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Performance Table</h2>
+            <p>Detailed performance measurements per page view and heartbeat.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Page</th>
+                <th>Event</th>
+                <th>Page Load</th>
+                <th>DOM Ready</th>
+                <th>Duration</th>
+                <th>DB Response</th>
+                <th>Browser</th>
+                <th>Viewport</th>
+              </tr>
+            </thead>
+            <tbody id="performanceBody">
+              <tr><td colspan="9">Loading performance data...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-errors" class="tab-panel">
+      <section class="health-grid-3">
+        <article class="card health-kpi">
+          <div class="health-kpi-label">JavaScript Errors</div>
+          <div id="errJs" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">window.onerror</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Promise Rejections</div>
+          <div id="errPromises" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Unhandled async failures</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">DB Failures</div>
+          <div id="errDb" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Failed health checks</div>
+        </article>
+      </section>
+
+      <section class="health-grid-2">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Errors by Page</h2>
+              <p>Where errors are happening most often.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartErrorsByPage"></canvas>
+          </div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Errors Over Time</h2>
+              <p>Error trend for the selected period.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartErrorsTrend"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Latest Errors</h2>
+            <p>JavaScript, promise and database errors with page and stack data.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table wide">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Type</th>
+                <th>Page</th>
+                <th>Message</th>
+                <th>Stack</th>
+                <th>Browser</th>
+                <th>User</th>
+              </tr>
+            </thead>
+            <tbody id="errorsBody">
+              <tr><td colspan="7">Loading errors...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-clicks" class="tab-panel">
+      <section class="health-grid-2">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Clicks by Page</h2>
+              <p>Where users click most.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartClicksByPage"></canvas>
+          </div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Clicks by Type</h2>
+              <p>Navigation, action buttons, invoice actions, POD actions and more.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartClicksByType"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Recent Clicks</h2>
+            <p>Button and link tracking from all monitored pages.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Page</th>
+                <th>Button / Link</th>
+                <th>Type</th>
+                <th>Element ID</th>
+                <th>Href</th>
+                <th>User</th>
+                <th>Browser</th>
+              </tr>
+            </thead>
+            <tbody id="clicksBody">
+              <tr><td colspan="8">Loading clicks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-downloads" class="tab-panel">
+      <section class="health-grid-3">
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Invoice Downloads</div>
+          <div id="dlInvoices" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Detected invoice/download clicks</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">POD Downloads</div>
+          <div id="dlPods" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Detected POD clicks</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Export Downloads</div>
+          <div id="dlExports" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">CSV / Excel / PDF exports</div>
+        </article>
+      </section>
+
+      <section class="health-grid-2">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Downloads by Type</h2>
+              <p>Invoice, POD, ACK, delivery note and export clicks.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartDownloadsByType"></canvas>
+          </div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Downloads Over Time</h2>
+              <p>Document and export activity trend.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartDownloadsTrend"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Recent Downloads</h2>
+            <p>Detected document and export download clicks.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Page</th>
+                <th>Download</th>
+                <th>Href</th>
+                <th>Entity</th>
+                <th>User</th>
+                <th>Browser</th>
+              </tr>
+            </thead>
+            <tbody id="downloadsBody">
+              <tr><td colspan="7">Loading downloads...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+   <section id="tab-users" class="tab-panel">
+  <section class="health-grid-4">
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Active Users</div>
+      <div id="userActiveCount" class="health-kpi-value">0</div>
+      <div class="health-kpi-sub">Users with activity in period</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Most Active User</div>
+      <div id="userMostActive" class="health-kpi-value">—</div>
+      <div class="health-kpi-sub" id="userMostActiveSub">No activity yet</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Highest Downloader</div>
+      <div id="userTopDownloader" class="health-kpi-value">—</div>
+      <div class="health-kpi-sub" id="userTopDownloaderSub">No downloads yet</div>
+    </article>
+
+    <article class="card health-kpi">
+      <div class="health-kpi-label">Most Errors</div>
+      <div id="userMostErrors" class="health-kpi-value">—</div>
+      <div class="health-kpi-sub" id="userMostErrorsSub">No errors yet</div>
+    </article>
+  </section>
+
+  <section class="health-grid-2">
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>User Activity Split</h2>
+          <p>Clicks, downloads, page views and errors per user.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartUserActivitySplit"></canvas>
+      </div>
+    </article>
+
+    <article class="card health-card">
+      <div class="health-card-head">
+        <div>
+          <h2>User Downloads</h2>
+          <p>Document and export download clicks by user.</p>
+        </div>
+      </div>
+      <div class="chart-box">
+        <canvas id="chartUserDownloads"></canvas>
+      </div>
+    </article>
+  </section>
+
+  <section class="card health-card">
+    <div class="health-card-head">
+      <div>
+        <h2>User Movement Table</h2>
+        <p>Detailed activity per user: clicks, downloads, errors, pages visited and performance.</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="health-table wide">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Role</th>
+            <th>Total Events</th>
+            <th>Page Views</th>
+            <th>Clicks</th>
+            <th>Downloads</th>
+            <th>Errors</th>
+            <th>Avg Page Load</th>
+            <th>Avg DB</th>
+            <th>Top Page</th>
+            <th>Top Button</th>
+            <th>Last Activity</th>
+          </tr>
+        </thead>
+        <tbody id="usersBody">
+          <tr><td colspan="12">Loading users...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card health-card">
+    <div class="health-card-head">
+      <div>
+        <h2>Recent User Movements</h2>
+        <p>Latest page views, clicks, downloads and errors with user name where available.</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="health-table wide">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>User</th>
+            <th>Role</th>
+            <th>Event</th>
+            <th>Page</th>
+            <th>Button / Download</th>
+            <th>Result</th>
+            <th>Performance</th>
+            <th>Browser</th>
+          </tr>
+        </thead>
+        <tbody id="userMovementsBody">
+          <tr><td colspan="9">Loading user movements...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
+
+    <section id="tab-database" class="tab-panel">
+      <section class="health-grid-4">
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Current DB Response</div>
+          <div id="dbCurrent" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Latest health check</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Average DB Response</div>
+          <div id="dbAverage" class="health-kpi-value">—</div>
+          <div class="health-kpi-sub">Selected period</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Failed DB Checks</div>
+          <div id="dbFailed" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Selected period</div>
+        </article>
+
+        <article class="card health-kpi">
+          <div class="health-kpi-label">Health Heartbeats</div>
+          <div id="dbHeartbeats" class="health-kpi-value">0</div>
+          <div class="health-kpi-sub">Active monitored sessions</div>
+        </article>
+      </section>
+
+      <section class="health-grid-2">
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Supabase Response Trend</h2>
+              <p>Database response time measured from the browser.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartDbTrend"></canvas>
+          </div>
+        </article>
+
+        <article class="card health-card">
+          <div class="health-card-head">
+            <div>
+              <h2>Database Response Distribution</h2>
+              <p>How often response times fall into each bucket.</p>
+            </div>
+          </div>
+          <div class="chart-box">
+            <canvas id="chartDbBuckets"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Latest Database Health Checks</h2>
+            <p>Heartbeat and page-view database response measurements.</p>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Page</th>
+                <th>DB Response</th>
+                <th>Success</th>
+                <th>Error</th>
+                <th>Browser</th>
+              </tr>
+            </thead>
+            <tbody id="databaseBody">
+              <tr><td colspan="7">Loading database checks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-raw" class="tab-panel">
+      <section class="card health-card">
+        <div class="health-card-head">
+          <div>
+            <h2>Raw System Events</h2>
+            <p>Unfiltered monitoring rows from <strong>system_events</strong>.</p>
+          </div>
+
+          <div class="health-toolbar-right">
+            <select id="rawLimit" class="select">
+              <option value="100">Last 100</option>
+              <option value="250" selected>Last 250</option>
+              <option value="500">Last 500</option>
+              <option value="1000">Last 1,000</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="health-table wide">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Group</th>
+                <th>Page</th>
+                <th>Element</th>
+                <th>Success</th>
+                <th>Duration</th>
+                <th>Page Load</th>
+                <th>DB</th>
+                <th>Error</th>
+                <th>Metadata</th>
+              </tr>
+            </thead>
+            <tbody id="rawEventsBody">
+              <tr><td colspan="11">Loading raw events...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

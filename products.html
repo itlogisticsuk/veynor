@@ -49,8 +49,39 @@
     .soft-badge{display:inline-flex;border-radius:999px;background:#f3f4f6;border:1px solid #e5e7eb;padding:4px 8px;font-size:11px;font-weight:900;white-space:nowrap}
     .quick-actions{display:flex;gap:6px;flex-wrap:wrap}
     .mini-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 9px;font-size:11px;font-weight:900;cursor:pointer;white-space:nowrap}
-    .mini-btn.primary{background:var(--gold);border-color:var(--gold);color:#fff}
+   .mini-btn.primary{
+    background:#2563eb;
+    border-color:#2563eb;
+    color:#ffffff !important;
+    font-weight:900;
+}
+.mini-btn.primary:hover{
+    background:#1d4ed8;
+    border-color:#1d4ed8;
+    color:#ffffff !important;
+}
     .import-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.custom-file{
+    display:grid;
+    gap:8px;
+}
+
+.custom-file input[type=file]{
+    display:none;
+}
+
+.custom-file-row{
+    display:flex;
+    gap:10px;
+    align-items:center;
+    flex-wrap:wrap;
+}
+
+.custom-file-name{
+    font-size:12px;
+    color:var(--muted);
+    font-weight:700;
+}
     .products-help-box{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:12px;padding:12px 14px;font-size:12.5px;font-weight:800;line-height:1.5}
 
     .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.60);z-index:9999;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:28px}
@@ -117,94 +148,120 @@
 
     <div id="toast" class="notice"></div>
 
-    <section class="kpi-grid">
-      <div class="kpi-box"><div class="kpi-label">Products</div><div id="kpiProductsTotal" class="kpi-value">0</div></div>
-      <div class="kpi-box"><div class="kpi-label">With Volume</div><div id="kpiProductsVolume" class="kpi-value">0</div></div>
-      <div class="kpi-box"><div class="kpi-label">Missing Volume</div><div id="kpiProductsMissingVolume" class="kpi-value">0</div></div>
-      <div class="kpi-box"><div class="kpi-label">With Tariffs</div><div id="kpiProductsTariffs" class="kpi-value">0</div></div>
-      <div class="kpi-box"><div class="kpi-label">Avg CBM</div><div id="kpiProductsAvgVolume" class="kpi-value">0</div></div>
-      <div class="kpi-box"><div class="kpi-label">Avg Charge</div><div id="kpiProductsAvgCharge" class="kpi-value">£0.00</div></div>
-    </section>
+   <section class="kpi-grid">
+  <div class="kpi-box"><div class="kpi-label">Products</div><div id="kpiProductsTotal" class="kpi-value">0</div></div>
+  <div class="kpi-box"><div class="kpi-label">With Volume</div><div id="kpiProductsVolume" class="kpi-value">0</div></div>
+  <div class="kpi-box"><div class="kpi-label">Missing Volume</div><div id="kpiProductsMissingVolume" class="kpi-value">0</div></div>
+  <div class="kpi-box"><div class="kpi-label">With Tariffs</div><div id="kpiProductsTariffs" class="kpi-value">0</div></div>
+  <div class="kpi-box"><div class="kpi-label">Avg CBM</div><div id="kpiProductsAvgVolume" class="kpi-value">0</div></div>
+  <div class="kpi-box"><div class="kpi-label">Avg Charge</div><div id="kpiProductsAvgCharge" class="kpi-value">£0.00</div></div>
+</section>
 
-    <section class="card card-inner">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">Import Products</h2>
-          <p class="section-sub">Existing SKUs are updated. New SKUs are created. Products are linked to product owner, not retailer.</p>
-        </div>
-      </div>
+<section class="card card-inner">
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">Import Products</h2>
+      <p class="section-sub">
+        Existing SKUs are updated. New SKUs are created. Select the product owner before importing.
+      </p>
+    </div>
+  </div>
 
-      <div class="import-row">
-        <input id="productsImportFile" class="input" type="file" accept=".xlsx,.xls,.csv" style="max-width:420px;"/>
-        <button id="btnImportProducts" class="btn btn-primary" type="button">Import Products</button>
-        <button id="btnDownloadTemplate" class="btn" type="button">Download Template</button>
-        <span id="excelFileStatus" class="section-sub">No file selected</span>
-      </div>
-    </section>
+  <div class="import-row">
+    <div class="field" style="min-width:260px;">
+      <label for="productsImportOwner">Product Owner</label>
+      <select id="productsImportOwner" class="select"></select>
+    </div>
 
-    <section class="card card-inner">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">Product List</h2>
-          <p class="section-sub">SKU is leading. Package count determines stock labels and later order packages.</p>
-        </div>
-        <div id="productsResultsMeta" class="section-sub">0 products shown</div>
-      </div>
+    <div class="custom-file">
+      <input id="productsImportFile" type="file" accept=".xlsx,.xls,.csv"/>
 
-      <div class="filters-row">
-        <div class="field">
-          <label for="productSearch">Search</label>
-          <input id="productSearch" class="input" placeholder="SKU, name, barcode..."/>
-        </div>
-        <div class="field">
-          <label for="filterProductCustomer">Owner</label>
-          <select id="filterProductCustomer" class="select"></select>
-        </div>
-        <div class="field">
-          <label for="filterProductCategory">Range</label>
-          <select id="filterProductCategory" class="select"></select>
-        </div>
-        <div class="field">
-          <label for="filterProductCompleteness">Completeness</label>
-          <select id="filterProductCompleteness" class="select">
-            <option value="">All</option>
-            <option value="complete">Complete volume/weight</option>
-            <option value="missing_volume">Missing volume</option>
-            <option value="missing_weight">Missing weight</option>
-            <option value="with_tariff">With tariff</option>
-            <option value="missing_tariff">Missing tariff</option>
-          </select>
-        </div>
-        <button id="btnClearProductFilters" class="btn" type="button">Clear</button>
+      <div class="custom-file-row">
+        <label for="productsImportFile" class="btn" role="button">Choose File</label>
+        <span id="excelFileStatus" class="custom-file-name">No file selected</span>
       </div>
+    </div>
 
-      <div class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>SKU</th>
-              <th>Product</th>
-              <th>Owner</th>
-              <th>Range</th>
-              <th>CBM</th>
-              <th>Net kg</th>
-              <th>Gross kg</th>
-              <th>Storage</th>
-              <th>Admin</th>
-              <th>Pick</th>
-              <th>Transport</th>
-              <th>Total Charge</th>
-              <th>Packages</th>
-              <th>Barcode</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="productsTableBody">
-            <tr><td colspan="15">Loading products...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <button id="btnImportProducts" class="btn btn-primary" type="button">Import Products</button>
+    <button id="btnDownloadTemplate" class="btn" type="button">Download Template</button>
+  </div>
+
+  <div class="products-help-box">
+    Import uses Storage, Admin, Pick/Pack/Load and Delivery Cost UK Mainland.
+    Scotland, Highlands, Ireland and fuel surcharge are calculated later from postcode and invoice settings.
+  </div>
+</section>
+
+<section class="card card-inner">
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">Product List</h2>
+      <p class="section-sub">SKU is leading. Package count determines stock labels and later order packages.</p>
+    </div>
+    <div id="productsResultsMeta" class="section-sub">0 products shown</div>
+  </div>
+
+  <div class="filters-row">
+    <div class="field">
+      <label for="productSearch">Search</label>
+      <input id="productSearch" class="input" placeholder="SKU, name, barcode..."/>
+    </div>
+
+    <div class="field">
+      <label for="filterProductCustomer">Owner</label>
+      <select id="filterProductCustomer" class="select"></select>
+    </div>
+
+    <div class="field">
+      <label for="filterProductCategory">Range</label>
+      <select id="filterProductCategory" class="select"></select>
+    </div>
+
+    <div class="field">
+      <label for="filterProductCompleteness">Completeness</label>
+      <select id="filterProductCompleteness" class="select">
+        <option value="">All</option>
+        <option value="complete">Complete</option>
+        <option value="incomplete">Incomplete / missing info</option>
+        <option value="missing_volume">Missing volume</option>
+        <option value="missing_weight">Missing weight</option>
+        <option value="with_tariff">With tariff</option>
+        <option value="missing_tariff">Missing tariff</option>
+      </select>
+    </div>
+
+    <button id="btnClearProductFilters" class="btn" type="button">Clear</button>
+  </div>
+
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th>Product</th>
+          <th>Owner</th>
+          <th>Status</th>
+          <th>Range</th>
+          <th>CBM</th>
+          <th>Net kg</th>
+          <th>Gross kg</th>
+          <th>Storage</th>
+          <th>Admin</th>
+          <th>Pick</th>
+          <th>Transport</th>
+          <th>Total Charge</th>
+          <th>Packages</th>
+          <th>Barcode</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody id="productsTableBody">
+        <tr><td colspan="16">Loading products...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
   </main>
 </div>
 

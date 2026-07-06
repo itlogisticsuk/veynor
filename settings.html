@@ -150,8 +150,9 @@
   <button class="settings-tab" data-tab="users" type="button">Users & Access</button>
   <button class="settings-tab" data-tab="customers" type="button">Product Owners</button>
   <button class="settings-tab" data-tab="shops" type="button">Retailers</button>
-  <button class="settings-tab" data-tab="documents" type="button">Documents</button>
-  <button class="settings-tab" data-tab="automation" type="button">Automation</button>
+ <button class="settings-tab" data-tab="documents" type="button">Documents</button>
+<button class="settings-tab" data-tab="pricing" type="button">Pricing</button>
+<button class="settings-tab" data-tab="automation" type="button">Automation</button>
   <button class="settings-tab" data-tab="system" type="button">System</button>
 </nav>
 
@@ -528,21 +529,130 @@
                   <span id="owner_logo_preview_empty">No logo uploaded yet.</span>
                 </div>
               </div>
-              <div class="field"><label for="owner_invoice_email">Invoice Email</label><input id="owner_invoice_email" class="input"/></div>
-              <div class="field"><label for="owner_ack_email">ACK Email</label><input id="owner_ack_email" class="input"/></div>
-              <div class="field"><label for="owner_pod_email">POD Email</label><input id="owner_pod_email" class="input"/></div>
-              <div class="field"><label for="owner_ops_email">Operations Email</label><input id="owner_ops_email" class="input"/></div>
-              <div class="field"><label for="owner_payment_terms">Payment Terms Days</label><input id="owner_payment_terms" class="input"/></div>
-              <div class="field"><label for="owner_invoice_frequency">Invoice Frequency</label><select id="owner_invoice_frequency" class="select"><option value="batch">Batch</option><option value="per_order">Per Order</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div>
-              <div class="field"><label for="owner_default_source_name">Default Import Name</label><input id="owner_default_source_name" class="input"/></div>
-              <div class="field"><label for="owner_auto_ack">Auto ACK</label><select id="owner_auto_ack" class="select"><option value="false">false</option><option value="true">true</option></select></div>
-              <div class="field"><label for="owner_auto_invoice">Auto Invoice</label><select id="owner_auto_invoice" class="select"><option value="false">false</option><option value="true">true</option></select></div>
-              <div class="field" style="grid-column:1 / -1;"><label for="owner_notes">Document / Product Owner Notes</label><textarea id="owner_notes" class="textarea"></textarea></div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </section>
+              <div class="field">
+  <label for="owner_invoice_email">Invoice Email</label>
+  <input id="owner_invoice_email" class="input"/>
+</div>
+
+<div class="field">
+  <label for="owner_ack_email">ACK Email</label>
+  <input id="owner_ack_email" class="input"/>
+</div>
+
+<div class="field">
+  <label for="owner_pod_email">POD Email</label>
+  <input id="owner_pod_email" class="input"/>
+</div>
+
+<div class="field">
+  <label for="owner_ops_email">Operations Email</label>
+  <input id="owner_ops_email" class="input"/>
+</div>
+
+<div class="field">
+  <label for="owner_payment_terms_days">Payment Terms Days</label>
+  <input id="owner_payment_terms_days" class="input" type="number" min="0"/>
+</div>
+
+<div class="field">
+  <label for="owner_invoice_frequency">Invoice Frequency</label>
+  <select id="owner_invoice_frequency" class="select">
+    <option value="batch">Batch</option>
+    <option value="per_order">Per Order</option>
+    <option value="weekly">Weekly</option>
+    <option value="monthly">Monthly</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_default_source_name">Default Import Name</label>
+  <input id="owner_default_source_name" class="input"/>
+</div>
+
+<div class="field">
+  <label for="owner_auto_ack">Auto ACK</label>
+  <select id="owner_auto_ack" class="select">
+    <option value="false">false</option>
+    <option value="true">true</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_auto_invoice">Auto Invoice</label>
+  <select id="owner_auto_invoice" class="select">
+    <option value="false">false</option>
+    <option value="true">true</option>
+  </select>
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <div class="note-box">
+    <strong>Transport Volume Restrictions</strong><br>
+    Configure minimum delivery volume and transport surcharge rules for this product owner.
+  </div>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_enabled">Enable Minimum Delivery Rule</label>
+  <select id="owner_minimum_delivery_enabled" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_volume_m3">Minimum Delivery Volume (m³)</label>
+  <input id="owner_minimum_delivery_volume_m3" class="input" type="number" step="0.01" value="1.25"/>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_transport_tariff_per_m3">Transport Tariff / m³ (£)</label>
+  <input id="owner_minimum_delivery_transport_tariff_per_m3" class="input" type="number" step="0.01" value="55.20"/>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_requires_approval">Require Approval Below Minimum</label>
+  <select id="owner_minimum_delivery_requires_approval" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_owner_can_approve">Product Owner Can Approve</label>
+  <select id="owner_minimum_delivery_owner_can_approve" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_minimum_delivery_manual_override">Allow Manual Surcharge Override</label>
+  <select id="owner_minimum_delivery_manual_override" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <label for="owner_minimum_delivery_invoice_label">Invoice Line Label</label>
+  <input
+    id="owner_minimum_delivery_invoice_label"
+    class="input"
+    value="Minimum delivery surcharge"
+  />
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <label for="owner_notes">Document / Product Owner Notes</label>
+  <textarea id="owner_notes" class="textarea"></textarea>
+</div>
+
+</div>
+</div>
+</div>
+</section>
+</section>
 
     <section id="tab-shops" class="settings-panel">
       <section class="card settings-card">
@@ -624,6 +734,61 @@
 </div>
       </section>
     </section>
+
+<section id="tab-pricing" class="settings-panel">
+  <section class="card settings-card">
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">Pricing</h2>
+        <p class="section-sub">Configure fuel surcharge and regional transport surcharges used on ACKs and invoices.</p>
+      </div>
+      <button id="btnSavePricing" class="btn btn-primary" type="button">Save Pricing</button>
+    </div>
+
+    <div class="field-grid">
+      <div class="field">
+        <label for="fuel_surcharge_percent">Fuel Surcharge %</label>
+        <input id="fuel_surcharge_percent" class="input" type="number" step="0.01" value="8.5"/>
+      </div>
+
+      <div class="field">
+        <label for="surcharge_edinburgh_glasgow_percent">Edinburgh / Glasgow Surcharge %</label>
+        <input id="surcharge_edinburgh_glasgow_percent" class="input" type="number" step="0.01" value="20"/>
+      </div>
+
+      <div class="field">
+        <label for="surcharge_highlands_islands_percent">Highlands & Islands Surcharge %</label>
+        <input id="surcharge_highlands_islands_percent" class="input" type="number" step="0.01" value="40"/>
+      </div>
+
+      <div class="field">
+    <label for="pricing_ireland_mode">
+        Ireland Pricing
+    </label>
+
+    <select id="pricing_ireland_mode" class="select">
+        <option value="price_on_request">
+            Northern Ireland & Republic of Ireland - Price on request
+        </option>
+
+        <option value="allow_manual_price">
+            Allow manual quotation
+        </option>
+    </select>
+</div>
+
+      <div class="field" style="grid-column:1 / -1;">
+        <label for="pricing_invoice_note">Invoice Pricing Note</label>
+        <textarea id="pricing_invoice_note" class="textarea">Fuel surcharge is calculated over the subtotal excluding VAT.</textarea>
+      </div>
+
+      <div class="field" style="grid-column:1 / -1;">
+        <label for="pricing_ack_note">ACK Pricing Note</label>
+        <textarea id="pricing_ack_note" class="textarea">Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.</textarea>
+      </div>
+    </div>
+  </section>
+</section>
 
     <section id="tab-automation" class="settings-panel">
       <section class="card settings-card">

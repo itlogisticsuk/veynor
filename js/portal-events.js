@@ -165,6 +165,14 @@
 
       if (!target) return;
 
+if (
+  target.dataset.portalDocType ||
+  target.dataset.documentType ||
+  target.dataset.docType
+) {
+  return;
+}
+
       const text =
         target.textContent?.trim() ||
         target.innerText?.trim() ||
@@ -200,6 +208,79 @@
     });
 
   }
+
+function hookDocumentActions() {
+
+  document.addEventListener("click", async (event) => {
+
+    const el = event.target.closest(
+      "[data-portal-doc-type],[data-document-type],[data-doc-type]"
+    );
+
+    if (!el) return;
+
+    const docType =
+      el.dataset.portalDocType ||
+      el.dataset.documentType ||
+      el.dataset.docType ||
+      "document";
+
+    const action =
+      el.dataset.portalDocAction ||
+      el.dataset.documentAction ||
+      el.dataset.docAction ||
+      "opened";
+
+    const orderId =
+      el.dataset.orderId ||
+      el.closest("[data-order-id]")?.dataset.orderId ||
+      null;
+
+    const orderNumber =
+      el.dataset.orderNumber ||
+      el.closest("[data-order-number]")?.dataset.orderNumber ||
+      null;
+
+    const url =
+      el.href ||
+      el.dataset.url ||
+      el.dataset.fileUrl ||
+      "";
+
+    const cleanDocType = String(docType).toLowerCase().replaceAll("-", "_");
+    const cleanAction = String(action).toLowerCase().replaceAll("-", "_");
+
+    await writeEvent({
+      eventType: `${cleanDocType}_${cleanAction}`,
+      entityType: "document",
+      entityId: url || orderId || orderNumber || cleanDocType,
+      description: `${niceDocumentType(cleanDocType)} ${cleanAction}`,
+      metadata: {
+        document_type: cleanDocType,
+        action: cleanAction,
+        order_id: orderId,
+        order_number: orderNumber,
+        url
+      }
+    });
+
+  });
+
+}
+
+function niceDocumentType(value) {
+  const map = {
+    ack: "ACK",
+    acknowledgement: "ACK",
+    delivery_note: "Delivery Note",
+    invoice: "Invoice",
+    credit_note: "Credit Note",
+    pod: "POD",
+    pod_photos: "POD Photos"
+  };
+
+  return map[value] || String(value || "Document").replaceAll("_", " ");
+}
 
   function hookOrderClicks() {
 
@@ -284,8 +365,9 @@
 
     await logPageView();
 
-    hookDownloads();
-    hookOrderClicks();
+ hookDownloads();
+hookDocumentActions();
+hookOrderClicks();
     hookVisibilityTracking();
     hookLogoutButtons();
 

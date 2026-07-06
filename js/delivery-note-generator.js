@@ -77,13 +77,13 @@
     return cleanText(order.purchase_order || order.po_number || "—");
   }
 
-function getSupplierReference(order) {
-  const so = cleanText(order?.order_number || "");
-  const ref = cleanText(order?.external_reference || "");
+  function getSupplierReference(order) {
+    const so = cleanText(order?.order_number || "");
+    const ref = cleanText(order?.external_reference || "");
 
-  if (!ref || ref === so) return "";
-  return ref;
-}
+    if (!ref || ref === so) return "";
+    return ref;
+  }
 
   function getProductOwnerName(order) {
     return cleanText(
@@ -103,20 +103,38 @@ function getSupplierReference(order) {
     );
   }
 
+  function uniqueLines(lines) {
+    const seen = new Set();
+    const out = [];
+
+    (lines || []).forEach(line => {
+      const clean = cleanText(line);
+      if (!clean) return;
+
+      const key = normalize(clean);
+      if (seen.has(key)) return;
+
+      seen.add(key);
+      out.push(clean);
+    });
+
+    return out;
+  }
+
   function getShipToLines(order) {
-  return [
-    getRetailerName(order),
-    order.delivery_address_1,
-    order.delivery_address_2,
-    order.delivery_address_3,
-    order.delivery_address_4,
-    order.delivery_city,
-    order.delivery_postcode,
-    order.delivery_country || "United Kingdom",
-    order.delivery_email || order.email || "",
-    order.delivery_phone || order.phone || ""
-  ].filter(Boolean).map(cleanText);
-}
+    return uniqueLines([
+      getRetailerName(order),
+      order.delivery_address_1,
+      order.delivery_address_2,
+      order.delivery_address_3,
+      order.delivery_address_4,
+      order.delivery_city,
+      order.delivery_postcode,
+      order.delivery_country || "United Kingdom",
+      order.delivery_email || order.email || "",
+      order.delivery_phone || order.phone || ""
+    ]);
+  }
 
   function getOrderLines(order) {
     return Array.isArray(order?.order_lines) ? order.order_lines : [];
@@ -136,23 +154,153 @@ function getSupplierReference(order) {
   }
 
   function getLineQty(line) {
-    return toNumber(line.quantity_ordered || line.quantity || 0, 0);
+    return toNumber(line.quantity_ordered || line.quantity || line.delivered_quantity || 0, 0);
   }
 
-  function getLineVolume(line) {
-    const explicit =
-      toNumber(line.total_line_volume_m3, 0) ||
-      toNumber(line.total_volume_m3, 0) ||
-      toNumber(line.volume_m3, 0);
+  function getProductPackageCount(product) {
+  const packageCount = toNumber(product?.package_count, 0);
+  if (packageCount > 0) return Math.max(1, Math.round(packageCount));
 
-    if (explicit > 0) return explicit;
+  const packagesPerUnit = toNumber(product?.packages_per_unit, 0);
+  if (packagesPerUnit > 0) return Math.max(1, Math.round(packagesPerUnit));
 
-    const qty = getLineQty(line);
-    const unit =
-      toNumber(line.unit_volume_m3, 0) ||
-      toNumber(line.products?.volume_m3, 0);
+  const flags = [
+    toNumber(product?.package_1_qty, 0),
+    toNumber(product?.package_2_qty, 0),
+    toNumber(product?.package_3_qty, 0),
+    toNumber(product?.package1_qty, 0),
+    toNumber(product?.package2_qty, 0),
+    toNumber(product?.package3_qty, 0)
+  ];
 
-    return round2(qty * unit);
+  const count = flags.filter(v => v > 0).length;
+  return Math.max(1, count || 1);
+}
+
+  function getLinePackagesPerProduct(line) {
+    return getProductPackageCount(line.products || {});
+  }
+
+  function getLinePackageCount(line) {
+  const qty = Math.max(0, Math.round(getLineQty(line)));
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    return qty;
+  }
+
+  const packagesPerProduct = getLinePackagesPerProduct(line);
+  return qty * packagesPerProduct;
+}
+
+  function getSingleProductPackageLabels(line) {
+    const packagesPerProduct = getLinePackagesPerProduct(line);
+
+    return Array.from(
+      { length: packagesPerProduct },
+      (_, index) => `${index + 1}/${packagesPerProduct}`
+    );
+  }
+
+ function getPackageLabel(line) {
+  const qty = Math.max(1, Math.round(getLineQty(line) || 1));
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    const label =
+      line.requested_package_label ||
+      `${line.requested_package_no}/${line.requested_package_total}`;
+
+    return qty <= 1 ? label : `${label} × ${qty}`;
+  }
+
+  const labels = getSingleProductPackageLabels(line);
+
+  if (qty <= 1) {
+    return labels.join(" & ");
+  }
+
+  return `${labels.join(" & ")} × ${qty}`;
+}
+
+function getRequestedPackageNo(line) {
+  return Math.max(1, Math.round(toNumber(line.requested_package_no, 1)));
+}
+
+function getPackageVolume(product, packageNo) {
+  if (packageNo === 1) return toNumber(product?.package_1_volume_m3, 0);
+  if (packageNo === 2) return toNumber(product?.package_2_volume_m3, 0);
+  if (packageNo === 3) return toNumber(product?.package_3_volume_m3, 0);
+  return 0;
+}
+
+function getPackageWeight(product, packageNo) {
+  if (packageNo === 1) return toNumber(product?.package_1_weight_kg, 0);
+  if (packageNo === 2) return toNumber(product?.package_2_weight_kg, 0);
+  if (packageNo === 3) return toNumber(product?.package_3_weight_kg, 0);
+  return 0;
+}
+
+function getLineVolume(line) {
+  const qty = getLineQty(line);
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    const packageNo = getRequestedPackageNo(line);
+    const packageVolume = getPackageVolume(line.products, packageNo);
+
+    if (packageVolume > 0) {
+      return round2(packageVolume * qty);
+    }
+  }
+
+  const explicit =
+    toNumber(line.total_line_volume_m3, 0) ||
+    toNumber(line.total_volume_m3, 0);
+
+  if (explicit > 0) return explicit;
+
+  const unit =
+    toNumber(line.unit_volume_m3, 0) ||
+    toNumber(line.products?.volume_m3, 0);
+
+  return round2(qty * unit);
+}
+
+function getLineWeight(line) {
+  const qty = getLineQty(line);
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    const packageNo = getRequestedPackageNo(line);
+    const packageWeight = getPackageWeight(line.products, packageNo);
+
+    if (packageWeight > 0) {
+      return round2(packageWeight * qty);
+    }
+  }
+
+  const fullWeight =
+    toNumber(line.products?.weight_kg, 0) ||
+    toNumber(line.products?.net_weight_kg, 0);
+
+  return round2(qty * fullWeight);
+}
+
+  function getTotalProducts(order) {
+    return getOrderLines(order).reduce((sum, line) => sum + getLineQty(line), 0);
+  }
+
+  function getTotalPackages(order) {
+    return getOrderLines(order).reduce((sum, line) => sum + getLinePackageCount(line), 0);
   }
 
   function getTotalVolume(order) {
@@ -164,6 +312,17 @@ function getSupplierReference(order) {
     if (explicit > 0) return explicit;
 
     return getOrderLines(order).reduce((sum, line) => sum + getLineVolume(line), 0);
+  }
+
+  function getTotalWeight(order) {
+    const explicit =
+      toNumber(order.total_order_weight_kg, 0) ||
+      toNumber(order.planning_weight_kg, 0) ||
+      toNumber(order.weight_kg, 0);
+
+    if (explicit > 0) return explicit;
+
+    return getOrderLines(order).reduce((sum, line) => sum + getLineWeight(line), 0);
   }
 
   function blobToDataUrl(blob) {
@@ -369,21 +528,22 @@ function getSupplierReference(order) {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
-const supplierRef = getSupplierReference(order);
 
-doc.text(`Date: ${formatDate(new Date())}`, 196, 41, { align: "right" });
+    const supplierRef = getSupplierReference(order);
 
-doc.setFont("helvetica", "bold");
-doc.text(`Order #: ${getOrderNumber(order)}`, 196, 48, { align: "right" });
+    doc.text(`Date: ${formatDate(new Date())}`, 196, 41, { align: "right" });
 
-doc.setFont("helvetica", "normal");
+    doc.setFont("helvetica", "bold");
+    doc.text(`Order #: ${getOrderNumber(order)}`, 196, 48, { align: "right" });
 
-if (supplierRef) {
-  doc.text(`Supplier Ref: ${supplierRef}`, 196, 55, { align: "right" });
-  doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 62, { align: "right" });
-} else {
-  doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 55, { align: "right" });
-}
+    doc.setFont("helvetica", "normal");
+
+    if (supplierRef) {
+      doc.text(`Supplier Ref: ${supplierRef}`, 196, 55, { align: "right" });
+      doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 62, { align: "right" });
+    } else {
+      doc.text(`Purchase Order: ${getPurchaseOrder(order)}`, 196, 55, { align: "right" });
+    }
 
     const infoY = logoAdded ? 47 : 40;
 
@@ -435,7 +595,7 @@ if (supplierRef) {
   function drawBillShip(doc, order, ctx) {
     const owner = ctx.productOwner;
 
-    const onBehalfOfLines = [
+    const onBehalfOfLines = uniqueLines([
       owner.tradingName || owner.name,
       owner.address1,
       owner.address2,
@@ -443,7 +603,7 @@ if (supplierRef) {
       owner.postcode,
       owner.country,
       owner.vat ? `VAT No: ${owner.vat}` : ""
-    ];
+    ]);
 
     const shipToLines = getShipToLines(order);
 
@@ -457,12 +617,14 @@ if (supplierRef) {
 
     setDark(doc);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.6);
+    doc.setFontSize(7.1);
 
     doc.text("Item", 14, y);
-    doc.text("Description", 40, y);
-    doc.text("Delivered", 156, y, { align: "right" });
-    doc.text("Volume", 192, y, { align: "right" });
+    doc.text("Description", 34, y);
+    doc.text("Packages", 116, y);
+    doc.text("Delivered", 150, y, { align: "right" });
+    doc.text("Volume", 174, y, { align: "right" });
+    doc.text("Weight", 194, y, { align: "right" });
 
     doc.setDrawColor(70, 80, 95);
     doc.line(14, y + 3.5, 196, y + 3.5);
@@ -484,7 +646,7 @@ if (supplierRef) {
     y = drawTableHeader(doc, y);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.4);
+    doc.setFontSize(7.1);
 
     const lines = getOrderLines(order);
 
@@ -497,18 +659,49 @@ if (supplierRef) {
       y = maybeAddPage(doc, y, order, ctx, tenantLogoDataUrl);
 
       const sku = getLineSku(line);
-      const description = getLineDescription(line);
-      const qty = getLineQty(line);
-      const volume = getLineVolume(line);
+const description = getLineDescription(line);
+const qty = getLineQty(line);
+const packageCount = getLinePackageCount(line);
+const packageLabel = getPackageLabel(line);
 
-      const descLines = splitText(doc, description, 104);
-      const rowHeight = Math.max(6.3, descLines.length * 3.4);
+const serviceWarning =
+  line.requested_package_no && line.requested_package_total
+    ? `ATTENTION: Service delivery / partial order - Deliver package ${line.requested_package_label} only.`
+    : "";
+
+const volume = getLineVolume(line);
+const weight = getLineWeight(line);
+
+      const fullDescription =
+  serviceWarning
+    ? `${description}\n${serviceWarning}`
+    : description;
+
+const descLines = splitText(doc, fullDescription, 76);
+      const packageWord = packageCount === 1 ? "package" : "packages";
+      const packageLines = splitText(doc, `${packageCount} ${packageWord}`, 28);
+      const labelLines = splitText(doc, packageLabel, 34);
+
+      const rowHeight = Math.max(
+        9,
+        descLines.length * 3.4,
+        (packageLines.length + labelLines.length) * 3.4
+      );
 
       setDark(doc);
       doc.text(sku, 14, y);
-      doc.text(descLines, 40, y);
-      doc.text(formatNumber(qty, 0), 156, y, { align: "right" });
-      doc.text(formatNumber(volume, 2), 192, y, { align: "right" });
+      doc.text(descLines, 34, y);
+
+      doc.setFont("helvetica", "bold");
+      doc.text(packageLines, 116, y);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.6);
+      doc.text(labelLines, 116, y + 4.2);
+      doc.setFontSize(7.1);
+
+      doc.text(formatNumber(qty, 0), 150, y, { align: "right" });
+      doc.text(formatNumber(volume, 2), 174, y, { align: "right" });
+      doc.text(formatNumber(weight, 1), 194, y, { align: "right" });
 
       y += rowHeight;
     });
@@ -517,23 +710,39 @@ if (supplierRef) {
   }
 
   function drawTotalsAndSignature(doc, y, order, ctx, tenantLogoDataUrl) {
-    if (y > 235) {
+    if (y > 230) {
       doc.addPage();
       drawHeader(doc, order, ctx, tenantLogoDataUrl);
       y = 72;
     }
 
+    const totalProducts = getTotalProducts(order);
+    const totalPackages = getTotalPackages(order);
     const totalVolume = getTotalVolume(order);
+    const totalWeight = getTotalWeight(order);
 
     doc.setDrawColor(70, 80, 95);
     doc.line(14, y, 196, y);
 
-    y += 9;
+    y += 8;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text("Total Volume", 142, y);
-    doc.text(formatNumber(totalVolume, 2), 192, y, { align: "right" });
+    doc.setFontSize(8.5);
+
+    doc.text("Total Products", 116, y);
+    doc.text(formatNumber(totalProducts, 0), 194, y, { align: "right" });
+
+    y += 5.5;
+    doc.text("Total Packages", 116, y);
+    doc.text(formatNumber(totalPackages, 0), 194, y, { align: "right" });
+
+    y += 5.5;
+    doc.text("Total Volume", 116, y);
+    doc.text(`${formatNumber(totalVolume, 2)} m³`, 194, y, { align: "right" });
+
+    y += 5.5;
+    doc.text("Total Weight", 116, y);
+    doc.text(`${formatNumber(totalWeight, 1)} kg`, 194, y, { align: "right" });
 
     y += 16;
 
@@ -617,7 +826,7 @@ if (supplierRef) {
     drawBillShip(doc, order, ctx);
     addWatermark(doc, watermarkDataUrl);
 
-    let y = drawLines(doc, order, ctx, tenantLogoDataUrl);
+    const y = drawLines(doc, order, ctx, tenantLogoDataUrl);
     drawTotalsAndSignature(doc, y, order, ctx, tenantLogoDataUrl);
     drawFooter(doc, ctx.company);
 
@@ -658,7 +867,7 @@ if (supplierRef) {
       customer_id: order.customer_id || null,
       order_id: order.id,
       document_type: "delivery_note",
-     document_number: order.order_number || String(order.id).slice(0, 8),
+      document_number: order.order_number || String(order.id).slice(0, 8),
       document_status: "generated",
       file_url: uploaded.fileUrl,
       storage_path: uploaded.storagePath,
@@ -708,28 +917,108 @@ if (supplierRef) {
     }
   }
 
+  async function loadFreshOrderForDeliveryNote(client, companyId, orderId) {
+  const { data, error } = await client
+    .from("orders")
+    .select(`
+      *,
+      customers (
+        id,
+        name,
+        customer_code,
+        customer_type,
+        vat_number,
+        billing_email
+      ),
+      order_documents (
+        id,
+        document_type,
+        document_number,
+        document_status,
+        file_url,
+        storage_path,
+        created_at,
+        updated_at
+      ),
+      order_lines (
+       id,
+order_id,
+quantity_ordered,
+requested_package_no,
+requested_package_total,
+requested_package_label,
+product_id,
+sku_base,
+description,
+        unit_volume_m3,
+        total_volume_m3,
+        total_line_volume_m3,
+        products (
+          id,
+          sku_base,
+          name,
+          description,
+          volume_m3,
+          weight_kg,
+          net_weight_kg,
+package_count,
+package_1_qty,
+package_2_qty,
+package_3_qty,
+packages_per_unit,
+package_1_volume_m3,
+package_2_volume_m3,
+package_3_volume_m3,
+package_1_weight_kg,
+package_2_weight_kg,
+package_3_weight_kg
+        ),
+        order_allocations (
+          id,
+          allocation_status,
+          items (
+            id,
+            package_no,
+            package_total,
+            physical_product_id
+          )
+        )
+      )
+    `)
+    .eq("company_id", companyId)
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return data || null;
+}
+
   async function generate(order, client, companyId) {
     if (!order?.id) throw new Error("Cannot generate delivery note: order is missing.");
     if (!client) throw new Error("Cannot generate delivery note: Supabase client is missing.");
     if (!companyId) throw new Error("Cannot generate delivery note: companyId is missing.");
 
-    const ctx = await loadCompanySettings(client, companyId);
-    ctx.productOwner = await loadProductOwnerProfile(client, order, ctx.ownerProfiles);
+    const freshOrder = await loadFreshOrderForDeliveryNote(client, companyId, order.id);
+    const workingOrder = freshOrder || order;
 
-    const blob = await createPdfBlob(order, ctx);
-    const uploaded = await uploadPdf(client, companyId, order, blob);
+    const ctx = await loadCompanySettings(client, companyId);
+    ctx.productOwner = await loadProductOwnerProfile(client, workingOrder, ctx.ownerProfiles);
+
+    const blob = await createPdfBlob(workingOrder, ctx);
+    const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
 
     if (!uploaded.fileUrl || !uploaded.storagePath) {
       throw new Error("Delivery note PDF was uploaded, but no file URL/storage path was returned.");
     }
 
-    await upsertDocumentRecord(client, companyId, order, uploaded);
-    await createActivity(client, companyId, order);
+    await upsertDocumentRecord(client, companyId, workingOrder, uploaded);
+    await createActivity(client, companyId, workingOrder);
 
     await client
       .from("orders")
       .update({ last_activity_at: new Date().toISOString() })
-      .eq("id", order.id);
+      .eq("id", workingOrder.id);
 
     return uploaded;
   }

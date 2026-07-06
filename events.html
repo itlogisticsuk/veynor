@@ -41,7 +41,7 @@
       <section class="page-topbar">
         <div class="page-title">
           <h1>Warehouse Events</h1>
-          <p>Bekijk warehouse events, statuswisselingen en wijzigingen vanuit import, matching en voorraadstromen.</p>
+         <p>View warehouse events, status changes and updates from imports, matching and stock movements.</p>
         </div>
 
         <div class="topbar-actions">
@@ -62,20 +62,22 @@
         <div class="section-head">
           <div>
             <h2 class="section-title">Filters</h2>
-            <p class="section-sub">Filter op referentie of eventtype en ververs direct vanuit Supabase.</p>
+            <p class="section-sub">Filter by reference or event type and refresh directly from Supabase.</p>
           </div>
         </div>
 
         <div class="toolbar">
           <div class="field">
-            <label for="filterSearch">Zoek order / SKU / reference</label>
-            <input id="filterSearch" class="input" placeholder="Zoek order / SKU">
+            <label for="filterSearch"><label for="filterSearch">
+Search order / SKU / reference
+</label></label>
+            <input id="filterSearch" class="input" placeholder="Search order / SKU">
           </div>
 
           <div class="field" style="max-width:280px;">
             <label for="filterType">Event type</label>
             <select id="filterType" class="select">
-              <option value="">Alle types</option>
+              <option value="">All types</option>
               <option value="order_imported">order_imported</option>
               <option value="order_match_completed">order_match_completed</option>
               <option value="item_reserved">item_reserved</option>
@@ -94,7 +96,7 @@
         <div class="section-head">
           <div>
             <h2 class="section-title">Event Log</h2>
-            <p class="section-sub">Laatste warehouse events met bronmodule en statusovergang.</p>
+            <p class="section-sub">Latest warehouse events with source module and status transitions.</p>
           </div>
         </div>
 
@@ -102,7 +104,7 @@
           <table class="events-table">
             <thead>
               <tr>
-                <th>Tijd</th>
+                <th>Time</th>
                 <th>Event</th>
                 <th>Entity</th>
                 <th>Reference</th>

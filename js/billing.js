@@ -294,7 +294,7 @@
 
     const calculatedNet = round2(pick + warehouse + admin + transport);
     const explicitNet = round2(toNumber(order?.total_customer_charge, 0));
-    const net = explicitNet > 0 ? explicitNet : calculatedNet;
+    const net = explicitNet !== 0 ? explicitNet : calculatedNet;
 
     const vat = round2(net * VAT_RATE);
     const gross = round2(net + vat);
@@ -1150,12 +1150,7 @@ ${
         ? `<a class="mini-btn" href="${escapeHtml(downloadUrl)}" target="_blank" rel="noopener">Download</a>`
         : `<span class="mini-btn" style="opacity:.55;cursor:not-allowed;">No PDF</span>`;
 
-      const internalCellsHtml = isCustomerView()
-        ? ""
-        : `
-          <td class="money-cell">${formatMoney(raw.pick)}</td>
-          <td class="money-cell">${formatMoney(raw.admin)}</td>
-        `;
+const internalCellsHtml = "";
 
       const invoiceSubline = isTenantRole()
         ? `<span class="subline">${escapeHtml(invoice.storage_path || "")}</span>`

@@ -10,8 +10,9 @@
   let events = [];
   let filteredEvents = [];
 
-  const customerMap = new Map();
-  const userMap = new Map();
+const customerMap = new Map();
+const userMap = new Map();
+const orderMap = new Map();
 
   function byId(id) {
     return document.getElementById(id);
@@ -162,16 +163,33 @@
     return String(value || "—").replaceAll("_", " ");
   }
 
-  function entityLabel(row) {
-    if (!row.entity_type && !row.entity_id) return "—";
-    return [row.entity_type, row.entity_id].filter(Boolean).join(": ");
+function entityLabel(row) {
+  const type = String(row.entity_type || "").toLowerCase();
+
+  if (!row.entity_type && !row.entity_id) return "—";
+
+  if (type === "order" && row.entity_id) {
+    const order = orderMap.get(String(row.entity_id));
+
+    if (order) {
+      const orderNo = order.order_number || "";
+      const ref = order.external_reference || order.purchase_order || "";
+
+      if (orderNo && ref) return `${orderNo} (${ref})`;
+      if (orderNo) return orderNo;
+      if (ref) return ref;
+    }
   }
+
+  return [row.entity_type, row.entity_id].filter(Boolean).join(": ");
+}
 
   async function loadLookupData(rawEvents) {
     const db = ensureClient();
 
     customerMap.clear();
     userMap.clear();
+orderMap.clear();
 
     const customerIds = [...new Set(
       (rawEvents || []).map(row => row.customer_id).filter(Boolean).map(String)
@@ -196,7 +214,7 @@
       }
     }
 
-    if (userIds.length) {
+       if (userIds.length) {
       const { data, error } = await db
         .from("user_profiles")
         .select("id, auth_user_id, full_name, email, role")
@@ -213,12 +231,35 @@
         console.warn("User lookup skipped:", error.message);
       }
     }
+
+    const orderIds = [...new Set(
+      (rawEvents || [])
+        .filter(row => String(row.entity_type || "").toLowerCase() === "order")
+        .map(row => row.entity_id)
+        .filter(Boolean)
+        .map(String)
+    )];
+
+    if (orderIds.length) {
+      const { data, error } = await db
+        .from("orders")
+        .select("id, order_number, external_reference, purchase_order")
+        .in("id", orderIds);
+
+      if (!error) {
+        (data || []).forEach(row => {
+          orderMap.set(String(row.id), row);
+        });
+      } else {
+        console.warn("Order lookup skipped:", error.message);
+      }
+    }
   }
 
   async function loadEvents() {
     const db = ensureClient();
     const cid = await getCompanyId();
-    const limit = Number(byId("filterLimit")?.value || 250);
+    const limit = Number(byId("filterLimit")?.value || 2000);
 
     let query = db
       .from("portal_events")

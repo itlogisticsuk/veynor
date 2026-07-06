@@ -22,6 +22,7 @@
 
   const menuItems = [
     { href: "./index.html", label: "Dashboard", icon: "dashboard", group: "Main", roles: TENANT_ROLES },
+{ href: "./message-center.html", label: "Message Center", icon: "activity", group: "Main", roles: ALL_ROLES, badge: "message-center" },
     { href: "./customer-dashboard.html", label: "Customer Dashboard", icon: "dashboard", group: "Main", roles: PRODUCT_OWNER_ROLES },
 
     { href: "./order-import.html", label: "Orders Import", icon: "upload", group: "Orders", roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] },
@@ -43,6 +44,7 @@
     { href: "./support.html", label: "Support Center", icon: "support", group: "System", roles: ALL_ROLES },
     { href: "./customer-activity.html", label: "Customer Activity", icon: "activity", group: "System", roles: TENANT_ROLES },
     { href: "./events.html", label: "Warehouse Events", icon: "pulse", group: "System", roles: TENANT_ROLES },
+{ href: "./system-health.html", label: "System Health", icon: "pulse", group: "System", roles: TENANT_ROLES },
     { href: "./settings.html", label: "Settings", icon: "settings", group: "System", roles: [ROLES.VEYNOR_ADMIN, ROLES.TENANT_ADMIN] }
   ];
 
@@ -210,9 +212,16 @@
       return `
         ${group}
         <a href="${item.href}" class="${active}" title="${item.label}">
-          <span class="nav-icon">${icon(item.icon)}</span>
-          <span class="nav-label">${item.label}</span>
-        </a>
+  <span class="nav-icon">${icon(item.icon)}</span>
+
+  <span class="nav-label">${item.label}</span>
+
+  ${
+    item.badge
+      ? `<span class="nav-badge" data-nav-badge="${item.badge}" style="display:none;">0</span>`
+      : ""
+  }
+</a>
       `;
     }).join("");
   }
@@ -355,7 +364,42 @@
       .logout-cancel-btn{background:#fff;color:#07152f;border:1px solid #dce5f2;}
       .logout-confirm-btn{background:#ef4444;color:#fff;border:1px solid #ef4444;}
       @media(max-width:760px){.page-topbar{flex-direction:column;}.topbar-actions{width:100%;justify-content:flex-start;}.global-account-text{display:none;}.global-account-dropdown{left:0;right:auto;width:280px;}}
-    `;
+    .nav a{
+    position:relative;
+}
+
+.nav-badge{
+    margin-left:auto;
+    min-width:18px;
+    height:18px;
+    padding:0 6px;
+    border-radius:999px;
+    background:#ef4444;
+    color:#fff;
+    font-size:10px;
+    font-weight:900;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow:0 0 0 3px rgba(239,68,68,.18);
+    animation:sidebarBadgePulse 1.2s infinite;
+}
+
+@keyframes sidebarBadgePulse{
+    0%{
+        transform:scale(1);
+    }
+
+    50%{
+        transform:scale(1.12);
+    }
+
+    100%{
+        transform:scale(1);
+    }
+}
+
+`;
 
     document.head.appendChild(style);
   }
@@ -466,6 +510,110 @@
     });
   }
 
+async function updateMessageCenterNavBadge() {
+  try {
+    if (!currentProfile || typeof sb !== "function") return;
+
+    const db = sb();
+
+    const unreadMessagesQuery = db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .is("read_at", null)
+      .neq("sender_profile_id", currentProfile.id);
+
+    const unreadNotificationsQuery = db
+      .from("system_notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("is_read", false);
+
+    if (currentProfile.company_id) {
+      unreadMessagesQuery.eq("company_id", currentProfile.company_id);
+      unreadNotificationsQuery.eq("company_id", currentProfile.company_id);
+    }
+
+    if (currentProfile.customer_id) {
+      unreadMessagesQuery.eq("customer_id", currentProfile.customer_id);
+      unreadNotificationsQuery.eq("customer_id", currentProfile.customer_id);
+    }
+
+    unreadMessagesQuery.or(
+      `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
+    );
+
+    unreadNotificationsQuery.or(
+      `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
+    );
+
+    const [messagesRes, notificationsRes] = await Promise.all([
+      unreadMessagesQuery,
+      unreadNotificationsQuery
+    ]);
+
+    const unreadMessages = messagesRes.count || 0;
+    const unreadNotifications = notificationsRes.count || 0;
+    const total = unreadMessages + unreadNotifications;
+
+    const badge = document.querySelector('[data-nav-badge="message-center"]');
+    if (badge) {
+      badge.textContent = String(total);
+      badge.style.display = total > 0 ? "inline-flex" : "none";
+    }
+
+    window.VeynorUnreadCounts = {
+      messages: unreadMessages,
+      notifications: unreadNotifications,
+      total
+    };
+
+    window.dispatchEvent(new CustomEvent("veynor:unread-counts", {
+      detail: window.VeynorUnreadCounts
+    }));
+
+  } catch (error) {
+    console.warn("Message Center badge failed:", error);
+  }
+}
+
+async function updateMessageCenterNavBadge() {
+  try {
+    if (!currentProfile || typeof sb !== "function") return;
+
+    const db = sb();
+
+    let query = db
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .is("read_at", null)
+      .neq("sender_profile_id", currentProfile.id);
+
+    if (currentProfile.role) {
+      query = query.or(
+        `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
+      );
+    }
+
+    if (currentProfile.customer_id) {
+      query = query.eq("customer_id", currentProfile.customer_id);
+    }
+
+    const { count, error } = await query;
+
+    if (error) {
+      console.warn("Message Center badge failed:", error.message);
+      return;
+    }
+
+    const badge = document.querySelector('[data-nav-badge="message-center"]');
+    if (!badge) return;
+
+    badge.textContent = String(count || 0);
+    badge.style.display = count > 0 ? "inline-flex" : "none";
+  } catch (error) {
+    console.warn("Message Center badge failed:", error);
+  }
+}
+
   function renderSidebar() {
     const mount = document.getElementById("sidebarMount");
     if (!mount) return;
@@ -514,7 +662,26 @@
 
     await loadProfile();
 
-    renderSidebar();
+renderSidebar();
+await updateMessageCenterNavBadge();
+
+window.VeynorUpdateMessageCenterNavBadge = updateMessageCenterNavBadge;
+
+setInterval(updateMessageCenterNavBadge, 5000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) updateMessageCenterNavBadge();
+});
+
+setInterval(updateMessageCenterNavBadge, 5000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) updateMessageCenterNavBadge();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) updateMessageCenterNavBadge();
+});
 
     if (!document.getElementById("logoutModal")) {
       document.body.insertAdjacentHTML("beforeend", renderLogoutModal());
@@ -524,4 +691,24 @@
     bindAccountMenu();
     bindLogoutEvents();
   });
+})();
+
+(function loadSystemMonitor() {
+  if (window.__systemMonitorScriptLoaded) return;
+  window.__systemMonitorScriptLoaded = true;
+
+  const script = document.createElement("script");
+  script.src = "/js/system-monitor.js";
+  script.defer = true;
+  document.head.appendChild(script);
+})();
+
+(function loadNotificationService() {
+  if (window.__notificationServiceLoaded) return;
+  window.__notificationServiceLoaded = true;
+
+  const script = document.createElement("script");
+  script.src = "/js/notification-service.js";
+  script.defer = true;
+  document.head.appendChild(script);
 })();

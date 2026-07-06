@@ -35,9 +35,18 @@ let portalUsersCache = [];
       payment_terms_days: "14",
       invoice_frequency: "batch",
       default_source_name: "Bellstone",
-      auto_ack: false,
-      auto_invoice: false,
-      notes: ""
+auto_ack: false,
+auto_invoice: false,
+
+minimum_delivery_enabled: true,
+minimum_delivery_volume_m3: "1.25",
+minimum_delivery_transport_tariff_per_m3: "55.20",
+minimum_delivery_requires_approval: true,
+minimum_delivery_owner_can_approve: true,
+minimum_delivery_manual_override: true,
+minimum_delivery_invoice_label: "Minimum Delivery Charge",
+
+notes: ""
     },
     {
       key: "zoy",
@@ -59,9 +68,18 @@ let portalUsersCache = [];
       payment_terms_days: "14",
       invoice_frequency: "batch",
       default_source_name: "Zoy",
-      auto_ack: false,
-      auto_invoice: false,
-      notes: ""
+auto_ack: false,
+auto_invoice: false,
+
+minimum_delivery_enabled: true,
+minimum_delivery_volume_m3: "1.25",
+minimum_delivery_transport_tariff_per_m3: "55.20",
+minimum_delivery_requires_approval: true,
+minimum_delivery_owner_can_approve: true,
+minimum_delivery_manual_override: true,
+minimum_delivery_invoice_label: "Minimum Delivery Charge",
+
+notes: ""
     }
   ];
 
@@ -163,6 +181,13 @@ diesel_price_per_litre_gbp_inc_vat: "1.55",
 doc_vat_rate: "0.20",
 doc_ack_lead_days: "21",
 doc_bucket: "order-documents",
+
+fuel_surcharge_percent: "8.5",
+surcharge_edinburgh_glasgow_percent: "20",
+surcharge_highlands_islands_percent: "40",
+pricing_ireland_mode: "price_on_request",
+pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
+pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
 
 sales_order_prefix: "SO-",
 sales_order_padding: "5",
@@ -1100,30 +1125,38 @@ updateSummary();
     }
 
     [
-      "name",
-      "trading_name",
-      "customer_code",
-      "vat",
-      "address1",
-      "address2",
-      "city",
-      "postcode",
-      "country",
-      "logo_url",
-      "logo_storage_path",
-      "invoice_email",
-      "ack_email",
-      "pod_email",
-      "ops_email",
-      "payment_terms_days",
-      "invoice_frequency",
-      "default_source_name",
-      "auto_ack",
-      "auto_invoice",
-      "notes"
-    ].forEach(field => {
-      setFieldValue(`owner_${field}`, owner?.[field] ?? "");
-    });
+  "name",
+  "trading_name",
+  "customer_code",
+  "vat",
+  "address1",
+  "address2",
+  "city",
+  "postcode",
+  "country",
+  "logo_url",
+  "logo_storage_path",
+  "invoice_email",
+  "ack_email",
+  "pod_email",
+  "ops_email",
+  "payment_terms_days",
+  "invoice_frequency",
+  "default_source_name",
+"auto_ack",
+"auto_invoice",
+"minimum_delivery_enabled",
+"minimum_delivery_volume_m3",
+"minimum_delivery_transport_tariff_per_m3",
+"minimum_delivery_requires_approval",
+"minimum_delivery_owner_can_approve",
+"minimum_delivery_manual_override",
+"minimum_delivery_invoice_label",
+
+"notes"
+].forEach(field => {
+  setFieldValue(`owner_${field}`, owner?.[field] ?? "");
+});
 
     setFieldValue("owner_auto_ack", String(owner?.auto_ack || false));
     setFieldValue("owner_auto_invoice", String(owner?.auto_invoice || false));
@@ -1151,12 +1184,21 @@ updateSummary();
       ack_email: getFieldValue("owner_ack_email"),
       pod_email: getFieldValue("owner_pod_email"),
       ops_email: getFieldValue("owner_ops_email"),
-      payment_terms_days: getFieldValue("owner_payment_terms", "14"),
+      payment_terms_days: getFieldValue("owner_payment_terms_days", "14"),
       invoice_frequency: getFieldValue("owner_invoice_frequency", "batch"),
       default_source_name: getFieldValue("owner_default_source_name"),
-      auto_ack: parseBool(getFieldValue("owner_auto_ack"), false),
-      auto_invoice: parseBool(getFieldValue("owner_auto_invoice"), false),
-      notes: getFieldValue("owner_notes")
+auto_ack: parseBool(getFieldValue("owner_auto_ack"), false),
+auto_invoice: parseBool(getFieldValue("owner_auto_invoice"), false),
+
+minimum_delivery_enabled: parseBool(getFieldValue("owner_minimum_delivery_enabled", "true"), true),
+minimum_delivery_volume_m3: getFieldValue("owner_minimum_delivery_volume_m3", "1.25"),
+minimum_delivery_transport_tariff_per_m3: getFieldValue("owner_minimum_delivery_transport_tariff_per_m3", "55.20"),
+minimum_delivery_requires_approval: parseBool(getFieldValue("owner_minimum_delivery_requires_approval", "true"), true),
+minimum_delivery_owner_can_approve: parseBool(getFieldValue("owner_minimum_delivery_owner_can_approve", "true"), true),
+minimum_delivery_manual_override: parseBool(getFieldValue("owner_minimum_delivery_manual_override", "true"), true),
+minimum_delivery_invoice_label: getFieldValue("owner_minimum_delivery_invoice_label", "Minimum Delivery Charge"),
+
+notes: getFieldValue("owner_notes")
     };
   }
 
@@ -1228,9 +1270,18 @@ updateSummary();
       payment_terms_days: "14",
       invoice_frequency: "batch",
       default_source_name: name,
-      auto_ack: false,
-      auto_invoice: false,
-      notes: ""
+auto_ack: false,
+auto_invoice: false,
+
+minimum_delivery_enabled: true,
+minimum_delivery_volume_m3: "1.25",
+minimum_delivery_transport_tariff_per_m3: "55.20",
+minimum_delivery_requires_approval: true,
+minimum_delivery_owner_can_approve: true,
+minimum_delivery_manual_override: true,
+minimum_delivery_invoice_label: "Minimum Delivery Charge",
+
+notes: ""
     });
 
     selectedOwnerKey = key;
@@ -1762,7 +1813,6 @@ lastActivity
   function bindEvents() {
     bindTabs();
 
-    byId("main_logo_file")?.addEventListener("change", previewSelectedLogoFile);
 byId("main_logo_file")?.addEventListener("change", previewSelectedLogoFile);
 byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile);
 
@@ -1797,6 +1847,18 @@ byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile
         showToast(error.message || "Could not save document settings.", "err");
       }
     });
+
+byId("btnSavePricing")?.addEventListener("click", async () => {
+  try {
+    await saveSettingsByIds(
+      collectFieldsInside("tab-pricing"),
+      "Pricing settings saved."
+    );
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not save pricing settings.", "err");
+  }
+});
 
     byId("btnSaveAutomation")?.addEventListener("click", async () => {
       try {

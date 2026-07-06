@@ -16,33 +16,31 @@
     footerText: ""
   };
 
+  const DEFAULT_PRICING = {
+    fuel_surcharge_percent: "8.5",
+    surcharge_edinburgh_glasgow_percent: "20",
+    surcharge_highlands_islands_percent: "40",
+    pricing_ireland_mode: "price_on_request",
+    pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice."
+  };
+
   const DAMAGE_NOTE = "All goods must be checked for damage and reported within 5 days of delivery.";
+
+  const PAGE = {
+    left: 14,
+    right: 196,
+    width: 182,
+    bottom: 268,
+    footerY: 278
+  };
 
   function toNumber(value, fallback = 0) {
     const num = Number(String(value ?? "").replace(",", "."));
     return Number.isFinite(num) ? num : fallback;
   }
 
-function dedupeAddressLines(lines) {
-  const seen = new Set();
-
-  return (lines || [])
-    .map(v => String(v || "").replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .filter(line => {
-      const key = line
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "");
-
-      if (!key || seen.has(key)) return false;
-
-      seen.add(key);
-      return true;
-    });
-}
-
   function round2(value) {
-    return Number(toNumber(value, 0).toFixed(2));
+    return Math.round((toNumber(value, 0) + Number.EPSILON) * 100) / 100;
   }
 
   function cleanText(value) {
@@ -70,62 +68,20 @@ function dedupeAddressLines(lines) {
     return d.toLocaleDateString("en-GB");
   }
 
+  function formatNumber(value, digits = 0) {
+    const num = Number(value ?? 0);
+    if (!Number.isFinite(num)) return "0";
+
+    return num.toLocaleString("en-GB", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits
+    });
+  }
+
   function addDays(value, days) {
     const d = new Date(value);
     d.setDate(d.getDate() + days);
     return d;
-  }
-
-  function getAckCreatedDate() {
-    return new Date();
-  }
-
-  function getMemo(order) {
-    return cleanText(order?.memo || "");
-  }
-function getSupplierReference(order) {
-  const so = cleanText(order?.order_number || "");
-  const ref = cleanText(order?.external_reference || "");
-
-  if (!ref || ref === so) return "";
-  return ref;
-}
-
-  function getOrderLines(order) {
-    return Array.isArray(order?.order_lines) ? order.order_lines : [];
-  }
-
-  function getProductOwnerName(order) {
-    return cleanText(order?.customers?.name || order?.product_owner_name || order?.customer_name || "—");
-  }
-
-  function getShipToName(order) {
-    return cleanText(order?.retail_name || order?.retailer_name || "—");
-  }
-
-  function getLineWarehouseCost(line) {
-    return round2(
-      toNumber(line.tariff_storage, 0) +
-      toNumber(line.tariff_admin, 0) +
-      toNumber(line.tariff_handling, 0)
-    );
-  }
-
-  function getLineTransportCost(line) {
-    return round2(toNumber(line.tariff_transport, 0));
-  }
-
-  function getLineTotal(line) {
-    const explicitTotal = toNumber(line.total_customer_charge, 0);
-    if (explicitTotal > 0) return round2(explicitTotal);
-    return round2(getLineWarehouseCost(line) + getLineTransportCost(line));
-  }
-
-  function safeFilePart(value) {
-    return String(value || "")
-      .replace(/[^a-zA-Z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "");
   }
 
   function splitText(doc, text, width) {
@@ -140,79 +96,229 @@ function getSupplierReference(order) {
     doc.setTextColor(90, 90, 90);
   }
 
-  async function loadCompanySettings(client, companyId) {
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
+  function safeFilePart(value) {
+    return String(value || "")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
 
-    if (error) {
-      console.warn("ACK company settings skipped:", error.message);
-      return {
-        company: { ...FALLBACK_COMPANY },
-        vatRate: DEFAULT_VAT_RATE,
-        ackLeadDays: DEFAULT_ACK_LEAD_DAYS
-      };
+  function dedupeAddressLines(lines) {
+    const seen = new Set();
+
+    return (lines || [])
+      .map(v => String(v || "").replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .filter(line => {
+        const key = line.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function removeContactLinesFromAddress(lines) {
+    const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    const phoneRegex = /(?:\+?\d[\d\s().-]{7,}\d)/;
+
+    return (lines || [])
+      .map(cleanText)
+      .filter(Boolean)
+      .filter(line => !emailRegex.test(line))
+      .filter(line => {
+        const digitCount = line.replace(/\D/g, "").length;
+        return !(phoneRegex.test(line) && digitCount >= 9);
+      });
+  }
+
+  function getMemo(order) {
+    return cleanText(order?.memo || "");
+  }
+
+  function getSupplierReference(order) {
+    const so = cleanText(order?.order_number || "");
+    const ref = cleanText(order?.external_reference || "");
+
+    if (!ref || ref === so) return "";
+    return ref;
+  }
+
+  function getOrderLines(order) {
+    return Array.isArray(order?.order_lines) ? order.order_lines : [];
+  }
+
+  function getProductOwnerName(order) {
+    return cleanText(order?.customers?.name || order?.product_owner_name || order?.customer_name || "—");
+  }
+
+  function getShipToName(order) {
+    return cleanText(order?.retail_name || order?.retailer_name || order?.delivery_name || "—");
+  }
+
+  function getLineSku(line) {
+    return cleanText(line.sku_base || line.products?.sku_base || "—");
+  }
+
+  function getLineDescription(line) {
+    return cleanText(
+      line.description ||
+      line.products?.description ||
+      line.products?.name ||
+      "—"
+    );
+  }
+
+  function getLineQty(line) {
+    return toNumber(line.quantity_ordered || line.quantity || 0, 0);
+  }
+
+  function getProductPackageCount(product) {
+    const packageCount = toNumber(product?.package_count, 0);
+    if (packageCount > 0) return Math.max(1, Math.round(packageCount));
+
+    const packagesPerUnit = toNumber(product?.packages_per_unit, 0);
+    if (packagesPerUnit > 0) return Math.max(1, Math.round(packagesPerUnit));
+
+    const flags = [
+      toNumber(product?.package_1_qty, 0),
+      toNumber(product?.package_2_qty, 0),
+      toNumber(product?.package_3_qty, 0),
+      toNumber(product?.package1_qty, 0),
+      toNumber(product?.package2_qty, 0),
+      toNumber(product?.package3_qty, 0)
+    ];
+
+    const count = flags.filter(v => v > 0).length;
+    return Math.max(1, count || 1);
+  }
+
+  function isServiceLine(line) {
+    return (
+      toNumber(line.requested_package_no, 0) > 0 &&
+      toNumber(line.requested_package_total, 0) > 0
+    );
+  }
+
+  function getLinePackageCount(line) {
+    const qty = Math.max(0, Math.round(getLineQty(line)));
+
+    if (isServiceLine(line)) return qty;
+
+    return qty * getProductPackageCount(line.products || {});
+  }
+
+  function getPackageLabel(line) {
+    const qty = Math.max(1, Math.round(getLineQty(line) || 1));
+
+    if (isServiceLine(line)) {
+      const label =
+        line.requested_package_label ||
+        `${Math.round(toNumber(line.requested_package_no, 0))}/${Math.round(toNumber(line.requested_package_total, 0))}`;
+
+      return qty <= 1 ? label : `${label} × ${qty}`;
     }
 
-    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
+    const packageTotal = getProductPackageCount(line.products || {});
+    const labels = Array.from(
+      { length: packageTotal },
+      (_, index) => `${index + 1}/${packageTotal}`
+    );
+
+    return qty <= 1 ? labels.join(" & ") : `${labels.join(" & ")} × ${qty}`;
+  }
+
+  function getServiceWarning(line) {
+    if (!isServiceLine(line)) return "";
+
+    const label =
+      line.requested_package_label ||
+      `${Math.round(toNumber(line.requested_package_no, 0))}/${Math.round(toNumber(line.requested_package_total, 0))}`;
+
+    return `SERVICE / PARTIAL ORDER: This acknowledgement relates to package ${label} only. Remaining packages are not part of this order.`;
+  }
+
+  function getTotalProducts(order) {
+    return getOrderLines(order).reduce((sum, line) => sum + getLineQty(line), 0);
+  }
+
+  function getTotalPackages(order) {
+    return getOrderLines(order).reduce((sum, line) => sum + getLinePackageCount(line), 0);
+  }
+
+  function getSettingsObject(map) {
+    const obj = {};
+    map.forEach((value, key) => {
+      obj[key] = value;
+    });
+    return obj;
+  }
+
+  function calculatePricing(order, settings) {
+    if (window.VeynorPricing?.calculateOrderPricing) {
+      return window.VeynorPricing.calculateOrderPricing(order, settings);
+    }
+
+    const lines = getOrderLines(order);
+
+    const warehouse = round2(lines.reduce((sum, line) => {
+      return sum +
+        toNumber(line.tariff_storage, 0) +
+        toNumber(line.tariff_admin, 0) +
+        toNumber(line.tariff_handling, 0);
+    }, 0));
+
+    const transport = round2(lines.reduce((sum, line) => {
+      return sum + toNumber(line.tariff_transport, 0);
+    }, 0));
 
     return {
-      company: {
-        name: map.get("main_company_name") || FALLBACK_COMPANY.name,
-        displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
-        address: map.get("main_address") || FALLBACK_COMPANY.address,
-        phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
-        email: map.get("main_email") || FALLBACK_COMPANY.email,
-        vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
-        logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
-        footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
+      warehouse,
+      baseTransport: transport,
+      regionalSurcharge: 0,
+      transport,
+      subtotalExFuel: round2(warehouse + transport),
+      totalExFuel: round2(warehouse + transport),
+      priceOnRequest: false,
+      regional: {
+        code: "standard",
+        label: "Standard UK mainland",
+        percent: 0,
+        priceOnRequest: false,
+        note: ""
       },
-      vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
-      ackLeadDays: Math.round(toNumber(map.get("ack_lead_days") || map.get("default_ack_lead_days"), DEFAULT_ACK_LEAD_DAYS))
+      note: ""
     };
   }
 
-  async function loadProductOwnerProfile(client, customerId, order) {
-    if (!customerId) {
-      throw new Error("Cannot generate ACK: order has no product owner/customer_id.");
+  function getLineWarehouseCost(line) {
+    if (window.VeynorPricing?.getLineWarehouseCost) {
+      return window.VeynorPricing.getLineWarehouseCost(line);
     }
 
-    const { data: customer, error: customerError } = await client
-      .from("customers")
-      .select("*")
-      .eq("id", customerId)
-      .maybeSingle();
+    return round2(
+      toNumber(line.tariff_storage, 0) +
+      toNumber(line.tariff_admin, 0) +
+      toNumber(line.tariff_handling, 0)
+    );
+  }
 
-    if (customerError) throw customerError;
-    if (!customer?.id) throw new Error("Cannot generate ACK: product owner/customer not found.");
+  function getLineTransportCost(line, regional) {
+    if (regional?.priceOnRequest) return null;
 
-    let address = null;
-
-    const { data: addresses, error: addressError } = await client
-      .from("customer_addresses")
-      .select("*")
-      .eq("customer_id", customerId)
-      .order("is_default", { ascending: false })
-      .limit(1);
-
-    if (!addressError && addresses?.length) {
-      address = addresses[0];
+    if (window.VeynorPricing?.getLineTransportCost) {
+      return window.VeynorPricing.getLineTransportCost(line, regional);
     }
 
-    return {
-      id: customer.id,
-      name: customer.name || getProductOwnerName(order),
-      customerCode: customer.customer_code || "",
-      vat: customer.vat_number || customer.vat || "",
-      email: customer.billing_email || customer.email || "",
-      address1: address?.street || customer.address1 || customer.address_1 || "",
-      address2: address?.address2 || customer.address2 || customer.address_2 || "",
-      city: address?.city || customer.city || "",
-      county: address?.county || customer.county || "",
-      postcode: address?.postal_code || address?.postcode || customer.postcode || "",
-      country: address?.country || customer.country || "United Kingdom"
-    };
+    return round2(toNumber(line.tariff_transport, 0));
+  }
+
+  function getLineTotal(line, regional) {
+    if (regional?.priceOnRequest) return null;
+
+    return round2(
+      getLineWarehouseCost(line) +
+      getLineTransportCost(line, regional)
+    );
   }
 
   function blobToDataUrl(blob) {
@@ -268,83 +374,233 @@ function getSupplierReference(order) {
     }
   }
 
-  function drawHeader(doc, order, ctx, logoDataUrl) {
-    const company = ctx.company;
-    const ackDate = getAckCreatedDate();
-    const expectedDate = addDays(ackDate, ctx.ackLeadDays || DEFAULT_ACK_LEAD_DAYS);
+  async function loadCompanySettings(client, companyId) {
+    const { data, error } = await client
+      .from("settings")
+      .select("setting_key, setting_value")
+      .eq("company_id", companyId);
 
-    const logoAdded = addLogo(doc, logoDataUrl, 14, 12, 48, 24);
+    if (error) {
+      console.warn("ACK company settings skipped:", error.message);
+      return {
+        settings: { ...DEFAULT_PRICING },
+        company: { ...FALLBACK_COMPANY },
+        vatRate: DEFAULT_VAT_RATE,
+        ackLeadDays: DEFAULT_ACK_LEAD_DAYS,
+        pricingAckNote: DEFAULT_PRICING.pricing_ack_note
+      };
+    }
+
+    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
+    const settings = {
+      ...DEFAULT_PRICING,
+      ...getSettingsObject(map)
+    };
+
+    return {
+      settings,
+      company: {
+        name: map.get("main_company_name") || FALLBACK_COMPANY.name,
+        displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
+        address: map.get("main_address") || FALLBACK_COMPANY.address,
+        phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
+        email: map.get("main_email") || FALLBACK_COMPANY.email,
+        vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
+        logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
+        footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
+      },
+      vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
+      ackLeadDays: Math.round(toNumber(map.get("ack_lead_days") || map.get("default_ack_lead_days") || map.get("doc_ack_lead_days"), DEFAULT_ACK_LEAD_DAYS)),
+      pricingAckNote: map.get("pricing_ack_note") || DEFAULT_PRICING.pricing_ack_note
+    };
+  }
+
+  async function loadProductOwnerProfile(client, customerId, order) {
+    if (!customerId) {
+      throw new Error("Cannot generate ACK: order has no product owner/customer_id.");
+    }
+
+    const { data: customer, error: customerError } = await client
+      .from("customers")
+      .select("*")
+      .eq("id", customerId)
+      .maybeSingle();
+
+    if (customerError) throw customerError;
+    if (!customer?.id) throw new Error("Cannot generate ACK: product owner/customer not found.");
+
+    let address = null;
+
+    const { data: addresses, error: addressError } = await client
+      .from("customer_addresses")
+      .select("*")
+      .eq("customer_id", customerId)
+      .order("is_default", { ascending: false })
+      .limit(1);
+
+    if (!addressError && addresses?.length) {
+      address = addresses[0];
+    }
+
+    return {
+      id: customer.id,
+      name: customer.name || getProductOwnerName(order),
+      customerCode: customer.customer_code || "",
+      vat: customer.vat_number || customer.vat || "",
+      email: customer.billing_email || customer.email || "",
+      address1: address?.street || customer.address1 || customer.address_1 || "",
+      address2: address?.address2 || customer.address2 || customer.address_2 || "",
+      city: address?.city || customer.city || "",
+      county: address?.county || customer.county || "",
+      postcode: address?.postal_code || address?.postcode || customer.postcode || "",
+      country: address?.country || customer.country || "United Kingdom"
+    };
+  }
+
+  async function loadFreshOrderForAck(client, companyId, orderId) {
+    const { data, error } = await client
+      .from("orders")
+      .select(`
+        *,
+        customers (
+          id,
+          name,
+          customer_code,
+          customer_type,
+          vat_number,
+          billing_email
+        ),
+        order_documents (
+          id,
+          document_type,
+          document_number,
+          document_status,
+          file_url,
+          storage_path,
+          created_at,
+          updated_at
+        ),
+        order_lines (
+          id,
+          order_id,
+          quantity_ordered,
+          requested_package_no,
+          requested_package_total,
+          requested_package_label,
+          product_id,
+          sku_base,
+          description,
+          unit_volume_m3,
+          total_volume_m3,
+          total_line_volume_m3,
+          tariff_storage,
+          tariff_admin,
+          tariff_handling,
+          tariff_transport,
+          total_customer_charge,
+          products (
+            id,
+            sku_base,
+            name,
+            description,
+            volume_m3,
+            weight_kg,
+            net_weight_kg,
+            package_count,
+            package_1_qty,
+            package_2_qty,
+            package_3_qty,
+            packages_per_unit
+          )
+        )
+      `)
+      .eq("company_id", companyId)
+      .eq("id", orderId)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data || null;
+  }
+
+  function drawHeader(doc, order, ctx, logoDataUrl, compact = false) {
+    const company = ctx.company;
+    const ackDate = new Date();
+    const expectedDate = addDays(ackDate, ctx.ackLeadDays || DEFAULT_ACK_LEAD_DAYS);
+    const supplierRef = getSupplierReference(order);
+
+    const logoAdded = addLogo(doc, logoDataUrl, 14, 9, 35, 18);
 
     setDark(doc);
 
     if (!logoAdded) {
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(17);
-      doc.text(company.displayName || company.name, 14, 24);
+      doc.setFontSize(14);
+      doc.text(company.displayName || company.name, 14, 18);
     }
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Order Acknowledgement", 196, 22, { align: "right" });
+    doc.setFontSize(14);
+    doc.text("Order Acknowledgement", 196, 18, { align: "right" });
+
+    doc.setFontSize(8);
+    doc.text(`Order No: ${order.order_number || "—"}`, 196, 28, { align: "right" });
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
+    doc.setFontSize(7.8);
 
-    const supplierRef = getSupplierReference(order);
+    let y = 36;
 
-doc.setFont("helvetica", "bold");
-doc.text(`Order No: ${order.order_number || "—"}`, 196, 33, { align: "right" });
+    if (supplierRef) {
+      doc.text(`Supplier Ref: ${supplierRef}`, 196, y, { align: "right" });
+      y += 5.4;
+    }
 
-doc.setFont("helvetica", "normal");
+    doc.text(`Purchase Order: ${order.purchase_order || "Unknown"}`, 196, y, { align: "right" });
+    y += 5.4;
+    doc.text(`Order Date: ${formatDate(ackDate)}`, 196, y, { align: "right" });
+    y += 5.4;
+    doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, y, { align: "right" });
 
-if (supplierRef) {
-  doc.text(`Supplier Ref: ${supplierRef}`, 196, 40, { align: "right" });
-  doc.text(`Purchase Order: ${order.purchase_order || "Unknown"}`, 196, 47, { align: "right" });
-  doc.text(`Order Date: ${formatDate(ackDate)}`, 196, 54, { align: "right" });
-  doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, 61, { align: "right" });
-} else {
-  doc.text(`Purchase Order: ${order.purchase_order || "Unknown"}`, 196, 40, { align: "right" });
-  doc.text(`Order Date: ${formatDate(ackDate)}`, 196, 47, { align: "right" });
-  doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, 54, { align: "right" });
-}
-    const infoY = logoAdded ? 45 : 34;
+    if (compact) return;
+
+    const infoY = 32;
 
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
+    doc.setFontSize(8.5);
     doc.text(company.name, 14, infoY);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.text(cleanText(company.address), 14, infoY + 6);
+    doc.setFontSize(7.5);
+    doc.text(cleanText(company.address), 14, infoY + 5);
 
     doc.setFont("helvetica", "bold");
-    doc.text("Phone", 14, infoY + 15);
+    doc.text("Phone", 14, infoY + 12);
     doc.setFont("helvetica", "normal");
-    doc.text(company.phone, 28, infoY + 15);
+    doc.text(company.phone, 27, infoY + 12);
 
     doc.setFont("helvetica", "bold");
-    doc.text("Email", 78, infoY + 15);
+    doc.text("Email", 70, infoY + 12);
     doc.setFont("helvetica", "normal");
-    doc.text(company.email, 92, infoY + 15);
+    doc.text(company.email, 82, infoY + 12);
 
     doc.setFont("helvetica", "bold");
-    doc.text(`VAT No ${company.vat}`, 14, infoY + 23);
+    doc.text(`VAT No ${company.vat}`, 14, infoY + 19);
   }
 
   function drawAddressBlock(doc, title, lines, x, y, width, height) {
-    doc.setFillColor(247, 247, 247);
-    doc.rect(x - 2, y - 6, width + 4, height, "F");
+    doc.setFillColor(248, 248, 248);
+    doc.rect(x - 2, y - 5, width + 4, height, "F");
 
-    doc.setDrawColor(210, 210, 210);
-    doc.rect(x - 2, y - 6, width + 4, height);
+    doc.setDrawColor(215, 215, 215);
+    doc.rect(x - 2, y - 5, width + 4, height);
 
     setDark(doc);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
+    doc.setFontSize(8);
     doc.text(title, x, y);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
+    doc.setFontSize(7.4);
 
     const wrapped = splitText(
       doc,
@@ -352,22 +608,20 @@ if (supplierRef) {
       width - 4
     );
 
-    let lineY = y + 7;
+    let lineY = y + 5.2;
 
     wrapped.forEach(line => {
-      if (lineY < y + height - 9) {
+      if (lineY < y + height - 7) {
         doc.text(line, x, lineY);
-        lineY += 5;
+        lineY += 4;
       }
     });
-
-    return lineY;
   }
 
   function drawBillToAndShipTo(doc, order, ctx) {
     const billTo = ctx.productOwner;
 
-    const billToLines = [
+    const billToLines = dedupeAddressLines([
       billTo.name,
       billTo.address1,
       billTo.address2,
@@ -376,132 +630,316 @@ if (supplierRef) {
       billTo.postcode,
       billTo.country,
       billTo.vat ? `VAT No: ${billTo.vat}` : ""
-    ];
+    ]);
 
-   const shipToLines = dedupeAddressLines([
-  order.retail_name,
-  order.delivery_address_1,
-  order.delivery_address_2,
-  order.delivery_city,
-  order.delivery_region,
-  order.delivery_postcode,
-  order.delivery_country
-]);
+    const shipToLines = dedupeAddressLines(removeContactLinesFromAddress([
+      getShipToName(order),
+      order.delivery_address_1,
+      order.delivery_address_2,
+      order.delivery_address_3,
+      order.delivery_address_4,
+      order.delivery_city,
+      order.delivery_region,
+      order.delivery_postcode,
+      order.delivery_country || "United Kingdom"
+    ]));
 
-    drawAddressBlock(doc, "Bill To:", billToLines, 14, 84, 78, 52);
-    drawAddressBlock(doc, "Ship To:", shipToLines, 112, 84, 78, 52);
+    drawAddressBlock(doc, "Bill To:", billToLines, 14, 62, 78, 36);
+    drawAddressBlock(doc, "Ship To:", shipToLines, 112, 62, 78, 36);
   }
 
   function drawTableHeader(doc, y) {
     setDark(doc);
 
     doc.setFillColor(245, 245, 245);
-    doc.rect(14, y - 6, 182, 10, "F");
+    doc.rect(14, y - 5, 182, 8.5, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.8);
+
+    doc.text("SKU", 14, y);
+    doc.text("Product Description", 33, y);
+    doc.text("Qty", 96, y, { align: "right" });
+    doc.text("Packages", 110, y);
+    doc.text("Warehouse", 146, y, { align: "right" });
+    doc.text("Transport", 166, y, { align: "right" });
+    doc.text("Total", 194, y, { align: "right" });
+
+    doc.setDrawColor(85, 85, 85);
+    doc.line(14, y + 3.3, 196, y + 3.3);
+
+    return y + 8.5;
+  }
+
+  function maybeAddNewPage(doc, y, order, ctx, logoDataUrl, withTableHeader = true) {
+    if (y <= PAGE.bottom) return y;
+
+    doc.addPage();
+    drawHeader(doc, order, ctx, logoDataUrl, true);
+
+    if (withTableHeader) {
+      return drawTableHeader(doc, 58);
+    }
+
+    return 58;
+  }
+
+  function drawServiceWarningBox(doc, y, warning) {
+    const warningLines = splitText(doc, warning, 172);
+    const boxHeight = Math.max(9, warningLines.length * 3.3 + 5);
+
+    doc.setFillColor(255, 247, 237);
+    doc.setDrawColor(253, 186, 116);
+    doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.8);
+    doc.setTextColor(194, 65, 12);
+    doc.text(warningLines.slice(0, 3), 17, y + 0.8);
+
+    setDark(doc);
+
+    return y + boxHeight + 2;
+  }
+
+  function drawPriceOnRequestBox(doc, y, ctx, order, logoDataUrl) {
+    y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
+
+    const text = "This delivery area is price on request. Final transport pricing must be confirmed manually before invoicing.";
+    const lines = splitText(doc, text, 172);
+
+    doc.setFillColor(255, 247, 237);
+    doc.setDrawColor(253, 186, 116);
+    doc.roundedRect(14, y - 4, 182, 12, 1.8, 1.8, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7);
+    doc.setTextColor(194, 65, 12);
+    doc.text(lines.slice(0, 2), 17, y + 1.2);
+
+    setDark(doc);
+
+    return y + 14;
+  }
+
+  function drawLines(doc, order, ctx, logoDataUrl, pricing) {
+    let y = 108;
+    y = drawTableHeader(doc, y);
+
+    const lines = getOrderLines(order);
+    const regional = pricing.regional || {};
+
+    if (!lines.length) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.2);
+      doc.text("No product lines found for this order.", 14, y);
+      return { y: y + 7 };
+    }
+
+    lines.forEach(line => {
+      y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, true);
+
+      const sku = getLineSku(line);
+      const description = getLineDescription(line);
+      const qty = getLineQty(line);
+      const packageCount = getLinePackageCount(line);
+      const packageLabel = getPackageLabel(line);
+      const warning = getServiceWarning(line);
+
+      const warehouseCost = getLineWarehouseCost(line);
+      const transportCost = getLineTransportCost(line, regional);
+      const total = getLineTotal(line, regional);
+
+      const descLines = splitText(doc, description, 56).slice(0, 3);
+      const packageWord = packageCount === 1 ? "package" : "packages";
+      const packageLines = splitText(doc, `${packageCount} ${packageWord}`, 24);
+      const labelLines = splitText(doc, packageLabel, 24).slice(0, 2);
+
+      const rowHeight = Math.max(
+        7,
+        descLines.length * 3.25,
+        (packageLines.length + labelLines.length) * 3.15
+      );
+
+      setDark(doc);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.8);
+
+      doc.text(sku, 14, y);
+      doc.text(descLines, 33, y);
+      doc.text(formatNumber(qty, 0), 96, y, { align: "right" });
+
+      doc.setFont("helvetica", "bold");
+      doc.text(packageLines, 110, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.1);
+      doc.text(labelLines, 110, y + 3.4);
+
+      doc.setFontSize(6.8);
+      doc.text(formatMoney(warehouseCost), 146, y, { align: "right" });
+      doc.text(regional.priceOnRequest ? "POR" : formatMoney(transportCost), 166, y, { align: "right" });
+      doc.text(regional.priceOnRequest ? "POR" : formatMoney(total), 194, y, { align: "right" });
+
+      y += rowHeight + 1;
+
+      if (warning) {
+        y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+        y = drawServiceWarningBox(doc, y, warning);
+      }
+    });
+
+    if (regional.priceOnRequest) {
+      y = drawPriceOnRequestBox(doc, y + 2, ctx, order, logoDataUrl);
+    }
+
+    return { y: y + 3 };
+  }
+
+  function drawPricingNoteBox(doc, y, ctx, order, logoDataUrl) {
+    const note = cleanText(ctx.pricingAckNote || "");
+    if (!note) return y;
+
+    y = maybeAddNewPage(doc, y + 2, order, ctx, logoDataUrl, false);
+
+    const lines = splitText(doc, note, 172);
+    const boxHeight = Math.max(10, lines.length * 3.4 + 5);
+
+    doc.setFillColor(239, 246, 255);
+    doc.setDrawColor(191, 219, 254);
+    doc.roundedRect(14, y - 4, 182, boxHeight, 1.8, 1.8, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.9);
+    doc.setTextColor(29, 78, 216);
+    doc.text(lines.slice(0, 3), 17, y + 1);
+
+    setDark(doc);
+
+    return y + boxHeight + 3;
+  }
+
+  function drawRegionalNote(doc, y, pricing, ctx, order, logoDataUrl) {
+    const regional = pricing.regional || {};
+    const note = cleanText(regional.note || "");
+
+    if (!note || regional.priceOnRequest) return y;
+
+    y = maybeAddNewPage(doc, y + 2, order, ctx, logoDataUrl, false);
+
+    const lines = splitText(doc, note, 172);
+    const boxHeight = Math.max(9, lines.length * 3.3 + 5);
+
+    doc.setFillColor(245, 243, 255);
+    doc.setDrawColor(221, 214, 254);
+    doc.roundedRect(14, y - 4, 182, boxHeight, 1.8, 1.8, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.8);
+    doc.setTextColor(109, 40, 217);
+    doc.text(lines.slice(0, 3), 17, y + 1);
+
+    setDark(doc);
+
+    return y + boxHeight + 3;
+  }
+
+  function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
+    y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
+
+    const regional = pricing.regional || {};
+    const subtotal = regional.priceOnRequest ? null : round2(pricing.warehouse + pricing.transport);
+
+    const totalProducts = getTotalProducts(order);
+    const totalPackages = getTotalPackages(order);
+
+    doc.setDrawColor(90, 90, 90);
+    doc.line(14, y, 196, y);
+
+    y += 7;
+
+    const labelX = 118;
+    const valueX = 194;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8);
 
-    doc.text("SKU", 14, y);
-    doc.text("Product Description", 36, y);
-    doc.text("Quantity", 103, y);
-    doc.text("Warehouse Costs", 124, y);
-    doc.text("Transport Costs", 158, y);
-    doc.text("Total", 188, y);
+    doc.text("Total Products", labelX, y);
+    doc.text(formatNumber(totalProducts, 0), valueX, y, { align: "right" });
 
-    doc.setDrawColor(80, 80, 80);
-    doc.line(14, y + 4, 196, y + 4);
+    y += 5;
+    doc.text("Total Packages", labelX, y);
+    doc.text(formatNumber(totalPackages, 0), valueX, y, { align: "right" });
 
-    return y + 11;
-  }
+    y += 7;
 
-  function maybeAddNewPage(doc, y, order, ctx, logoDataUrl) {
-    if (y <= 258) return y;
-
-    doc.addPage();
-    drawHeader(doc, order, ctx, logoDataUrl);
-    return drawTableHeader(doc, 76);
-  }
-
-  function drawTotalsBlock(doc, y, totals, ctx) {
-    const subtotal = round2(totals.warehouse + totals.transport);
-    const vatRate = toNumber(ctx.vatRate, DEFAULT_VAT_RATE);
-    const vat = round2(subtotal * vatRate);
-    const total = round2(subtotal + vat);
-
-    doc.setDrawColor(80, 80, 80);
-    doc.line(14, y, 196, y);
-
-    y += 10;
-
-    const labelX = 138;
-    const valueX = 184;
-
-    setDark(doc);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
+    doc.setFontSize(8.2);
     doc.text("Order Total", labelX, y);
 
-    y += 8;
+    y += 6;
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
+    doc.setFontSize(7.6);
 
     doc.text("Warehouse Costs", labelX, y);
-    doc.text(formatMoney(totals.warehouse), valueX, y, { align: "right" });
+    doc.text(formatMoney(pricing.warehouse), valueX, y, { align: "right" });
 
-    y += 7;
-
+    y += 5.2;
     doc.text("Transport Costs", labelX, y);
-    doc.text(formatMoney(totals.transport), valueX, y, { align: "right" });
+    doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport), valueX, y, { align: "right" });
 
-    y += 7;
+    if (!regional.priceOnRequest && pricing.regionalSurcharge > 0) {
+      y += 5.2;
+      doc.text(`Regional surcharge ${formatNumber(regional.percent, 0)}%`, labelX, y);
+      doc.text(formatMoney(pricing.regionalSurcharge), valueX, y, { align: "right" });
+    }
 
-    doc.text("Subtotal", labelX, y);
-    doc.text(formatMoney(subtotal), valueX, y, { align: "right" });
-
-    y += 7;
-
-    doc.text(`VAT ${Math.round(vatRate * 100)}%`, labelX, y);
-    doc.text(formatMoney(vat), valueX, y, { align: "right" });
-
-    y += 7;
-
+    y += 5.8;
     doc.setFont("helvetica", "bold");
-    doc.text("Total", labelX, y);
-    doc.text(formatMoney(total), valueX, y, { align: "right" });
+    doc.text("Subtotal excl. fuel surcharge & VAT", labelX, y);
+    doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal), valueX, y, { align: "right" });
 
-    return y + 12;
+    y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
+    y = drawPricingNoteBox(doc, y, ctx, order, logoDataUrl);
+
+    return y + 2;
   }
 
-  function drawMemoAndDamageNote(doc, y, memo) {
-    y += 4;
+  function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
+    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+
+    const memo = getMemo(order);
 
     if (memo) {
-      doc.setFillColor(247, 247, 247);
-      doc.rect(14, y - 5, 182, 23, "F");
+      const memoLines = splitText(doc, memo, 170).slice(0, 2);
+      const boxHeight = Math.max(10, memoLines.length * 3.5 + 6);
 
+      doc.setFillColor(248, 248, 248);
       doc.setDrawColor(210, 210, 210);
-      doc.rect(14, y - 5, 182, 23);
+      doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
 
       setDark(doc);
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.text("Memo", 18, y + 1);
+      doc.setFontSize(7.2);
+      doc.text("Memo", 17, y + 1);
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
-      const memoLines = splitText(doc, memo, 170);
-      doc.text(memoLines.slice(0, 2), 18, y + 8);
+      doc.setFontSize(7);
+      doc.text(memoLines, 37, y + 1);
 
-      y += 25;
+      y += boxHeight + 2;
     }
+
+    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
     setDark(doc);
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.7);
-    doc.text(DAMAGE_NOTE, 14, y);
+    doc.setFontSize(7.2);
+    const noteLines = splitText(doc, DAMAGE_NOTE, 180);
+    doc.text(noteLines.slice(0, 2), 14, y);
 
-    return y + 8;
+    return y + 5;
   }
 
   function drawBusinessFooter(doc, company) {
@@ -510,17 +948,17 @@ if (supplierRef) {
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
 
-      doc.setDrawColor(180, 180, 180);
-      doc.line(14, 276, 196, 276);
+      doc.setDrawColor(185, 185, 185);
+      doc.line(14, 277, 196, 277);
 
       setMuted(doc);
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
+      doc.setFontSize(7);
 
       const footerLine1 = company.footerText || `${company.name}  ${company.address}`;
       const footerLine2 = `Phone ${company.phone}   Email ${company.email}   VAT No ${company.vat}`;
 
-      doc.text(footerLine1, 105, 282, { align: "center" });
+      doc.text(footerLine1, 105, 282.5, { align: "center" });
       doc.text(footerLine2, 105, 287, { align: "center" });
 
       setDark(doc);
@@ -541,58 +979,14 @@ if (supplierRef) {
     });
 
     const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
+    const pricing = calculatePricing(order, ctx.settings || {});
 
-    drawHeader(doc, order, ctx, logoDataUrl);
+    drawHeader(doc, order, ctx, logoDataUrl, false);
     drawBillToAndShipTo(doc, order, ctx);
 
-    let y = 152;
-    y = drawTableHeader(doc, y);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-
-    const totals = {
-      warehouse: 0,
-      transport: 0
-    };
-
-    const lines = getOrderLines(order);
-
-    lines.forEach(line => {
-      y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl);
-
-      const sku = cleanText(line.sku_base || line.products?.sku_base || "—");
-      const description = cleanText(line.description || line.products?.description || line.products?.name || "—");
-      const qty = toNumber(line.quantity_ordered, 0);
-
-      const warehouseCost = getLineWarehouseCost(line);
-      const transportCost = getLineTransportCost(line);
-      const total = getLineTotal(line);
-
-      totals.warehouse += warehouseCost;
-      totals.transport += transportCost;
-
-      const descriptionLines = splitText(doc, description, 62);
-      const rowHeight = Math.max(8, descriptionLines.length * 4.3);
-
-      setDark(doc);
-      doc.text(sku, 14, y);
-      doc.text(descriptionLines, 36, y);
-      doc.text(String(qty), 103, y);
-      doc.text(formatMoney(warehouseCost), 124, y);
-      doc.text(formatMoney(transportCost), 158, y);
-      doc.text(formatMoney(total), 188, y);
-
-      y += rowHeight;
-    });
-
-    y += 8;
-    y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl);
-    y = drawTotalsBlock(doc, y, totals, ctx);
-
-    const memo = getMemo(order);
-    y = maybeAddNewPage(doc, y + 4, order, ctx, logoDataUrl);
-    drawMemoAndDamageNote(doc, y, memo);
+    const result = drawLines(doc, order, ctx, logoDataUrl, pricing);
+    let y = drawTotalsBlock(doc, result.y, pricing, ctx, order, logoDataUrl);
+    y = drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl);
 
     drawBusinessFooter(doc, ctx.company);
 
@@ -687,29 +1081,79 @@ if (supplierRef) {
     if (!client) throw new Error("Cannot generate ACK: Supabase client is missing.");
     if (!companyId) throw new Error("Cannot generate ACK: companyId is missing.");
 
+    const freshOrder = await loadFreshOrderForAck(client, companyId, order.id);
+    const workingOrder = freshOrder || order;
+
     const ctx = await loadCompanySettings(client, companyId);
-    ctx.productOwner = await loadProductOwnerProfile(client, order.customer_id, order);
+    ctx.productOwner = await loadProductOwnerProfile(client, workingOrder.customer_id, workingOrder);
 
-    const blob = await createPdfBlob(order, ctx);
-    const uploaded = await uploadPdf(client, companyId, order, blob);
+    const blob = await createPdfBlob(workingOrder, ctx);
+    const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
 
-    await upsertDocumentRecord(client, companyId, order, uploaded);
+    if (!uploaded.fileUrl || !uploaded.storagePath) {
+      throw new Error("ACK PDF was uploaded, but no file URL/storage path was returned.");
+    }
+
+    await upsertDocumentRecord(client, companyId, workingOrder, uploaded);
 
     await createActivity(
       client,
       companyId,
-      order,
+      workingOrder,
       "ACK document generated and uploaded"
     );
 
-    await client
-      .from("orders")
-      .update({
-        last_activity_at: new Date().toISOString()
-      })
-      .eq("id", order.id);
+await client
+  .from("orders")
+  .update({
+    last_activity_at: new Date().toISOString()
+  })
+  .eq("id", workingOrder.id);
 
-    return uploaded;
+//-----------------------------------------------------
+// Message Center Notification
+//-----------------------------------------------------
+
+try {
+
+  await client
+    .from("system_notifications")
+    .insert({
+
+      company_id: companyId,
+      customer_id: workingOrder.customer_id,
+
+      recipient_role: null,
+
+      notification_type: "ack_generated",
+
+      title: "New Acknowledgement",
+
+ message:
+  `Acknowledgement PDF is now available for order ${workingOrder.order_number || "Unknown"}.`,
+
+      severity: "info",
+
+      entity_type: "order",
+      entity_id: workingOrder.id,
+
+      action_url: uploaded.fileUrl,
+
+      is_read: false,
+      popup_shown: false
+
+    });
+
+} catch (error) {
+
+  console.warn(
+    "ACK notification could not be created:",
+    error.message
+  );
+
+}
+console.log("ACK notification should be created now");
+return uploaded;
   }
 
   window.AcknowledgementGenerator = {

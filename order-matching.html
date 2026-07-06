@@ -37,16 +37,28 @@
     .actions-left,.actions-right{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
-    .matching-table{width:100%;min-width:1650px;border-collapse:collapse}
-    .matching-table th,.matching-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12.5px;text-align:left;vertical-align:middle}
-    .matching-table th{background:#fbfbfc;font-size:10.5px;font-weight:800;text-transform:uppercase;color:#374151;letter-spacing:.03em;white-space:nowrap}
-    .matching-table tbody tr.order-row:hover{background:#fafcff;cursor:pointer}
+.matching-table{width:100%;min-width:1650px;border-collapse:collapse}    .matching-table tbody tr.order-row:hover{background:#fafcff;cursor:pointer}
     .matching-table tbody tr.order-row.active{background:#f7fbff}
     .matching-table tfoot td{background:#fafafa;font-weight:900;border-top:2px solid var(--border)}
     .checkbox-cell{width:36px;text-align:center}
     .expand-cell{width:42px;text-align:center}
     .expand-btn{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:#fff;font-weight:900;cursor:pointer}
     .expand-btn:hover{background:#f8fafc}
+
+.order-header{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:6px;
+}
+
+.order-cell .expand-btn{
+    flex-shrink:0;
+}
+
+.order-cell strong{
+    margin:0;
+}
 
     .sortable-th{cursor:pointer;user-select:none}
     .sortable-th:hover{background:#f2f4f7}
@@ -260,31 +272,30 @@
             <thead>
               <tr>
                 <th class="checkbox-cell"><input id="checkAllVisible" type="checkbox"/></th>
-                <th class="expand-cell"></th>
                 <th class="sortable-th" data-sort-key="order">Order <span class="sort-indicator" data-sort-indicator="order"></span></th>
-                <th class="sortable-th" data-sort-key="customer">Customer <span class="sort-indicator" data-sort-indicator="customer"></span></th>
-                <th class="sortable-th" data-sort-key="address">Ship To <span class="sort-indicator" data-sort-indicator="address"></span></th>
-                <th class="sortable-th" data-sort-key="lines">Lines <span class="sort-indicator" data-sort-indicator="lines"></span></th>
-                <th class="sortable-th" data-sort-key="matched">Matched <span class="sort-indicator" data-sort-indicator="matched"></span></th>
-                <th class="sortable-th" data-sort-key="volume">Actual volume <span class="sort-indicator" data-sort-indicator="volume"></span></th>
-                <th class="sortable-th" data-sort-key="weight">Actual weight <span class="sort-indicator" data-sort-indicator="weight"></span></th>
-                <th class="sortable-th" data-sort-key="geo">Geo <span class="sort-indicator" data-sort-indicator="geo"></span></th>
-                <th class="sortable-th" data-sort-key="match">Match <span class="sort-indicator" data-sort-indicator="match"></span></th>
-                <th class="sortable-th" data-sort-key="status">Status <span class="sort-indicator" data-sort-indicator="status"></span></th>
-                <th class="sortable-th" data-sort-key="release">Release <span class="sort-indicator" data-sort-indicator="release"></span></th>
-                <th class="sortable-th" data-sort-key="delivery_date">Delivery date <span class="sort-indicator" data-sort-indicator="delivery_date"></span></th>
+<th class="sortable-th" data-sort-key="customer">Product Owner <span class="sort-indicator" data-sort-indicator="customer"></span></th>
+<th class="sortable-th" data-sort-key="address">Retailer / Ship To <span class="sort-indicator" data-sort-indicator="address"></span></th>
+<th class="sortable-th" data-sort-key="lines">Lines <span class="sort-indicator" data-sort-indicator="lines"></span></th>
+<th class="sortable-th" data-sort-key="matched">Packages <span class="sort-indicator" data-sort-indicator="matched"></span></th>
+<th class="sortable-th" data-sort-key="volume">Volume <span class="sort-indicator" data-sort-indicator="volume"></span></th>
+<th class="sortable-th" data-sort-key="weight">Weight <span class="sort-indicator" data-sort-indicator="weight"></span></th>
+<th class="sortable-th" data-sort-key="geo">Coordinates <span class="sort-indicator" data-sort-indicator="geo"></span></th>
+<th class="sortable-th" data-sort-key="match">Completeness <span class="sort-indicator" data-sort-indicator="match"></span></th>
+<th class="sortable-th" data-sort-key="status">Lifecycle <span class="sort-indicator" data-sort-indicator="status"></span></th>
+<th class="sortable-th" data-sort-key="release">Planning <span class="sort-indicator" data-sort-indicator="release"></span></th>
+<th class="sortable-th" data-sort-key="delivery_date">Requested Delivery <span class="sort-indicator" data-sort-indicator="delivery_date"></span></th>
               </tr>
             </thead>
 
             <tbody id="ordersBody">
               <tr>
-                <td colspan="14">Loading orders...</td>
+                <td colspan="13">Loading orders...</td>
               </tr>
             </tbody>
 
             <tfoot>
               <tr>
-                <td colspan="5" id="totalOrdersLabel">Totals</td>
+                <td colspan="4" id="totalOrdersLabel">Totals</td>
                 <td id="totalLines">0</td>
                 <td id="totalMatched">0 / 0</td>
                 <td id="totalVolume">0.00 m³</td>

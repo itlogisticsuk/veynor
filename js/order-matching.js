@@ -180,18 +180,53 @@
   }
 
   function getLineAllocations(line) {
-    return (line.order_allocations || []).filter(a =>
-      normalize(a.allocation_status) !== CANCELLED_ALLOCATION_STATUS
-    );
-  }
+  return (line.order_allocations || []).filter(a =>
+    normalize(a.allocation_status) !== CANCELLED_ALLOCATION_STATUS
+  );
+}
 
-  function productVolume(product) {
-    return toNumber(product?.volume_m3, 0);
-  }
+function getUniqueStockSetAllocations(line) {
+  const allocs = getLineAllocations(line);
+  const map = new Map();
 
-  function productWeight(product) {
-    return toNumber(product?.weight_kg, 0);
-  }
+  allocs.forEach(alloc => {
+    const key =
+      alloc.stock_set_id ||
+      alloc.stock_sets?.id ||
+      alloc.items?.stock_set_id ||
+      alloc.item_id;
+
+    if (!key) return;
+    if (!map.has(String(key))) map.set(String(key), alloc);
+  });
+
+  return Array.from(map.values());
+}
+
+function allocationVolume(alloc, product) {
+  return toNumber(alloc.stock_sets?.volume_m3, productVolume(product));
+}
+
+function allocationWeight(alloc, product) {
+  return toNumber(alloc.stock_sets?.weight_kg, productWeight(product));
+}
+
+function allocationColli(alloc) {
+  return toNumber(
+    alloc.stock_sets?.package_count ||
+    alloc.stock_sets?.package_total ||
+    alloc.items?.package_total,
+    1
+  );
+}
+
+function productVolume(product) {
+  return toNumber(product?.volume_m3, 0);
+}
+
+function productWeight(product) {
+  return toNumber(product?.weight_kg, 0);
+}
 
   function itemVolume(item, product) {
     return toNumber(item?.volume_m3, productVolume(product));
@@ -457,8 +492,10 @@
       const product = line.products || {};
       const qty = toNumber(line.quantity_ordered, 0);
       const allocs = getLineAllocations(line);
-      const allocCount = allocs.length;
-      const missing = Math.max(0, qty - allocCount);
+const setAllocs = getUniqueStockSetAllocations(line);
+const allocCount = setAllocs.length;
+const matchedColli = setAllocs.reduce((sum, alloc) => sum + allocationColli(alloc), 0);
+const missing = Math.max(0, qty - allocCount);
 
       const sku = getLineSku(line);
       const hasLinkedProduct = Boolean(line.product_id || product.id || sku);
@@ -480,15 +517,13 @@
           productWeight(product)
         );
 
-      const lineAllocatedVolume = allocs.reduce((sum, alloc) => {
-        const item = alloc.items || {};
-        return sum + itemVolume(item, item.products || product);
-      }, 0);
+      const lineAllocatedVolume = setAllocs.reduce((sum, alloc) => {
+  return sum + allocationVolume(alloc, product);
+}, 0);
 
-      const lineAllocatedWeight = allocs.reduce((sum, alloc) => {
-        const item = alloc.items || {};
-        return sum + itemWeight(item, item.products || product);
-      }, 0);
+const lineAllocatedWeight = setAllocs.reduce((sum, alloc) => {
+  return sum + allocationWeight(alloc, product);
+}, 0);
 
       const lineStorage = toNumber(line.tariff_storage, 0);
       const lineAdmin = toNumber(line.tariff_admin, 0);
@@ -518,8 +553,10 @@
         description: getLineDescription(line),
         qty,
         allocs,
-        allocCount,
-        missing,
+setAllocs,
+allocCount,
+matchedColli,
+missing,
         requestedVolume: lineRequestedVolume,
         requestedWeight: lineRequestedWeight,
         allocatedVolume: lineAllocatedVolume,
@@ -535,8 +572,8 @@
       };
     });
 
-    required = toNumber(order.total_order_colli, 0) || toNumber(order.planning_colli, 0) || required;
-    matched = toNumber(order.matched_colli, 0) || matched;
+    required = required;
+matched = matched;
 
     requestedVolume = toNumber(order.total_order_volume_m3, 0) || toNumber(order.planning_volume_m3, 0) || requestedVolume;
     requestedWeight = toNumber(order.total_order_weight_kg, 0) || requestedWeight;
@@ -553,7 +590,7 @@
     if (!lines.length) blockers.push("No order lines");
     if (missingProductLines > 0) blockers.push(`${missingProductLines} line(s) missing product/SKU`);
     if (required <= 0) blockers.push("No required quantity");
-    if (matched < required) blockers.push(`${required - matched} item(s) not matched`);
+    if (matched < required) blockers.push(`${required - matched} complete product(s) not matched`);
     if (!String(order.delivery_city || "").trim()) blockers.push("Missing city");
     if (!String(order.delivery_postcode || "").trim()) blockers.push("Missing postcode");
     if (!hasCoordinates(order)) blockers.push("Missing coordinates");
@@ -637,56 +674,79 @@
           total_s2u_fees,
           total_customer_charge,
           products (
-            id,
-            sku_base,
-            name,
-            description,
-            volume_m3,
-            weight_kg,
-            net_weight_kg,
-            storage_tariff,
-            admin_tariff,
-            handling_tariff,
-            transport_tariff,
-            total_s2u_fees,
-            total_customer_charge
-          ),
-          order_allocations (
-            id,
-            order_line_id,
-            item_id,
-            allocation_status,
-            allocated_at,
-            items (
-              id,
-              product_id,
-              sku_unique,
-              storage_mutation_id,
-              status,
-              volume_m3,
-              weight_kg,
-              products (
-                id,
-                sku_base,
-                name,
-                volume_m3,
-                weight_kg
-              ),
-              warehouse_locations (
-                id,
-                code
-              ),
-              warehouses (
-                id,
-                name
-              )
-            )
+  id,
+  sku_base,
+  name,
+  description,
+  volume_m3,
+  weight_kg,
+  net_weight_kg,
+  package_count,
+  package_1_qty,
+  package_2_qty,
+  package_3_qty,
+  packages_per_unit,
+  storage_tariff,
+  admin_tariff,
+  handling_tariff,
+  transport_tariff,
+  total_s2u_fees,
+  total_customer_charge
+),
+order_allocations (
+  id,
+  order_line_id,
+  item_id,
+  stock_set_id,
+  allocation_status,
+  allocated_at,
+  stock_sets (
+    id,
+    set_code,
+    product_id,
+    status,
+    package_total,
+    package_count,
+    volume_m3,
+    weight_kg
+  ),
+  items (
+    id,
+    product_id,
+    sku_unique,
+    storage_mutation_id,
+    status,
+    volume_m3,
+    weight_kg,
+    package_no,
+    package_total,
+    package_label,
+    physical_product_id,
+    products (
+      id,
+      sku_base,
+      name,
+      volume_m3,
+      weight_kg
+    ),
+    warehouse_locations (
+      id,
+      code
+    ),
+    warehouses (
+      id,
+      name
           )
         )
+	)
+	)
       `)
-      .eq("company_id", cid)
-      .order("requested_delivery_date", { ascending: true, nullsFirst: false })
-      .order("order_number", { ascending: true });
+
+.eq("company_id", cid)
+.or("planning_release.is.null,planning_release.eq.false")
+.not("status", "in", '("loaded","delivered","cancelled")')
+.order("requested_delivery_date", { ascending: true, nullsFirst: false })
+.order("order_number", { ascending: true });
 
     if (error) throw error;
 
@@ -1117,14 +1177,16 @@
           <td class="checkbox-cell">
             <input class="row-check" type="checkbox" data-order-id="${escapeHtml(order.id)}" ${selectedIds.has(String(order.id)) ? "checked" : ""}/>
           </td>
+<td class="order-cell">
+  <div class="order-header">
+    <button class="expand-btn"
+            type="button"
+            data-expand-order="${escapeHtml(order.id)}">
+      ${isOpen ? "−" : "+"}
+    </button>
 
-          <td class="expand-cell">
-            <button class="expand-btn" type="button" data-expand-order="${escapeHtml(order.id)}">${isOpen ? "−" : "+"}</button>
-          </td>
-
-          <td>
-<td>
-  <strong>${escapeHtml(order.order_number || "—")}</strong>
+    <strong>${escapeHtml(order.order_number || "—")}</strong>
+  </div>
 
   ${
     order.external_reference
@@ -1132,8 +1194,7 @@
       : ""
   }
 
-  <span class="subline">PO: ${escapeHtml(order.purchase_order || "Unknown")}</span>
-            ${
+  <span class="subline">PO: ${escapeHtml(order.purchase_order || "Unknown")}</span>            ${
               memo
                 ? `<span class="subline memo-link" data-memo-order-id="${escapeHtml(order.id)}">Memo: ${escapeHtml(shortMemo(memo))}</span>`
                 : `<span class="subline memo-link" data-memo-order-id="${escapeHtml(order.id)}">Memo: Add memo</span>`
@@ -1141,7 +1202,7 @@
           </td>
 
           <td>${escapeHtml(order.customer_name || "—")}</td>
-          <td>${escapeHtml(address)}</td>
+          <td class="ship-to-cell">${escapeHtml(address)}</td>
           <td>${formatNumber((order.order_lines || []).length)}</td>
 
           <td>
@@ -1231,7 +1292,7 @@
 
     return `
       <tr class="order-detail-row ${isOpen ? "open" : ""}" data-detail-row-for="${escapeHtml(order.id)}">
-        <td class="order-detail-cell" colspan="14">
+        <td class="order-detail-cell" colspan="13">
           <div class="inline-detail">
             <div class="inline-detail-head">
               <div>
@@ -1243,9 +1304,14 @@
 
             <div class="detail-grid">
               <div class="detail-box">
-                <div class="detail-label">Ship To</div>
-                <div class="detail-value">${escapeHtml(order.ship_to_address || getAddressText(order))}</div>
-              </div>
+  <div class="detail-label">Products</div>
+  <div class="detail-value">${formatNumber(s.matched)} / ${formatNumber(s.required)}</div>
+</div>
+
+<div class="detail-box">
+  <div class="detail-label">Packages</div>
+  <div class="detail-value">${formatNumber(s.matchedPackages || s.matched_packages || s.matchedColli || s.matched)} / ${formatNumber(s.requiredPackages || s.required_packages || s.requiredColli || s.required)}</div>
+</div>
 
               <div class="detail-box">
                 <div class="detail-label">Memo</div>
@@ -1299,7 +1365,7 @@
               </div>
 
               <div class="detail-box">
-                <div class="detail-label">Colli</div>
+                <div class="detail-label">Packages</div>
                 <div class="detail-value">${formatNumber(s.required || order.planning_colli || 0)}</div>
               </div>
 
@@ -1597,54 +1663,81 @@
     }
   }
 
-  async function releaseOrders(orderIds) {
-    const releasable = [];
-    const blocked = [];
+async function releaseOrders(orderIds) {
+  const cid = await getCompanyId();
 
-    orderIds.forEach(id => {
-      const order = allOrders.find(o => String(o.id) === String(id));
-      if (!order) return;
+  const releasable = [];
+  const blocked = [];
 
-      const stats = calculateOrderStats(order);
+  orderIds.forEach(id => {
+    const order = allOrders.find(o => String(o.id) === String(id));
+    if (!order) return;
 
-      if (stats.readyForPlanning) {
-        releasable.push(order);
-      } else {
-        blocked.push({
-          order,
-          blockers: stats.blockers
-        });
-      }
-    });
+    const stats = calculateOrderStats(order);
 
-    if (blocked.length) {
-      const first = blocked[0];
-      throw new Error(`${blocked.length} order(s) blocked. Example ${first.order.order_number}: ${first.blockers.join(" · ")}`);
+    if (stats.readyForPlanning) {
+      releasable.push(order);
+    } else {
+      blocked.push({
+        order,
+        blockers: stats.blockers
+      });
     }
+  });
 
-    if (!releasable.length) {
-      throw new Error("No ready orders to release.");
-    }
+  if (blocked.length) {
+    const first = blocked[0];
 
-    for (const order of releasable) {
-      const { error } = await client
-        .from("orders")
-        .update({
-          status: "ready_for_planning",
-          planning_release: true,
-          released_to_planning_at: nowIso(),
-          released_to_planning_by: "manual",
-          planning_colli: getTotalColli(order),
-          planning_volume_m3: round3(getTotalVolume(order))
-        })
-        .eq("id", order.id);
+    console.warn("Release blocked:", blocked);
 
-      if (error) throw error;
-    }
-
-    return releasable.length;
+    throw new Error(
+      `${blocked.length} order(s) blocked. Example ${first.order.order_number}: ${first.blockers.join(" · ")}`
+    );
   }
 
+  if (!releasable.length) {
+    throw new Error("No ready orders to release.");
+  }
+
+  for (const order of releasable) {
+    console.log("Releasing order to planning:", order.order_number, order.id);
+
+    const payload = {
+      status: "ready_for_planning",
+      planning_release: true,
+      released_to_planning_at: nowIso(),
+      released_to_planning_by: "manual",
+      planning_colli: getTotalColli(order),
+      planning_volume_m3: round3(getTotalVolume(order)),
+      last_activity_at: nowIso()
+    };
+
+    const { data, error } = await client
+      .from("orders")
+      .update(payload)
+      .eq("company_id", cid)
+      .eq("id", order.id)
+      .select("id, order_number, status, planning_release")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Release update failed:", order.order_number, error);
+      throw error;
+    }
+
+    if (!data || data.planning_release !== true) {
+      console.error("Release update returned no confirmed row:", order.order_number, data);
+
+      throw new Error(
+        `Order ${order.order_number || order.id} was not released. No confirmed database update returned.`
+      );
+    }
+
+    console.log("Released successfully:", data);
+  }
+
+  return releasable.length;
+}
   async function geocodeAndReleaseSelected() {
     try {
       const ids = selectedIds.size

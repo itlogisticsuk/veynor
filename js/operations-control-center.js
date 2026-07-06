@@ -12,6 +12,12 @@
 
   let allOrders = [];
   let filteredOrders = [];
+let allProducts = [];
+let ownerProfiles = [];
+let deliveryGroupsMap = new Map();
+let showDeliveryGroups = false;
+let orderViewMode = "active";
+let editRemovedLineIds = new Set();
 
   const selectedOrderIds = new Set();
   const expandedOrderIds = new Set();
@@ -239,8 +245,15 @@
     if (isTenantRole()) return true;
 
     if (isProductOwnerRole()) {
-      return ["supplier_packing_slip", "delivery_note", "pod", "signed_delivery_note", "invoice"].includes(docType);
-    }
+  return [
+    "acknowledgement",
+    "supplier_packing_slip",
+    "delivery_note",
+    "pod",
+    "signed_delivery_note",
+    "invoice"
+  ].includes(docType);
+}
 
     if (isRetailerRole()) {
       return ["delivery_note", "pod", "signed_delivery_note"].includes(docType);
@@ -576,95 +589,147 @@ function getProductOwnerName(order) {
     return d < todayStart() && !["delivered"].includes(order.derived_lifecycle_status);
   }
 
-  function getLineRequiredQty(line) {
-    return toNumber(line.quantity_ordered || line.quantity || 0, 0);
+ function getLineRequiredQty(line) {
+  return toNumber(line.quantity_ordered || line.quantity || 0, 0);
+}
+
+function getLineSku(line) {
+  return cleanText(line.sku_base || line.products?.sku_base || "—");
+}
+
+function getLineDescription(line) {
+  return cleanText(
+    line.description ||
+    line.products?.description ||
+    line.products?.name ||
+    "—"
+  );
+}
+
+function getLineRevenue(line) {
+  const direct = toNumber(line.total_customer_charge, 0);
+
+  if (direct !== 0) return direct;
+
+  const manualAmount = toNumber(line.manual_amount_gbp, 0);
+  if (manualAmount !== 0) return manualAmount;
+
+  const qty = getLineRequiredQty(line) || 1;
+
+  const tariffTotal =
+    toNumber(line.tariff_storage, 0) +
+    toNumber(line.tariff_admin, 0) +
+    toNumber(line.tariff_handling, 0) +
+    toNumber(line.tariff_transport, 0);
+
+  return tariffTotal * qty;
+}
+
+function getOrderRevenue(order) {
+  const direct = toNumber(order.total_customer_charge, 0);
+
+  if (direct !== 0) return direct;
+
+  return (order.order_lines || []).reduce((sum, line) => {
+    return sum + getLineRevenue(line);
+  }, 0);
+}
+
+function getProductPackageCount(product) {
+  const packageCount = toNumber(product?.package_count, 0);
+  if (packageCount > 0) return Math.max(1, Math.round(packageCount));
+
+  const packagesPerUnit = toNumber(product?.packages_per_unit, 0);
+  if (packagesPerUnit > 0) return Math.max(1, Math.round(packagesPerUnit));
+
+  const flags = [
+    toNumber(product?.package_1_qty, 0),
+    toNumber(product?.package_2_qty, 0),
+    toNumber(product?.package_3_qty, 0)
+  ];
+
+  const count = flags.filter(v => v > 0).length;
+  return Math.max(1, count || 1);
+}
+
+function getLineRequiredPackages(line) {
+  const qty = getLineRequiredQty(line);
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    return qty;
   }
 
-  function getLineMatchedQty(line) {
-    const allocs = Array.isArray(line.order_allocations) ? line.order_allocations : [];
+  return qty * getProductPackageCount(line.products || {});
+}
 
-    return allocs.filter(allocation =>
-      !["cancelled", "removed", "unreserved"].includes(normalize(allocation.allocation_status))
-    ).length;
+function getLineMatchedQty(line) {
+  const allocs = Array.isArray(line.order_allocations) ? line.order_allocations : [];
+
+  const active = allocs.filter(allocation =>
+    !["cancelled"].includes(normalize(allocation.allocation_status))
+  );
+
+  if (
+    toNumber(line.requested_package_no, 0) > 0 &&
+    toNumber(line.requested_package_total, 0) > 0
+  ) {
+    return active.length;
   }
 
-  function getLineSku(line) {
-    return cleanText(line.sku_base || line.products?.sku_base || "—");
-  }
+  return active.reduce((sum, allocation) => {
+    return sum + Math.max(1, Math.round(toNumber(allocation.items?.package_total, 1)));
+  }, 0);
+}
 
-  function getLineDescription(line) {
-    return cleanText(line.description || line.products?.description || line.products?.name || "—");
-  }
+function getProductCompleteness(order) {
+  const lines = Array.isArray(order.order_lines)
+  ? order.order_lines.filter(line => normalize(line.line_type) !== "manual")
+  : [];
 
-  function getLineRevenue(line) {
-    const direct = toNumber(line.total_customer_charge, 0);
-    if (direct > 0) return direct;
+  const required = lines.reduce((sum, line) => sum + getLineRequiredPackages(line), 0);
 
-    const qty = getLineRequiredQty(line) || 1;
+  const matched = lines.reduce((sum, line) => {
+    const requiredPackages = getLineRequiredPackages(line);
+    return sum + Math.min(getLineMatchedQty(line), requiredPackages);
+  }, 0);
 
-    const tariffTotal =
-      toNumber(line.tariff_storage, 0) +
-      toNumber(line.tariff_admin, 0) +
-      toNumber(line.tariff_handling, 0) +
-      toNumber(line.tariff_transport, 0);
+  const missing = Math.max(0, required - matched);
+  const pct = required > 0 ? Math.min(100, Math.round((matched / required) * 100)) : 0;
 
-    return tariffTotal * qty;
-  }
-
-  function getOrderRevenue(order) {
-    const direct =
-      toNumber(order.estimated_revenue_gbp, 0) ||
-      toNumber(order.total_customer_charge, 0) ||
-      toNumber(order.customer_charge_gbp, 0) ||
-      toNumber(order.revenue_gbp, 0) ||
-      toNumber(order.order_revenue_gbp, 0);
-
-    if (direct > 0) return direct;
-
-    return (order.order_lines || []).reduce((sum, line) => sum + getLineRevenue(line), 0);
-  }
-
-  function getProductCompleteness(order) {
-    const lines = Array.isArray(order.order_lines) ? order.order_lines : [];
-
-    const required = lines.reduce((sum, line) => sum + getLineRequiredQty(line), 0);
-    const matched = lines.reduce((sum, line) => {
-      return sum + Math.min(getLineMatchedQty(line), getLineRequiredQty(line));
-    }, 0);
-
-    const missing = Math.max(0, required - matched);
-    const pct = required > 0 ? Math.min(100, Math.round((matched / required) * 100)) : 0;
-
-    const lineDetails = lines.map(line => {
-      const requiredQty = getLineRequiredQty(line);
-      const matchedQty = Math.min(getLineMatchedQty(line), requiredQty);
-      const missingQty = Math.max(0, requiredQty - matchedQty);
-
-      return {
-        id: line.id,
-        sku: getLineSku(line),
-        description: getLineDescription(line),
-        required: requiredQty,
-        matched: matchedQty,
-        missing: missingQty,
-        complete: requiredQty > 0 && matchedQty >= requiredQty,
-        revenue: getLineRevenue(line)
-      };
-    });
-
-    let status = "none";
-    if (required > 0 && missing <= 0) status = "complete";
-    if (required > 0 && missing > 0) status = "missing";
+  const lineDetails = lines.map(line => {
+    const requiredPackages = getLineRequiredPackages(line);
+    const matchedPackages = Math.min(getLineMatchedQty(line), requiredPackages);
+    const missingPackages = Math.max(0, requiredPackages - matchedPackages);
 
     return {
-      required,
-      matched,
-      missing,
-      pct,
-      status,
-      lines: lineDetails
+      id: line.id,
+      sku: getLineSku(line),
+      description: getLineDescription(line),
+      required: requiredPackages,
+      matched: matchedPackages,
+      missing: missingPackages,
+      orderedProducts: getLineRequiredQty(line),
+      complete: requiredPackages > 0 && matchedPackages >= requiredPackages,
+      revenue: getLineRevenue(line)
     };
-  }
+  });
+
+  let status = "none";
+  if (required > 0 && missing <= 0) status = "complete";
+  if (required > 0 && missing > 0) status = "missing";
+
+  return {
+    required,
+    matched,
+    missing,
+    pct,
+    status,
+    lines: lineDetails
+  };
+}
 
   function deriveFinanceStatus(order) {
     const explicit = normalize(order.finance_status || "");
@@ -729,6 +794,152 @@ function getProductOwnerName(order) {
     return 1;
   }
 
+function getOrderVolumeM3(order) {
+  return (order.order_lines || []).reduce((sum, line) => {
+    const qty = getLineRequiredQty(line) || 1;
+
+    const volume =
+      toNumber(line.total_line_volume_m3, 0) ||
+      toNumber(line.total_volume_m3, 0) ||
+      (toNumber(line.unit_volume_m3, 0) * qty) ||
+      (toNumber(line.products?.volume_m3, 0) * qty);
+
+    return sum + volume;
+  }, 0);
+}
+
+function getDeliveryGroupKey(order) {
+  return [
+    order.customer_id || "",
+    getRetailerCode(order),
+    String(order.delivery_postcode || "").toUpperCase().replace(/\s+/g, "")
+  ].join("|");
+}
+
+function getOwnerProfileForOrder(order) {
+  const ownerCode = normalize(order.customers?.customer_code || order.customer_code || "");
+  const ownerName = normalize(getProductOwnerName(order));
+
+  return ownerProfiles.find(owner =>
+    normalize(owner.customer_code) === ownerCode ||
+    normalize(owner.trading_name) === ownerName ||
+    normalize(owner.name) === ownerName
+  ) || null;
+}
+
+function getMinimumRulesForOrder(order) {
+  const owner = getOwnerProfileForOrder(order);
+
+  return {
+    enabled: owner?.minimum_delivery_enabled !== false,
+    minimumVolume: toNumber(owner?.minimum_delivery_volume_m3, 1.25),
+    tariffPerM3: toNumber(owner?.minimum_delivery_transport_tariff_per_m3, 55.20),
+    invoiceLabel: owner?.minimum_delivery_invoice_label || "Minimum Delivery Charge"
+  };
+}
+
+function isReadyForDeliveryGroup(order) {
+  return ["stock_complete", "planned"].includes(normalize(order.derived_lifecycle_status));
+}
+
+function isWaitingForDeliveryGroup(order) {
+  return ["order_received", "awaiting_goods"].includes(normalize(order.derived_lifecycle_status));
+}
+
+function isExcludedFromDeliveryGroup(order) {
+  return [
+    "on_transport",
+    "delivered",
+    "issue"
+  ].includes(normalize(order.derived_lifecycle_status));
+}
+
+function isHistoricalOrder(order) {
+  const status = normalize(order.status);
+  const type = normalize(order.order_type);
+  const lifecycle = normalize(order.derived_lifecycle_status);
+
+  return (
+    type === "credit" ||
+    lifecycle === "delivered" ||
+    status === "closed" ||
+    status === "cancelled"
+  );
+}
+
+function isActiveOrder(order) {
+  return !isHistoricalOrder(order);
+}
+
+function rebuildDeliveryGroups() {
+  deliveryGroupsMap = new Map();
+
+  allOrders.forEach(order => {
+    if (isExcludedFromDeliveryGroup(order)) return;
+    if (!isReadyForDeliveryGroup(order) && !isWaitingForDeliveryGroup(order)) return;
+
+    const rules = getMinimumRulesForOrder(order);
+    if (!rules.enabled) return;
+
+    const key = getDeliveryGroupKey(order);
+    const volume = round2(getOrderVolumeM3(order));
+
+    if (!deliveryGroupsMap.has(key)) {
+      deliveryGroupsMap.set(key, {
+        key,
+        productOwner: getProductOwnerName(order),
+        retailer: getRetailerName(order),
+        postcode: order.delivery_postcode || "",
+        minimumVolume: rules.minimumVolume,
+        tariffPerM3: rules.tariffPerM3,
+        invoiceLabel: rules.invoiceLabel,
+
+        readyVolume: 0,
+        waitingVolume: 0,
+        totalPotentialVolume: 0,
+
+        shortfall: 0,
+        surcharge: 0,
+
+        readyOrders: [],
+        waitingOrders: []
+      });
+    }
+
+    const group = deliveryGroupsMap.get(key);
+
+    const item = {
+      id: order.id,
+      orderNumber: order.order_number || "Order",
+      reference: order.external_reference || "",
+      status: order.derived_lifecycle_status,
+      volume
+    };
+
+    if (isReadyForDeliveryGroup(order)) {
+      group.readyVolume += volume;
+      group.readyOrders.push(item);
+    }
+
+    if (isWaitingForDeliveryGroup(order)) {
+      group.waitingVolume += volume;
+      group.waitingOrders.push(item);
+    }
+  });
+
+  deliveryGroupsMap.forEach(group => {
+    group.readyVolume = round2(group.readyVolume);
+    group.waitingVolume = round2(group.waitingVolume);
+    group.totalPotentialVolume = round2(group.readyVolume + group.waitingVolume);
+
+    group.shortfall = round2(Math.max(0, group.minimumVolume - group.readyVolume));
+    group.surcharge = round2(group.shortfall * group.tariffPerM3);
+  });
+}
+function getDeliveryGroup(order) {
+  return deliveryGroupsMap.get(getDeliveryGroupKey(order)) || null;
+}
+
   function enrichOrder(order) {
     const productCompleteness = getProductCompleteness(order);
     const lifecycle = deriveLifecycleStatus(order);
@@ -761,8 +972,43 @@ function getProductOwnerName(order) {
     };
   }
 
-  async function loadOrders() {
-    const cid = await getCompanyId();
+async function loadOwnerProfilesForMinimumRules() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_value")
+    .eq("company_id", cid)
+    .eq("setting_key", "product_owner_profiles")
+    .maybeSingle();
+
+  if (error) throw error;
+
+  try {
+    ownerProfiles = JSON.parse(data?.setting_value || "[]");
+  } catch {
+    ownerProfiles = [];
+  }
+}
+
+async function loadStoredDeliveryGroups() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("delivery_groups")
+    .select("*")
+    .eq("company_id", cid);
+
+  if (error) throw error;
+
+  window.__storedDeliveryGroups = data || [];
+}
+
+async function loadOrders() {
+  const cid = await getCompanyId();
+
+  await loadOwnerProfilesForMinimumRules();
+await loadStoredDeliveryGroups();
 
     let query = client
       .from("orders")
@@ -849,13 +1095,19 @@ function getProductOwnerName(order) {
           created_at
         ),
         order_lines (
-          id,
-          order_id,
-          quantity_ordered,
-          product_id,
-          sku_base,
-          description,
-          unit_volume_m3,
+  id,
+  order_id,
+  quantity_ordered,
+  requested_package_no,
+  requested_package_total,
+  requested_package_label,
+  product_id,
+  sku_base,
+description,
+line_type,
+manual_description,
+manual_amount_gbp,
+unit_volume_m3,
           total_volume_m3,
           total_line_volume_m3,
           tariff_storage,
@@ -864,16 +1116,35 @@ function getProductOwnerName(order) {
           tariff_transport,
           total_customer_charge,
           products (
-            id,
-            sku_base,
-            name,
-            description,
-            volume_m3
-          ),
+  id,
+  sku_base,
+  name,
+  description,
+  volume_m3,
+  weight_kg,
+  net_weight_kg,
+  package_count,
+  package_1_qty,
+  package_2_qty,
+  package_3_qty,
+  packages_per_unit
+),
           order_allocations (
-            id,
-            allocation_status
-          )
+  id,
+  order_line_id,
+  item_id,
+  allocation_status,
+items (
+  id,
+  status,
+  product_id,
+  physical_product_id,
+  stock_set_id,
+  package_no,
+  package_total,
+  package_label
+)
+)
         )
       `)
       .eq("company_id", cid)
@@ -892,6 +1163,7 @@ function getProductOwnerName(order) {
     if (error) throw error;
 
     allOrders = (data || []).map(enrichOrder);
+rebuildDeliveryGroups();
 
     selectedOrderIds.forEach(id => {
       if (!allOrders.some(order => String(order.id) === String(id))) {
@@ -955,7 +1227,9 @@ function getProductOwnerName(order) {
     const finance = canSeeFinance() ? normalize(byId("filterFinance")?.value || "") : "";
     const dateStatus = normalize(byId("filterDateStatus")?.value || "");
 
-    filteredOrders = allOrders.filter(order => {
+ filteredOrders = allOrders.filter(order => {
+  if (orderViewMode === "active" && !isActiveOrder(order)) return false;
+  if (orderViewMode === "historical" && !isHistoricalOrder(order)) return false;
       if (lifecycle) {
         const compact = compactLifecycleStep(order);
         const lifecycleMatches =
@@ -1088,6 +1362,24 @@ function getProductOwnerName(order) {
       ).length)
     );
 
+const visibleGroups = new Map();
+
+filteredOrders.forEach(order => {
+  const group = getDeliveryGroup(order);
+  if (group) visibleGroups.set(group.key, group);
+});
+
+const belowMinimumGroups = [...visibleGroups.values()].filter(group => group.shortfall > 0);
+const potentialSurcharge = belowMinimumGroups.reduce((sum, group) => sum + group.surcharge, 0);
+
+setText("kpiMinimumVolumeGroups", formatNumber(belowMinimumGroups.length));
+setText(
+  "kpiMinimumVolumeValue",
+  belowMinimumGroups.length
+    ? `${formatMoney(potentialSurcharge)} potential surcharge`
+    : "No retailers below minimum"
+);
+
     setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
   }
 
@@ -1180,14 +1472,24 @@ function getProductOwnerName(order) {
     `;
   }
 
-  function getVisibleDocumentTypes() {
-    return [
-      ["acknowledgement", "ACK"],
-      ["supplier_packing_slip", "Packing Slip"],
-      ["delivery_note", "Delivery Note"],
-      ["pod", "POD"],
-      ["invoice", "Invoice"]
-    ].filter(([type]) => canSeeDocumentType(type));
+function getVisibleDocumentTypes(order) {
+
+  const docs = [
+    ["acknowledgement", "ACK"],
+    ["supplier_packing_slip", "Packing Slip"],
+    ["delivery_note", "Delivery Note"],
+    ["pod", "POD"],
+    ["invoice", "Invoice"]
+  ];
+
+  if (
+    normalize(order.order_type) === "credit" &&
+    getDoc(order, "credit_note")
+  ) {
+    docs.push(["credit_note", "Credit Note"]);
+  }
+
+  return docs.filter(([type]) => canSeeDocumentType(type));
   }
 
   function documentIsGenerated(order, type) {
@@ -1231,15 +1533,76 @@ function getProductOwnerName(order) {
     `;
   }
 
-  function renderFinanceCell(order) {
+function getOrderType(order) {
+  return normalize(order.order_type || "standard");
+}
+
+function renderOrderTypeBadge(order) {
+  const type = getOrderType(order);
+
+  if (type === "manual_charge") {
+    return `<span class="status-pill orange">Manual Charge</span>`;
+  }
+
+  if (type === "credit") {
+    return `<span class="status-pill red">Credit</span>`;
+  }
+
+  if (type === "copy") {
+    return `<span class="status-pill green">Copy</span>`;
+  }
+
+  return `<span class="status-pill blue">Standard</span>`;
+}
+
+function renderFinanceCell(order) {
+  return `
+    <div class="finance-metric">
+      ${pill(order.derived_finance_status)}
+      ${canSeeInternalPlanningData() ? `<strong>${formatMoney(getOrderRevenue(order))}</strong>` : ""}
+    </div>
+  `;
+}
+
+function renderDeliveryGroupCell(order) {
+  const group = getDeliveryGroup(order);
+
+  if (!group) {
+    return `<div class="subline">—</div>`;
+  }
+
+  const readyVolume = toNumber(group.readyVolume, 0);
+  const minimumVolume = toNumber(group.minimumVolume, 1.25);
+  const shortfall = round2(Math.max(0, minimumVolume - readyVolume));
+  const surcharge = round2(shortfall * toNumber(group.tariffPerM3, 55.20));
+
+  if (readyVolume <= 0) {
     return `
-      <div class="finance-metric">
-        ${pill(order.derived_finance_status)}
-        ${canSeeInternalPlanningData() ? `<strong>${formatMoney(getOrderRevenue(order))}</strong>` : ""}
+      <div class="delivery-group wait">
+        <strong>0.00 / ${formatNumber(minimumVolume, 2)} m³</strong>
+        <span class="subline">Waiting goods</span>
       </div>
     `;
   }
 
+  if (shortfall <= 0) {
+    return `
+      <div class="delivery-group good">
+        <strong>✓ ${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
+        <span class="subline">Ready</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="delivery-group warn">
+      <strong>${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
+      <span class="subline">
+        Shortfall ${formatNumber(shortfall, 2)} m³ · +${formatMoney(surcharge)}
+      </span>
+    </div>
+  `;
+}
   function renderMemoLink(order, maxLength = 70) {
     const memo = getMemo(order);
     if (!memo) return `<span class="subline">Memo: —</span>`;
@@ -1251,89 +1614,160 @@ function getProductOwnerName(order) {
     `;
   }
 
-  function renderProductLines(order) {
-    const c = order.product_completeness || getProductCompleteness(order);
+function renderProductLines(order) {
+  const c = order.product_completeness || getProductCompleteness(order);
+  const manualLines = (order.order_lines || []).filter(line => normalize(line.line_type) === "manual");
 
-    if (!c.lines.length) {
-      return `<div class="detail-line"><span class="detail-label">Products</span><span class="detail-value">No product lines found.</span></div>`;
-    }
-
-    return c.lines.map(line => `
+  const stockHtml = !c.lines.length
+    ? `<div class="detail-line"><span class="detail-label">Products</span><span class="detail-value">No stock product lines found.</span></div>`
+    : c.lines.map(line => `
       <div class="detail-line">
         <span class="detail-label">${escapeHtml(line.sku)}</span>
-        <span class="detail-value">
-          ${escapeHtml(shortText(line.description, 54))}
-          <span class="subline">
-            Ordered ${formatNumber(line.required, 0)}
-            · Matched ${formatNumber(line.matched, 0)}
+       <span class="detail-value">
+  <span style="
+    display:inline-block;
+    width:10px;
+    height:10px;
+    border-radius:50%;
+    margin-right:7px;
+    background:${line.complete ? "#16a34a" : "#ef4444"};
+  "></span>
+  ${escapeHtml(shortText(line.description, 54))}
+  <span class="subline">
+    Ordered ${formatNumber(line.required, 0)}
+    · Matched ${formatNumber(line.matched, 0)}
             ${line.missing > 0 ? `· Missing ${formatNumber(line.missing, 0)}` : `· Complete`}
             ${canSeeFinance() ? `· ${formatMoney(line.revenue)}` : ""}
           </span>
         </span>
       </div>
     `).join("");
-  }
 
-  function renderDocumentAction(order, type, label) {
-    const doc = getDoc(order, type);
-    const status = doc?.document_status || "not_generated";
-    const url = type === "pod" ? getPodDocumentUrl(order) : doc?.file_url || "";
+  const manualHtml = manualLines.map(line => `
+    <div class="detail-line">
+      <span class="detail-label">MANUAL</span>
+      <span class="detail-value">
+        ${escapeHtml(shortText(line.manual_description || line.description || "Manual product", 54))}
+        <span class="subline">
+          ${canSeeFinance() ? `${formatMoney(line.total_customer_charge || line.manual_amount_gbp || 0)}` : "Manual line"}
+        </span>
+      </span>
+    </div>
+  `).join("");
 
-    if (url) {
-      return `<a class="quick-action" href="${escapeHtml(url)}" target="_blank" rel="noopener"><span>${escapeHtml(label)}</span><span>Download</span></a>`;
-    }
+  return stockHtml + manualHtml;
+}
 
-    if (canGenerateDocuments() && type !== "supplier_packing_slip" && type !== "pod") {
-      return `
-        <button class="quick-action" type="button" data-doc-action="${escapeHtml(type)}" data-order-id="${escapeHtml(order.id)}">
-          <span>${escapeHtml(label)}</span>
-          <span>Generate</span>
-        </button>
-      `;
-    }
+function portalDocType(type) {
+  const map = {
+    acknowledgement: "ack",
+    delivery_note: "delivery_note",
+    invoice: "invoice",
+    credit_note: "credit_note",
+    pod: "pod",
+    signed_delivery_note: "pod"
+  };
 
+  return map[normalize(type)] || normalize(type || "document");
+}
+
+function renderPortalDocAttrs(order, type, action = "downloaded", url = "") {
+  return `
+    data-portal-doc-type="${escapeHtml(portalDocType(type))}"
+    data-portal-doc-action="${escapeHtml(action)}"
+    data-order-id="${escapeHtml(order.id)}"
+    data-order-number="${escapeHtml(order.order_number || "")}"
+    data-url="${escapeHtml(url || "")}"
+  `;
+}
+
+function renderDocumentAction(order, type, label) {
+  const doc = getDoc(order, type);
+  const status = doc?.document_status || "not_generated";
+  const url = type === "pod" ? getPodDocumentUrl(order) : doc?.file_url || "";
+
+  if (url) {
     return `
-      <div class="quick-action" style="opacity:.7;">
+      <a
+        class="quick-action"
+        href="${escapeHtml(url)}"
+        target="_blank"
+        rel="noopener"
+        ${renderPortalDocAttrs(order, type, "downloaded", url)}
+      >
         <span>${escapeHtml(label)}</span>
-        <span>${escapeHtml(statusLabel(status))}</span>
-      </div>
+        <span>Download</span>
+      </a>
     `;
   }
 
-  function renderDocumentsPanel(order) {
-    const docs = getVisibleDocumentTypes(order);
-    const photos = getPodPhotos(order);
-
+  if (canGenerateDocuments() && type !== "supplier_packing_slip" && type !== "pod") {
     return `
-      <div class="quick-action-list">
-        ${docs.map(([type, label]) => renderDocumentAction(order, type, label)).join("")}
+      <button
+        class="quick-action"
+        type="button"
+        data-doc-action="${escapeHtml(type)}"
+        data-order-id="${escapeHtml(order.id)}"
+        data-order-number="${escapeHtml(order.order_number || "")}"
+      >
+        <span>${escapeHtml(label)}</span>
+        <span>Generate</span>
+      </button>
+    `;
+  }
 
-        ${
-          canSeeDocumentType("pod")
-            ? photos.length
-              ? `<button class="quick-action" type="button" data-open-pod-photos="${escapeHtml(order.id)}"><span>Delivery Photos</span><span>${photos.length}/5</span></button>`
-              : `<div class="quick-action" style="opacity:.7;"><span>Delivery Photos</span><span>No photos</span></div>`
-            : ""
-        }
+  return `
+    <div class="quick-action" style="opacity:.7;">
+      <span>${escapeHtml(label)}</span>
+      <span>${escapeHtml(statusLabel(status))}</span>
+    </div>
+  `;
+}
 
-        ${
-          isTenantRole()
+function renderDocumentsPanel(order) {
+  const docs = getVisibleDocumentTypes(order);
+  const photos = getPodPhotos(order);
+
+  return `
+    <div class="quick-action-list">
+      ${docs.map(([type, label]) => renderDocumentAction(order, type, label)).join("")}
+
+      ${
+        canSeeDocumentType("pod")
+          ? photos.length
             ? `
-              <button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}">
-                <span>Manual delivery / POD</span>
-                <span>Open</span>
-              </button>
-
-              <button class="quick-action" type="button" data-open-tariff-modal="${escapeHtml(order.id)}">
-                <span>Finance / Tariffs</span>
-                <span>Edit</span>
+              <button
+                class="quick-action"
+                type="button"
+                data-open-pod-photos="${escapeHtml(order.id)}"
+                ${renderPortalDocAttrs(order, "pod_photos", "viewed")}
+              >
+                <span>Delivery Photos</span>
+                <span>${photos.length}/5</span>
               </button>
             `
-            : ""
-        }
-      </div>
-    `;
-  }
+            : `<div class="quick-action" style="opacity:.7;"><span>Delivery Photos</span><span>No photos</span></div>`
+          : ""
+      }
+
+      ${
+        isTenantRole()
+          ? `
+            <button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}">
+              <span>Manual delivery / POD</span>
+              <span>Open</span>
+            </button>
+
+            <button class="quick-action" type="button" data-open-tariff-modal="${escapeHtml(order.id)}">
+              <span>Finance / Tariffs</span>
+              <span>Edit</span>
+            </button>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
 
   function renderExpandedRow(order) {
     const c = order.product_completeness || getProductCompleteness(order);
@@ -1365,7 +1799,7 @@ function getProductOwnerName(order) {
               <section class="detail-box">
                 <h3>Lifecycle</h3>
                 <div class="detail-line"><span class="detail-label">Current</span><span class="detail-value">${pill(order.derived_lifecycle_status)}</span></div>
-                <div class="detail-line"><span class="detail-label">Completeness</span><span class="detail-value">${formatNumber(c.matched, 0)} / ${formatNumber(c.required, 0)} colli · ${formatNumber(c.pct, 0)}%</span></div>
+                <div class="detail-line"><span class="detail-label">Completeness</span><span class="detail-value">${formatNumber(c.matched, 0)} / ${formatNumber(c.required, 0)} packages · ${formatNumber(c.pct, 0)}%</span></div>
                 <div class="detail-line"><span class="detail-label">Requested</span><span class="detail-value">${escapeHtml(formatDate(getRequestedDeliveryDate(order)))}</span></div>
                 <div class="detail-line"><span class="detail-label">Expected</span><span class="detail-value">${escapeHtml(formatDate(getExpectedDeliveryDate(order)))}</span></div>
                 <div class="detail-line"><span class="detail-label">ETA</span><span class="detail-value">${escapeHtml(getEtaDisplay(order))}</span></div>
@@ -1396,12 +1830,443 @@ function getProductOwnerName(order) {
     `;
   }
 
-  function renderTable() {
-    const tbody = byId("ordersBody");
-    if (!tbody) return;
+function getStoredDeliveryGroup(group) {
+  if (!group?.key) return null;
+  return (window.__storedDeliveryGroups || []).find(row => row.group_key === group.key) || null;
+}
 
-    updateSortIndicators();
+function renderDeliveryGroupOrdersBlock(title, orders, emptyText) {
+  if (!orders?.length) {
+    return `
+      <div class="delivery-group-empty">
+        ${escapeHtml(emptyText)}
+      </div>
+    `;
+  }
 
+  return `
+    <div class="delivery-group-orders-block">
+      <strong>${escapeHtml(title)}</strong>
+      ${orders.map(item => `
+        <div class="delivery-group-order-line">
+          <span>
+            <strong>${escapeHtml(item.orderNumber)}</strong>
+            <span class="subline">${escapeHtml(statusLabel(item.status))}</span>
+          </span>
+          <span>${formatNumber(item.volume, 2)} m³</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderDeliveryGroupCard(group) {
+  const stored = getStoredDeliveryGroup(group);
+  const isApproved = normalize(stored?.status) === "approved";
+
+  const readyVolume = toNumber(group.readyVolume, 0);
+  const waitingVolume = toNumber(group.waitingVolume, 0);
+  const minimumVolume = toNumber(group.minimumVolume, 1.25);
+  const potentialVolume = round2(readyVolume + waitingVolume);
+
+  const shortfall = round2(Math.max(0, minimumVolume - readyVolume));
+  const surcharge = round2(shortfall * toNumber(group.tariffPerM3, 55.20));
+
+  const readyEnough = readyVolume >= minimumVolume;
+  const hasReadyOrders = group.readyOrders.length > 0;
+  const hasWaitingOrders = group.waitingOrders.length > 0;
+  const waitingCouldHelp = potentialVolume >= minimumVolume && shortfall > 0;
+
+  let statusHtml = "";
+
+  if (!hasReadyOrders) {
+    statusHtml = pill("pending", "Waiting goods");
+  } else if (isApproved) {
+    statusHtml = pill("confirmed", "Approved");
+  } else if (readyEnough) {
+    statusHtml = pill("stock_complete", "Ready");
+  } else {
+    statusHtml = pill("planned", `Below minimum · +${formatMoney(surcharge)}`);
+  }
+
+  return `
+    <div class="delivery-group-card">
+      <div class="delivery-group-card-head">
+        <div>
+          <h3>${escapeHtml(group.retailer || "Unknown retailer")}</h3>
+          <div class="subline">
+            ${escapeHtml(group.productOwner || "—")} · ${escapeHtml(group.postcode || "No postcode")}
+          </div>
+        </div>
+        <div>${statusHtml}</div>
+      </div>
+
+      <div class="delivery-group-metrics">
+        <div class="delivery-group-metric">
+          <span>Ready orders</span>
+          <strong>${formatNumber(group.readyOrders.length, 0)}</strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Waiting orders</span>
+          <strong>${formatNumber(group.waitingOrders.length, 0)}</strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Ready volume</span>
+          <strong>${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Potential volume</span>
+          <strong>${formatNumber(potentialVolume, 2)} m³</strong>
+        </div>
+      </div>
+
+      ${
+        shortfall > 0
+          ? `
+            <div class="delivery-group-warning">
+              <strong>Shortfall ${formatNumber(shortfall, 2)} m³</strong>
+              <span>Additional transport charge: ${formatMoney(surcharge)}</span>
+              ${
+                waitingCouldHelp
+                  ? `<span>Waiting orders could bring this delivery above the minimum.</span>`
+                  : hasWaitingOrders
+                    ? `<span>Even with waiting orders, this stays below minimum.</span>`
+                    : `<span>No waiting orders available for this retailer.</span>`
+              }
+            </div>
+          `
+          : `
+            <div class="delivery-group-ok">
+              Minimum volume is met for the ready orders.
+            </div>
+          `
+      }
+
+      <div class="delivery-group-card-grid">
+        ${renderDeliveryGroupOrdersBlock("Ready to deliver", group.readyOrders, "No ready orders.")}
+        ${renderDeliveryGroupOrdersBlock("Waiting / potential", group.waitingOrders, "No waiting orders.")}
+      </div>
+
+      <div class="delivery-group-decision">
+        ${
+          isApproved
+            ? `
+              <div>
+                <strong>Approved</strong>
+                <span class="subline">
+                  ${escapeHtml(stored?.approved_by_name || "Unknown user")}
+                  ${stored?.approved_at ? ` · ${escapeHtml(formatDateTime(stored.approved_at))}` : ""}
+                </span>
+                <span class="subline">
+                  Applied surcharge: ${formatMoney(stored?.applied_surcharge || surcharge)}
+                </span>
+              </div>
+            `
+            : !hasReadyOrders
+              ? `
+                <div>
+                  <strong>No ready orders yet</strong>
+                  <span class="subline">Wait until at least one order is stock complete or planned.</span>
+                </div>
+              `
+              : readyEnough
+                ? `
+                  <div>
+                    <strong>Ready to deliver</strong>
+                    <span class="subline">No minimum-volume approval required.</span>
+                  </div>
+                `
+                : `
+                  <div>
+                    <strong>Decision required</strong>
+                    <span class="subline">Deliver ready orders now, or hold for waiting orders.</span>
+                  </div>
+
+                  <button
+                    class="btn btn-primary"
+                    type="button"
+                    data-open-delivery-group="${escapeHtml(group.key)}"
+                  >
+                    Review Delivery
+                  </button>
+                `
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderDeliveryGroupsView() {
+  const tableWrap = byId("ordersTableWrap");
+  const groupsWrap = byId("deliveryGroupsWrap");
+  const container = byId("deliveryGroupsContainer");
+
+  if (!tableWrap || !groupsWrap || !container) return;
+
+  tableWrap.style.display = "none";
+  groupsWrap.style.display = "";
+
+  const visibleGroups = new Map();
+
+  filteredOrders.forEach(order => {
+    const group = getDeliveryGroup(order);
+    if (!group) return;
+    visibleGroups.set(group.key, group);
+  });
+
+  const groups = [...visibleGroups.values()]
+    .filter(group => group.readyOrders.length || group.waitingOrders.length)
+    .sort((a, b) => {
+      const aNeedsDecision = a.readyOrders.length && a.shortfall > 0 ? 1 : 0;
+      const bNeedsDecision = b.readyOrders.length && b.shortfall > 0 ? 1 : 0;
+
+      if (bNeedsDecision !== aNeedsDecision) return bNeedsDecision - aNeedsDecision;
+      if (b.readyVolume !== a.readyVolume) return b.readyVolume - a.readyVolume;
+
+      return String(a.retailer || "").localeCompare(String(b.retailer || ""), "en");
+    });
+
+  if (!groups.length) {
+    container.innerHTML = `
+      <div class="delivery-group-empty">
+        No delivery groups found.
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="delivery-groups-view">
+      ${groups.map(group => renderDeliveryGroupCard(group)).join("")}
+    </div>
+  `;
+
+  bindDeliveryGroupTableEvents();
+}
+
+async function approveDeliveryGroup(groupKey, options = {}) {
+  const group = deliveryGroupsMap.get(groupKey);
+  if (!group) throw new Error("Delivery group not found.");
+
+  const cid = await getCompanyId();
+
+  const payload = {
+    company_id: cid,
+    product_owner_id: null,
+    product_owner_name: group.productOwner || "",
+    retailer_name: group.retailer || "",
+    retailer_code: "",
+    delivery_postcode: group.postcode || "",
+    group_key: group.key,
+
+    ready_volume_m3: round2(group.readyVolume),
+    waiting_volume_m3: round2(group.waitingVolume),
+    minimum_volume_m3: round2(group.minimumVolume),
+    shortfall_m3: round2(group.shortfall),
+    tariff_per_m3: round2(group.tariffPerM3),
+
+    calculated_surcharge: round2(group.surcharge),
+applied_surcharge: round2(options.appliedSurcharge ?? group.surcharge),
+
+    status: "approved",
+    approval_note: options.approvalNote || "Delivery approved from OCC.",
+    approved_by: currentUser?.id || null,
+    approved_by_name: currentProfile?.full_name || currentUser?.email || "Unknown user",
+    approved_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { data, error } = await client
+    .from("delivery_groups")
+    .upsert(payload, {
+      onConflict: "company_id,group_key"
+    })
+    .select("id")
+    .single();
+
+  if (error) throw error;
+
+  const deliveryGroupId = data.id;
+
+  await client
+    .from("delivery_group_orders")
+    .delete()
+    .eq("delivery_group_id", deliveryGroupId);
+
+  const rows = [
+    ...group.readyOrders.map(order => ({
+      company_id: cid,
+      delivery_group_id: deliveryGroupId,
+      order_id: order.id,
+      order_number: order.orderNumber,
+      order_status: order.status,
+      volume_m3: round2(order.volume),
+      group_role: "ready"
+    })),
+    ...group.waitingOrders.map(order => ({
+      company_id: cid,
+      delivery_group_id: deliveryGroupId,
+      order_id: order.id,
+      order_number: order.orderNumber,
+      order_status: order.status,
+      volume_m3: round2(order.volume),
+      group_role: "waiting"
+    }))
+  ];
+
+  if (rows.length) {
+    const { error: orderError } = await client
+      .from("delivery_group_orders")
+      .insert(rows);
+
+    if (orderError) throw orderError;
+  }
+
+  await client
+    .from("delivery_group_activity")
+    .insert({
+      company_id: cid,
+      delivery_group_id: deliveryGroupId,
+      activity_type: "approved",
+      description: `Delivery approved. Applied surcharge ${formatMoney(options.appliedSurcharge ?? group.surcharge)}.${options.approvalNote ? ` Note: ${options.approvalNote}` : ""}`,
+      created_by: currentUser?.id || null,
+      created_by_name: currentProfile?.full_name || currentUser?.email || "Unknown user"
+    });
+
+  showToast(`Delivery group approved: ${formatMoney(group.surcharge)} surcharge.`, "ok");
+}
+
+function bindDeliveryGroupTableEvents() {
+  document.querySelectorAll("[data-open-delivery-group]").forEach(button => {
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+
+      const key = button.getAttribute("data-open-delivery-group");
+      openDeliveryGroupApprovalModal(key);
+    });
+  });
+}
+
+function openDeliveryGroupApprovalModal(groupKey) {
+  const group = deliveryGroupsMap.get(groupKey);
+
+  if (!group) {
+    showToast("Delivery group not found.", "err");
+    return;
+  }
+
+  const readyVolume = toNumber(group.readyVolume, 0);
+  const waitingVolume = toNumber(group.waitingVolume, 0);
+  const minimumVolume = toNumber(group.minimumVolume, 1.25);
+  const shortfall = round2(Math.max(0, minimumVolume - readyVolume));
+  const surcharge = round2(shortfall * toNumber(group.tariffPerM3, 55.20));
+
+  byId("deliveryGroupKey").value = group.key;
+
+  setText("deliveryGroupModalSub", "Review minimum delivery volume and approve the ready orders for planning.");
+  setText("deliveryGroupOwner", group.productOwner || "—");
+  setText("deliveryGroupRetailer", group.retailer || "—");
+  setText("deliveryGroupPostcode", group.postcode || "—");
+  setText("deliveryGroupDate", "Ready orders only");
+
+  setText("deliveryGroupActualVolume", `${formatNumber(readyVolume, 2)} m³`);
+  setText("deliveryGroupMinimumVolume", `${formatNumber(minimumVolume, 2)} m³`);
+  setText("deliveryGroupShortfall", `${formatNumber(shortfall, 2)} m³`);
+  setText("deliveryGroupTariff", `${formatMoney(group.tariffPerM3)} / m³`);
+  setText("deliveryGroupCalculatedSurcharge", formatMoney(surcharge));
+
+  const surchargeInput = byId("deliveryGroupAppliedSurcharge");
+if (surchargeInput) {
+  surchargeInput.value = surcharge.toFixed(2);
+  surchargeInput.readOnly = !isTenantRole();
+}
+
+  const noteInput = byId("deliveryGroupApprovalNote");
+  if (noteInput) noteInput.value = "";
+
+  const list = byId("deliveryGroupOrdersList");
+  if (list) {
+    list.innerHTML = `
+      <div class="quick-action" style="background:#ecfdf5;border-color:#bbf7d0;">
+        <span><strong>Ready to deliver</strong></span>
+        <span>${formatNumber(group.readyOrders.length, 0)} order(s)</span>
+      </div>
+
+      ${group.readyOrders.map(order => `
+        <div class="quick-action">
+          <span>
+            <strong>${escapeHtml(order.orderNumber)}</strong>
+            <span class="subline">${escapeHtml(statusLabel(order.status))}</span>
+          </span>
+          <span>${formatNumber(order.volume, 2)} m³</span>
+        </div>
+      `).join("")}
+
+      <div class="quick-action" style="background:#fff7ed;border-color:#fed7aa;margin-top:8px;">
+        <span><strong>Waiting / potential</strong></span>
+        <span>${formatNumber(group.waitingOrders.length, 0)} order(s)</span>
+      </div>
+
+      ${
+        group.waitingOrders.length
+          ? group.waitingOrders.map(order => `
+              <div class="quick-action" style="opacity:.82;">
+                <span>
+                  <strong>${escapeHtml(order.orderNumber)}</strong>
+                  <span class="subline">${escapeHtml(statusLabel(order.status))}</span>
+                </span>
+                <span>${formatNumber(order.volume, 2)} m³</span>
+              </div>
+            `).join("")
+          : `
+              <div class="quick-action" style="opacity:.7;">
+                <span>No waiting orders</span>
+                <span>—</span>
+              </div>
+            `
+      }
+    `;
+  }
+
+  byId("deliveryGroupModal")?.classList.add("open");
+  byId("deliveryGroupModal")?.setAttribute("aria-hidden", "false");
+}
+
+function closeDeliveryGroupApprovalModal() {
+  byId("deliveryGroupModal")?.classList.remove("open");
+  byId("deliveryGroupModal")?.setAttribute("aria-hidden", "true");
+}
+
+async function approveDeliveryGroupFromModal() {
+  const key = byId("deliveryGroupKey")?.value || "";
+  const appliedSurcharge = toNumber(byId("deliveryGroupAppliedSurcharge")?.value, 0);
+  const approvalNote = byId("deliveryGroupApprovalNote")?.value || "";
+
+  await approveDeliveryGroup(key, {
+    appliedSurcharge,
+    approvalNote
+  });
+
+  closeDeliveryGroupApprovalModal();
+  await loadOrders();
+}
+
+function renderTable() {
+  const tbody = byId("ordersBody");
+  if (!tbody) return;
+
+if (showDeliveryGroups) {
+  renderDeliveryGroupsView();
+  return;
+}
+
+byId("ordersTableWrap").style.display = "";
+byId("deliveryGroupsWrap").style.display = "none";
+
+  updateSortIndicators();
     if (!filteredOrders.length) {
       tbody.innerHTML = `<tr><td colspan="13">No orders found.</td></tr>`;
       updateSelectionUi();
@@ -1440,6 +2305,10 @@ function getProductOwnerName(order) {
 </td>
 
 <td>
+  ${renderOrderTypeBadge(order)}
+</td>
+
+<td>
   <strong>${escapeHtml(order.external_reference || "—")}</strong>
   <span class="subline">Supplier / ACK ref</span>
 </td>
@@ -1466,17 +2335,30 @@ function getProductOwnerName(order) {
           <td>${renderCompactDocuments(order)}</td>
           <td class="eta-cell">${renderDeliveryCell(order)}</td>
           ${canSeeFinance() ? `<td class="finance-cell finance-column">${renderFinanceCell(order)}</td>` : ""}
-          <td class="activity-cell">
+
+${canSeeFinance() ? `<td class="finance-column">${renderDeliveryGroupCell(order)}</td>` : ""}
+
+<td class="activity-cell">
             ${escapeHtml(formatDateTime(order.last_activity_at || order.created_at))}
             <span class="subline">${escapeHtml(order.order_activity_log?.[0]?.description || order.delivery_status_label || "—")}</span>
           </td>
           <td class="actions-cell">
-            ${
-              isTenantRole()
-                ? `<button class="action-menu-btn tenant-only" type="button" data-manual-ops-order-id="${escapeHtml(orderId)}">⋯</button>`
-                : `<button class="action-menu-btn" type="button" data-expand-order-id="${escapeHtml(orderId)}">⋯</button>`
-            }
-          </td>
+  ${
+    isTenantRole()
+      ? `<button
+           class="action-menu-btn tenant-only"
+           type="button"
+           data-order-actions="${escapeHtml(orderId)}">
+           ⋯
+         </button>`
+      : `<button
+           class="action-menu-btn"
+           type="button"
+           data-expand-order-id="${escapeHtml(orderId)}">
+           ⋯
+         </button>`
+  }
+</td>
         </tr>
       `);
 
@@ -1488,6 +2370,49 @@ function getProductOwnerName(order) {
     updateSelectionUi();
   }
 
+function closeOrderActionMenu() {
+  const menu = byId("occRowActionMenu");
+  if (!menu) return;
+
+  menu.classList.remove("open");
+  menu.setAttribute("aria-hidden", "true");
+  menu.dataset.orderId = "";
+}
+
+byId("genericActionCloseBtn")?.addEventListener("click", closeGenericActionModal);
+byId("genericActionCancelBtn")?.addEventListener("click", closeGenericActionModal);
+
+byId("occGenericActionModal")?.addEventListener("click", event => {
+  if (event.target === byId("occGenericActionModal")) {
+    closeGenericActionModal();
+  }
+});
+
+function openOrderActionMenu(orderId, button) {
+  const menu = byId("occRowActionMenu");
+
+  if (!menu) {
+    showToast("Order action menu not found in HTML.", "err");
+    return;
+  }
+
+  if (!button) {
+    showToast("Order action button not found.", "err");
+    return;
+  }
+
+  const rect = button.getBoundingClientRect();
+
+  menu.dataset.orderId = orderId;
+  menu.style.position = "fixed";
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${Math.max(12, rect.right - 230)}px`;
+
+  menu.classList.add("open");
+  menu.setAttribute("aria-hidden", "false");
+
+  console.log("Order action menu opened", { orderId });
+}
   function bindTableEvents() {
     const tbody = byId("ordersBody");
     if (!tbody) return;
@@ -1503,18 +2428,28 @@ function getProductOwnerName(order) {
       });
     });
 
-    tbody.querySelectorAll("[data-expand-order-id]").forEach(button => {
-      button.addEventListener("click", event => {
-        event.stopPropagation();
+tbody.querySelectorAll("[data-expand-order-id]").forEach(button => {
+  button.addEventListener("click", event => {
+    event.stopPropagation();
 
-        const id = String(button.getAttribute("data-expand-order-id") || "");
+    const id = String(button.getAttribute("data-expand-order-id") || "");
 
-        if (expandedOrderIds.has(id)) expandedOrderIds.delete(id);
-        else expandedOrderIds.add(id);
+    if (expandedOrderIds.has(id)) expandedOrderIds.delete(id);
+    else expandedOrderIds.add(id);
 
-        renderTable();
-      });
-    });
+    renderTable();
+  });
+});
+
+tbody.querySelectorAll("[data-order-actions]").forEach(button => {
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+
+    const orderId = String(button.getAttribute("data-order-actions") || "");
+
+    openOrderActionMenu(orderId, button);
+  });
+});
 
     tbody.querySelectorAll("[data-manual-ops-order-id]").forEach(button => {
       button.addEventListener("click", event => {
@@ -1541,6 +2476,21 @@ function getProductOwnerName(order) {
           if (docType === "acknowledgement") return generateAcknowledgement(orderId);
           if (docType === "delivery_note") return generateDeliveryNote(orderId);
           if (docType === "invoice") return generateSingleInvoice(orderId);
+
+if (docType === "credit_note") {
+
+  const order = getOrderById(orderId);
+
+  const existing = getDoc(order, "credit_note");
+
+  if (existing?.file_url) {
+    window.open(existing.file_url, "_blank");
+    return;
+  }
+
+  showToast("Credit Note PDF not found.", "err");
+  return;
+}
 
           return createPlaceholderDocument(orderId, docType);
         } catch (error) {
@@ -1577,122 +2527,159 @@ function getProductOwnerName(order) {
     const style = document.createElement("style");
     style.id = "occGeneratedStyles";
 
-    style.textContent = `
-      .occ-memo-modal-backdrop{
-        position:fixed;
-        inset:0;
-        z-index:9999;
-        background:rgba(15,23,42,.45);
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:24px
-      }
-
-      .occ-memo-modal-card{
-        width:min(760px,96vw);
-        background:#fff;
-        border-radius:18px;
-        box-shadow:0 24px 60px rgba(15,23,42,.25);
-        padding:18px
-      }
-
-      .occ-memo-modal-head{
-        display:flex;
-        justify-content:space-between;
-        gap:12px;
-        align-items:center;
-        margin-bottom:12px
-      }
-
-      .occ-memo-modal-text{
-        white-space:pre-wrap;
-        border:1px solid #d1d5db;
-        border-radius:12px;
-        padding:12px;
-        min-height:140px;
-        max-height:60vh;
-        overflow:auto;
-        background:#f8fafc
-      }
-
-      .occ-photo-grid{
-        display:grid;
-        grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-        gap:12px
-      }
-
-      .occ-photo-grid img{
-        width:100%;
-        height:140px;
-        object-fit:cover;
-        border-radius:12px;
-        border:1px solid #d1d5db
-      }
-
-      .manual-tariff-table-wrap{
-        overflow:auto;
-        border:1px solid #dce5f2;
-        border-radius:12px;
-        background:#fff
-      }
-
-      .manual-tariff-table{
-        width:100%;
-        min-width:980px;
-        border-collapse:collapse
-      }
-
-      .manual-tariff-table th,
-      .manual-tariff-table td{
-        padding:9px 10px;
-        border-bottom:1px solid #e5edf7;
-        text-align:left;
-        vertical-align:middle;
-        font-size:12px
-      }
-
-      .manual-tariff-table th{
-        background:#f8fafc;
-        color:#334155;
-        font-size:10px;
-        font-weight:950;
-        text-transform:uppercase;
-        letter-spacing:.04em
-      }
-
-      .manual-tariff-table input{
-        width:100%;
-        min-height:34px;
-        border:1px solid #dce5f2;
-        border-radius:9px;
-        padding:7px 9px;
-        font-size:12px
-      }
-
-      .manual-tariff-total{
-        font-weight:950;
-        color:#07152f;
-        white-space:nowrap
-      }
-
-      .manual-tariff-footer{
-        display:flex;
-        justify-content:space-between;
-        gap:12px;
-        align-items:center;
-        flex-wrap:wrap
-      }
-
-      .manual-tariff-summary{
-        font-size:12px;
-        color:#334155;
-        font-weight:850
-      }
-    `;
-
-    document.head.appendChild(style);
+style.textContent = `
+  .occ-memo-modal-backdrop{
+    position:fixed;
+    inset:0;
+    z-index:9999;
+    background:rgba(15,23,42,.45);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px
   }
+
+.occ-memo-modal-card{
+  width:min(1120px,96vw);
+    background:#fff;
+    border-radius:18px;
+    box-shadow:0 24px 60px rgba(15,23,42,.25);
+    padding:18px
+  }
+
+  .occ-memo-modal-head{
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    align-items:center;
+    margin-bottom:12px
+  }
+
+  .occ-memo-modal-text{
+    white-space:pre-wrap;
+    border:1px solid #d1d5db;
+    border-radius:12px;
+    padding:12px;
+    min-height:140px;
+    max-height:60vh;
+    overflow:auto;
+    background:#f8fafc
+  }
+
+  .occ-photo-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+    gap:12px
+  }
+
+  .occ-photo-grid img{
+    width:100%;
+    height:140px;
+    object-fit:cover;
+    border-radius:12px;
+    border:1px solid #d1d5db
+  }
+
+  .manual-tariff-table-wrap{
+    overflow:auto;
+    border:1px solid #dce5f2;
+    border-radius:12px;
+    background:#fff
+  }
+
+  .manual-tariff-table{
+    width:100%;
+    min-width:980px;
+    border-collapse:collapse
+  }
+
+  .manual-tariff-table th,
+  .manual-tariff-table td{
+    padding:9px 10px;
+    border-bottom:1px solid #e5edf7;
+    text-align:left;
+    vertical-align:top;
+    font-size:12px
+  }
+
+  .manual-tariff-table th{
+    background:#f8fafc;
+    color:#334155;
+    font-size:10px;
+    font-weight:950;
+    text-transform:uppercase;
+    letter-spacing:.04em
+  }
+
+  .manual-tariff-table input,
+  .manual-tariff-table select{
+    width:100%;
+    min-height:38px;
+    border:1px solid #dce5f2;
+    border-radius:9px;
+    padding:7px 9px;
+    font-size:12px;
+    background:#fff
+  }
+
+  .manual-tariff-total{
+    font-weight:950;
+    color:#07152f;
+    white-space:nowrap
+  }
+
+  .manual-tariff-footer{
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    align-items:center;
+    flex-wrap:wrap
+  }
+
+  .manual-tariff-summary{
+    font-size:12px;
+    color:#334155;
+    font-weight:850
+  }
+
+.edit-products-table{
+  min-width:1120px;
+  table-layout:fixed;
+}
+
+.edit-products-table th:nth-child(1),
+.edit-products-table td:nth-child(1){ width:300px; }
+
+.edit-products-table th:nth-child(2),
+.edit-products-table td:nth-child(2){ width:230px; }
+
+.edit-products-table th:nth-child(3),
+.edit-products-table td:nth-child(3){ width:80px; }
+
+.edit-products-table th:nth-child(4),
+.edit-products-table td:nth-child(4){ width:95px; }
+
+.edit-products-table th:nth-child(5),
+.edit-products-table td:nth-child(5){ width:115px; }
+
+.edit-products-table th:nth-child(6),
+.edit-products-table td:nth-child(6){ width:115px; }
+
+.edit-products-table th:nth-child(7),
+.edit-products-table td:nth-child(7){
+  width:120px;
+  text-align:right;
+}
+
+.edit-products-table td:nth-child(4),
+.edit-products-table td:nth-child(5),
+.edit-products-table td:nth-child(6){
+  white-space:nowrap;
+  font-weight:800;
+}`;
+
+document.head.appendChild(style);
+}
 
   function openMemoModal(orderId) {
     ensurePageStyles();
@@ -1848,7 +2835,7 @@ function getProductOwnerName(order) {
             ? `<div class="occ-memo-modal-text">No order lines found.</div>`
             : `
               <div class="manual-tariff-table-wrap">
-                <table class="manual-tariff-table">
+                <table class="manual-tariff-table edit-products-table">
                   <thead>
                     <tr>
                       <th>SKU</th>
@@ -2446,136 +3433,901 @@ function getProductOwnerName(order) {
     renderAll();
   }
 
-  function bindEvents() {
-    [
-      "filterSearch",
-      "filterLifecycle",
-      "filterProducts",
-      "filterDocument",
-      "filterFinance",
-      "filterDateStatus"
-    ].forEach(id => {
-      const el = byId(id);
-      if (!el) return;
+async function loadProductsForEditor() {
+  if (allProducts.length) return allProducts;
 
-      el.addEventListener("input", () => {
-        applyFilters();
-        renderAll();
-      });
+  const cid = await getCompanyId();
 
-      el.addEventListener("change", () => {
-        applyFilters();
-        renderAll();
-      });
-    });
+  const { data, error } = await client
+    .from("products")
+    .select(`
+      id,
+      customer_id,
+      sku_base,
+      name,
+      description,
+      volume_m3,
+      weight_kg,
+      net_weight_kg,
+      package_count,
+      packages_per_unit
+    `)
+    .eq("company_id", cid)
+    .order("sku_base", { ascending: true });
 
-    document.querySelectorAll("[data-sort-key]").forEach(th => {
-      th.addEventListener("click", () => {
-        const key = th.getAttribute("data-sort-key");
+  if (error) throw error;
 
-        if (sortState.key === key) {
-          sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
-        } else {
-          sortState.key = key;
-          sortState.direction = "asc";
-        }
+  allProducts = data || [];
+  return allProducts;
+}
 
-        sortOrders();
-        renderAll();
-      });
-    });
+function getLineWeightKg(line) {
+  const qty = getLineRequiredQty(line) || 1;
+  const weight =
+    toNumber(line.total_line_weight_kg, 0) ||
+    toNumber(line.total_weight_kg, 0) ||
+    (toNumber(line.unit_weight_kg, 0) * qty) ||
+    (toNumber(line.products?.weight_kg, 0) * qty) ||
+    (toNumber(line.products?.net_weight_kg, 0) * qty);
 
-    byId("selectAllVisibleOrders")?.addEventListener("change", event => {
-      const checked = !!event.target.checked;
+  return weight;
+}
 
-      filteredOrders.forEach(order => {
-        const id = String(order.id);
-        if (checked) selectedOrderIds.add(id);
-        else selectedOrderIds.delete(id);
-      });
+function renderProductOptionsForOrder(order) {
+  return allProducts
+    .filter(product => !order.customer_id || !product.customer_id || String(product.customer_id) === String(order.customer_id))
+    .map(product => `
+      <option
+        value="${escapeHtml(product.id)}"
+        data-sku="${escapeHtml(product.sku_base || "")}"
+        data-description="${escapeHtml(product.description || product.name || "")}"
+        data-volume="${escapeHtml(product.volume_m3 || 0)}"
+        data-weight="${escapeHtml(product.weight_kg || product.net_weight_kg || 0)}"
+        data-packages="${escapeHtml(getProductPackageCount(product))}">
+        ${escapeHtml(product.sku_base || "SKU")} · ${escapeHtml(product.description || product.name || "")}
+      </option>
+    `)
+    .join("");
+}
 
-      renderTable();
-    });
+function getSelectedProductFromEditRow(row) {
+  const select = row.querySelector("[data-edit-line-product]");
+  const option = select?.selectedOptions?.[0];
 
-    byId("btnClearSelectedOrders")?.addEventListener("click", () => {
-      selectedOrderIds.clear();
-      renderTable();
-      showToast("Selection cleared.", "ok");
-    });
+  if (!option || !option.value) return null;
 
-    byId("btnGenerateCombinedInvoice")?.addEventListener("click", async () => {
-      try {
-        await generateCombinedInvoice();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not generate combined invoice.", "err");
-      }
-    });
+  return {
+    id: option.value,
+    sku: option.dataset.sku || "",
+    description: option.dataset.description || "",
+    volume: toNumber(option.dataset.volume, 0),
+    weight: toNumber(option.dataset.weight, 0),
+    packages: Math.max(1, Math.round(toNumber(option.dataset.packages, 1)))
+  };
+}
 
-    byId("btnRefresh")?.addEventListener("click", async () => {
-      try {
-        await loadOrders();
-        showToast("Operations refreshed.", "ok");
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not refresh operations.", "err");
-      }
-    });
+function refreshEditProductLineRow(row) {
+  const product = getSelectedProductFromEditRow(row);
+  const qty = Math.max(0, Math.round(toNumber(row.querySelector("[data-edit-line-qty]")?.value, 0)));
 
-    byId("btnResetFilters")?.addEventListener("click", resetFilters);
+  if (!product) return;
 
-    byId("btnSyncStatuses")?.addEventListener("click", async () => {
-      try {
-        await syncStatuses();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not sync statuses.", "err");
-      }
-    });
+  const descInput = row.querySelector("[data-edit-line-description]");
+  if (descInput && !descInput.value) descInput.value = product.description;
 
-    byId("manualOpsCloseBtn")?.addEventListener("click", closeManualOpsModal);
-    byId("manualOpsCancelBtn")?.addEventListener("click", closeManualOpsModal);
+  const packagesCell = row.querySelector("[data-edit-line-packages]");
+  const volumeCell = row.querySelector("[data-edit-line-volume]");
+  const weightCell = row.querySelector("[data-edit-line-weight]");
 
-    byId("manualOpsModal")?.addEventListener("click", event => {
-      if (event.target === byId("manualOpsModal")) closeManualOpsModal();
-    });
+  if (packagesCell) packagesCell.textContent = formatNumber(qty * product.packages, 0);
+  if (volumeCell) volumeCell.textContent = `${formatNumber(qty * product.volume, 2)} m³`;
+  if (weightCell) weightCell.textContent = `${formatNumber(qty * product.weight, 2)} kg`;
+}
 
-    byId("btnSaveManualDeliveryDate")?.addEventListener("click", async () => {
-      try {
-        await saveManualDeliveryDate();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not save delivery date.", "err");
-      }
-    });
+function bindEditProductEditorEvents(order) {
+  const body = byId("editProductLinesBody");
+  if (!body) return;
 
-    byId("btnUploadManualPodPhotos")?.addEventListener("click", async () => {
-      try {
-        await uploadManualPodPhotos();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not upload POD photos.", "err");
-      }
-    });
+  body.querySelectorAll("[data-edit-line-product], [data-edit-line-qty]").forEach(input => {
+    input.addEventListener("input", () => refreshEditProductLineRow(input.closest("tr")));
+    input.addEventListener("change", () => refreshEditProductLineRow(input.closest("tr")));
+  });
 
-    byId("btnUploadManualSignedPod")?.addEventListener("click", async () => {
-      try {
-        await uploadManualSignedPod();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not upload signed POD.", "err");
-      }
-    });
+body.querySelectorAll("[data-remove-edit-line]").forEach(button => {
+  button.addEventListener("click", () => {
+    const row = button.closest("tr");
+    if (!row) return;
 
-    byId("btnManualMarkDelivered")?.addEventListener("click", async () => {
-      try {
-        await manualMarkDelivered();
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not mark delivered.", "err");
-      }
-    });
+    const lineId = row.getAttribute("data-edit-line-id");
+
+    if (lineId && row.dataset.newLine !== "1") {
+      const removed = JSON.parse(body.dataset.removedLineIds || "[]");
+      if (!removed.includes(lineId)) removed.push(lineId);
+      body.dataset.removedLineIds = JSON.stringify(removed);
+    }
+
+    row.remove();
+  });
+});
+
+  byId("btnAddEditProductLine")?.addEventListener("click", () => {
+    const rowKey = `new-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    const tr = document.createElement("tr");
+    tr.setAttribute("data-edit-line-id", rowKey);
+    tr.setAttribute("data-new-line", "1");
+
+    tr.innerHTML = `
+      <td>
+        <select class="input" data-edit-line-product>
+          <option value="">Select product</option>
+          ${renderProductOptionsForOrder(order)}
+        </select>
+      </td>
+
+      <td>
+        <input class="input" data-edit-line-description value="">
+      </td>
+
+      <td>
+        <input class="input" type="number" min="0" step="1" data-edit-line-qty value="1">
+      </td>
+
+      <td data-edit-line-packages>0</td>
+      <td data-edit-line-volume>0.00 m³</td>
+      <td data-edit-line-weight>0.00 kg</td>
+
+      <td>
+        <button class="mini-btn" type="button" data-remove-edit-line>Remove</button>
+      </td>
+    `;
+
+    body.appendChild(tr);
+
+    tr.querySelector("[data-edit-line-product]")?.addEventListener("change", () => refreshEditProductLineRow(tr));
+    tr.querySelector("[data-edit-line-qty]")?.addEventListener("input", () => refreshEditProductLineRow(tr));
+    tr.querySelector("[data-remove-edit-line]")?.addEventListener("click", () => tr.remove());
+  });
+
+  body.querySelectorAll("tr[data-edit-line-id]").forEach(refreshEditProductLineRow);
+}
+
+async function openGenericActionModal(orderId, action) {
+  ensurePageStyles();
+
+  const order = getOrderById(orderId);
+
+  if (!order) {
+    showToast("Order not found.", "err");
+    return;
   }
+
+  byId("genericActionOrderId").value = order.id;
+  byId("genericActionType").value = action;
+
+  const titleMap = {
+    copy_order: "Create Copy Order",
+    credit_order: "Create Credit Order",
+    change_status: "Change Status",
+    view_activity: "View Activity",
+    warehouse_events: "Warehouse Events",
+    portal_events: "Portal Events"
+  };
+
+  setText("genericActionTitle", titleMap[action] || "Order action");
+
+  setText(
+    "genericActionSub",
+    `${order.order_number || "Order"} · ${order.retailer_name || ""} · ${order.delivery_postcode || ""}`
+  );
+
+  const body = byId("genericActionBody");
+  const saveBtn = byId("genericActionSaveBtn");
+
+  if (!body || !saveBtn) return;
+
+  saveBtn.style.display = "none";
+
+  body.innerHTML = `
+    <h3>${escapeHtml(titleMap[action] || "Order action")}</h3>
+    <p class="occ-help">
+      This tool is temporarily disabled. The order itself is not changed.
+    </p>
+  `;
+
+  byId("occGenericActionModal")?.classList.add("open");
+  byId("occGenericActionModal")?.setAttribute("aria-hidden", "false");
+}
+
+function closeGenericActionModal() {
+  byId("occGenericActionModal")?.classList.remove("open");
+  byId("occGenericActionModal")?.setAttribute("aria-hidden", "true");
+}
+
+function getOrderById(orderId) {
+  return allOrders.find(order => String(order.id) === String(orderId)) || null;
+}
+
+async function getNextCopyOrderNumber(originalOrderNumber) {
+  const base = String(originalOrderNumber || "COPY").trim();
+
+  const cleanBase = base.replace(/C\d*$/i, "");
+  const firstCopy = `${cleanBase}C`;
+
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("orders")
+    .select("order_number")
+    .eq("company_id", cid)
+    .ilike("order_number", `${firstCopy}%`);
+
+  if (error) throw error;
+
+  const existing = new Set((data || []).map(row => String(row.order_number || "").toUpperCase()));
+
+  if (!existing.has(firstCopy.toUpperCase())) {
+    return firstCopy;
+  }
+
+  for (let i = 2; i < 999; i++) {
+    const candidate = `${firstCopy}${i}`;
+    if (!existing.has(candidate.toUpperCase())) {
+      return candidate;
+    }
+  }
+
+  throw new Error("Could not create a unique copy order number.");
+}
+
+function openEditOrderModal(orderId) {
+  return openGenericActionModal(orderId, "edit_order");
+}
+
+function openCopyOrderModal(orderId) {
+  return openGenericActionModal(orderId, "copy_order");
+}
+
+function openCreditOrderModal(orderId) {
+  return openGenericActionModal(orderId, "credit_order");
+}
+
+function openStatusModal(orderId) {
+  return openGenericActionModal(orderId, "change_status");
+}
+
+function openActivityModal(orderId) {
+  return openGenericActionModal(orderId, "view_activity");
+}
+
+function openWarehouseEventsModal(orderId) {
+  return openGenericActionModal(orderId, "warehouse_events");
+}
+
+function openPortalEventsModal(orderId) {
+  return openGenericActionModal(orderId, "portal_events");
+}
+
+async function releaseAllocationsForLine(lineId, releaseCount = null) {
+  const order = getOrderById(byId("genericActionOrderId")?.value || "");
+  const line = (order?.order_lines || []).find(l => String(l.id) === String(lineId));
+
+  const allocations = (line?.order_allocations || [])
+    .filter(a => !["cancelled"].includes(normalize(a.allocation_status)));
+
+  const toRelease = releaseCount === null
+    ? allocations
+    : allocations.slice(0, Math.max(0, releaseCount));
+
+  const allocationIds = toRelease.map(a => a.id).filter(Boolean);
+
+  if (allocationIds.length) {
+    const { error } = await client
+      .from("order_allocations")
+      .update({ allocation_status: "cancelled" })
+      .in("id", allocationIds);
+
+    if (error) throw error;
+  }
+
+  for (const allocation of toRelease) {
+    const physicalProductId = allocation.items?.physical_product_id || null;
+    const stockSetId = allocation.items?.stock_set_id || allocation.stock_set_id || null;
+    const itemId = allocation.item_id || allocation.items?.id || null;
+
+    let query = client
+      .from("items")
+      .update({
+        status: "in_stock",
+        linked_order_id: null,
+        reserved_at: null
+      });
+
+    if (physicalProductId) {
+      query = query.eq("physical_product_id", physicalProductId);
+    } else if (stockSetId) {
+      query = query.eq("stock_set_id", stockSetId);
+    } else if (itemId) {
+      query = query.eq("id", itemId);
+    } else {
+      continue;
+    }
+
+    const { error } = await query;
+    if (error) throw error;
+  }
+
+  if (toRelease.length) {
+    await insertOrderActivity(
+      order.id,
+      `${toRelease.length} allocation(s) released back to stock after order edit.`,
+      "order_edit_stock_released"
+    );
+  }
+
+  return toRelease.length;
+}
+async function runMatchingForEditedOrder(orderId) {
+  if (!byId("editRunMatching")?.checked) {
+    return { skipped: true, allocationsCreated: 0, itemsReserved: 0 };
+  }
+
+  if (!window.AllocationEngine?.run) {
+    throw new Error("AllocationEngine is not loaded. Add allocation-engine.js before operations-control-center.js.");
+  }
+
+  const result = await window.AllocationEngine.run({
+    orderIds: [orderId],
+    dryRun: false
+  });
+
+  return {
+    skipped: false,
+    allocationsCreated: result?.allocations_created ?? result?.allocationsCreated ?? result?.created ?? 0,
+    itemsReserved: result?.items_reserved ?? result?.itemsReserved ?? 0
+  };
+}
+
+async function neutralizeOrderLineFromDb(orderId, lineId) {
+  const { data: allocations, error: allocError } = await client
+    .from("order_allocations")
+    .select(`
+      id,
+      item_id,
+      items (
+        id,
+        physical_product_id,
+        stock_set_id
+      )
+    `)
+    .eq("order_line_id", lineId);
+
+  if (allocError) throw allocError;
+
+  for (const allocation of allocations || []) {
+    const physicalProductId = allocation.items?.physical_product_id || null;
+    const stockSetId = allocation.items?.stock_set_id || null;
+    const itemId = allocation.item_id || allocation.items?.id || null;
+
+    let query = client
+      .from("items")
+      .update({
+        status: "in_stock",
+        linked_order_id: null,
+        reserved_at: null
+      });
+
+    if (physicalProductId) {
+      query = query.eq("physical_product_id", physicalProductId);
+    } else if (stockSetId) {
+      query = query.eq("stock_set_id", stockSetId);
+    } else if (itemId) {
+      query = query.eq("id", itemId);
+    } else {
+      continue;
+    }
+
+    const { error } = await query;
+    if (error) throw error;
+  }
+
+  const { error: deleteAllocError } = await client
+    .from("order_allocations")
+    .delete()
+    .eq("order_line_id", lineId);
+
+  if (deleteAllocError) throw deleteAllocError;
+
+  const { error: deleteLineError } = await client
+    .from("order_lines")
+    .delete()
+    .eq("id", lineId)
+    .eq("order_id", orderId);
+
+  if (deleteLineError) throw deleteLineError;
+
+  return allocations?.length || 0;
+}
+
+async function saveEditOrderModal() {
+  const orderId = byId("genericActionOrderId")?.value || "";
+  const order = getOrderById(orderId);
+  if (!order) throw new Error("Order not found.");
+
+  const rows = Array.from(document.querySelectorAll("#editProductLinesBody tr[data-edit-line-id]"));
+const editBody = byId("editProductLinesBody");
+const removedLineIds = JSON.parse(editBody?.dataset.removedLineIds || "[]");
+
+  let totalVolume = 0;
+  let totalWeight = 0;
+  let totalPackages = 0;
+  let changedProducts = 0;
+  let removedProducts = 0;
+  let addedProducts = 0;
+  let releasedPackages = 0;
+
+  await safeUpdateOrder(order.id, {
+    retail_name: byId("editRetailerName")?.value || "",
+    retailer_code: byId("editRetailerCode")?.value || "",
+    delivery_address_1: byId("editAddress1")?.value || "",
+    delivery_address_2: byId("editAddress2")?.value || "",
+    delivery_address_3: byId("editAddress3")?.value || "",
+    delivery_address_4: byId("editAddress4")?.value || "",
+    delivery_city: byId("editCity")?.value || "",
+    delivery_postcode: byId("editPostcode")?.value || "",
+    delivery_country: byId("editCountry")?.value || "United Kingdom",
+    memo: byId("editMemo")?.value || "",
+    last_activity_at: new Date().toISOString()
+  });
+
+for (const removedLineId of removedLineIds) {
+  releasedPackages += await neutralizeOrderLineFromDb(order.id, removedLineId);
+  removedProducts++;
+}
+
+  for (const row of rows) {
+const isNew = row.dataset.newLine === "1";
+const lineId = row.getAttribute("data-edit-line-id");
+const qtyInput = row.querySelector("[data-edit-line-qty]");
+const qty = Math.max(0, Math.round(toNumber(qtyInput?.value, 0)));
+
+const isRemoved =
+  !isNew &&
+  (
+    row.dataset.removeLine === "1" ||
+    editRemovedLineIds.has(String(lineId)) ||
+    qty <= 0
+  );
+
+    const product = getSelectedProductFromEditRow(row);
+    const description = row.querySelector("[data-edit-line-description]")?.value || product?.description || "";
+
+if (!isNew && isRemoved) {
+  releasedPackages += await releaseAllocationsForLine(lineId);
+
+  const { error: allocationDeleteError } = await client
+    .from("order_allocations")
+    .delete()
+    .eq("order_line_id", lineId);
+
+  if (allocationDeleteError) throw allocationDeleteError;
+
+  const { error: lineDeleteError } = await client
+    .from("order_lines")
+    .delete()
+    .eq("id", lineId)
+    .eq("order_id", order.id);
+
+  if (lineDeleteError) throw lineDeleteError;
+
+  removedProducts++;
+  continue;
+}
+    if (!product || qty <= 0) continue;
+
+    const lineVolume = round2(qty * product.volume);
+    const lineWeight = round2(qty * product.weight);
+    const packages = qty * product.packages;
+
+    totalVolume += lineVolume;
+    totalWeight += lineWeight;
+    totalPackages += packages;
+
+ const payload = {
+  order_id: order.id,
+  product_id: product.id,
+  sku_base: product.sku,
+  description,
+  quantity_ordered: qty,
+  unit_volume_m3: round2(product.volume),
+  total_volume_m3: lineVolume,
+  total_line_volume_m3: lineVolume,
+  unit_weight_kg: round2(product.weight),
+  total_line_weight_kg: lineWeight
+};
+
+    if (isNew) {
+      const { error } = await client.from("order_lines").insert(payload);
+      if (error) throw error;
+      addedProducts++;
+      continue;
+    }
+
+    const oldLine = (order.order_lines || []).find(l => String(l.id) === String(lineId));
+    const oldQty = getLineRequiredQty(oldLine);
+    const oldProductId = oldLine?.product_id || oldLine?.products?.id;
+    const productChanged = String(oldProductId || "") !== String(product.id || "");
+
+    if (productChanged) {
+      releasedPackages += await releaseAllocationsForLine(lineId);
+    } else if (qty < oldQty) {
+  const packagesPerUnit = getProductPackageCount(oldLine?.products || {});
+  releasedPackages += await releaseAllocationsForLine(lineId, (oldQty - qty) * packagesPerUnit);
+}
+
+    const { error } = await client
+      .from("order_lines")
+      .update(payload)
+      .eq("id", lineId)
+      .eq("order_id", order.id);
+
+    if (error) throw error;
+
+    if (productChanged || qty !== oldQty || description !== getLineDescription(oldLine)) {
+      changedProducts++;
+    }
+  }
+
+await safeUpdateOrder(order.id, {
+  planning_volume_m3: round2(totalVolume),
+  planning_colli: totalPackages,
+  warehouse_status: "awaiting_goods",
+  overall_status: "awaiting_goods",
+  last_activity_at: new Date().toISOString()
+});
+
+  await insertOrderActivity(
+    order.id,
+    `Order edited in OCC. Added ${addedProducts}, changed ${changedProducts}, removed ${removedProducts}. Released ${releasedPackages} package(s). Volume ${formatNumber(totalVolume, 2)} m³, weight ${formatNumber(totalWeight, 2)} kg.`,
+    "edit_order"
+  );
+
+  const matchResult = await runMatchingForEditedOrder(order.id);
+
+  if (!matchResult.skipped) {
+    await insertOrderActivity(
+      order.id,
+      `Matching executed after edit. ${formatNumber(matchResult.allocationsCreated, 0)} allocation(s) created, ${formatNumber(matchResult.itemsReserved, 0)} item(s) reserved.`,
+      "edit_order_matching"
+    );
+  }
+
+  closeGenericActionModal();
+  await loadOrders();
+
+  showToast("Order saved. Matching completed for missing products.", "ok");
+}
+function bindEvents() {
+  [
+    "filterSearch",
+    "filterLifecycle",
+    "filterProducts",
+    "filterDocument",
+    "filterFinance",
+    "filterDateStatus"
+  ].forEach(id => {
+    const el = byId(id);
+    if (!el) return;
+
+    el.addEventListener("input", () => {
+      applyFilters();
+      renderAll();
+    });
+
+    el.addEventListener("change", () => {
+      applyFilters();
+      renderAll();
+    });
+  });
+
+  document.addEventListener("click", event => {
+    const menu = byId("occRowActionMenu");
+    if (!menu) return;
+
+    if (
+      menu.contains(event.target) ||
+      event.target.closest("[data-order-actions]")
+    ) {
+      return;
+    }
+
+    closeOrderActionMenu();
+  });
+
+  byId("occRowActionMenu")?.addEventListener("click", event => {
+    const button = event.target.closest("[data-row-action]");
+    if (!button) return;
+
+    const action = button.getAttribute("data-row-action");
+    const orderId = byId("occRowActionMenu")?.dataset.orderId || "";
+
+    closeOrderActionMenu();
+
+    if (action === "manual_pod") return openManualOpsModal(orderId);
+    if (action === "finance_tariffs") return openTariffModal(orderId);
+
+ if (action === "edit_order") {
+  if (window.OrderEditor?.open) return window.OrderEditor.open(orderId);
+  showToast("Order editor is not loaded.", "err");
+  return;
+}
+    if (action === "copy_order") {
+  if (window.CopyOrderTool?.open) return window.CopyOrderTool.open(orderId);
+  showToast("Copy Order Tool is not loaded.", "err");
+  return;
+}
+if (action === "credit_order") {
+  if (window.CreditOrderTool?.open) return window.CreditOrderTool.open(orderId);
+  showToast("Credit Order Tool is not loaded.", "err");
+  return;
+}
+if (action === "change_status") {
+  if (window.ChangeStatusTool?.open) return window.ChangeStatusTool.open(orderId);
+  showToast("Change Status Tool is not loaded.", "err");
+  return;
+}
+if (action === "view_activity") {
+  if (window.ActivityViewTool?.open) return window.ActivityViewTool.open(orderId);
+  showToast("Activity View Tool is not loaded.", "err");
+  return;
+}
+if (action === "warehouse_events") {
+  if (window.WarehouseEventsTool?.open) {
+    return window.WarehouseEventsTool.open(orderId);
+  }
+
+  showToast("Warehouse Events Tool is not loaded.", "err");
+  return;
+}
+if (action === "portal_events") {
+  if (window.PortalEventsTool?.open) {
+    return window.PortalEventsTool.open(orderId);
+  }
+
+  showToast("Portal Events Tool is not loaded.", "err");
+  return;
+}
+
+    showToast(`${action} is not connected yet.`, "ok");
+  });
+
+  byId("btnActiveOrdersView")?.addEventListener("click", () => {
+    orderViewMode = "active";
+    showDeliveryGroups = false;
+
+    if (byId("toggleDeliveryGroups")) {
+      byId("toggleDeliveryGroups").checked = false;
+    }
+
+    byId("orderViewSwitch")?.classList.remove("history");
+    byId("btnActiveOrdersView")?.classList.add("active");
+    byId("btnHistoricalOrdersView")?.classList.remove("active");
+
+    applyFilters();
+    renderAll();
+  });
+
+  byId("btnHistoricalOrdersView")?.addEventListener("click", () => {
+    orderViewMode = "historical";
+    showDeliveryGroups = false;
+
+    if (byId("toggleDeliveryGroups")) {
+      byId("toggleDeliveryGroups").checked = false;
+    }
+
+    byId("orderViewSwitch")?.classList.add("history");
+    byId("btnHistoricalOrdersView")?.classList.add("active");
+    byId("btnActiveOrdersView")?.classList.remove("active");
+
+    applyFilters();
+    renderAll();
+  });
+
+  document.querySelectorAll("[data-sort-key]").forEach(th => {
+    th.addEventListener("click", () => {
+      const key = th.getAttribute("data-sort-key");
+
+      if (sortState.key === key) {
+        sortState.direction = sortState.direction === "asc" ? "desc" : "asc";
+      } else {
+        sortState.key = key;
+        sortState.direction = "asc";
+      }
+
+      sortOrders();
+      renderAll();
+    });
+  });
+
+  byId("toggleDeliveryGroups")?.addEventListener("change", event => {
+    showDeliveryGroups = !!event.target.checked;
+
+    setText(
+      "resultsMeta",
+      showDeliveryGroups
+        ? `${formatNumber(deliveryGroupsMap.size)} delivery groups shown`
+        : `${formatNumber(filteredOrders.length)} orders shown`
+    );
+
+    renderAll();
+  });
+
+  byId("deliveryGroupCloseBtn")?.addEventListener("click", closeDeliveryGroupApprovalModal);
+  byId("deliveryGroupCancelBtn")?.addEventListener("click", closeDeliveryGroupApprovalModal);
+
+  byId("deliveryGroupModal")?.addEventListener("click", event => {
+    if (event.target === byId("deliveryGroupModal")) {
+      closeDeliveryGroupApprovalModal();
+    }
+  });
+
+  byId("deliveryGroupHoldBtn")?.addEventListener("click", () => {
+    closeDeliveryGroupApprovalModal();
+    showToast("Delivery group kept on hold.", "ok");
+  });
+
+  byId("deliveryGroupApproveBtn")?.addEventListener("click", async () => {
+    try {
+      await approveDeliveryGroupFromModal();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not approve delivery group.", "err");
+    }
+  });
+
+  byId("selectAllVisibleOrders")?.addEventListener("change", event => {
+    const checked = !!event.target.checked;
+
+    filteredOrders.forEach(order => {
+      const id = String(order.id);
+      if (checked) selectedOrderIds.add(id);
+      else selectedOrderIds.delete(id);
+    });
+
+    renderTable();
+  });
+
+  byId("btnClearSelectedOrders")?.addEventListener("click", () => {
+    selectedOrderIds.clear();
+    renderTable();
+    showToast("Selection cleared.", "ok");
+  });
+
+  byId("btnGenerateCombinedInvoice")?.addEventListener("click", async () => {
+    try {
+      await generateCombinedInvoice();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not generate combined invoice.", "err");
+    }
+  });
+
+  byId("btnRefresh")?.addEventListener("click", async () => {
+    try {
+      await loadOrders();
+      showToast("Operations refreshed.", "ok");
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not refresh operations.", "err");
+    }
+  });
+
+  byId("btnResetFilters")?.addEventListener("click", resetFilters);
+
+  byId("btnSyncStatuses")?.addEventListener("click", async () => {
+    try {
+      await syncStatuses();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not sync statuses.", "err");
+    }
+  });
+
+  byId("manualOpsCloseBtn")?.addEventListener("click", closeManualOpsModal);
+  byId("manualOpsCancelBtn")?.addEventListener("click", closeManualOpsModal);
+
+  byId("manualOpsModal")?.addEventListener("click", event => {
+    if (event.target === byId("manualOpsModal")) closeManualOpsModal();
+  });
+
+  byId("btnSaveManualDeliveryDate")?.addEventListener("click", async () => {
+    try {
+      await saveManualDeliveryDate();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not save delivery date.", "err");
+    }
+  });
+
+  byId("btnUploadManualPodPhotos")?.addEventListener("click", async () => {
+    try {
+      await uploadManualPodPhotos();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not upload POD photos.", "err");
+    }
+  });
+
+  byId("btnUploadManualSignedPod")?.addEventListener("click", async () => {
+    try {
+      await uploadManualSignedPod();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not upload signed POD.", "err");
+    }
+  });
+
+  byId("btnManualMarkDelivered")?.addEventListener("click", async () => {
+    try {
+      await manualMarkDelivered();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not mark delivered.", "err");
+    }
+  });
+
+  byId("genericActionCloseBtn")?.addEventListener("click", closeGenericActionModal);
+  byId("genericActionCancelBtn")?.addEventListener("click", closeGenericActionModal);
+
+  byId("occGenericActionModal")?.addEventListener("click", event => {
+    if (event.target === byId("occGenericActionModal")) {
+      closeGenericActionModal();
+    }
+  });
+
+byId("genericActionSaveBtn")?.addEventListener("click", async () => {
+  const saveBtn = byId("genericActionSaveBtn");
+  const action = byId("genericActionType")?.value || "";
+
+  if (saveBtn?.disabled) return;
+
+  const oldText = saveBtn?.textContent || "Save Order";
+
+  try {
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+      saveBtn.style.opacity = "0.75";
+      saveBtn.style.cursor = "wait";
+    }
+
+    showToast("Saving order, please wait...", "ok");
+
+if (action === "edit_order") {
+editRemovedLineIds = new Set();
+  await saveEditOrderModal();
+  return;
+}
+    if (action === "copy_order") {
+  showToast("Copy order popup is ready. Save function is the next step.", "ok");
+  return;
+}
+
+showToast(`${action} save function is not connected yet.`, "ok");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not save order.", "err");
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = oldText;
+      saveBtn.style.opacity = "";
+      saveBtn.style.cursor = "";
+    }
+  }
+});
+
+}
 
   async function init() {
     try {
@@ -2594,6 +4346,11 @@ function getProductOwnerName(order) {
       }
     }
   }
+
+window.OCCReloadOrders = async function () {
+  await loadOrders();
+};
+window.getOrderById = getOrderById;
 
   document.addEventListener("DOMContentLoaded", init);
 })();

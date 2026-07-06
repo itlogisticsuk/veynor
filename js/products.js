@@ -4,8 +4,9 @@
   const TENANT_NAME = "Sofa2U";
   const DEFAULT_PRODUCT_OWNER = "Bellstone";
   const OWNER_PROFILES_KEY = "product_owner_profiles";
-  const LABEL_W_MM = 140;
-  const LABEL_H_MM = 110;
+
+  const SMALL_LABEL_W_MM = 89;
+  const SMALL_LABEL_H_MM = 36;
 
   let client = null;
   let companyId = null;
@@ -13,6 +14,7 @@
   let customers = [];
   let allCustomers = [];
   let ownerProfiles = [];
+  let importOwnerOptions = [];
   let allProducts = [];
   let filteredProducts = [];
   let selectedImportFile = null;
@@ -38,10 +40,16 @@
     "net_weight_kg",
     "packages_per_unit",
     "package_count",
-    "package_1_qty",
-    "package_2_qty",
-    "package_3_qty",
-    "total_s2u_fees",
+   "package_1_qty",
+"package_2_qty",
+"package_3_qty",
+"package_1_weight_kg",
+"package_2_weight_kg",
+"package_3_weight_kg",
+"package_1_volume_m3",
+"package_2_volume_m3",
+"package_3_volume_m3",
+"total_s2u_fees",
     "total_customer_charge",
     "is_active"
   ];
@@ -64,13 +72,17 @@
     return String(value ?? "").trim().toLowerCase();
   }
 
+  function compactKey(value) {
+    return normalize(value).replace(/[^a-z0-9]/g, "");
+  }
+
   function toNumber(value, fallback = 0) {
     if (value === null || value === undefined || value === "") return fallback;
 
     const text = String(value)
       .replace(/£/g, "")
+      .replace(/,/g, ".")
       .replace(/\s/g, "")
-      .replace(",", ".")
       .trim();
 
     if (!text) return fallback;
@@ -82,6 +94,10 @@
   function toInteger(value, fallback = 0) {
     const num = Math.round(toNumber(value, fallback));
     return Number.isFinite(num) ? num : fallback;
+  }
+
+  function round2(value) {
+    return Math.round((toNumber(value, 0) + Number.EPSILON) * 100) / 100;
   }
 
   function formatNumber(value, digits = 0) {
@@ -117,7 +133,7 @@
     window.__productsToastTimer = window.setTimeout(() => {
       el.textContent = "";
       el.className = "notice";
-    }, 7000);
+    }, 9000);
   }
 
   function ensureClient() {
@@ -165,24 +181,6 @@
 
   function getBrand(row) {
     return getProductValue(row, "category", "") || extractBrandFromDescription(row?.description);
-  }
-
-  function customerLooksLikeProductOwner(customer) {
-    const name = normalize(customer?.name || "");
-    if (!name) return false;
-
-    if (DEFAULT_OWNER_NAMES.some(owner => name.includes(owner))) return true;
-
-    return ownerProfiles.some(owner => {
-      const possibleNames = [
-        owner.name,
-        owner.trading_name,
-        owner.customer_code,
-        owner.default_source_name
-      ].map(normalize).filter(Boolean);
-
-      return possibleNames.some(ownerName => name.includes(ownerName) || ownerName.includes(name));
-    });
   }
 
   function calculatePackageCountFromParts(package1, package2, package3) {
@@ -239,6 +237,50 @@
     return `${sku}-${getPackageLabel(row, packageNo)}`;
   }
 
+  function productHasTariff(row) {
+    return (
+      toNumber(getProductValue(row, "storage_tariff", 0), 0) > 0 &&
+      toNumber(getProductValue(row, "admin_tariff", 0), 0) > 0 &&
+      toNumber(getProductValue(row, "handling_tariff", 0), 0) > 0 &&
+      toNumber(getProductValue(row, "transport_tariff", 0), 0) > 0
+    );
+  }
+
+  function getMissingProductInfo(row) {
+    const missing = [];
+
+    if (!row?.sku_base) missing.push("SKU");
+    if (!row?.name) missing.push("name");
+    if (toNumber(row?.volume_m3, 0) <= 0) missing.push("volume");
+    if (toNumber(row?.weight_kg, 0) <= 0) missing.push("gross weight");
+    if (toNumber(getProductValue(row, "net_weight_kg", 0), 0) <= 0) missing.push("net weight");
+    if (toNumber(getProductValue(row, "storage_tariff", 0), 0) <= 0) missing.push("storage");
+    if (toNumber(getProductValue(row, "admin_tariff", 0), 0) <= 0) missing.push("admin");
+    if (toNumber(getProductValue(row, "handling_tariff", 0), 0) <= 0) missing.push("pick");
+    if (toNumber(getProductValue(row, "transport_tariff", 0), 0) <= 0) missing.push("transport");
+
+    return missing;
+  }
+
+  function productIsComplete(row) {
+    return getMissingProductInfo(row).length === 0;
+  }
+
+  function productStatusBadge(row) {
+    const missing = getMissingProductInfo(row);
+
+    if (!missing.length) {
+      return `<span class="soft-badge" style="background:#ecfdf5;border-color:#bbf7d0;color:#047857;">Complete</span>`;
+    }
+
+    return `
+      <span class="soft-badge" title="Missing: ${escapeHtml(missing.join(", "))}" style="background:#fff7ed;border-color:#fed7aa;color:#c2410c;">
+        ⚠ Missing info
+      </span>
+      <span class="subline">${escapeHtml(missing.slice(0, 3).join(", "))}${missing.length > 3 ? "..." : ""}</span>
+    `;
+  }
+
   function getDefaultOwnerCustomerId() {
     const direct = customers.find(c => normalize(c.name).includes(normalize(DEFAULT_PRODUCT_OWNER)));
     if (direct?.id) return direct.id;
@@ -264,6 +306,90 @@
     }
   }
 
+  function ownerProfileName(profile) {
+    return (
+      profile?.name ||
+      profile?.trading_name ||
+      profile?.default_source_name ||
+      profile?.customer_code ||
+      ""
+    ).trim();
+  }
+
+  function customerMatchesOwnerProfile(customer, profile) {
+    const customerName = compactKey(customer?.name || "");
+    const customerCode = compactKey(customer?.customer_code || "");
+
+    const keys = [
+      profile?.name,
+      profile?.trading_name,
+      profile?.customer_code,
+      profile?.default_source_name
+    ].map(compactKey).filter(Boolean);
+
+    if (!customerName && !customerCode) return false;
+
+    return keys.some(key =>
+      key === customerName ||
+      key === customerCode ||
+      customerName.includes(key) ||
+      key.includes(customerName)
+    );
+  }
+
+  function customerLooksLikeProductOwner(customer) {
+    if (customer?.customer_type === "product_owner") return true;
+
+    const name = normalize(customer?.name || "");
+    if (!name) return false;
+
+    if (DEFAULT_OWNER_NAMES.some(owner => name.includes(owner))) return true;
+
+    return ownerProfiles.some(profile => customerMatchesOwnerProfile(customer, profile));
+  }
+
+  function buildImportOwnerOptions() {
+    const options = [];
+    const usedKeys = new Set();
+
+    customers.forEach(customer => {
+      const key = compactKey(customer.name || customer.id);
+      if (usedKeys.has(key)) return;
+
+      options.push({
+        type: "customer",
+        value: `customer:${customer.id}`,
+        customerId: customer.id,
+        label: customer.name,
+        name: customer.name
+      });
+
+      usedKeys.add(key);
+    });
+
+    ownerProfiles.forEach(profile => {
+      const name = ownerProfileName(profile);
+      if (!name) return;
+
+      const key = compactKey(name);
+      if (usedKeys.has(key)) return;
+
+      const matchingCustomer = allCustomers.find(customer => customerMatchesOwnerProfile(customer, profile));
+
+      options.push({
+        type: matchingCustomer?.id ? "customer" : "profile",
+        value: matchingCustomer?.id ? `customer:${matchingCustomer.id}` : `profile:${key}`,
+        customerId: matchingCustomer?.id || "",
+        label: name,
+        name
+      });
+
+      usedKeys.add(key);
+    });
+
+    importOwnerOptions = options.sort((a, b) => a.label.localeCompare(b.label));
+  }
+
   async function loadCustomers() {
     const db = ensureClient();
     const cid = await getCompanyId();
@@ -272,16 +398,15 @@
 
     const { data, error } = await db
       .from("customers")
-      .select("id, name, customer_type")
+      .select("id, name, customer_type, customer_code")
       .eq("company_id", cid)
       .order("name", { ascending: true });
 
     if (error) throw error;
 
     allCustomers = data || [];
-    customers = allCustomers.filter(
-  customer => customer.customer_type === "product_owner"
-);
+
+    customers = allCustomers.filter(customerLooksLikeProductOwner);
 
     if (!customers.length) {
       customers = allCustomers.filter(c =>
@@ -289,12 +414,14 @@
       );
     }
 
+    buildImportOwnerOptions();
     renderCustomerSelects();
   }
 
   function renderCustomerSelects() {
     const formSelect = byId("productCustomer");
     const filterSelect = byId("filterProductCustomer");
+    const importSelect = byId("productsImportOwner");
 
     if (formSelect) {
       const current = formSelect.value || "";
@@ -317,6 +444,71 @@
         filterSelect.value = current;
       }
     }
+
+    if (importSelect) {
+      const current = importSelect.value || "";
+      importSelect.innerHTML =
+        `<option value="">Select product owner for import</option>` +
+        importOwnerOptions.map(owner => `
+          <option value="${escapeHtml(owner.value)}">${escapeHtml(owner.label)}</option>
+        `).join("");
+
+      if (current && importOwnerOptions.some(o => o.value === current)) {
+        importSelect.value = current;
+      } else {
+        const bellstone = importOwnerOptions.find(o => normalize(o.label).includes("bellstone"));
+        importSelect.value = bellstone?.value || importOwnerOptions[0]?.value || "";
+      }
+    }
+  }
+
+  async function ensureImportOwnerCustomerId() {
+    const select = byId("productsImportOwner");
+    const selected = select?.value || "";
+
+    if (!selected) throw new Error("Select a Product Owner before importing.");
+
+    if (selected.startsWith("customer:")) {
+      const id = selected.replace("customer:", "");
+      if (!id) throw new Error("Selected Product Owner has no customer record.");
+      return id;
+    }
+
+    const option = importOwnerOptions.find(o => o.value === selected);
+    const ownerName = option?.name || option?.label || "";
+
+    if (!ownerName) throw new Error("Selected Product Owner could not be resolved.");
+
+    const existing = allCustomers.find(c =>
+      compactKey(c.name) === compactKey(ownerName) ||
+      compactKey(ownerName).includes(compactKey(c.name)) ||
+      compactKey(c.name).includes(compactKey(ownerName))
+    );
+
+    if (existing?.id) return existing.id;
+
+    const db = ensureClient();
+    const cid = await getCompanyId();
+
+    const { data, error } = await db
+      .from("customers")
+      .insert({
+        company_id: cid,
+        name: ownerName,
+        customer_type: "product_owner"
+      })
+      .select("id, name, customer_type, customer_code")
+      .single();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("Could not create Product Owner customer record.");
+
+    allCustomers.push(data);
+    customers.push(data);
+    buildImportOwnerOptions();
+    renderCustomerSelects();
+
+    return data.id;
   }
 
   async function loadProducts() {
@@ -376,15 +568,6 @@
     if (current) select.value = current;
   }
 
-  function productHasTariff(row) {
-    return (
-      toNumber(getProductValue(row, "storage_tariff", 0), 0) > 0 ||
-      toNumber(getProductValue(row, "admin_tariff", 0), 0) > 0 ||
-      toNumber(getProductValue(row, "handling_tariff", 0), 0) > 0 ||
-      toNumber(getProductValue(row, "transport_tariff", 0), 0) > 0
-    );
-  }
-
   function applyFilters() {
     const q = normalize(byId("productSearch")?.value || "");
     const ownerId = byId("filterProductCustomer")?.value || "";
@@ -398,8 +581,10 @@
       const volume = toNumber(row.volume_m3, 0);
       const weight = toNumber(row.weight_kg, 0);
       const hasTariff = productHasTariff(row);
+      const missing = getMissingProductInfo(row);
 
-      if (completeness === "complete" && (!volume || !weight)) return false;
+      if (completeness === "complete" && missing.length > 0) return false;
+      if (completeness === "incomplete" && missing.length === 0) return false;
       if (completeness === "missing_volume" && volume > 0) return false;
       if (completeness === "missing_weight" && weight > 0) return false;
       if (completeness === "with_tariff" && !hasTariff) return false;
@@ -413,7 +598,8 @@
           getBrand(row),
           getProductValue(row, "barcode_value", ""),
           getProductValue(row, "qr_value", ""),
-          getOwnerName(row)
+          getOwnerName(row),
+          missing.join(" ")
         ].join(" ").toLowerCase();
 
         if (!haystack.includes(q)) return false;
@@ -454,7 +640,7 @@
     if (!tbody) return;
 
     if (!filteredProducts.length) {
-      tbody.innerHTML = `<tr><td colspan="15">No products found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="16">No products found.</td></tr>`;
       if (byId("productsResultsMeta")) byId("productsResultsMeta").textContent = "0 products shown";
       return;
     }
@@ -476,6 +662,7 @@
             <span class="subline">${escapeHtml(row.description || "")}</span>
           </td>
           <td>${escapeHtml(getOwnerName(row))}</td>
+          <td>${productStatusBadge(row)}</td>
           <td><span class="soft-badge">${escapeHtml(getBrand(row) || "General")}</span></td>
           <td>${formatNumber(row.volume_m3, 3)}</td>
           <td>${formatNumber(getProductValue(row, "net_weight_kg", 0), 1)}</td>
@@ -502,9 +689,22 @@
 
     tbody.querySelectorAll("[data-action='edit']").forEach(btn => {
       btn.addEventListener("click", event => {
+        event.preventDefault();
         event.stopPropagation();
-        const row = allProducts.find(p => String(p.id) === String(btn.dataset.productId));
-        if (row) fillForm(row);
+
+        const row = allProducts.find(
+          p => String(p.id) === String(btn.dataset.productId)
+        );
+
+        if (!row) {
+          showToast("Product not found.", "err");
+          return;
+        }
+
+        fillForm(row);
+
+        byId("productModalTitle").textContent = "Edit Product";
+        byId("productModal").classList.add("open");
       });
     });
 
@@ -518,7 +718,7 @@
 
     tbody.querySelectorAll("tr[data-product-id]").forEach(tr => {
       tr.addEventListener("click", () => {
-        const row = allProducts.find(p => String(p.id) === String(tr.dataset.productId));
+        const row = allProducts.find(p => String(p.id) === String(tr.datasetProductId));
         if (row) fillForm(row);
       });
     });
@@ -601,11 +801,19 @@
 
       if (field === "packages_per_unit") payload[field] = data.packages_per_unit || 1;
       if (field === "package_count") payload[field] = data.package_count || data.packages_per_unit || 1;
-      if (field === "package_1_qty") payload[field] = data.package_1_qty || 0;
-      if (field === "package_2_qty") payload[field] = data.package_2_qty || 0;
-      if (field === "package_3_qty") payload[field] = data.package_3_qty || 0;
+     if (field === "package_1_qty") payload[field] = data.package_1_qty || 0;
+if (field === "package_2_qty") payload[field] = data.package_2_qty || 0;
+if (field === "package_3_qty") payload[field] = data.package_3_qty || 0;
 
-      if (field === "total_s2u_fees") payload[field] = totalS2uFees;
+if (field === "package_1_weight_kg") payload[field] = data.package_1_weight_kg || 0;
+if (field === "package_2_weight_kg") payload[field] = data.package_2_weight_kg || 0;
+if (field === "package_3_weight_kg") payload[field] = data.package_3_weight_kg || 0;
+
+if (field === "package_1_volume_m3") payload[field] = data.package_1_volume_m3 || 0;
+if (field === "package_2_volume_m3") payload[field] = data.package_2_volume_m3 || 0;
+if (field === "package_3_volume_m3") payload[field] = data.package_3_volume_m3 || 0;
+
+if (field === "total_s2u_fees") payload[field] = totalS2uFees;
       if (field === "total_customer_charge") payload[field] = data.total_customer_charge || 0;
       if (field === "is_active") payload[field] = true;
     });
@@ -755,414 +963,230 @@
     if (byId("stockModalBarcode")) byId("stockModalBarcode").value = barcode;
   }
 
-  function buildStockLabelHtml(row, packageNo) {
-  const sku = row.sku_base || "SKU";
-  const owner = getOwnerName(row);
-  const productName = row.name || "Product";
-  const packageLabel = getPackageLabel(row, packageNo);
-  const packageSku = makePackageBarcode(row, packageNo);
-  const barcode = makePackageBarcode(row, packageNo);
-  const volume = toNumber(row.volume_m3, 0);
-  const weight = toNumber(row.weight_kg, 0);
-  const uniqueId = `lbl_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  function buildSmallStockLabelHtml(row, packageNo) {
+    const sku = row.sku_base || "SKU";
+    const productName = row.name || "Product";
+    const packageLabel = getPackageLabel(row, packageNo);
+    const packageSku = makePackageBarcode(row, packageNo);
+    const volume = toNumber(row.volume_m3, 0);
+    const weight = toNumber(row.weight_kg, 0);
+    const uniqueId = `small_lbl_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
-  return `
-    <div class="stock-label clean-stock-label" data-label-id="${uniqueId}" data-barcode="${escapeHtml(barcode)}">
-      <div class="clean-top">
-        <div class="clean-brand">
-          <div class="clean-logo">SOFA<span>2U</span></div>
-          <div class="clean-sub">WAREHOUSE SERVICES</div>
-        </div>
-        <div class="clean-status">IN STOCK</div>
-      </div>
-
-      <div class="clean-body">
-        <div class="clean-product">
-          <div>
-            <div class="stock-k">Product</div>
-            <div class="clean-product-name">${escapeHtml(productName)}</div>
-          </div>
-          <div>
-            <div class="stock-k">Product Code</div>
-            <div class="clean-product-code">${escapeHtml(sku)}</div>
-          </div>
-        </div>
-
-        <div class="clean-divider"></div>
-
-        <div class="clean-scan-row">
-          <div>
-            <div class="stock-k">Package SKU</div>
-            <div class="clean-package-sku">${escapeHtml(packageSku)}</div>
+    return `
+      <div class="small-stock-label dynamic-small-label" data-label-id="${uniqueId}" data-barcode="${escapeHtml(packageSku)}">
+        <div class="small-left">
+          <div class="small-brand-row">
+            <div class="small-logo-box">
+              <div>SOFA</div>
+              <div>2U</div>
+            </div>
+            <div class="small-product-title">
+              <div class="small-sku-main">${escapeHtml(sku)}</div>
+              <div class="small-product-name">${escapeHtml(productName)}</div>
+            </div>
           </div>
 
-          <div>
-            <div class="stock-k center">Barcode</div>
-            <svg id="bc_${uniqueId}" class="clean-barcode"></svg>
-            <div class="barcode-text">${escapeHtml(barcode)}</div>
-          </div>
+          <div class="small-divider"></div>
+          <div class="small-package-no">${escapeHtml(packageLabel)}</div>
+          <div class="small-divider"></div>
 
-          <div>
-            <div class="stock-k center">QR Code</div>
-            <div class="clean-qr" id="qr_${uniqueId}"></div>
+          <div class="small-metrics">
+            <div>${formatNumber(weight, 1)} kg</div>
+            <div>${formatNumber(volume, 3)} m³</div>
           </div>
         </div>
 
-        <div class="clean-divider"></div>
-
-        <div class="clean-info-row">
-          <div>
-            <div class="stock-k">Volume</div>
-            <div class="clean-info-value">${formatNumber(volume, 3)} m³</div>
-          </div>
-          <div>
-            <div class="stock-k">Weight</div>
-            <div class="clean-info-value">${formatNumber(weight, 1)} kg</div>
-          </div>
-          <div>
-            <div class="stock-k">Received</div>
-            <div class="clean-info-value">${escapeHtml(todayUk())}</div>
-          </div>
-        </div>
-
-        <div class="clean-divider"></div>
-
-        <div class="clean-owner-row">
-          <div>
-            <div class="stock-k">Owner</div>
-            <div class="clean-owner">${escapeHtml(owner)}</div>
-          </div>
-          <div>
-            <div class="stock-k">Package</div>
-            <div class="clean-owner">${escapeHtml(packageLabel)}</div>
+        <div class="small-right">
+          <div class="small-barcode-wrap">
+            <svg id="bc_${uniqueId}" class="small-barcode"></svg>
+            <div class="small-barcode-line"></div>
+            <div class="small-barcode-text">${escapeHtml(packageSku)}</div>
           </div>
         </div>
       </div>
+    `;
+  }
 
-      <div class="clean-footer">
-        <span>Property of ${escapeHtml(owner)}</span>
-        <span>www.sofa2u.co.uk</span>
-      </div>
-    </div>
-  `;
-}
+  function injectSmallLabelCss() {
+    if (document.getElementById("smallStockLabelCss")) return;
 
-  function injectCleanLabelCss() {
-  if (document.getElementById("cleanStockLabelCss")) return;
+    const style = document.createElement("style");
+    style.id = "smallStockLabelCss";
 
-  const style = document.createElement("style");
-  style.id = "cleanStockLabelCss";
+    style.textContent = `
+      .dynamic-small-label{
+        width:89mm;
+        height:36mm;
+        background:#fff;
+        border:1px solid #d9dee7;
+        border-radius:2mm;
+        box-sizing:border-box;
+        overflow:hidden;
+        font-family:Arial,sans-serif;
+        color:#111827;
+        display:grid;
+        grid-template-columns:48mm 41mm;
+      }
 
-  style.textContent = `
-    .clean-stock-label{
-      width:140mm;
-      height:110mm;
-      background:#ffffff;
-      border:1px solid #d9dee7;
-      border-radius:10px;
-      overflow:hidden;
-      font-family:Arial,sans-serif;
-      color:#111827;
-      display:grid;
-      grid-template-rows:24mm 74mm 12mm;
-      box-sizing:border-box;
-    }
+      .small-left{
+        padding:2mm 2.2mm;
+        border-right:0.25mm solid #c8a76a;
+        box-sizing:border-box;
+        display:grid;
+        grid-template-rows:auto 1px auto 1px auto;
+        gap:0.9mm;
+        min-width:0;
+      }
 
-    /* TOP HEADER */
+      .small-brand-row{
+        display:grid;
+        grid-template-columns:8mm 1fr;
+        gap:2mm;
+        align-items:start;
+        min-width:0;
+      }
 
-    .clean-top{
-      display:grid;
-      grid-template-columns:1fr 45mm;
-      background:#16202c;
-      color:#fff;
-    }
+      .small-logo-box{
+        width:8mm;
+        height:8mm;
+        border:0.25mm solid #c8a76a;
+        border-radius:1mm;
+        background:#16202c;
+        color:#c8a76a;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        font-size:2.3mm;
+        font-weight:900;
+        line-height:0.95;
+        flex:none;
+      }
 
-    .clean-brand{
-      padding:7mm 8mm 0;
-      display:flex;
-      flex-direction:column;
-      justify-content:flex-start;
-    }
+      .small-product-title{min-width:0;}
 
-    .clean-logo{
-      font-size:24px;
-      line-height:1;
-      letter-spacing:7px;
-      color:#d7b177;
-      white-space:nowrap;
-      font-weight:300;
-    }
+      .small-sku-main{
+        font-size:6.4mm;
+        font-weight:900;
+        line-height:0.95;
+        letter-spacing:-0.15mm;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        max-width:100%;
+      }
 
-    .clean-logo span{
-      color:#ffffff;
-    }
+      .small-product-name{
+        margin-top:0.6mm;
+        font-size:3.1mm;
+        font-weight:800;
+        line-height:1.05;
+        max-height:7mm;
+        overflow:hidden;
+        text-transform:uppercase;
+      }
 
-    .clean-sub{
-      margin-top:3mm;
-      font-size:9px;
-      letter-spacing:3px;
-      color:#ffffff;
-      white-space:nowrap;
-      font-weight:700;
-    }
+      .small-divider{
+        height:0.2mm;
+        background:#c8a76a;
+        opacity:.8;
+      }
 
-    .clean-status{
-      background:#2f6b3b;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      text-align:center;
-      font-size:15px;
-      font-weight:900;
-      letter-spacing:.02em;
-    }
+      .small-package-no{
+        font-size:4.8mm;
+        font-weight:900;
+        line-height:1;
+        letter-spacing:-0.1mm;
+        display:flex;
+        align-items:center;
+        gap:1.2mm;
+        white-space:nowrap;
+      }
 
-    /* BODY */
+      .small-package-no::before{
+        content:"Package";
+        font-size:2.5mm;
+        color:#9a7a3f;
+        letter-spacing:0;
+        font-weight:900;
+        text-transform:uppercase;
+      }
 
-    .clean-body{
-  padding:6mm 8mm 4mm;
+      .small-metrics{
+        display:grid;
+        grid-template-columns:1fr 1fr;
+        gap:1.5mm;
+        font-size:3mm;
+        font-weight:900;
+        line-height:1;
+        align-items:end;
+      }
 
-  display:grid;
+      .small-metrics div{white-space:nowrap;}
 
-  grid-template-rows:
-    16mm
-    1px
-    25mm
-    1px
-    13mm
-    1px
-    9mm;
+      .small-metrics div + div{
+        border-left:0.2mm solid #c8a76a;
+        padding-left:1.5mm;
+      }
 
-  gap:3mm;
+      .small-right{
+        padding:6mm 2.5mm 2mm;
+        display:flex;
+        justify-content:center;
+        align-items:center;
+        box-sizing:border-box;
+      }
 
-  overflow:hidden;
+      .small-barcode-wrap{
+        width:36mm;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        gap:1.4mm;
+      }
 
-  align-content:start;
+      .small-barcode{
+        width:36mm;
+        height:14mm;
+        display:block;
+      }
 
-  box-sizing:border-box;
+      .small-barcode-line{
+        width:36mm;
+        height:0.2mm;
+        background:#c8a76a;
+      }
 
-  background:#ffffff;
+      .small-barcode-text{
+        width:36mm;
+        font-size:3mm;
+        font-weight:900;
+        text-align:center;
+        line-height:1;
+        white-space:nowrap;
+        overflow:visible;
+        text-overflow:clip;
+        letter-spacing:0;
+      }
+    `;
 
-  width:100%;
-
-  min-height:0;
-
-  position:relative;
-}
-
-    .stock-k{
-      font-size:8.5px;
-      font-weight:900;
-      color:#2f6b3b;
-      text-transform:uppercase;
-      letter-spacing:.05em;
-      margin-bottom:1.4mm;
-      line-height:1;
-    }
-
-    .stock-k.center{
-      text-align:center;
-    }
-
-    /* PRODUCT ROW */
-
-    .clean-product{
-      display:grid;
-      grid-template-columns:1.3fr .7fr;
-      gap:8mm;
-      align-items:start;
-    }
-
-    .clean-product > div + div{
-      border-left:1px solid #d9dee7;
-      padding-left:7mm;
-      min-height:100%;
-      box-sizing:border-box;
-    }
-
-    .clean-product-name{
-      font-size:18px;
-      font-weight:900;
-      line-height:1.15;
-      letter-spacing:-0.02em;
-      overflow-wrap:anywhere;
-    }
-
-    .clean-product-code{
-      font-size:18px;
-      font-weight:900;
-      line-height:1.15;
-      overflow-wrap:anywhere;
-    }
-
-    /* DIVIDER */
-
-    .clean-divider{
-      height:1px;
-      background:#d9dee7;
-      width:100%;
-    }
-
-    /* BARCODE + QR */
-
-    .clean-scan-row{
-      display:grid;
-      grid-template-columns:.9fr 1fr 26mm;
-      gap:6mm;
-      align-items:center;
-    }
-
-    .clean-scan-row > div + div{
-      border-left:1px solid #d9dee7;
-      padding-left:5mm;
-      min-height:100%;
-      box-sizing:border-box;
-    }
-
-    .clean-package-sku{
-      font-size:22px;
-      font-weight:900;
-      line-height:1;
-      letter-spacing:-0.03em;
-      overflow-wrap:anywhere;
-    }
-
-    .clean-barcode{
-      width:100%;
-      height:16mm;
-      display:block;
-    }
-
-    .barcode-text{
-      text-align:center;
-      font-size:8.5px;
-      margin-top:1mm;
-      line-height:1;
-      letter-spacing:.03em;
-      color:#374151;
-    }
-
-    .clean-qr{
-      width:21mm;
-      height:21mm;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      margin:auto;
-    }
-
-    /* METRICS */
-
-    .clean-info-row{
-      display:grid;
-      grid-template-columns:repeat(3,1fr);
-      gap:5mm;
-      align-items:center;
-    }
-
-    .clean-info-row > div{
-      display:grid;
-      grid-template-columns:12mm 1fr;
-      gap:3mm;
-      align-items:center;
-      min-height:12mm;
-      padding-right:4mm;
-      border-right:1px dashed #d9dee7;
-      box-sizing:border-box;
-    }
-
-    .clean-info-row > div:last-child{
-      border-right:none;
-      padding-right:0;
-    }
-
-    .metric-icon{
-      width:10mm;
-      height:10mm;
-      border-radius:999px;
-      background:#eef2f2;
-      color:#2f6b3b;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size:15px;
-      font-weight:900;
-      flex:none;
-    }
-
-    .clean-info-value{
-      font-size:14px;
-      font-weight:900;
-      line-height:1.08;
-      overflow-wrap:anywhere;
-    }
-
-    /* OWNER */
-
-    .clean-owner-row{
-      display:grid;
-      grid-template-columns:1fr 28mm;
-      gap:8mm;
-      align-items:start;
-    }
-
-    .clean-owner{
-      font-size:13px;
-      font-weight:900;
-      line-height:1.12;
-      overflow-wrap:anywhere;
-    }
-
-    /* FOOTER */
-
-    .clean-footer{
-      background:#2f6b3b;
-      color:#ffffff;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:8px;
-      padding:0 8mm;
-      font-size:9px;
-      font-weight:900;
-      box-sizing:border-box;
-      overflow:hidden;
-    }
-
-    .clean-footer span{
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-  `;
-
-  document.head.appendChild(style);
-}
+    document.head.appendChild(style);
+  }
 
   function drawCodesForLabel(labelNode) {
     const labelId = labelNode.getAttribute("data-label-id");
     const barcodeText = labelNode.getAttribute("data-barcode") || "SKU";
 
     const barcodeSvg = labelNode.querySelector(`#bc_${CSS.escape(labelId)}`);
-    const qrEl = labelNode.querySelector(`#qr_${CSS.escape(labelId)}`);
 
     if (barcodeSvg && typeof JsBarcode !== "undefined") {
       JsBarcode(barcodeSvg, barcodeText, {
         format: "CODE128",
         displayValue: false,
-        height: 62,
-        width: 1.45,
+        height: 52,
+        width: 1.3,
         margin: 0
-      });
-    }
-
-    if (qrEl && typeof QRCode !== "undefined") {
-      qrEl.innerHTML = "";
-      new QRCode(qrEl, {
-        text: barcodeText,
-        width: 92,
-        height: 92,
-        correctLevel: QRCode.CorrectLevel.M
       });
     }
   }
@@ -1175,7 +1199,7 @@
       return;
     }
 
-    injectCleanLabelCss();
+    injectSmallLabelCss();
 
     const area = byId("stockLabelPreviewArea");
     if (!area) return;
@@ -1185,8 +1209,8 @@
 
     updateStockModalBarcode(row);
 
-    area.innerHTML = Array.from({ length: qty }, () => buildStockLabelHtml(row, packageNo)).join("");
-    generatedLabelNodes = Array.from(area.querySelectorAll(".stock-label"));
+    area.innerHTML = Array.from({ length: qty }, () => buildSmallStockLabelHtml(row, packageNo)).join("");
+    generatedLabelNodes = Array.from(area.querySelectorAll(".small-stock-label"));
 
     generatedLabelNodes.forEach(drawCodesForLabel);
 
@@ -1217,7 +1241,7 @@
       const pdf = new jsPDF({
         orientation: "landscape",
         unit: "mm",
-        format: [LABEL_W_MM, LABEL_H_MM]
+        format: [SMALL_LABEL_W_MM, SMALL_LABEL_H_MM]
       });
 
       for (let i = 0; i < generatedLabelNodes.length; i++) {
@@ -1231,8 +1255,8 @@
 
         const img = canvas.toDataURL("image/png");
 
-        if (i > 0) pdf.addPage([LABEL_W_MM, LABEL_H_MM], "landscape");
-        pdf.addImage(img, "PNG", 0, 0, LABEL_W_MM, LABEL_H_MM);
+        if (i > 0) pdf.addPage([SMALL_LABEL_W_MM, SMALL_LABEL_H_MM], "landscape");
+        pdf.addImage(img, "PNG", 0, 0, SMALL_LABEL_W_MM, SMALL_LABEL_H_MM);
       }
 
       const sku = selectedLabelProduct?.sku_base || "stock-label";
@@ -1246,6 +1270,46 @@
     } finally {
       if (btn) btn.disabled = false;
     }
+  }
+
+  function headerKey(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/&/g, " and ")
+      .replace(/\+/g, " plus ")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function buildHeaderMap(headerArray) {
+    const map = new Map();
+
+    (headerArray || []).forEach((header, index) => {
+      const key = headerKey(header);
+      if (key) map.set(key, index);
+    });
+
+    return map;
+  }
+
+  function findColumn(headerMap, patternGroups) {
+    for (const patterns of patternGroups) {
+      for (const [key, index] of headerMap.entries()) {
+        if (patterns.every(pattern => key.includes(pattern))) return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function getCell(rowArray, index) {
+    if (index < 0) return "";
+    return rowArray[index] ?? "";
+  }
+
+  function firstNonEmpty(values) {
+    return values.find(v => String(v ?? "").trim() !== "") ?? "";
   }
 
   function parseSku(value) {
@@ -1263,29 +1327,27 @@
     return { brand: "", sku: raw };
   }
 
-  function rowValueByLetter(rowArray, letter) {
-    const index = letter.toUpperCase().charCodeAt(0) - 65;
-    return rowArray[index] ?? "";
-  }
+  function countPackagesFromRow(rowArray, headerMap) {
+    const ctn1Index = findColumn(headerMap, [
+      ["box1", "gross", "weight"],
+      ["box", "1", "gross", "weight"],
+      ["ctn", "1", "gross", "weight"],
+      ["carton", "1", "gross", "weight"]
+    ]);
 
-  function firstNonEmpty(values) {
-    return values.find(v => String(v ?? "").trim() !== "") ?? "";
-  }
+    const ctn2Index = findColumn(headerMap, [
+      ["box2", "gross", "weight"],
+      ["box", "2", "gross", "weight"],
+      ["ctn", "2", "gross", "weight"],
+      ["carton", "2", "gross", "weight"]
+    ]);
 
-  function findHeaderIndex(headerArray, patterns) {
-    return headerArray.findIndex(header => {
-      const h = normalize(header)
-        .replace(/\s+/g, " ")
-        .replace(/[^a-z0-9 ]/g, "");
-
-      return patterns.every(pattern => h.includes(pattern));
-    });
-  }
-
-  function countPackagesFromRow(rowArray, headerArray) {
-    const ctn1Index = findHeaderIndex(headerArray, ["gross", "weight", "ctn", "1"]);
-    const ctn2Index = findHeaderIndex(headerArray, ["gross", "weight", "ctn", "2"]);
-    const ctn3Index = findHeaderIndex(headerArray, ["gross", "weight", "ctn", "3"]);
+    const ctn3Index = findColumn(headerMap, [
+      ["box3", "gross", "weight"],
+      ["box", "3", "gross", "weight"],
+      ["ctn", "3", "gross", "weight"],
+      ["carton", "3", "gross", "weight"]
+    ]);
 
     const ctn1 = ctn1Index >= 0 ? toNumber(rowArray[ctn1Index], 0) : 0;
     const ctn2 = ctn2Index >= 0 ? toNumber(rowArray[ctn2Index], 0) : 0;
@@ -1298,59 +1360,107 @@
     return {
       packages_per_unit: packageCount,
       package_count: packageCount,
-      package_1_qty: ctn1 > 0 ? 1 : 0,
+      package_1_qty: ctn1 > 0 || packageCount >= 1 ? 1 : 0,
       package_2_qty: ctn2 > 0 ? 1 : 0,
       package_3_qty: ctn3 > 0 ? 1 : 0
     };
   }
 
-  function mapPricingWorksheetRow(rowArray, headerArray) {
-    const skuRaw = rowValueByLetter(rowArray, "B");
-    const parsedSku = parseSku(skuRaw);
+  function cell(rowArray, colNumber) {
+  return rowArray[colNumber - 1] ?? "";
+}
 
-    const name = firstNonEmpty([
-      rowValueByLetter(rowArray, "C"),
-      rowValueByLetter(rowArray, "A"),
-      parsedSku.sku
-    ]);
+function mapPricingWorksheetRow(rowArray, headerMap) {
+  const brand = String(cell(rowArray, 1) || "").trim();
+  const sku = String(cell(rowArray, 2) || "").trim();
+  const nadaSku = String(cell(rowArray, 3) || "").trim();
+  const description = String(cell(rowArray, 4) || "").trim();
 
-    const brand = parsedSku.brand || "";
+  const volume = toNumber(cell(rowArray, 5), 0);
 
-    const storage = toNumber(rowValueByLetter(rowArray, "G"), 0);
-    const admin = toNumber(rowValueByLetter(rowArray, "H"), 0);
-    const pick = toNumber(rowValueByLetter(rowArray, "I"), 0);
-    const transport = toNumber(rowValueByLetter(rowArray, "L"), 0);
-    const totalCharge = toNumber(rowValueByLetter(rowArray, "M"), 0);
+  const ctn1Length = toNumber(cell(rowArray, 6), 0);
+  const ctn1Width = toNumber(cell(rowArray, 7), 0);
+  const ctn1Height = toNumber(cell(rowArray, 8), 0);
 
-    const packages = countPackagesFromRow(rowArray, headerArray);
+  const ctn2Length = toNumber(cell(rowArray, 9), 0);
+  const ctn2Width = toNumber(cell(rowArray, 10), 0);
+  const ctn2Height = toNumber(cell(rowArray, 11), 0);
 
-    return {
-      ownerName: DEFAULT_PRODUCT_OWNER,
-      sku_base: parsedSku.sku,
-      brand,
-      name: String(name || parsedSku.sku || "").trim(),
-      description: String(name || "").trim(),
-      barcode_value: parsedSku.sku,
-      qr_value: parsedSku.sku,
-      volume_m3: toNumber(rowValueByLetter(rowArray, "D"), 0),
-      net_weight_kg: toNumber(rowValueByLetter(rowArray, "E"), 0),
-      weight_kg: toNumber(rowValueByLetter(rowArray, "F"), 0),
-      storage_tariff: storage,
-      admin_tariff: admin,
-      handling_tariff: pick,
-      transport_tariff: transport,
-      total_s2u_fees: storage + admin + pick,
-      total_customer_charge: totalCharge,
-      packages_per_unit: packages.packages_per_unit,
-      package_count: packages.package_count,
-      package_1_qty: packages.package_1_qty,
-      package_2_qty: packages.package_2_qty,
-      package_3_qty: packages.package_3_qty,
-      default_location_prefix: ""
-    };
-  }
+  const ctn3Length = toNumber(cell(rowArray, 12), 0);
+  const ctn3Width = toNumber(cell(rowArray, 13), 0);
+  const ctn3Height = toNumber(cell(rowArray, 14), 0);
 
-  async function readImportRows() {
+  const netWeight = toNumber(cell(rowArray, 15), 0);
+  const grossWeight = toNumber(cell(rowArray, 16), 0);
+
+  const box1 = toNumber(cell(rowArray, 17), 0);
+  const box2 = toNumber(cell(rowArray, 18), 0);
+  const box3 = toNumber(cell(rowArray, 19), 0);
+
+  const storage = toNumber(cell(rowArray, 21), 0);
+  const admin = toNumber(cell(rowArray, 22), 0);
+  const pick = toNumber(cell(rowArray, 23), 0);
+  const transport = toNumber(cell(rowArray, 26), 0);
+
+  const ctn1Volume = ctn1Length && ctn1Width && ctn1Height
+    ? round2((ctn1Length * ctn1Width * ctn1Height) / 1000000)
+    : 0;
+
+  const ctn2Volume = ctn2Length && ctn2Width && ctn2Height
+    ? round2((ctn2Length * ctn2Width * ctn2Height) / 1000000)
+    : 0;
+
+  const ctn3Volume = ctn3Length && ctn3Width && ctn3Height
+    ? round2((ctn3Length * ctn3Width * ctn3Height) / 1000000)
+    : 0;
+
+  const packageCount =
+    box3 > 0 || ctn3Volume > 0 ? 3 :
+    box2 > 0 || ctn2Volume > 0 ? 2 :
+    1;
+
+  const fallbackVolumePerPackage = packageCount > 0
+    ? round2(volume / packageCount)
+    : volume;
+
+  return {
+    sku_base: sku,
+    brand,
+    name: nadaSku || description || sku,
+    description: description || nadaSku || sku,
+    barcode_value: sku,
+    qr_value: sku,
+
+    volume_m3: volume,
+    net_weight_kg: netWeight,
+    weight_kg: grossWeight,
+
+    storage_tariff: storage,
+    admin_tariff: admin,
+    handling_tariff: pick,
+    transport_tariff: transport,
+
+    total_s2u_fees: round2(storage + admin + pick),
+    total_customer_charge: round2(storage + admin + pick + transport),
+
+    packages_per_unit: packageCount,
+    package_count: packageCount,
+
+    package_1_qty: packageCount >= 1 ? 1 : 0,
+    package_2_qty: packageCount >= 2 ? 1 : 0,
+    package_3_qty: packageCount >= 3 ? 1 : 0,
+
+    package_1_weight_kg: box1,
+    package_2_weight_kg: box2,
+    package_3_weight_kg: box3,
+
+    package_1_volume_m3: ctn1Volume || fallbackVolumePerPackage,
+    package_2_volume_m3: packageCount >= 2 ? (ctn2Volume || fallbackVolumePerPackage) : 0,
+    package_3_volume_m3: packageCount >= 3 ? (ctn3Volume || fallbackVolumePerPackage) : 0,
+
+    default_location_prefix: ""
+  };
+}  async function readImportRows() {
     if (!selectedImportFile) throw new Error("Select an Excel or CSV file first.");
     if (typeof XLSX === "undefined") throw new Error("XLSX library is not loaded.");
 
@@ -1364,46 +1474,39 @@
     const headerIndex = rows.findIndex(row => {
       const joined = row.map(v => String(v).toLowerCase()).join(" ");
       return (
-        joined.includes("sku") ||
-        joined.includes("cbm") ||
-        joined.includes("gross weight") ||
-        joined.includes("packing gross weight")
+        joined.includes("sku") &&
+        (
+          joined.includes("cbm") ||
+          joined.includes("storage") ||
+          joined.includes("delivery cost")
+        )
       );
     });
 
     const headerArray = headerIndex >= 0 ? rows[headerIndex] : rows[0];
+    const headerMap = buildHeaderMap(headerArray);
 
     return rows
       .slice(headerIndex >= 0 ? headerIndex + 1 : 1)
-      .map(row => mapPricingWorksheetRow(row, headerArray))
+      .map(row => mapPricingWorksheetRow(row, headerMap))
       .filter(row => row.sku_base && row.name);
-  }
-
-  function findCustomerIdByName(name) {
-    const clean = normalize(name || DEFAULT_PRODUCT_OWNER);
-
-    const customer = customers.find(c =>
-      normalize(c.name).includes(clean) || clean.includes(normalize(c.name))
-    );
-
-    return customer?.id || getDefaultOwnerCustomerId();
   }
 
   async function importProducts() {
     const db = ensureClient();
     const cid = await getCompanyId();
+    const ownerId = await ensureImportOwnerCustomerId();
 
     const mapped = await readImportRows();
 
-    if (!mapped.length) throw new Error("No valid product rows found. SKU in column B is required.");
+    if (!mapped.length) throw new Error("No valid product rows found. SKU is required.");
 
     let inserted = 0;
     let updated = 0;
+    let incomplete = 0;
     let skipped = 0;
 
     for (const row of mapped) {
-      const ownerId = findCustomerIdByName(row.ownerName || DEFAULT_PRODUCT_OWNER);
-
       if (!ownerId) {
         skipped += 1;
         continue;
@@ -1427,10 +1530,18 @@
         transport_tariff: row.transport_tariff,
         total_customer_charge: row.total_customer_charge,
         packages_per_unit: row.packages_per_unit || row.package_count || 1,
-        package_count: row.package_count || row.packages_per_unit || 1,
-        package_1_qty: row.package_1_qty,
-        package_2_qty: row.package_2_qty,
-        package_3_qty: row.package_3_qty
+package_count: row.package_count || row.packages_per_unit || 1,
+package_1_qty: row.package_1_qty,
+package_2_qty: row.package_2_qty,
+package_3_qty: row.package_3_qty,
+
+package_1_weight_kg: row.package_1_weight_kg,
+package_2_weight_kg: row.package_2_weight_kg,
+package_3_weight_kg: row.package_3_weight_kg,
+
+package_1_volume_m3: row.package_1_volume_m3,
+package_2_volume_m3: row.package_2_volume_m3,
+package_3_volume_m3: row.package_3_volume_m3
       };
 
       const payload = buildDbPayload(data, cid);
@@ -1438,6 +1549,8 @@
       if (productHasColumn("total_s2u_fees")) {
         payload.total_s2u_fees = row.total_s2u_fees || 0;
       }
+
+      if (getMissingProductInfo(payload).length > 0) incomplete += 1;
 
       const { data: existing, error: existingError } = await db
         .from("products")
@@ -1459,7 +1572,8 @@
       }
     }
 
-    showToast(`${inserted} products created, ${updated} updated, ${skipped} skipped.`, "ok");
+    showToast(`${inserted} products created, ${updated} updated, ${incomplete} incomplete, ${skipped} skipped.`, "ok");
+    await loadCustomers();
     await loadProducts();
   }
 
@@ -1470,21 +1584,18 @@
     }
 
     const rows = [{
-      "A Product": "Cromwell Storage bed King size",
-      "B SKU": "CRO0804",
-      "C Description": "Cromwell Storage bed King size",
-      "D CBM": 0.760,
-      "E Net Weight kg": 70,
-      "F Gross Weight kg": 75,
-      "G Storage": 0,
-      "H Admin": 0,
-      "I Pick": 0,
-      "L Transport": 0,
-      "M Total Customer Charge": 0,
-      "Packages Per Unit": 3,
-      "Packing gross weight ctn 1": 25,
-      "Packing gross weight ctn 2": 25,
-      "Packing gross weight ctn 3": 25
+      "SKU": "CRO0804",
+      "Description": "Cromwell Storage bed King size",
+      "Original CBM": 0.760,
+      "Net weight": 70,
+      "Gross weight": 75,
+      "Box1 Gross Weight": 25,
+      "Box2 Gross Weight": 25,
+      "Box3 Gross Weight": 25,
+      "Storage": 0,
+      "Admin": 0,
+      "Pick Pack Load": 0,
+      "Delivery Cost UK (S2U) - Mainland UK": 0
     }];
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1526,9 +1637,26 @@
 
     byId("btnClearProductFilters")?.addEventListener("click", clearFilters);
 
+    byId("btnOpenProductModal")?.addEventListener("click", () => {
+      clearForm();
+      byId("productModalTitle").textContent = "New Product";
+      byId("productModal")?.classList.add("open");
+    });
+
+    byId("btnCloseProductModal")?.addEventListener("click", () => {
+      byId("productModal")?.classList.remove("open");
+    });
+
+    byId("productModal")?.addEventListener("click", event => {
+      if (event.target?.id === "productModal") {
+        byId("productModal").classList.remove("open");
+      }
+    });
+
     byId("btnSaveProduct")?.addEventListener("click", async () => {
       try {
         await saveProduct();
+        byId("productModal")?.classList.remove("open");
       } catch (error) {
         console.error(error);
         showToast(error.message, "err");
@@ -1562,7 +1690,9 @@
     byId("btnCloseStockLabelModal")?.addEventListener("click", closeStockLabelModal);
 
     byId("stockLabelModal")?.addEventListener("click", event => {
-      if (event.target?.id === "stockLabelModal") closeStockLabelModal();
+      if (event.target?.id === "stockLabelModal") {
+        closeStockLabelModal();
+      }
     });
 
     byId("stockLabelPackageSelect")?.addEventListener("change", () => {
@@ -1573,7 +1703,9 @@
     });
 
     byId("stockLabelQty")?.addEventListener("change", () => {
-      if (selectedLabelProduct) generateStockLabels();
+      if (selectedLabelProduct) {
+        generateStockLabels();
+      }
     });
 
     byId("btnGenerateStockLabel")?.addEventListener("click", generateStockLabels);

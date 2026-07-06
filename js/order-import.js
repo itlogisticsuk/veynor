@@ -1915,53 +1915,63 @@ delivery_region: null,
     if (orderError) throw orderError;
 
     const linePayloads = enrichedLines.map((line, index) => {
-      const qty = Math.round(toNumber(line.quantity, 0));
-      const unitVolume = toNumber(line.unitVolume, 0);
-      const totalLineVolume = toNumber(line.totalVolume, 0);
-      const unitWeight = toNumber(line.unitWeight, 0);
-      const totalLineWeight = toNumber(line.totalWeight, 0);
+  const qty = Math.round(toNumber(line.quantity, 0));
+  const unitVolume = toNumber(line.unitVolume, 0);
+  const totalLineVolume = toNumber(line.totalVolume, 0);
+  const unitWeight = toNumber(line.unitWeight, 0);
+  const totalLineWeight = toNumber(line.totalWeight, 0);
 
-      return {
-        company_id: cid,
-        order_id: insertedOrder.id,
-        product_id: line.productSnapshot?.id || null,
+  return {
+    company_id: cid,
+    order_id: insertedOrder.id,
+    product_id: line.productSnapshot?.id || null,
 
-        line_number: index + 1,
-        sku_base: String(line.itemCode || "").trim() || null,
-        description: line.description || line.itemRaw || null,
+    line_number: index + 1,
+    sku_base: String(line.itemCode || "").trim() || null,
+    description: line.description || line.itemRaw || null,
 
-        quantity_ordered: qty,
-        quantity_allocated: 0,
-        quantity_shipped: 0,
+    requested_package_no: line.requested_package_no || null,
+    requested_package_total: line.requested_package_total || null,
+    requested_package_label:
+      line.packageChoice === "full"
+        ? null
+        : line.packageChoice,
 
-        unit_volume_m3: round3(unitVolume),
-        total_volume_m3: round3(totalLineVolume),
-        total_line_volume_m3: round3(totalLineVolume),
+    quantity_ordered: qty,
+    quantity_allocated: 0,
+    quantity_shipped: 0,
 
-        unit_weight_kg: round3(unitWeight),
-        total_line_weight_kg: round3(totalLineWeight),
+    unit_volume_m3: round3(unitVolume),
+    total_volume_m3: round3(totalLineVolume),
+    total_line_volume_m3: round3(totalLineVolume),
 
-        matched_quantity: 0,
-        matched_volume_m3: 0,
-        matched_weight_kg: 0,
+    unit_weight_kg: round3(unitWeight),
+    total_line_weight_kg: round3(totalLineWeight),
 
-        tariff_storage: round2(line.tariff_storage),
-        tariff_admin: round2(line.tariff_admin),
-        tariff_handling: round2(line.tariff_handling),
-        tariff_transport: round2(line.tariff_transport),
-        total_s2u_fees: round2(line.total_s2u_fees),
-        total_customer_charge: round2(line.total_customer_charge),
+    matched_quantity: 0,
+    matched_volume_m3: 0,
+    matched_weight_kg: 0,
 
-        notes: [
-          line.description || "",
-          line.itemRaw ? `Original item: ${line.itemRaw}` : "",
-          order.purchaseOrder ? `Purchase Order: ${order.purchaseOrder}` : "",
-          line.productSnapshot?.id
-            ? "Product linked at import"
-            : "WARNING: No matching product found in product master at import"
-        ].filter(Boolean).join(" | ") || null
-      };
-    });
+    tariff_storage: round2(line.tariff_storage),
+    tariff_admin: round2(line.tariff_admin),
+    tariff_handling: round2(line.tariff_handling),
+    tariff_transport: round2(line.tariff_transport),
+    total_s2u_fees: round2(line.total_s2u_fees),
+    total_customer_charge: round2(line.total_customer_charge),
+
+    notes: [
+      line.description || "",
+      line.itemRaw ? `Original item: ${line.itemRaw}` : "",
+      order.purchaseOrder ? `Purchase Order: ${order.purchaseOrder}` : "",
+      line.packageChoice && line.packageChoice !== "full"
+        ? `Requested package: ${line.packageChoice}`
+        : "",
+      line.productSnapshot?.id
+        ? "Product linked at import"
+        : "WARNING: No matching product found in product master at import"
+    ].filter(Boolean).join(" | ") || null
+  };
+});
 
     if (!linePayloads.length) {
       throw new Error(`No order lines to insert for ${order.orderNumber}.`);
@@ -2305,6 +2315,59 @@ function findManualProduct(sku) {
   return manualProducts.find(p => normalize(p.sku_base) === normalize(sku)) || null;
 }
 
+function isTenantRole() {
+  const role = normalize(window.VEYNOR_CURRENT_PROFILE?.role || "");
+  return ["veynor_admin", "tenant_admin", "tenant_user"].includes(role);
+}
+
+function getManualPackageTotal(product) {
+  return Math.max(
+    1,
+    Math.round(toNumber(
+      product?.package_count ||
+      product?.packages_per_unit ||
+      1,
+      1
+    ))
+  );
+}
+
+function fillManualPackageOptions(row, product) {
+  const select = row.querySelector(".manualPackageChoice");
+  if (!select) return;
+
+  const total = getManualPackageTotal(product);
+
+  select.innerHTML =
+    `<option value="full">Full Product (${total}/${total})</option>` +
+    Array.from({ length: total }, (_, index) => {
+      const no = index + 1;
+      return `<option value="${no}/${total}">Package ${no}/${total}</option>`;
+    }).join("");
+}
+
+function applyManualFinanceVisibility() {
+  const allowed = isTenantRole();
+
+  document.querySelectorAll(".manual-line-finance").forEach(el => {
+    el.style.display = allowed ? "" : "none";
+  });
+
+  const unknownOwner = byId("manualUnknownOwner");
+  const unknownOwnerLabel = unknownOwner?.closest("label");
+
+  if (unknownOwner) {
+    unknownOwner.disabled = !allowed;
+    if (!allowed) unknownOwner.checked = false;
+  }
+
+  if (unknownOwnerLabel) {
+    unknownOwnerLabel.style.display = allowed ? "" : "none";
+  }
+
+  toggleManualUnknownOwnerFields();
+}
+
 function fillManualLineFromSku(input) {
   const row = input.closest(".manual-line-row");
   if (!row) return;
@@ -2322,15 +2385,28 @@ function fillManualLineFromSku(input) {
   const missing = row.querySelector(".manualProductMissing");
   const hint = row.querySelector(".manualProductHint");
 
+  fillManualPackageOptions(row, product);
+
   if (desc) desc.value = product.description || product.name || "";
   if (volume) volume.value = product.volume_m3 || 0;
   if (weight) weight.value = product.weight_kg || product.net_weight_kg || 0;
-  if (storage) storage.value = product.storage_tariff || 0;
-  if (admin) admin.value = product.admin_tariff || 0;
-  if (handling) handling.value = product.handling_tariff || 0;
-  if (transport) transport.value = product.transport_tariff || 0;
+
+  if (isTenantRole()) {
+    if (storage) storage.value = product.storage_tariff || 0;
+    if (admin) admin.value = product.admin_tariff || 0;
+    if (handling) handling.value = product.handling_tariff || 0;
+    if (transport) transport.value = product.transport_tariff || 0;
+  } else {
+    if (storage) storage.value = 0;
+    if (admin) admin.value = 0;
+    if (handling) handling.value = 0;
+    if (transport) transport.value = 0;
+  }
+
   if (missing) missing.checked = false;
   if (hint) hint.textContent = "Product found in master data.";
+
+  applyManualFinanceVisibility();
 }
 
 async function loadManualRetailers() {
@@ -2448,7 +2524,6 @@ function toggleManualUnknownOwnerFields() {
 }
 
 function openManualOrderModal() {
-
   syncManualOwnerSelect();
   toggleManualUnknownOwnerFields();
 
@@ -2463,11 +2538,23 @@ function openManualOrderModal() {
   if (orderInput && !orderInput.value) {
     orderInput.value = `MAN-${Date.now().toString().slice(-6)}`;
   }
+
+  document.querySelectorAll("#manualLines .manual-line-row").forEach(row => {
+    const sku = row.querySelector(".manualSku")?.value || "";
+    const product = findManualProduct(sku);
+
+    if (product) {
+    fillManualLineFromSku(row.querySelector(".manualSku"));
+}
+  });
+
+  applyManualFinanceVisibility();
 }
 
 function closeManualOrderModal() {
   byId("manualOrderModal")?.classList.remove("open");
 }
+
 
 function addManualLine() {
   const wrap = byId("manualLines");
@@ -2489,6 +2576,13 @@ function addManualLine() {
         <div class="field">
           <label>Qty</label>
           <input class="input manualQty" type="number" min="1" value="1"/>
+        </div>
+
+        <div class="field">
+          <label>Package</label>
+          <select class="select manualPackageChoice">
+            <option value="full">Full Product</option>
+          </select>
         </div>
 
         <div class="field">
@@ -2536,6 +2630,8 @@ function addManualLine() {
       </div>
     </div>
   `);
+
+  applyManualFinanceVisibility();
 }
 
 function getManualLines() {
@@ -2547,6 +2643,10 @@ function getManualLines() {
 
       const unitVolume = toNumber(row.querySelector(".manualVolume")?.value, 0);
       const unitWeight = toNumber(row.querySelector(".manualWeight")?.value, 0);
+const packageChoice = row.querySelector(".manualPackageChoice")?.value || "full";
+const packageParts = packageChoice !== "full" ? packageChoice.split("/") : [];
+const requestedPackageNo = packageParts.length ? toNumber(packageParts[0], null) : null;
+const requestedPackageTotal = packageParts.length ? toNumber(packageParts[1], null) : null;
 
       return {
         itemRaw: sku,
@@ -2558,10 +2658,14 @@ function getManualLines() {
         totalVolume: qty * unitVolume,
         unitWeight,
         totalWeight: qty * unitWeight,
-        tariff_storage: toNumber(row.querySelector(".manualStorageTariff")?.value, 0),
-        tariff_admin: toNumber(row.querySelector(".manualAdminTariff")?.value, 0),
-        tariff_handling: toNumber(row.querySelector(".manualHandlingTariff")?.value, 0),
-        tariff_transport: toNumber(row.querySelector(".manualTransportTariff")?.value, 0),
+packageChoice,
+requested_package_no: requestedPackageNo,
+requested_package_total: requestedPackageTotal,
+
+tariff_storage: isTenantRole() ? toNumber(row.querySelector(".manualStorageTariff")?.value, 0) : 0,
+tariff_admin: isTenantRole() ? toNumber(row.querySelector(".manualAdminTariff")?.value, 0) : 0,
+tariff_handling: isTenantRole() ? toNumber(row.querySelector(".manualHandlingTariff")?.value, 0) : 0,
+tariff_transport: isTenantRole() ? toNumber(row.querySelector(".manualTransportTariff")?.value, 0) : 0,
         productMissingManual: !!row.querySelector(".manualProductMissing")?.checked,
         sourceRow: index + 1
       };

@@ -96,6 +96,17 @@
 
     <div id="toast" class="notice"></div>
 
+<div id="scanProgressBox" class="notice ok" style="display:none;">
+  <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;">
+    <strong id="scanProgressTitle">Booking stock...</strong>
+    <span id="scanProgressText">0%</span>
+  </div>
+  <div style="height:10px;background:#dbeafe;border-radius:999px;overflow:hidden;">
+    <div id="scanProgressBar" style="height:100%;width:0%;background:#1267ff;border-radius:999px;transition:width .25s ease;"></div>
+  </div>
+  <div id="scanProgressSub" style="margin-top:8px;font-size:12px;color:#166534;">Preparing...</div>
+</div>
+
     <section class="scan-kpi-grid">
       <article class="card scan-kpi-card">
         <div class="scan-kpi-label">Lines Today</div>

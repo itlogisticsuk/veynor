@@ -2,6 +2,8 @@
   "use strict";
 
   const TENANT_NAME = "Sofa2U";
+  const OUTBOUND_STATUS = "manual_outbound";
+  const OUTBOUND_STATUSES = ["manual_outbound", "picked", "loaded", "shipped", "closed", "cancelled", "damaged", "missing"];
 
   let client = null;
   let companyId = null;
@@ -40,7 +42,7 @@
   }
 
   function cleanCode(value) {
-    return normalize(value).replace(/\s+/g, "");
+    return normalize(value).replace(/[^a-z0-9]/g, "");
   }
 
   function toNumber(value, fallback = 0) {
@@ -67,11 +69,21 @@
     });
   }
 
+  function uuid() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      const v = c === "x" ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
   function showToast(message, type = "ok") {
     const el = byId("toast");
     if (!el) return;
 
-    el.textContent = message;
+    el.textContent = message || "";
     el.className = `notice ${type}`;
 
     clearTimeout(window.__scanToastTimer);
@@ -80,6 +92,44 @@
       el.className = "notice";
     }, 5000);
   }
+
+function showProgress(title, current, total, subText) {
+  const box = byId("scanProgressBox");
+  const titleEl = byId("scanProgressTitle");
+  const textEl = byId("scanProgressText");
+  const barEl = byId("scanProgressBar");
+  const subEl = byId("scanProgressSub");
+
+  if (!box || !barEl || !textEl) return;
+
+  const safeTotal = Math.max(1, Number(total || 1));
+  const safeCurrent = Math.max(0, Math.min(Number(current || 0), safeTotal));
+  const pct = Math.round((safeCurrent / safeTotal) * 100);
+
+  box.style.display = "block";
+  if (titleEl) titleEl.textContent = title || "Booking stock...";
+  textEl.textContent = `${pct}%`;
+  barEl.style.width = `${pct}%`;
+
+  if (subEl) {
+    subEl.textContent = subText || `${safeCurrent} of ${safeTotal} processed`;
+  }
+}
+
+function hideProgress(delay = 900) {
+  window.clearTimeout(window.__scanProgressTimer);
+  window.__scanProgressTimer = window.setTimeout(() => {
+    const box = byId("scanProgressBox");
+    const bar = byId("scanProgressBar");
+
+    if (box) box.style.display = "none";
+    if (bar) bar.style.width = "0%";
+  }, delay);
+}
+
+function nextFrame() {
+  return new Promise(resolve => requestAnimationFrame(resolve));
+}
 
   function setText(id, value) {
     const el = byId(id);
@@ -118,13 +168,30 @@
       return parts[parts.length - 1].trim();
     }
 
-    if (raw.includes("/")) {
-      const last = raw.split("/").pop().trim();
-      return last || raw;
-    }
-
     return raw;
   }
+
+function parsePackageInfo(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  const compact = raw.replace(/\s+/g, "");
+
+  const match = compact.match(/(?:^|[-_])(?:pkg|package|colli|box)?(\d{1,2})[\/](\d{1,2})$/i);
+  if (!match) return null;
+
+  const packageNo = Number(match[1]);
+  const packageTotal = Number(match[2]);
+
+  if (!Number.isInteger(packageNo) || !Number.isInteger(packageTotal)) return null;
+  if (packageNo < 1 || packageTotal < 1 || packageNo > packageTotal) return null;
+
+  return {
+    package_no: packageNo,
+    package_total: packageTotal,
+    package_label: `${packageNo}/${packageTotal}`
+  };
+}
 
   function ownerName(product) {
     return product?.customers?.name || "—";
@@ -135,10 +202,32 @@
   }
 
   function locationLabel(row) {
-    return row?.code || row?.name || "—";
+    return row?.code || row?.location_code || row?.name || "—";
   }
 
-  function buildUniqueSku(product, index) {
+  function packageProfile(product) {
+    const flags = [
+      toNumber(product.package_1_qty, 0),
+      toNumber(product.package_2_qty, 0),
+      toNumber(product.package_3_qty, 0)
+    ];
+
+    let total = flags.filter(v => v > 0).length;
+
+    if (!total) {
+      total = Math.max(1, Math.round(toNumber(product.packages_per_unit, 1)));
+    }
+
+    total = Math.max(1, Math.min(9, total));
+
+    return Array.from({ length: total }, (_, i) => ({
+      package_no: i + 1,
+      package_total: total,
+      package_label: `${i + 1}/${total}`
+    }));
+  }
+
+  function buildUniqueSku(product, setIndex, packageNo, packageTotal) {
     const sku = String(product.sku_base || "SKU").replace(/[^a-zA-Z0-9_-]/g, "");
     const d = new Date();
 
@@ -150,13 +239,17 @@
       String(d.getMinutes()).padStart(2, "0") +
       String(d.getSeconds()).padStart(2, "0");
 
-    return `${sku}-IN-${stamp}-${String(index).padStart(3, "0")}`;
+    return `${sku}-IN-${stamp}-${String(setIndex).padStart(3, "0")}-PKG${packageNo}OF${packageTotal}`;
   }
 
-  function mutationFromUnique(product, uniqueSku) {
-    const match = String(uniqueSku || "").match(/-(\d{1,6})$/);
-    if (match) return `${product.sku_base}-${Number(match[1])}`;
-    return `${product.sku_base}-1`;
+  function mutationFromItem(product, item) {
+    const label = item.package_label || (
+      item.package_no && item.package_total
+        ? `${item.package_no}/${item.package_total}`
+        : "1/1"
+    );
+
+    return `${product.sku_base || "SKU"} · Package ${label}`;
   }
 
   function updateKpis(mode, lastScanText) {
@@ -317,6 +410,9 @@
       if (q) {
         const haystack = [
           p.sku_base,
+          p.sku,
+          p.barcode,
+          p.barcode_value,
           p.name,
           p.description,
           ownerName(p)
@@ -340,14 +436,18 @@
       return;
     }
 
-    tbody.innerHTML = rows.slice(0, 150).map(p => `
-      <tr data-sku="${escapeHtml(p.sku_base || "")}">
-        <td><strong>${escapeHtml(p.sku_base || "—")}</strong></td>
-        <td>${escapeHtml(p.name || "—")}</td>
-        <td>${escapeHtml(ownerName(p))}</td>
-        <td>${formatNumber(p.volume_m3, 3)}</td>
-      </tr>
-    `).join("");
+    tbody.innerHTML = rows.slice(0, 150).map(p => {
+      const packages = packageProfile(p).map(x => x.package_label).join(" + ");
+
+      return `
+        <tr data-sku="${escapeHtml(p.sku_base || "")}">
+          <td><strong>${escapeHtml(p.sku_base || "—")}</strong><span class="subline">${escapeHtml(packages)}</span></td>
+          <td>${escapeHtml(p.name || "—")}</td>
+          <td>${escapeHtml(ownerName(p))}</td>
+          <td>${formatNumber(p.volume_m3, 3)}</td>
+        </tr>
+      `;
+    }).join("");
 
     tbody.querySelectorAll("tr[data-sku]").forEach(row => {
       row.addEventListener("click", () => {
@@ -384,107 +484,601 @@
 
     return rows.find(l =>
       cleanCode(l.code) === code ||
+      cleanCode(l.location_code) === code ||
       cleanCode(l.name) === code ||
       cleanCode(l.barcode) === code
     ) || null;
   }
 
+  function stripPackageSuffix(value) {
+    return String(value || "")
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/[-_ ]?(?:pkg|package|colli|box)?\d{1,2}[\/\-]\d{1,2}$/i, "");
+  }
+
   function findProduct(scanValue) {
-    const sku = cleanCode(parseScan(scanValue));
+    const raw = parseScan(scanValue);
+    const withoutPackage = stripPackageSuffix(raw);
+    const code = cleanCode(withoutPackage);
     const ownerId = byId("productOwnerFilter")?.value || "";
 
     return products.find(p => {
       if (ownerId && String(p.customer_id) !== String(ownerId)) return false;
 
-      return (
-        cleanCode(p.sku_base) === sku ||
-        cleanCode(p.sku) === sku ||
-        cleanCode(p.barcode) === sku
-      );
+      const candidates = [
+        p.sku_base,
+        p.sku,
+        p.barcode,
+        p.barcode_value,
+        p.qr_value,
+        p.qr_code_value
+      ]
+        .filter(Boolean)
+        .map(cleanCode)
+        .filter(Boolean);
+
+      return candidates.some(c => code === c);
     }) || null;
   }
 
-  async function bookInbound(product, qty = 1) {
-    if (!activeWarehouse) throw new Error("Scan or select a warehouse first.");
-    if (!activeLocation) throw new Error("Scan or select a location first.");
+  async function findOpenSetForPackage(product, packageInfo, reference, excludePhysicalIds = new Set()) {
+  const cid = await getCompanyId();
 
-    const cid = await getCompanyId();
-    const reference = byId("referenceInput")?.value?.trim() || "";
-    const inboundDate = nowIso();
+  const { data, error } = await ensureClient()
+    .from("items")
+    .select(`
+      id,
+      physical_product_id,
+      package_no,
+      package_total,
+      status,
+      inbound_reference,
+      created_at,
+      stock_set_id
+    `)
+    .eq("company_id", cid)
+    .eq("product_id", product.id)
+    .eq("package_total", packageInfo.package_total)
+    .eq("status", "in_stock")
+    .not("physical_product_id", "is", null)
+    .order("created_at", { ascending: true })
+    .limit(1000);
 
-    const count = Math.max(1, Math.round(toNumber(qty, 1)));
-    const rows = [];
+  if (error) throw error;
 
-    for (let i = 1; i <= count; i++) {
-      const uniqueSku = buildUniqueSku(product, i);
+  const groups = new Map();
 
-      rows.push({
-        company_id: cid,
-        product_id: product.id,
-        warehouse_id: activeWarehouse.id,
-        location_id: activeLocation.id,
-        storage_mutation_id: uniqueSku,
-        sku_unique: uniqueSku,
-        status: "in_stock",
-        volume_m3: toNumber(product.volume_m3, 0),
-        weight_kg: toNumber(product.weight_kg, 0),
-        inbound_reference: reference || null,
-        inbound_date: inboundDate,
-        received_at: inboundDate
-      });
+  (data || []).forEach(item => {
+    const key = String(item.physical_product_id || "");
+    if (!key) return;
+    if (excludePhysicalIds.has(key)) return;
+
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+
+  for (const [physicalId, rows] of groups.entries()) {
+    const hasSamePackage = rows.some(r =>
+      Number(r.package_no) === Number(packageInfo.package_no)
+    );
+
+    if (hasSamePackage) continue;
+
+    const total = Number(rows[0]?.package_total || packageInfo.package_total);
+    if (rows.length >= total) continue;
+
+    if (reference) {
+      const refKey = normalize(reference);
+      const sameRef = rows.some(r => normalize(r.inbound_reference || "") === refKey);
+      if (!sameRef) continue;
     }
 
-    const { data, error } = await ensureClient()
+    return physicalId;
+  }
+
+  return uuid();
+}
+
+  function packageNumbersComplete(rows, packageTotal) {
+    const present = new Set(rows.map(r => Number(r.package_no || 1)));
+
+    return Array.from({ length: packageTotal }, (_, i) => i + 1)
+      .every(no => present.has(no));
+  }
+
+  function rowIsActiveStock(row) {
+    return !OUTBOUND_STATUSES.includes(normalize(row?.status));
+  }
+
+  async function refreshStockSetStatus(physicalProductId) {
+    if (!physicalProductId) return;
+
+    const db = ensureClient();
+    const cid = await getCompanyId();
+
+    const { data, error } = await db
       .from("items")
-      .insert(rows)
-      .select("id, sku_unique, storage_mutation_id, status, created_at");
+      .select(`
+        id,
+        company_id,
+        product_id,
+        warehouse_id,
+        location_id,
+        package_no,
+        package_total,
+        status,
+        physical_product_id,
+        stock_set_id,
+        products (
+          id,
+          sku_base,
+          volume_m3,
+          weight_kg,
+          net_weight_kg
+        )
+      `)
+      .eq("company_id", cid)
+      .eq("physical_product_id", physicalProductId);
 
     if (error) throw error;
 
-    const inserted = data || [];
+    const rows = data || [];
+    if (!rows.length) return;
 
-    inserted.forEach(item => {
-      inboundHistory.unshift({
-        time: nowTime(),
-        warehouse: warehouseLabel(activeWarehouse),
-        location: locationLabel(activeLocation),
-        sku: product.sku_base,
-        product: product.name,
-        owner: ownerName(product),
-        mutation: mutationFromUnique(product, item.sku_unique),
+    const activeRows = rows.filter(rowIsActiveStock);
+    const product = rows[0]?.products || {};
+    const productId = rows[0]?.product_id || null;
+
+    if (!productId) throw new Error("Cannot create stock set: product_id is missing.");
+
+    const packageTotal = Math.max(
+      1,
+      ...rows.map(r => Number(r.package_total || 1))
+    );
+
+    const complete = packageNumbersComplete(activeRows, packageTotal);
+    const setStatus = complete ? "complete" : "incomplete";
+    const allItemIds = rows.map(r => r.id).filter(Boolean);
+
+    if (allItemIds.length) {
+      const { error: statusError } = await db
+        .from("items")
+        .update({ stock_set_status: setStatus })
+        .in("id", allItemIds);
+
+      if (statusError) throw statusError;
+    }
+
+    if (!complete) return;
+
+    const activeItemIds = activeRows.map(r => r.id).filter(Boolean);
+    const packageCount = activeRows.length;
+    const existingLinkedId = activeRows.find(r => r.stock_set_id)?.stock_set_id || null;
+
+    let stockSetId = existingLinkedId;
+
+    if (!stockSetId) {
+      const { data: existingSet, error: existingError } = await db
+        .from("stock_sets")
+        .select("id")
+        .eq("company_id", cid)
+        .eq("physical_product_id", physicalProductId)
+        .maybeSingle();
+
+      if (existingError) throw existingError;
+
+      stockSetId = existingSet?.id || null;
+    }
+
+const weightKg = activeRows.reduce(
+  (sum, row) => sum + toNumber(row.weight_kg, 0),
+  0
+);
+
+const volumeM3 = activeRows.reduce(
+  (sum, row) => sum + toNumber(row.volume_m3, 0),
+  0
+);
+
+    const warehouseId = activeRows[0]?.warehouse_id || rows[0]?.warehouse_id || null;
+    const locationId = activeRows[0]?.location_id || rows[0]?.location_id || null;
+
+    if (!stockSetId) {
+      const { count, error: countError } = await db
+        .from("stock_sets")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", cid)
+        .eq("product_id", productId);
+
+      if (countError) throw countError;
+
+      const setCode = `C-${product.sku_base || "SKU"}-${String((count || 0) + 1).padStart(6, "0")}`;
+
+      const { data: insertedSet, error: insertError } = await db
+        .from("stock_sets")
+        .insert({
+          company_id: cid,
+          product_id: productId,
+          physical_product_id: physicalProductId,
+          set_code: setCode,
+          status: "complete",
+          package_total: packageTotal,
+          package_count: packageCount,
+          volume_m3: volumeM3,
+          weight_kg: weightKg,
+          warehouse_id: warehouseId,
+          location_id: locationId,
+          created_at: nowIso(),
+          updated_at: nowIso()
+        })
+        .select("id")
+        .single();
+
+      if (insertError) throw insertError;
+      if (!insertedSet?.id) throw new Error("Stock set insert succeeded, but no id was returned.");
+
+      stockSetId = insertedSet.id;
+    } else {
+      const { error: updateSetError } = await db
+        .from("stock_sets")
+        .update({
+          status: "complete",
+          package_total: packageTotal,
+          package_count: packageCount,
+          volume_m3: volumeM3,
+          weight_kg: weightKg,
+          warehouse_id: warehouseId,
+          location_id: locationId,
+          updated_at: nowIso()
+        })
+        .eq("id", stockSetId);
+
+      if (updateSetError) throw updateSetError;
+    }
+
+    if (!stockSetId) throw new Error("Stock set id missing after create/update.");
+
+    const { error: linkError } = await db
+      .from("items")
+      .update({
+        stock_set_id: stockSetId,
+        stock_set_status: "complete"
+      })
+      .in("id", activeItemIds);
+
+    if (linkError) throw linkError;
+  }
+
+  function buildItemRow({
+    cid,
+    product,
+    physicalId,
+    packageInfo,
+    setIndex,
+    reference,
+    inboundDate
+  }) {
+    const packageTotal = packageInfo.package_total || 1;
+    const packageNo = packageInfo.package_no || 1;
+    const packageLabel = packageInfo.package_label || `${packageNo}/${packageTotal}`;
+
+    const uniqueSku = buildUniqueSku(
+      product,
+      setIndex,
+      packageNo,
+      packageTotal
+    );
+
+    let volumePerPackage = 0;
+let weightPerPackage = 0;
+
+switch (packageNo) {
+
+  case 1:
+    volumePerPackage =
+      toNumber(product.package_1_volume_m3, 0) ||
+      toNumber(product.volume_m3, 0) / packageTotal;
+
+    weightPerPackage =
+      toNumber(product.package_1_weight_kg, 0) ||
+      toNumber(product.weight_kg, 0) / packageTotal;
+    break;
+
+  case 2:
+    volumePerPackage =
+      toNumber(product.package_2_volume_m3, 0) ||
+      toNumber(product.volume_m3, 0) / packageTotal;
+
+    weightPerPackage =
+      toNumber(product.package_2_weight_kg, 0) ||
+      toNumber(product.weight_kg, 0) / packageTotal;
+    break;
+
+  case 3:
+    volumePerPackage =
+      toNumber(product.package_3_volume_m3, 0) ||
+      toNumber(product.volume_m3, 0) / packageTotal;
+
+    weightPerPackage =
+      toNumber(product.package_3_weight_kg, 0) ||
+      toNumber(product.weight_kg, 0) / packageTotal;
+    break;
+
+  default:
+    volumePerPackage =
+      toNumber(product.volume_m3, 0) / packageTotal;
+
+    weightPerPackage =
+      toNumber(product.weight_kg, 0) / packageTotal;
+
+}
+
+    return {
+      company_id: cid,
+      product_id: product.id,
+      warehouse_id: activeWarehouse.id,
+      location_id: activeLocation.id,
+      storage_mutation_id: uniqueSku,
+      sku_unique: uniqueSku,
+      status: "in_stock",
+      volume_m3: volumePerPackage,
+      weight_kg: weightPerPackage,
+      inbound_reference: reference || null,
+      inbound_date: inboundDate,
+      received_at: inboundDate,
+      physical_product_id: physicalId,
+      package_no: packageNo,
+      package_total: packageTotal,
+      package_label: packageLabel,
+      stock_set_key: `${product.id}:${physicalId}`,
+      stock_set_status: packageTotal === 1 ? "complete" : "incomplete"
+    };
+  }
+
+ async function bookInboundCompleteProducts(product, qty = 1) {
+  if (!activeWarehouse) throw new Error("Scan or select a warehouse first.");
+  if (!activeLocation) throw new Error("Scan or select a location first.");
+
+  const cid = await getCompanyId();
+  const reference = byId("referenceInput")?.value?.trim() || "";
+  const inboundDate = nowIso();
+  const count = Math.max(1, Math.round(toNumber(qty, 1)));
+  const profile = packageProfile(product);
+  const totalPackages = count * profile.length;
+
+  showProgress(
+    "Booking stock...",
+    0,
+    totalPackages,
+    `Preparing ${count} product(s) / ${totalPackages} package(s) for ${product.sku_base}`
+  );
+  await nextFrame();
+
+  const rows = [];
+  const physicalIds = [];
+
+  for (let setIndex = 1; setIndex <= count; setIndex++) {
+    const physicalId = uuid();
+    physicalIds.push(physicalId);
+
+    profile.forEach(pkg => {
+      rows.push(buildItemRow({
+        cid,
+        product,
+        physicalId,
+        packageInfo: pkg,
+        setIndex,
         reference,
-        status: item.status
-      });
+        inboundDate
+      }));
+    });
+
+    showProgress(
+      "Preparing stock rows...",
+      Math.min(rows.length, totalPackages),
+      totalPackages,
+      `${rows.length} of ${totalPackages} package row(s) prepared`
+    );
+
+    if (setIndex % 5 === 0) await nextFrame();
+  }
+
+  showProgress("Saving stock...", 0, totalPackages, "Sending packages to Supabase...");
+  await nextFrame();
+
+  const { data, error } = await ensureClient()
+    .from("items")
+    .insert(rows)
+    .select(`
+      id,
+      sku_unique,
+      storage_mutation_id,
+      status,
+      package_no,
+      package_total,
+      package_label,
+      physical_product_id,
+      stock_set_status,
+      created_at
+    `);
+
+  if (error) {
+    hideProgress(0);
+    throw error;
+  }
+
+  const inserted = data || [];
+
+  for (let i = 0; i < physicalIds.length; i++) {
+    showProgress(
+      "Finalising stock sets...",
+      i + 1,
+      physicalIds.length,
+      `${i + 1} of ${physicalIds.length} product set(s) checked`
+    );
+
+    await refreshStockSetStatus(physicalIds[i]);
+
+    if (i % 3 === 0) await nextFrame();
+  }
+
+  inserted.forEach(item => pushInboundHistory(product, item, reference));
+
+  linesToday += 1;
+  unitsIn += inserted.length;
+
+  renderInboundHistory();
+  updateKpis("Scan In", `${product.sku_base} booked in · ${inserted.length} packages`);
+
+  showProgress(
+    "Completed",
+    totalPackages,
+    totalPackages,
+    `${inserted.length} package(s) booked in for ${product.sku_base}`
+  );
+
+  showToast(`${count} complete product(s) / ${inserted.length} package(s) booked in for ${product.sku_base}.`, "ok");
+
+  for (const item of inserted) {
+    await logWarehouseEvent({
+      company_id: cid,
+      event_type: "item_received",
+      entity_type: "item",
+      entity_id: item.id,
+      reference_no: item.sku_unique || product.sku_base,
+      source_module: "scan-in",
+      old_status: null,
+      new_status: "in_stock",
+      payload: {
+        product_id: product.id,
+        sku_base: product.sku_base,
+        warehouse_id: activeWarehouse.id,
+        location_id: activeLocation.id,
+        inbound_reference: reference || null,
+        physical_product_id: item.physical_product_id,
+        package_no: item.package_no,
+        package_total: item.package_total,
+        package_label: item.package_label
+      }
+    });
+  }
+
+  hideProgress();
+}
+
+  async function bookInboundLoosePackage(product, packageInfo, qty = 1) {
+  if (!activeWarehouse) throw new Error("Scan or select a warehouse first.");
+  if (!activeLocation) throw new Error("Scan or select a location first.");
+
+  const cid = await getCompanyId();
+  const reference = byId("referenceInput")?.value?.trim() || "";
+  const inboundDate = nowIso();
+  const count = Math.max(1, Math.round(toNumber(qty, 1)));
+
+  const rows = [];
+  const physicalIds = [];
+  const usedPhysicalIds = new Set();
+
+  for (let i = 1; i <= count; i++) {
+    const physicalId = await findOpenSetForPackage(
+      product,
+      packageInfo,
+      reference,
+      usedPhysicalIds
+    );
+
+    usedPhysicalIds.add(String(physicalId));
+    physicalIds.push(physicalId);
+
+    rows.push(buildItemRow({
+      cid,
+      product,
+      physicalId,
+      packageInfo,
+      setIndex: i,
+      reference,
+      inboundDate
+    }));
+  }
+
+  const { data, error } = await ensureClient()
+    .from("items")
+    .insert(rows)
+    .select(`
+      id,
+      sku_unique,
+      storage_mutation_id,
+      status,
+      package_no,
+      package_total,
+      package_label,
+      physical_product_id,
+      stock_set_status,
+      created_at
+    `);
+
+  if (error) throw error;
+
+  const inserted = data || [];
+  const uniquePhysicalIds = [...new Set(physicalIds)];
+
+ for (const physicalId of uniquePhysicalIds) {
+  try {
+    await refreshStockSetStatus(physicalId);
+  } catch (error) {
+    console.warn("Stock set refresh skipped:", error.message);
+  }
+}
+
+  inserted.forEach(item => pushInboundHistory(product, item, reference));
+
+  linesToday += 1;
+  unitsIn += inserted.length;
+
+  renderInboundHistory();
+  updateKpis("Scan In", `${product.sku_base} ${packageInfo.package_label} booked in`);
+  showToast(`${inserted.length} package(s) ${packageInfo.package_label} booked in for ${product.sku_base}.`, "ok");
+
+  for (const item of inserted) {
+    await logWarehouseEvent({
+      company_id: cid,
+      event_type: "item_received",
+      entity_type: "item",
+      entity_id: item.id,
+      reference_no: item.sku_unique || product.sku_base,
+      source_module: "scan-in",
+      old_status: null,
+      new_status: "in_stock",
+      payload: {
+        product_id: product.id,
+        sku_base: product.sku_base,
+        warehouse_id: activeWarehouse.id,
+        location_id: activeLocation.id,
+        inbound_reference: reference || null,
+        physical_product_id: item.physical_product_id,
+        package_no: item.package_no,
+        package_total: item.package_total,
+        package_label: item.package_label
+      }
+    });
+  }
+}
+
+  function pushInboundHistory(product, item, reference) {
+    inboundHistory.unshift({
+      time: nowTime(),
+      warehouse: warehouseLabel(activeWarehouse),
+      location: locationLabel(activeLocation),
+      sku: product.sku_base,
+      product: product.name,
+      owner: ownerName(product),
+      mutation: mutationFromItem(product, item),
+      reference,
+      status: item.stock_set_status === "complete" ? "complete package" : "in_stock"
     });
 
     inboundHistory = inboundHistory.slice(0, 100);
-
-    linesToday += 1;
-    unitsIn += inserted.length;
-
-    renderInboundHistory();
-    updateKpis("Scan In", `${product.sku_base} booked in`);
-    showToast(`${inserted.length} item(s) booked in for ${product.sku_base}.`, "ok");
-
-    for (const item of inserted) {
-      await logWarehouseEvent({
-        company_id: cid,
-        event_type: "item_received",
-        entity_type: "item",
-        entity_id: item.id,
-        reference_no: item.sku_unique || product.sku_base,
-        source_module: "scan-in",
-        old_status: null,
-        new_status: "in_stock",
-        payload: {
-          product_id: product.id,
-          sku_base: product.sku_base,
-          warehouse_id: activeWarehouse.id,
-          location_id: activeLocation.id,
-          inbound_reference: reference || null
-        }
-      });
-    }
   }
 
   async function handleInboundScan(rawValue) {
@@ -513,7 +1107,7 @@
       activeLocation = location;
 
       updateActiveState();
-      updateKpis("Scan In", `Location ${locationLabel(location)}`);
+      updateKpis("Scan In", `Location ${locationLabel(location)}.`);
       showToast(`Location selected: ${locationLabel(location)}.`, "ok");
       return;
     }
@@ -524,7 +1118,14 @@
       throw new Error(`No warehouse, location or SKU found for scan: ${value}`);
     }
 
-    await bookInbound(product, byId("manualQty")?.value || 1);
+    const pkg = parsePackageInfo(value);
+
+    if (pkg) {
+      await bookInboundLoosePackage(product, pkg, byId("manualQty")?.value || 1);
+      return;
+    }
+
+    await bookInboundCompleteProducts(product, byId("manualQty")?.value || 1);
   }
 
   function renderInboundHistory() {
@@ -551,6 +1152,57 @@
     `).join("");
   }
 
+  async function getCompleteAvailableSets(product, qty) {
+    const cid = await getCompanyId();
+    const profile = packageProfile(product);
+    const packageTotal = profile.length;
+
+    const { data, error } = await ensureClient()
+      .from("items")
+      .select(`
+        id,
+        sku_unique,
+        storage_mutation_id,
+        status,
+        product_id,
+        physical_product_id,
+        package_no,
+        package_total,
+        created_at
+      `)
+      .eq("company_id", cid)
+      .eq("product_id", product.id)
+      .eq("status", "in_stock")
+      .eq("package_total", packageTotal)
+      .not("physical_product_id", "is", null)
+      .order("created_at", { ascending: true })
+      .limit(1000);
+
+    if (error) throw error;
+
+    const groups = new Map();
+
+    (data || []).forEach(row => {
+      const key = String(row.physical_product_id || "");
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+
+    const complete = [];
+
+    for (const [physicalId, rows] of groups.entries()) {
+      const present = new Set(rows.map(r => Number(r.package_no || 1)));
+      const isComplete = profile.every(pkg => present.has(pkg.package_no));
+
+      if (isComplete) {
+        complete.push({ physicalId, rows });
+      }
+    }
+
+    return complete.slice(0, qty);
+  }
+
   async function bookOutboundManual() {
     const sku = byId("outboundSku")?.value?.trim() || "";
     const qty = Math.max(1, Math.round(toNumber(byId("outboundQty")?.value, 1)));
@@ -560,31 +1212,20 @@
     if (!product) throw new Error(`SKU ${sku} not found.`);
 
     const cid = await getCompanyId();
+    const completeSets = await getCompleteAvailableSets(product, qty);
 
-    const { data, error } = await ensureClient()
-      .from("items")
-      .select("id, sku_unique, storage_mutation_id, status, product_id")
-      .eq("company_id", cid)
-      .eq("product_id", product.id)
-      .eq("status", "in_stock")
-      .order("created_at", { ascending: true })
-      .limit(qty);
-
-    if (error) throw error;
-
-    const rows = data || [];
-
-    if (rows.length < qty) {
-      throw new Error(`Only ${rows.length} available item(s) found for ${product.sku_base}.`);
+    if (completeSets.length < qty) {
+      throw new Error(`Only ${completeSets.length} complete product(s) available for ${product.sku_base}. Incomplete/overstock packages are not booked out.`);
     }
 
+    const rows = completeSets.flatMap(set => set.rows);
     const ids = rows.map(r => r.id);
     const outboundDate = nowIso();
 
     const { error: updateError } = await ensureClient()
       .from("items")
       .update({
-        status: "manual_outbound",
+        status: OUTBOUND_STATUS,
         shipped_at: outboundDate
       })
       .in("id", ids);
@@ -595,19 +1236,19 @@
       time: nowTime(),
       sku: product.sku_base,
       product: product.name,
-      qty,
+      qty: rows.length,
       reference,
-      status: "manual_outbound"
+      status: `${qty} complete product(s) / ${rows.length} packages`
     });
 
     outboundHistory = outboundHistory.slice(0, 100);
 
     linesToday += 1;
-    unitsOut += qty;
+    unitsOut += rows.length;
 
     renderOutboundHistory();
     updateKpis("Scan Out", `${product.sku_base} booked out`);
-    showToast(`${qty} item(s) booked out for ${product.sku_base}.`, "ok");
+    showToast(`${qty} complete product(s) / ${rows.length} package(s) booked out for ${product.sku_base}.`, "ok");
 
     for (const item of rows) {
       await logWarehouseEvent({
@@ -618,11 +1259,14 @@
         reference_no: item.sku_unique || product.sku_base,
         source_module: "scan-out",
         old_status: "in_stock",
-        new_status: "manual_outbound",
+        new_status: OUTBOUND_STATUS,
         payload: {
           product_id: product.id,
           sku_base: product.sku_base,
-          outbound_reference: reference || null
+          outbound_reference: reference || null,
+          physical_product_id: item.physical_product_id,
+          package_no: item.package_no,
+          package_total: item.package_total
         }
       });
     }
@@ -644,7 +1288,7 @@
         <td>${escapeHtml(row.product || "—")}</td>
         <td>${escapeHtml(row.qty || 1)}</td>
         <td>${escapeHtml(row.reference || "—")}</td>
-        <td><span class="soft-pill orange">${escapeHtml(row.status || "manual_outbound")}</span></td>
+        <td><span class="soft-pill orange">${escapeHtml(row.status || OUTBOUND_STATUS)}</span></td>
       </tr>
     `).join("");
   }
@@ -657,7 +1301,7 @@
       <tr>
         <td colspan="7">
           <div class="empty-state">
-            Picklists are ready for the next step. We will connect these to order lines and reserved stock by SKU.
+            Picklists are ready for the next step. Matching must reserve complete physical products only, then pick/load all linked packages.
           </div>
         </td>
       </tr>
@@ -721,16 +1365,20 @@
       }
     });
 
-    byId("btnBookInManual")?.addEventListener("click", async () => {
-      try {
-        const product = findProduct(byId("manualSku")?.value);
-        if (!product) throw new Error("Manual SKU not found.");
-        await bookInbound(product, byId("manualQty")?.value || 1);
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Manual book-in failed.", "err");
-      }
-    });
+   byId("btnBookInManual")?.addEventListener("click", async () => {
+  try {
+    const value = byId("mainScanInput")?.value || "";
+
+    await handleInboundScan(value);
+
+    byId("mainScanInput").value = "";
+    byId("mainScanInput").focus();
+
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Manual book-in failed.", "err");
+  }
+});
 
     byId("manualWarehouse")?.addEventListener("change", () => {
       const id = byId("manualWarehouse").value || "";

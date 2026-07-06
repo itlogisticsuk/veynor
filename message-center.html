@@ -1,0 +1,1055 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Message Center · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/message-center.js" defer></script>
+
+  <style>
+
+.notification-row.unread{
+  border-color:#fecaca;
+  background:#fffafa;
+}
+
+.notification-unread-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:19px;
+  height:19px;
+  margin-left:8px;
+  padding:0 6px;
+  border-radius:999px;
+  background:#ef4444;
+  color:#fff;
+  font-size:10px;
+  font-weight:950;
+}
+
+.thread-unread-badge{
+  min-width:21px;
+  height:21px;
+  padding:0 7px;
+  border-radius:999px;
+  background:#ef4444;
+  color:#fff;
+  font-size:11px;
+  font-weight:950;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  box-shadow:0 0 0 3px rgba(239,68,68,.16);
+}
+
+.tab-badge{
+  display:inline-flex;
+  align-items:center;<style>
+  justify-content:center;
+  min-width:20px;
+  height:20px;
+  margin-left:8px;
+  padding:0 6px;
+  border-radius:999px;
+  background:#ef4444;
+  color:#fff;
+  font-size:11px;
+  font-weight:950;
+  animation:pulseBadge 1.2s infinite;
+}
+
+@keyframes pulseBadge{
+  0%{transform:scale(1);}
+  50%{transform:scale(1.12);}
+  100%{transform:scale(1);}
+}
+    .message-page{
+      display:grid;
+      gap:14px;
+      align-content:start;
+      padding-bottom:34px;
+    }
+
+    .message-hero{
+      border-radius:26px;
+      padding:28px;
+      background:
+        linear-gradient(90deg,rgba(7,21,47,.96),rgba(7,21,47,.72)),
+        url("/assets/veynor-login-bg.png") center/cover no-repeat;
+      color:#fff;
+      box-shadow:var(--shadow);
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:24px;
+      align-items:center;
+      overflow:hidden;
+      min-height:210px;
+    }
+
+    .message-hero h1{
+      margin:0;
+      font-size:40px;
+      font-weight:950;
+      letter-spacing:-.055em;
+      line-height:1;
+    }
+
+    .message-hero p{
+      margin:12px 0 0;
+      max-width:920px;
+      color:rgba(255,255,255,.82);
+      font-size:14px;
+      line-height:1.65;
+    }
+
+    .hero-wordmark{
+      width:154px;
+      opacity:.84;
+      filter:drop-shadow(0 12px 24px rgba(0,0,0,.32));
+    }
+
+    .message-tabs{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      padding:14px 16px;
+    }
+
+    .message-tab{
+      min-height:42px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#fff;
+      padding:0 16px;
+      font-size:12.5px;
+      font-weight:950;
+      color:#07152f;
+      cursor:pointer;
+    }
+
+    .message-tab.active{
+      background:var(--primary);
+      border-color:var(--primary);
+      color:#fff;
+    }
+
+    .tab-panel{display:none}
+    .tab-panel.active{display:grid;gap:14px}
+
+    .message-grid-2{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 390px;
+      gap:14px;
+      align-items:start;
+    }
+
+    .message-grid-3{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:14px;
+    }
+
+    .message-grid-4{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:14px;
+    }
+
+    .message-card{
+      padding:16px;
+      display:grid;
+      gap:14px;
+    }
+
+    .message-card-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+
+    .message-card-head h2{
+      margin:0;
+      font-size:16px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .message-card-head p{
+      margin:4px 0 0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+
+    .summary-list,
+    .notification-list,
+    .message-list,
+    .task-list,
+    .announcement-list,
+    .live-feed{
+      display:grid;
+      gap:10px;
+    }
+
+    .summary-row,
+    .notification-row,
+    .message-row,
+    .task-row,
+    .announcement-row,
+    .feed-row{
+      border:1px solid var(--border);
+      border-radius:15px;
+      background:#fff;
+      padding:12px;
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      text-decoration:none;
+      color:#07152f;
+      transition:.16s ease;
+    }
+
+    .notification-row:hover,
+    .message-row:hover,
+    .announcement-row:hover,
+    .feed-row:hover{
+      transform:translateY(-1px);
+      border-color:#bfdbfe;
+      box-shadow:0 10px 24px rgba(15,23,42,.06);
+    }
+
+    .row-main{
+      display:flex;
+      gap:11px;
+      min-width:0;
+      align-items:flex-start;
+    }
+
+    .row-icon{
+      width:36px;
+      height:36px;
+      border-radius:13px;
+      background:#eff6ff;
+      color:#1267ff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:17px;
+      flex:0 0 36px;
+      border:1px solid #bfdbfe;
+    }
+
+    .row-icon.green{
+      background:var(--green-bg);
+      color:var(--green-tx);
+      border-color:var(--green-bd);
+    }
+
+    .row-icon.orange{
+      background:var(--orange-bg);
+      color:var(--orange-tx);
+      border-color:var(--orange-bd);
+    }
+
+    .row-icon.red{
+      background:var(--danger-bg);
+      color:var(--danger-tx);
+      border-color:var(--danger-bd);
+    }
+
+    .row-icon.purple{
+      background:var(--purple-bg);
+      color:var(--purple-tx);
+      border-color:var(--purple-bd);
+    }
+
+    .row-content{
+      display:grid;
+      gap:4px;
+      min-width:0;
+    }
+
+    .row-title{
+      font-size:13px;
+      font-weight:950;
+      color:#07152f;
+      line-height:1.28;
+    }
+
+    .row-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.45;
+    }
+
+    .row-meta{
+      font-size:11px;
+      font-weight:900;
+      color:#667085;
+      white-space:nowrap;
+      text-align:right;
+    }
+
+    .message-kpi{
+      padding:16px;
+      min-height:112px;
+      display:grid;
+      gap:7px;
+    }
+
+    .message-kpi-label{
+      font-size:10px;
+      font-weight:950;
+      text-transform:uppercase;
+      color:#667085;
+      letter-spacing:.05em;
+    }
+
+    .message-kpi-value{
+      font-size:26px;
+      font-weight:950;
+      line-height:1;
+      color:#07152f;
+    }
+
+    .message-kpi-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.35;
+      font-weight:750;
+    }
+
+    .toolbar{
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:end;
+    }
+
+    .toolbar-left,
+    .toolbar-right{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:end;
+    }
+
+    .field{
+      display:grid;
+      gap:6px;
+    }
+
+    .field label{
+      font-size:10.5px;
+      font-weight:950;
+      text-transform:uppercase;
+      color:#667085;
+      letter-spacing:.05em;
+    }
+
+    .input,
+    .select,
+    .textarea{
+      width:100%;
+      min-height:42px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+      padding:10px 12px;
+      color:var(--text);
+      font-size:12.5px;
+    }
+
+    .textarea{
+      min-height:130px;
+      resize:vertical;
+    }
+
+    .compose-box{
+      display:grid;
+      gap:12px;
+    }
+
+    .conversation-shell{
+      display:grid;
+      grid-template-columns:360px minmax(0,1fr);
+      gap:14px;
+      align-items:start;
+    }
+
+    .thread-list{
+      border:1px solid var(--border);
+      border-radius:16px;
+      background:#fff;
+      overflow:hidden;
+    }
+
+    .thread-row{
+      padding:13px;
+      border-bottom:1px solid var(--border);
+      display:grid;
+      gap:4px;
+      cursor:pointer;
+    }
+
+    .thread-row:hover,
+    .thread-row.active{
+      background:#f7fbff;
+    }
+
+    .thread-title{
+      font-size:13px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .thread-sub{
+      font-size:11.5px;
+      color:var(--muted);
+      line-height:1.35;
+    }
+
+    .chat-window{
+      border:1px solid var(--border);
+      border-radius:16px;
+      background:#fff;
+      display:grid;
+      grid-template-rows:auto minmax(360px,1fr) auto;
+      overflow:hidden;
+      min-height:620px;
+    }
+
+    .chat-head{
+      padding:14px 16px;
+      border-bottom:1px solid var(--border);
+      background:#fbfdff;
+    }
+
+    .chat-head h3{
+      margin:0;
+      font-size:15px;
+      font-weight:950;
+    }
+
+    .chat-body{
+      padding:16px;
+      display:grid;
+      gap:12px;
+      align-content:start;
+      overflow:auto;
+      max-height:620px;
+    }
+
+    .chat-bubble{
+      max-width:76%;
+      padding:12px 13px;
+      border-radius:16px;
+      background:#f1f5f9;
+      display:grid;
+      gap:5px;
+      font-size:12.5px;
+      line-height:1.45;
+    }
+
+    .chat-bubble.me{
+      margin-left:auto;
+      background:#1267ff;
+      color:#fff;
+    }
+
+    .chat-bubble small{
+      font-size:10.5px;
+      opacity:.76;
+      font-weight:800;
+    }
+
+    .chat-compose{
+      padding:14px;
+      border-top:1px solid var(--border);
+      display:grid;
+      gap:10px;
+      background:#fbfdff;
+    }
+
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      padding:4px 10px;
+      font-size:11px;
+      font-weight:950;
+      border:1px solid transparent;
+      white-space:nowrap;
+    }
+
+    .badge.good{
+      background:var(--green-bg);
+      color:var(--green-tx);
+      border-color:var(--green-bd);
+    }
+
+    .badge.warn{
+      background:var(--orange-bg);
+      color:var(--orange-tx);
+      border-color:var(--orange-bd);
+    }
+
+    .badge.bad{
+      background:var(--danger-bg);
+      color:var(--danger-tx);
+      border-color:var(--danger-bd);
+    }
+
+    .badge.info{
+      background:var(--blue-bg);
+      color:var(--blue-tx);
+      border-color:var(--blue-bd);
+    }
+
+    .notice{
+      display:none;
+      padding:12px 14px;
+      border-radius:13px;
+      border:1px solid var(--border);
+      font-weight:850;
+      font-size:12.5px;
+    }
+
+    .notice.ok{
+      display:block;
+      background:#ecfdf5;
+      border-color:#bbf7d0;
+      color:#166534;
+    }
+
+    .notice.err{
+      display:block;
+      background:#fef2f2;
+      border-color:#fecaca;
+      color:#991b1b;
+    }
+
+    @media(max-width:1500px){
+      .message-grid-2,
+      .conversation-shell{
+        grid-template-columns:1fr;
+      }
+
+      .message-grid-4{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+    }
+
+    @media(max-width:900px){
+      .message-grid-3,
+      .message-grid-4{
+        grid-template-columns:1fr;
+      }
+
+      .message-hero{
+        grid-template-columns:1fr;
+      }
+
+      .hero-wordmark{
+        width:130px;
+      }
+
+      .chat-bubble{
+        max-width:94%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page message-page">
+
+    <section class="message-hero">
+      <div>
+        <h1 id="welcomeTitle">Good morning.</h1>
+        <p id="welcomeText">
+          Welcome to the Veynor Customer Portal. Here you can monitor your orders, deliveries,
+          documents and warehouse activity in real time.
+        </p>
+      </div>
+
+      <img class="hero-wordmark" src="/assets/veynor-wordmark.png" alt="Veynor">
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="card message-tabs">
+<button class="message-tab active" data-tab="overview" type="button">Overview</button>
+
+<button class="message-tab" data-tab="messages" type="button">
+  Messages <span id="messagesTabBadge" class="tab-badge" style="display:none;">0</span>
+</button>
+
+<button class="message-tab" data-tab="notifications" type="button">
+  Notifications <span id="notificationsTabBadge" class="tab-badge" style="display:none;">0</span>
+</button>
+
+<button class="message-tab" data-tab="tasks" type="button">
+  Tasks <span id="tasksTabBadge" class="tab-badge" style="display:none;">0</span>
+</button>
+
+<button class="message-tab" data-tab="announcements" type="button">
+  Announcements <span id="announcementsTabBadge" class="tab-badge" style="display:none;">0</span>
+</button>
+    </section>
+
+    <section id="tab-overview" class="tab-panel active">
+      <section class="message-grid-4">
+        <article class="card message-kpi">
+          <div class="message-kpi-label">New Messages</div>
+          <div id="kpiNewMessages" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Unread direct messages</div>
+        </article>
+
+        <article class="card message-kpi">
+          <div class="message-kpi-label">Notifications</div>
+          <div id="kpiNotifications" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Updates since last visit</div>
+        </article>
+
+        <article class="card message-kpi">
+          <div class="message-kpi-label">Open Tasks</div>
+          <div id="kpiOpenTasks" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Items requiring attention</div>
+        </article>
+
+        <article class="card message-kpi">
+          <div class="message-kpi-label">Announcements</div>
+          <div id="kpiAnnouncements" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Active platform updates</div>
+        </article>
+      </section>
+
+      <section class="message-grid-2">
+        <div class="stack">
+          <section class="card message-card">
+            <div class="message-card-head">
+              <div>
+                <h2>Since your last visit</h2>
+                <p>A short summary of warehouse, order, delivery and document activity.</p>
+              </div>
+              <span id="lastVisitLabel" class="badge info">Loading...</span>
+            </div>
+
+            <div id="sinceLastVisitList" class="summary-list">
+              <div class="summary-row">
+                <div class="row-main">
+                  <div class="row-icon">⏳</div>
+                  <div class="row-content">
+                    <div class="row-title">Loading activity summary...</div>
+                    <div class="row-sub">Please wait while Veynor checks what changed since your last visit.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card message-card">
+            <div class="message-card-head">
+              <div>
+                <h2>Latest Notifications</h2>
+                <p>Recent system updates. Click a notification to open the related page.</p>
+              </div>
+              <button id="btnMarkNotificationsRead" class="btn" type="button">Mark all read</button>
+            </div>
+
+            <div id="latestNotificationsList" class="notification-list">
+              <div class="notification-row">
+                <div class="row-main">
+                  <div class="row-icon">🔔</div>
+                  <div class="row-content">
+                    <div class="row-title">Loading notifications...</div>
+                    <div class="row-sub">Your latest updates will appear here.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="stack">
+          <section class="card message-card">
+            <div class="message-card-head">
+              <div>
+                <h2>Live Activity</h2>
+                <p>Most recent activity from your portal.</p>
+              </div>
+              <span class="badge good">Live</span>
+            </div>
+
+            <div id="liveActivityFeed" class="live-feed">
+              <div class="feed-row">
+                <div class="row-main">
+                  <div class="row-icon green">●</div>
+                  <div class="row-content">
+                    <div class="row-title">Waiting for activity...</div>
+                    <div class="row-sub">New updates will appear here while you are logged in.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card message-card">
+            <div class="message-card-head">
+              <div>
+                <h2>Quick Actions</h2>
+                <p>Go directly to the most used parts of Veynor.</p>
+              </div>
+            </div>
+
+            <div class="summary-list">
+              <a class="summary-row" href="./operations-control-center.html">
+                <div class="row-main">
+                  <div class="row-icon">🧾</div>
+                  <div class="row-content">
+                    <div class="row-title">Open Operations Control</div>
+                    <div class="row-sub">View order lifecycle, documents and activity.</div>
+                  </div>
+                </div>
+                <div class="row-meta">Open</div>
+              </a>
+
+              <a class="summary-row" href="./billing.html">
+                <div class="row-main">
+                  <div class="row-icon">£</div>
+                  <div class="row-content">
+                    <div class="row-title">Open Billing</div>
+                    <div class="row-sub">View invoices and finance status.</div>
+                  </div>
+                </div>
+                <div class="row-meta">Open</div>
+              </a>
+
+              <a class="summary-row" href="./pod.html">
+                <div class="row-main">
+                  <div class="row-icon">✍️</div>
+                  <div class="row-content">
+                    <div class="row-title">Open PODs</div>
+                    <div class="row-sub">View signed delivery notes and delivery photos.</div>
+                  </div>
+                </div>
+                <div class="row-meta">Open</div>
+              </a>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </section>
+
+    <section id="tab-messages" class="tab-panel">
+      <section class="card message-card">
+        <div class="message-card-head">
+          <div>
+            <h2>Messages</h2>
+            <p>Send and receive direct messages between Veynor, product owners, retailers and internal users.</p>
+          </div>
+
+          <button id="btnNewMessage" class="btn btn-primary" type="button">+ New Message</button>
+        </div>
+
+        <div class="conversation-shell">
+          <div class="thread-list" id="threadList">
+            <div class="thread-row active">
+              <div class="thread-title">Loading conversations...</div>
+              <div class="thread-sub">Please wait.</div>
+            </div>
+          </div>
+
+          <div class="chat-window">
+            <div class="chat-head">
+              <h3 id="activeThreadTitle">Select a conversation</h3>
+              <div id="activeThreadSub" class="row-sub">Messages will appear here.</div>
+            </div>
+
+            <div id="chatBody" class="chat-body">
+              <div class="chat-bubble">
+                <strong>Veynor</strong>
+                <div>Select a message thread or create a new message.</div>
+                <small>System</small>
+              </div>
+            </div>
+
+            <div class="chat-compose">
+              <textarea id="messageReplyBody" class="textarea" placeholder="Type your reply..."></textarea>
+              <div class="toolbar">
+                <div class="toolbar-left">
+                  <button id="btnAttachFile" class="btn" type="button" disabled title="Attachments will be added later">
+  Attach File
+</button>
+                </div>
+                <div class="toolbar-right">
+                  <button id="btnSendReply" class="btn btn-primary" type="button">Send Reply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="newMessagePanel" class="card message-card" style="display:none;">
+        <div class="message-card-head">
+          <div>
+            <h2>New Message</h2>
+            <p>Create a direct message for a customer, user role or internal team member.</p>
+          </div>
+        </div>
+
+        <div class="compose-box">
+          <div class="message-grid-4">
+            <div class="field">
+              <label for="newMessageRecipientType">Send to</label>
+              <select id="newMessageRecipientType" class="select">
+                <option value="tenant">Veynor / Sofa2U</option>
+                <option value="product_owner">Product Owner</option>
+                <option value="retailer">Retailer</option>
+                <option value="driver">Driver</option>
+                <option value="user">Specific User</option>
+              </select>
+            </div>
+
+           <div class="field">
+  <label for="newMessageContact">Contact person</label>
+  <select id="newMessageContact" class="select">
+    <option value="">All users / general inbox</option>
+  </select>
+</div>
+
+            <div class="field">
+              <label for="newMessagePriority">Priority</label>
+              <select id="newMessagePriority" class="select">
+                <option value="normal">Normal</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="newMessageSubject">Subject</label>
+            <input id="newMessageSubject" class="input" placeholder="Subject"/>
+          </div>
+
+          <div class="field">
+            <label for="newMessageBody">Message</label>
+            <textarea id="newMessageBody" class="textarea" placeholder="Write your message..."></textarea>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button id="btnCancelNewMessage" class="btn" type="button">Cancel</button>
+            </div>
+            <div class="toolbar-right">
+              <button id="btnSendNewMessage" class="btn btn-primary" type="button">Send Message</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-notifications" class="tab-panel">
+      <section class="card message-card">
+        <div class="message-card-head">
+          <div>
+            <h2>Notifications</h2>
+            <p>Automatic updates from warehouse, orders, delivery, billing and portal activity.</p>
+          </div>
+
+          <div class="toolbar-right">
+            <select id="notificationFilter" class="select">
+              <option value="">All notifications</option>
+              <option value="unread">Unread only</option>
+              <option value="warehouse">Warehouse</option>
+              <option value="orders">Orders</option>
+              <option value="documents">Documents</option>
+              <option value="delivery">Delivery</option>
+              <option value="finance">Finance</option>
+              <option value="warning">Warnings</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="notificationsList" class="notification-list">
+          <div class="notification-row">
+            <div class="row-main">
+              <div class="row-icon">🔔</div>
+              <div class="row-content">
+                <div class="row-title">Loading notifications...</div>
+                <div class="row-sub">Automatic updates will be shown here.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-tasks" class="tab-panel">
+      <section class="message-grid-3">
+        <article class="card message-kpi">
+          <div class="message-kpi-label">Matching Required</div>
+          <div id="taskMatchingRequired" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Orders needing stock/product checks</div>
+        </article>
+
+        <article class="card message-kpi">
+          <div class="message-kpi-label">Planning Required</div>
+          <div id="taskPlanningRequired" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Orders waiting for planning</div>
+        </article>
+
+        <article class="card message-kpi">
+          <div class="message-kpi-label">POD Missing</div>
+          <div id="taskPodMissing" class="message-kpi-value">0</div>
+          <div class="message-kpi-sub">Delivered orders without POD</div>
+        </article>
+      </section>
+
+      <section class="card message-card">
+        <div class="message-card-head">
+          <div>
+            <h2>Tasks</h2>
+            <p>Automatic work items requiring attention.</p>
+          </div>
+        </div>
+
+        <div id="tasksList" class="task-list">
+          <div class="task-row">
+            <div class="row-main">
+              <div class="row-icon orange">✓</div>
+              <div class="row-content">
+                <div class="row-title">Loading tasks...</div>
+                <div class="row-sub">Open tasks will appear here.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-announcements" class="tab-panel">
+      <section class="card message-card">
+        <div class="message-card-head">
+          <div>
+            <h2>Announcements</h2>
+            <p>Platform updates, maintenance messages, warehouse news and customer announcements.</p>
+          </div>
+
+          <button id="btnNewAnnouncement" class="btn btn-primary tenant-only" type="button">+ New Announcement</button>
+        </div>
+
+        <div id="announcementsList" class="announcement-list">
+          <div class="announcement-row">
+            <div class="row-main">
+              <div class="row-icon">📢</div>
+              <div class="row-content">
+                <div class="row-title">Loading announcements...</div>
+                <div class="row-sub">Active announcements will appear here.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="announcementComposer" class="card message-card tenant-only" style="display:none;">
+        <div class="message-card-head">
+          <div>
+            <h2>New Announcement</h2>
+            <p>Publish a message to all users, a product owner, drivers or internal users.</p>
+          </div>
+        </div>
+
+        <div class="compose-box">
+          <div class="message-grid-4">
+            <div class="field">
+              <label for="announcementAudience">Audience</label>
+              <select id="announcementAudience" class="select">
+                <option value="all">All</option>
+                <option value="tenant">Tenant / Internal</option>
+                <option value="product_owner">Product Owner</option>
+                <option value="retailer">Retailer</option>
+                <option value="driver">Driver</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="announcementType">Type</label>
+              <select id="announcementType" class="select">
+                <option value="general">General</option>
+                <option value="platform_update">Platform Update</option>
+                <option value="maintenance">Maintenance</option>
+                <option value="warehouse">Warehouse</option>
+                <option value="transport">Transport</option>
+                <option value="finance">Finance</option>
+                <option value="delivery">Delivery</option>
+                <option value="holiday">Holiday</option>
+                <option value="security">Security</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="announcementPriority">Priority</label>
+              <select id="announcementPriority" class="select">
+                <option value="low">Low</option>
+                <option value="normal" selected>Normal</option>
+                <option value="high">High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label for="announcementPopup">Popup</label>
+              <select id="announcementPopup" class="select">
+                <option value="false">No popup</option>
+                <option value="true">Show popup</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="announcementTitle">Title</label>
+            <input id="announcementTitle" class="input" placeholder="Announcement title"/>
+          </div>
+
+          <div class="field">
+            <label for="announcementMessage">Message</label>
+            <textarea id="announcementMessage" class="textarea" placeholder="Write announcement..."></textarea>
+          </div>
+
+          <div class="toolbar">
+            <div class="toolbar-left">
+              <button id="btnCancelAnnouncement" class="btn" type="button">Cancel</button>
+            </div>
+            <div class="toolbar-right">
+              <button id="btnPublishAnnouncement" class="btn btn-primary" type="button">Publish Announcement</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+
+  </main>
+</div>
+</body>
+</html>

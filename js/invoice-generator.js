@@ -2,8 +2,9 @@
   "use strict";
 
   const DOCUMENT_BUCKET = "order-documents";
-  const DEFAULT_VAT_RATE = 0.20;
-  const DEFAULT_PAYMENT_TERM_DAYS = 14;
+const DEFAULT_VAT_RATE = 0.20;
+const DEFAULT_PAYMENT_TERM_DAYS = 14;
+const DEFAULT_FUEL_SURCHARGE_PERCENT = 8.5;
 
   const FALLBACK_COMPANY = {
     name: "Sofa2U Ltd",
@@ -22,16 +23,16 @@
     footerText: ""
   };
 
-  const COL = {
-    order: 14,
-    retailer: 34,
-    address: 61,
-    date: 121,
-    amount: 142,
-    warehouse: 156,
-    transport: 174,
-    total: 196
-  };
+const COL = {
+  order: 14,
+  retailer: 34,
+  address: 61,
+  date: 118,
+  amount: 136,
+  warehouse: 151,
+  transport: 171,
+  total: 188
+};
 
   function toNumber(value, fallback = 0) {
     const num = Number(String(value ?? "").replace(",", "."));
@@ -51,14 +52,24 @@
   }
 
   function formatMoney(value) {
-    const num = Number(value ?? 0);
-    if (!Number.isFinite(num)) return "£ 0.00";
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "£ 0.00";
 
-    return `£ ${num.toLocaleString("en-GB", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    })}`;
-  }
+  return `£ ${num.toLocaleString("en-GB", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+function formatNumber(value, digits = 0) {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return "0";
+
+  return num.toLocaleString("en-GB", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  });
+}
 
   function formatDate(value) {
     if (!value) return "—";
@@ -184,15 +195,58 @@ function getOrderNumber(order) {
     return explicit || round2(getOrderWarehouseTotal(order) + getOrderTransportTotal(order));
   }
 
-  function getTotals(orders, vatRate) {
-    const warehouse = round2(orders.reduce((sum, order) => sum + getOrderWarehouseTotal(order), 0));
-    const transport = round2(orders.reduce((sum, order) => sum + getOrderTransportTotal(order), 0));
-    const subtotal = round2(warehouse + transport);
-    const vat = round2(subtotal * vatRate);
-    const total = round2(subtotal + vat);
+function getDeliverySurchargeTotal(ctx) {
+  return round2((ctx.deliverySurcharges || []).reduce((sum, item) => {
+    return sum + toNumber(item.applied_surcharge, 0);
+  }, 0));
+}
 
-    return { warehouse, transport, subtotal, vat, total };
-  }
+function isCreditOrder(order) {
+  return normalize(order.order_type) === "credit" || order.is_credit === true;
+}
+
+function getCreditTotal(orders) {
+  return round2(orders.reduce((sum, order) => {
+    if (!isCreditOrder(order)) return sum;
+    return sum + getOrderTotal(order);
+  }, 0));
+}
+
+function getTotals(orders, vatRate, fuelSurchargePercent = DEFAULT_FUEL_SURCHARGE_PERCENT, ctx = {}) {
+  const normalOrders = orders.filter(order => !isCreditOrder(order));
+  const creditOrders = orders.filter(order => isCreditOrder(order));
+
+  const warehouse = round2(normalOrders.reduce((sum, order) => sum + getOrderWarehouseTotal(order), 0));
+  const transport = round2(normalOrders.reduce((sum, order) => sum + getOrderTransportTotal(order), 0));
+  const credits = round2(creditOrders.reduce((sum, order) => sum + getOrderTotal(order), 0));
+
+  const minimumDeliverySurcharge = getDeliverySurchargeTotal(ctx);
+
+  const serviceSubtotal = round2(warehouse + transport + credits);
+  const fuelSurchargeBase = round2(transport);
+
+  const fuelSurcharge = round2(
+    fuelSurchargeBase * (toNumber(fuelSurchargePercent, 0) / 100)
+  );
+
+  const subtotal = round2(serviceSubtotal + fuelSurcharge + minimumDeliverySurcharge);
+  const vat = round2(subtotal * vatRate);
+  const total = round2(subtotal + vat);
+
+  return {
+    warehouse,
+    transport,
+    credits,
+    minimumDeliverySurcharge,
+    serviceSubtotal,
+    fuelSurchargePercent: toNumber(fuelSurchargePercent, 0),
+    fuelSurcharge,
+    subtotal,
+    vatBase: subtotal,
+    vat,
+    total
+  };
+}
 
   function makeInvoiceNumber(prefix = "INV") {
     const now = new Date();
@@ -214,11 +268,12 @@ function getOrderNumber(order) {
     if (error) {
       console.warn("Invoice company settings skipped:", error.message);
       return {
-        company: { ...FALLBACK_COMPANY },
-        vatRate: DEFAULT_VAT_RATE,
-        paymentTermDays: DEFAULT_PAYMENT_TERM_DAYS,
-        invoicePrefix: "INV"
-      };
+  company: { ...FALLBACK_COMPANY },
+  vatRate: DEFAULT_VAT_RATE,
+  paymentTermDays: DEFAULT_PAYMENT_TERM_DAYS,
+  invoicePrefix: "INV",
+  fuelSurchargePercent: DEFAULT_FUEL_SURCHARGE_PERCENT
+};
     }
 
     const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
@@ -245,11 +300,12 @@ function getOrderNumber(order) {
     };
 
     return {
-      company,
-      vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
-      paymentTermDays: Math.round(toNumber(map.get("default_payment_terms_days") || map.get("doc_default_payment_terms"), DEFAULT_PAYMENT_TERM_DAYS)),
-      invoicePrefix: map.get("invoice_prefix") || "INV"
-    };
+  company,
+  vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
+  paymentTermDays: Math.round(toNumber(map.get("default_payment_terms_days") || map.get("doc_default_payment_terms"), DEFAULT_PAYMENT_TERM_DAYS)),
+  invoicePrefix: map.get("invoice_prefix") || "INV",
+  fuelSurchargePercent: toNumber(map.get("fuel_surcharge_percent"), DEFAULT_FUEL_SURCHARGE_PERCENT)
+};
   }
 
   async function loadProductOwnerProfile(client, customerId) {
@@ -479,36 +535,53 @@ function getOrderNumber(order) {
   }
 
   function drawCostSummaryBox(doc, x, y, w, h, orders, totals, ctx) {
-    doc.setFillColor(248, 249, 251);
-    doc.roundedRect(x, y, w, h, 2, 2, "F");
+  doc.setFillColor(248, 249, 251);
+  doc.roundedRect(x, y, w, h, 2, 2, "F");
 
-    doc.setDrawColor(220, 224, 231);
-    doc.roundedRect(x, y, w, h, 2, 2);
+  doc.setDrawColor(220, 224, 231);
+  doc.roundedRect(x, y, w, h, 2, 2);
 
-    setDark(doc);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.text("Invoice Overview", x + 5, y + 9);
+  setDark(doc);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Invoice Overview", x + 5, y + 9);
 
-    const rows = [
-      ["Delivered orders", String(orders.length), false],
-      ["Warehouse costs", formatMoney(totals.warehouse), false],
-      ["Transport costs", formatMoney(totals.transport), false],
-      ["Subtotal excl. VAT", formatMoney(totals.subtotal), false],
-      [`VAT ${Math.round(ctx.vatRate * 100)}%`, formatMoney(totals.vat), false],
-      ["Invoice total", formatMoney(totals.total), true]
-    ];
+  const subtotalBeforeFuel = round2(
+    totals.serviceSubtotal + totals.minimumDeliverySurcharge
+  );
 
-    let rowY = y + 19;
+const fuelLabel =
+  `Fuel surcharge ${formatNumber(totals.fuelSurchargePercent, 1)}%`;
 
-    rows.forEach(([label, value, bold]) => {
-      doc.setFont("helvetica", bold ? "bold" : "normal");
-      doc.setFontSize(bold ? 9.4 : 8.3);
-      doc.text(label, x + 5, rowY);
-      doc.text(splitText(doc, value, 38).slice(0, 1), x + w - 6, rowY, { align: "right" });
-      rowY += bold ? 7 : 6.5;
-    });
-  }
+  const rows = [
+    ["Delivered orders", String(orders.length), false],
+    ["Warehouse costs", formatMoney(totals.warehouse), false],
+    ["Transport costs", formatMoney(totals.transport), false],
+...(totals.credits !== 0
+  ? [["Credit notes", formatMoney(totals.credits), false]]
+  : []),
+    ...(totals.minimumDeliverySurcharge > 0
+      ? [["Minimum Delivery Charge", formatMoney(totals.minimumDeliverySurcharge), false]]
+      : []),
+    ["Subtotal excl. VAT", formatMoney(subtotalBeforeFuel), false],
+   [fuelLabel, formatMoney(totals.fuelSurcharge), false],
+    [`VAT ${Math.round(ctx.vatRate * 100)}%`, formatMoney(totals.vat), false],
+    ["Invoice total", formatMoney(totals.total), true]
+  ];
+
+  let rowY = y + 19;
+
+  rows.forEach(([label, value, bold]) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal");
+    doc.setFontSize(bold ? 9.4 : 8.3);
+
+    doc.text(label, x + 5, rowY);
+    doc.text(value, x + w - 6, rowY, { align: "right" });
+
+    rowY += bold ? 7 : 6.5;
+  });
+}
+
 
   function drawPaymentDetails(doc, y, company) {
     doc.setFillColor(248, 249, 251);
@@ -550,7 +623,7 @@ function getOrderNumber(order) {
   }
 
   function drawPageOne(doc, orders, invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl) {
-    const totals = getTotals(orders, ctx.vatRate);
+    const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
 
     drawHeader(doc, "Invoice", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
     drawBillTo(doc, 92, ctx.productOwner);
@@ -563,10 +636,18 @@ function getOrderNumber(order) {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text("A detailed order specification is attached on the next page.", 14, 179);
+   doc.text("A detailed order specification is attached on the next page.", 14, 179);
 
-    drawPaymentDetails(doc, 206, ctx.company);
-  }
+if (totals.minimumDeliverySurcharge > 0) {
+  doc.setFontSize(8);
+  doc.text(
+    "* Fuel surcharge is calculated on transport charges only and is not applied to warehouse costs or any Minimum Delivery Charge.",
+    14,
+    186
+  );
+  doc.setFontSize(9);
+}
+}
 
   function drawSpecificationHeader(doc, y) {
     doc.setFillColor(245, 245, 245);
@@ -583,7 +664,7 @@ function getOrderNumber(order) {
     doc.text("Colli", COL.amount, y);
     doc.text("Warehouse", COL.warehouse, y);
     doc.text("Transport", COL.transport, y);
-    doc.text("Total", COL.total, y, { align: "right" });
+    doc.text("Total", COL.total + 2, y);
 
     doc.setDrawColor(80, 80, 80);
     doc.line(14, y + 4, 196, y + 4);
@@ -617,17 +698,100 @@ function getOrderNumber(order) {
 
     y += 7;
 
-    doc.text("Transport Costs", labelX, y);
-    doc.text(formatMoney(totals.transport), valueX, y, { align: "right" });
+   doc.text("Transport Costs", labelX, y);
+doc.text(formatMoney(totals.transport), valueX, y, { align: "right" });
 
-    y += 7;
+if (totals.minimumDeliverySurcharge > 0) {
+  y += 7;
 
-    doc.setFont("helvetica", "bold");
-    doc.text("Subtotal", labelX, y);
-    doc.text(formatMoney(totals.subtotal), valueX, y, { align: "right" });
+  doc.setFont("helvetica", "normal");
+
+  doc.text(
+    "Minimum Delivery Charge",
+    labelX,
+    y
+  );
+
+  doc.text(
+    formatMoney(totals.minimumDeliverySurcharge),
+    valueX,
+    y,
+    { align: "right" }
+  );
+}
+
+y += 7;
+
+doc.setFont("helvetica", "bold");
+
+const specificationSubtotal =
+    totals.serviceSubtotal +
+    totals.minimumDeliverySurcharge;
+
+doc.text("Subtotal", labelX, y);
+doc.text(
+    formatMoney(specificationSubtotal),
+    valueX,
+    y,
+    { align:"right"}
+);
 
     return y + 10;
   }
+
+function drawMinimumDeliverySurchargeRows(doc, y, ctx) {
+  const surcharges = ctx.deliverySurcharges || [];
+  if (!surcharges.length) return y;
+
+  surcharges.forEach(group => {
+    if (y > 258) {
+      doc.addPage();
+      y = drawSpecificationHeader(doc, 88);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+    }
+
+    const retailer = cleanText(group.retailer_name || "Minimum Delivery Charge");
+    const postcode = cleanText(group.delivery_postcode || "");
+    const readyVolume = toNumber(group.ready_volume_m3, 0);
+    const minimumVolume = toNumber(group.minimum_volume_m3, 1.25);
+    const shortfall = toNumber(group.shortfall_m3, Math.max(0, minimumVolume - readyVolume));
+    const surcharge = toNumber(group.applied_surcharge || group.calculated_surcharge, 0);
+
+     setDark(doc);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(6.5);
+
+doc.setFont("helvetica", "bold");
+doc.text(group.order_number || "Minimum", COL.order, y);
+
+doc.setFont("helvetica", "normal");
+doc.text("Min. Delivery", COL.retailer, y);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(
+      splitText(
+        doc,
+        `Planned: ${formatNumber(readyVolume,2)} / ${formatNumber(minimumVolume,2)} m³
+Shortfall: ${formatNumber(shortfall,2)} m³
+${postcode}`,
+        54
+      ),
+      COL.address,
+      y
+    );
+
+    doc.text("—", COL.date, y);
+    doc.text("—", COL.amount, y);
+doc.text(formatMoney(0), COL.warehouse, y);
+doc.text(formatMoney(surcharge), COL.transport, y);
+doc.text(formatMoney(surcharge), COL.total, y);
+
+    y += 15;
+  });
+
+  return y;
+}
 
   function drawSpecificationPage(doc, orders, invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl) {
   doc.addPage();
@@ -668,8 +832,17 @@ const orderRefLines = supplierRef
       const rowHeight = Math.max(8, retailerLines.length * 3.8, addressLines.length * 3.8);
 
       setDark(doc);
-      doc.setFont("helvetica", "bold");
+doc.setFont("helvetica", "bold");
 doc.text(orderRefLines[0], COL.order, y);
+
+if (orderRefLines[1]) {
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.8);
+  doc.text(orderRefLines[1], COL.order, y + 4);
+  doc.setFontSize(6.5);
+}
+
+doc.setFont("helvetica", "normal");
 
 if (orderRefLines[1]) {
   doc.setFont("helvetica", "normal");
@@ -681,16 +854,18 @@ if (orderRefLines[1]) {
       doc.text(addressLines, COL.address, y);
       doc.text(deliveryDate, COL.date, y);
       doc.text(String(amount), COL.amount, y);
-      doc.text(formatMoney(warehouse), COL.warehouse + 12, y, { align: "right" });
-      doc.text(formatMoney(transport), COL.transport + 13, y, { align: "right" });
-      doc.text(formatMoney(total), COL.total, y, { align: "right" });
+doc.text(formatMoney(warehouse), COL.warehouse, y);
+doc.text(formatMoney(transport), COL.transport, y);
+doc.text(formatMoney(total), COL.total, y);
 
       y += rowHeight;
-    });
+       });
+
+    y = drawMinimumDeliverySurchargeRows(doc, y, ctx);
 
     y += 7;
 
-    const totals = getTotals(orders, ctx.vatRate);
+    const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
 
     if (y > 230) {
       doc.addPage();
@@ -749,7 +924,7 @@ if (orderRefLines[1]) {
   }
 
   async function createInvoiceRecord(client, companyId, orders, invoiceNumber, uploaded, ctx) {
-    const totals = getTotals(orders, ctx.vatRate);
+    const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
     const customerId = ctx.productOwner.id;
     const invoiceDate = new Date();
     const dueDate = addDays(invoiceDate, ctx.paymentTermDays);
@@ -864,6 +1039,59 @@ if (orderRefLines[1]) {
     }
   }
 
+async function loadApprovedDeliverySurcharges(client, companyId, orders) {
+  const orderIds = orders.map(order => String(order.id)).filter(Boolean);
+  if (!orderIds.length) return [];
+
+  const { data: groupOrders, error: groupOrdersError } = await client
+    .from("delivery_group_orders")
+    .select("delivery_group_id, order_id, order_number, group_role")
+    .in("order_id", orderIds)
+    .eq("group_role", "ready");
+
+  if (groupOrdersError) throw groupOrdersError;
+
+  const groupIds = [...new Set((groupOrders || []).map(row => row.delivery_group_id).filter(Boolean))];
+  if (!groupIds.length) return [];
+
+  const { data: groups, error: groupsError } = await client
+    .from("delivery_groups")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("status", "approved")
+    .neq("invoice_status", "invoiced")
+    .in("id", groupIds);
+
+  if (groupsError) throw groupsError;
+
+  return (groups || []).map(group => {
+  const relatedOrder = (groupOrders || []).find(row =>
+    String(row.delivery_group_id) === String(group.id)
+  );
+
+  return {
+    ...group,
+    order_number: relatedOrder?.order_number || ""
+  };
+});
+}
+
+async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
+  const ids = (surcharges || []).map(row => row.id).filter(Boolean);
+  if (!ids.length) return;
+
+  const { error } = await client
+    .from("delivery_groups")
+    .update({
+      invoice_status: "invoiced",
+      invoice_id: invoiceId,
+      updated_at: new Date().toISOString()
+    })
+    .in("id", ids);
+
+  if (error) throw error;
+}
+
   async function generate(orders, client, companyId) {
     if (!Array.isArray(orders) || !orders.length) {
       throw new Error("No orders selected for invoice.");
@@ -881,6 +1109,7 @@ if (orderRefLines[1]) {
     const ctx = await loadCompanySettings(client, companyId);
 
     ctx.productOwner = await loadProductOwnerProfile(client, productOwnerId);
+ctx.deliverySurcharges = await loadApprovedDeliverySurcharges(client, companyId, orders);
 
     const invoiceNumber = makeInvoiceNumber(ctx.invoicePrefix);
 
@@ -897,6 +1126,7 @@ if (orderRefLines[1]) {
     await upsertInvoiceDocumentPerOrder(client, companyId, invoiceNumber, uploaded, orders);
     await updateOrdersAsInvoiced(client, orders);
     await createActivityRows(client, companyId, orders, invoiceNumber);
+await markDeliverySurchargesInvoiced(client, invoiceId, ctx.deliverySurcharges);
 
     return {
       invoiceId,
