@@ -507,12 +507,26 @@
       normalize(o.planning_release) === "true"
     );
 
-    const readyPlanning = orders.filter(o =>
-      normalize(o.status) === "ready_for_planning" ||
-      normalize(o.status) === "ready_for_picking" ||
-      o.planning_release === true ||
-      normalize(o.planning_release) === "true"
-    );
+const readyPlanning = orders.filter(o => {
+  const status = normalize(o.status);
+  const transportStatus = normalize(o.transport_status);
+
+  const isReleased =
+    o.planning_release === true ||
+    normalize(o.planning_release) === "true";
+
+  const isReady =
+    status === "ready_for_planning" ||
+    status === "ready_for_picking" ||
+    isReleased;
+
+  const isAlreadyPlanned =
+    Boolean(o.route_id) ||
+    status === "planned" ||
+    transportStatus === "planned";
+
+  return isReady && !isAlreadyPlanned;
+});
 
     const awaitingGoods = orders.filter(o => {
       const status = normalize(o.status);
@@ -658,7 +672,7 @@
     setText("kpiOpenOrders", formatNumber(m.openOrders));
     setText("kpiStockUnits", formatNumber(m.stockUnits));
     setText("kpiReadyPlanning", formatNumber(m.readyPlanning));
-    setText("kpiMapPoints", formatNumber(m.openWithCoords));
+    setText("kpiPlannedOrders", formatNumber(m.plannedOrders));
     setText("kpiPodsMissing", formatNumber(m.podsMissing));
     setText("kpiRevenueMonth", formatMoney(m.revenueMonth));
 

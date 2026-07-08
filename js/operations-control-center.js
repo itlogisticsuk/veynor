@@ -244,11 +244,13 @@ let editRemovedLineIds = new Set();
 
     if (isTenantRole()) return true;
 
-    if (isProductOwnerRole()) {
+if (isProductOwnerRole()) {
   return [
+    "legacy_acknowledgement",
     "acknowledgement",
     "supplier_packing_slip",
     "delivery_note",
+    "delivery_labels",
     "pod",
     "signed_delivery_note",
     "invoice"
@@ -685,6 +687,37 @@ function getLineMatchedQty(line) {
 }
 
 function getProductCompleteness(order) {
+
+  if (normalize(order.order_type) === "legacy") {
+    const lines = Array.isArray(order.order_lines)
+      ? order.order_lines
+      : [];
+
+    const required = lines.reduce((sum, line) => {
+      return sum + Math.max(1, toNumber(line.quantity_ordered || 1, 1));
+    }, 0);
+
+    return {
+      required,
+      matched: required,
+      missing: 0,
+      pct: 100,
+      status: "complete",
+      lines: lines.map(line => ({
+        id: line.id,
+        sku: getLineSku(line),
+        description: getLineDescription(line),
+        required: Math.max(1, toNumber(line.quantity_ordered || 1, 1)),
+        matched: Math.max(1, toNumber(line.quantity_ordered || 1, 1)),
+        missing: 0,
+        orderedProducts: getLineRequiredQty(line),
+        complete: true,
+        revenue: getLineRevenue(line)
+      }))
+    };
+  }
+
+  // bestaande code hieronder laten staan
   const lines = Array.isArray(order.order_lines)
   ? order.order_lines.filter(line => normalize(line.line_type) !== "manual")
   : [];
@@ -742,48 +775,58 @@ function getProductCompleteness(order) {
     return "not_invoiced";
   }
 
-  function deriveLifecycleStatus(order) {
-    const status = normalize(order.status || "");
-    const transportStatus = normalize(order.transport_status || "");
-    const warehouseStatus = normalize(order.warehouse_status || "");
-    const completeness = getProductCompleteness(order);
+ function deriveLifecycleStatus(order) {
+  const status = normalize(order.status || "");
+  const transportStatus = normalize(order.transport_status || "");
+  const warehouseStatus = normalize(order.warehouse_status || "");
+  const completeness = getProductCompleteness(order);
 
-    if (status === "delivered" || transportStatus === "delivered") return "delivered";
-
-    if (
-      ["out_for_delivery", "sent_to_driver", "loaded", "dispatched", "on_transport"].includes(status) ||
-      ["out_for_delivery", "sent_to_driver", "loaded", "dispatched", "on_transport"].includes(transportStatus)
-    ) {
-      return "on_transport";
-    }
-
-    if (
-      status === "planned" ||
-      transportStatus === "planned" ||
-      order.route_id ||
-      order.confirmed_delivery_date ||
-      order.delivery_eta_from ||
-      order.delivery_eta_to
-    ) {
-      return "planned";
-    }
-
-    if (completeness.required > 0 && completeness.missing <= 0) return "stock_complete";
-    if (completeness.required > 0 && completeness.missing > 0) return "awaiting_goods";
-
-    if (["delivery_issue", "returned", "failed_delivery", "issue"].includes(status)) return "issue";
-
-    if (
-      ["delivery_issue", "returned", "failed_delivery", "issue"].includes(transportStatus) &&
-      status !== "delivered"
-    ) {
-      return "issue";
-    }
-
-    if (warehouseStatus === "stock_complete") return "stock_complete";
-
-    return "order_received";
+  if (normalize(order.order_type) === "legacy") {
+    return "delivered";
   }
+
+  if (
+    status === "delivered" ||
+    transportStatus === "delivered" ||
+    warehouseStatus === "delivered"
+  ) {
+    return "delivered";
+  }
+
+  if (
+    ["out_for_delivery", "sent_to_driver", "loaded", "dispatched", "on_transport"].includes(status) ||
+    ["out_for_delivery", "sent_to_driver", "loaded", "dispatched", "on_transport"].includes(transportStatus)
+  ) {
+    return "on_transport";
+  }
+
+  if (
+    status === "planned" ||
+    transportStatus === "planned" ||
+    order.route_id ||
+    order.confirmed_delivery_date ||
+    order.delivery_eta_from ||
+    order.delivery_eta_to
+  ) {
+    return "planned";
+  }
+
+  if (completeness.required > 0 && completeness.missing <= 0) return "stock_complete";
+  if (completeness.required > 0 && completeness.missing > 0) return "awaiting_goods";
+
+  if (["delivery_issue", "returned", "failed_delivery", "issue"].includes(status)) return "issue";
+
+  if (
+    ["delivery_issue", "returned", "failed_delivery", "issue"].includes(transportStatus) &&
+    status !== "delivered"
+  ) {
+    return "issue";
+  }
+
+  if (warehouseStatus === "stock_complete") return "stock_complete";
+
+  return "order_received";
+}
 
   function compactLifecycleStep(order) {
     const status = normalize(order.derived_lifecycle_status || "");
@@ -937,7 +980,30 @@ function rebuildDeliveryGroups() {
   });
 }
 function getDeliveryGroup(order) {
+  if (normalize(order.order_type) === "legacy") {
+    return null;
+  }
+
   return deliveryGroupsMap.get(getDeliveryGroupKey(order)) || null;
+}
+
+function exposeDeliveryGroupsToPlanner() {
+  window.VeynorDeliveryGroups = {
+    map: deliveryGroupsMap,
+    stored: window.__storedDeliveryGroups || [],
+
+    getGroup(order) {
+      return getDeliveryGroup(order);
+    },
+
+    getStoredGroup(group) {
+      if (!group?.key) return null;
+
+      return (window.__storedDeliveryGroups || []).find(row =>
+        row.group_key === group.key
+      ) || null;
+    }
+  };
 }
 
   function enrichOrder(order) {
@@ -1162,8 +1228,9 @@ items (
     const { data, error } = await query;
     if (error) throw error;
 
-    allOrders = (data || []).map(enrichOrder);
+allOrders = (data || []).map(enrichOrder);
 rebuildDeliveryGroups();
+exposeDeliveryGroupsToPlanner();
 
     selectedOrderIds.forEach(id => {
       if (!allOrders.some(order => String(order.id) === String(id))) {
@@ -1474,13 +1541,15 @@ setText(
 
 function getVisibleDocumentTypes(order) {
 
-  const docs = [
-    ["acknowledgement", "ACK"],
-    ["supplier_packing_slip", "Packing Slip"],
-    ["delivery_note", "Delivery Note"],
-    ["pod", "POD"],
-    ["invoice", "Invoice"]
-  ];
+const docs = [
+  ["legacy_acknowledgement", "Legacy ACK"],
+  ["acknowledgement", "ACK"],
+  ["supplier_packing_slip", "Packing Slip"],
+  ["delivery_note", "Delivery Note"],
+  ["delivery_labels", "Delivery Labels"],
+  ["pod", "POD"],
+  ["invoice", "Invoice"]
+];
 
   if (
     normalize(order.order_type) === "credit" &&
@@ -1514,24 +1583,91 @@ function getVisibleDocumentTypes(order) {
     `;
   }
 
-  function renderDeliveryCell(order) {
-    const expectedDate = getExpectedDeliveryDate(order);
-    const etaStatus = getEtaStatus(order);
+function getIsoWeekNumber(value) {
+  if (!value) return "";
 
-    const etaPill = etaStatus === "confirmed"
-      ? pill("confirmed", "ETA confirmed")
-      : etaStatus === "planned"
-        ? pill("planned", "Date planned")
-        : pill("pending", "Pending");
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+
+  return weekNo;
+}
+
+function isFdsCarrierOrder(order) {
+  return (
+    normalize(order.transport_type) === "charter" &&
+    normalize(order.status) === "export_for_charter"
+  );
+}
+
+function getFdsWeekLabel(order) {
+  const date =
+    order.expected_delivery_date ||
+    order.planned_route_date ||
+    order.confirmed_delivery_date;
+
+  const week = getIsoWeekNumber(date);
+
+  return week ? `FDS Week ${week}` : "FDS Week";
+}
+
+function renderDeliveryCell(order) {
+  if (normalize(order.order_type) === "legacy") {
+    const deliveredDate =
+      order.confirmed_delivery_date ||
+      order.pod_signed_at ||
+      order.updated_at ||
+      order.created_at;
 
     return `
       <div class="delivery-cell">
-        <strong>${escapeHtml(formatDate(expectedDate))}</strong>
-        ${etaPill}
-        <span class="subline">${escapeHtml(getEtaDisplay(order))}</span>
+        <strong>${escapeHtml(formatDate(deliveredDate))}</strong>
+        ${pill("delivered", "Delivered")}
+        <span class="subline">Legacy delivered order</span>
       </div>
     `;
   }
+  const expectedDate = getExpectedDeliveryDate(order);
+
+if (isFdsCarrierOrder(order)) {
+  const actualDate = order.confirmed_delivery_date || "";
+
+  return `
+    <div class="delivery-cell">
+      ${pill("planned", getFdsWeekLabel(order))}
+      <span class="subline">
+        ${
+          actualDate
+            ? `Actual date: ${escapeHtml(formatDate(actualDate))}`
+            : `Actual date pending`
+        }
+      </span>
+    </div>
+  `;
+}
+  const etaStatus = getEtaStatus(order);
+
+  const etaPill = etaStatus === "confirmed"
+    ? pill("confirmed", "ETA confirmed")
+    : etaStatus === "planned"
+      ? pill("planned", "Date planned")
+      : pill("pending", "Pending");
+
+  return `
+    <div class="delivery-cell">
+      <strong>${escapeHtml(formatDate(expectedDate))}</strong>
+      ${etaPill}
+      <span class="subline">${escapeHtml(getEtaDisplay(order))}</span>
+    </div>
+  `;
+}
 
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
@@ -1539,6 +1675,10 @@ function getOrderType(order) {
 
 function renderOrderTypeBadge(order) {
   const type = getOrderType(order);
+
+  if (type === "legacy") {
+    return `<span class="status-pill purple">Legacy</span>`;
+  }
 
   if (type === "manual_charge") {
     return `<span class="status-pill orange">Manual Charge</span>`;
@@ -2413,6 +2553,28 @@ function openOrderActionMenu(orderId, button) {
 
   console.log("Order action menu opened", { orderId });
 }
+
+async function saveFdsActualDeliveryDate(orderId, date) {
+  if (!orderId) throw new Error("Order id missing.");
+
+  await safeUpdateOrder(orderId, {
+    confirmed_delivery_date: date,
+    delivery_eta_status: date ? "confirmed" : "carrier",
+    last_activity_at: new Date().toISOString()
+  });
+
+  await insertOrderActivity(
+    orderId,
+    date
+      ? `FDS actual delivery date set to ${date}.`
+      : "FDS actual delivery date removed.",
+    "fds_actual_delivery_date"
+  );
+
+  await loadOrders();
+
+  showToast("FDS actual delivery date saved.", "ok");
+}
   function bindTableEvents() {
     const tbody = byId("ordersBody");
     if (!tbody) return;
@@ -2427,6 +2589,26 @@ function openOrderActionMenu(orderId, button) {
         updateSelectionUi();
       });
     });
+
+tbody.querySelectorAll("[data-fds-actual-date]").forEach(input => {
+  input.addEventListener("click", event => {
+    event.stopPropagation();
+  });
+
+  input.addEventListener("change", async event => {
+    event.stopPropagation();
+
+    const orderId = input.getAttribute("data-fds-actual-date");
+    const date = input.value || null;
+
+    try {
+      await saveFdsActualDeliveryDate(orderId, date);
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not save FDS actual date.", "err");
+    }
+  });
+});
 
 tbody.querySelectorAll("[data-expand-order-id]").forEach(button => {
   button.addEventListener("click", event => {
@@ -2473,9 +2655,10 @@ tbody.querySelectorAll("[data-order-actions]").forEach(button => {
         const docType = button.getAttribute("data-doc-action");
 
         try {
-          if (docType === "acknowledgement") return generateAcknowledgement(orderId);
-          if (docType === "delivery_note") return generateDeliveryNote(orderId);
-          if (docType === "invoice") return generateSingleInvoice(orderId);
+if (docType === "acknowledgement") return generateAcknowledgement(orderId);
+if (docType === "delivery_note") return generateDeliveryNote(orderId);
+if (docType === "delivery_labels") return generateDeliveryLabels(orderId);
+if (docType === "invoice") return generateSingleInvoice(orderId);
 
 if (docType === "credit_note") {
 
@@ -2568,23 +2751,54 @@ style.textContent = `
 
   .occ-photo-grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
-    gap:12px
+    grid-template-columns:1fr;
+    gap:18px;
+    justify-items:center;
   }
 
-  .occ-photo-grid img{
+  .occ-photo-card{
     width:100%;
-    height:140px;
-    object-fit:cover;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+  }
+
+.occ-photo-modal-card{
+  width:min(620px,94vw);
+}
+
+.occ-photo-meta{
+  width:100%;
+  max-width:360px;
+  background:#f8fafc;
+  border:1px solid #dce5f2;
+  border-radius:12px;
+  padding:10px 14px;
+  text-align:center;
+  font-size:13px;
+  line-height:1.5;
+  color:#334155;
+}
+
+  .occ-photo-grid img{
+    width:auto;
+    max-width:100%;
+    max-height:75vh;
+    height:auto;
+    object-fit:contain;
     border-radius:12px;
-    border:1px solid #d1d5db
+    border:1px solid #d1d5db;
+    background:#f8fafc;
+    image-rendering:auto;
+    box-shadow:0 6px 18px rgba(0,0,0,.08);
   }
 
   .manual-tariff-table-wrap{
     overflow:auto;
     border:1px solid #dce5f2;
     border-radius:12px;
-    background:#fff
+    background:#fff;
   }
 
   .manual-tariff-table{
@@ -2708,39 +2922,86 @@ document.head.appendChild(style);
     document.body.appendChild(modal);
   }
 
-  function openPhotoModal(orderId) {
-    ensurePageStyles();
+function openPhotoModal(orderId) {
+  ensurePageStyles();
 
-    const order = allOrders.find(row => String(row.id) === String(orderId));
-    if (!order) return;
+  const order = allOrders.find(row => String(row.id) === String(orderId));
+  if (!order) return;
 
-    const photos = getPodPhotos(order);
+  const photos = getPodPhotos(order);
 
-    const modal = document.createElement("div");
-    modal.className = "occ-memo-modal-backdrop";
-    modal.innerHTML = `
-      <section class="occ-memo-modal-card">
-        <div class="occ-memo-modal-head">
-          <strong>POD Photos · ${escapeHtml(order.order_number || "Order")}</strong>
-          <button class="mini-btn" type="button" data-close>Close</button>
-        </div>
+  const ack = order.external_reference || "NO-ACK";
+  const so = order.order_number || "Order";
+  const deliveryDate = formatDate(order.confirmed_delivery_date || order.pod_signed_at || order.updated_at || order.created_at);
+  const retailer = order.retailer_name || order.retail_name || "Retailer";
 
-        ${
-          photos.length
-            ? `<div class="occ-photo-grid">${photos.map(url => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"><img src="${escapeHtml(url)}" alt="POD photo"/></a>`).join("")}</div>`
-            : `<div class="occ-memo-modal-text">No POD photos available.</div>`
-        }
-      </section>
-    `;
+  const modal = document.createElement("div");
+  modal.className = "occ-memo-modal-backdrop";
 
-    modal.addEventListener("click", event => {
-      if (event.target === modal || event.target.hasAttribute("data-close")) {
-        modal.remove();
+  modal.innerHTML = `
+    <section class="occ-memo-modal-card occ-photo-modal-card">
+      <div class="occ-memo-modal-head">
+        <strong>POD Photos · ${escapeHtml(so)}</strong>
+        <button class="mini-btn" type="button" data-close>Close</button>
+      </div>
+
+      ${
+        photos.length
+          ? `
+            <div class="occ-photo-grid">
+              ${photos.map((url, index) => {
+                const fileName = `${so}-${ack}-POD-photo-${index + 1}.jpg`;
+
+                return `
+                  <div class="occ-photo-card">
+<div class="occ-photo-meta">
+
+  <div style="font-size:18px;font-weight:700;color:#0f172a;">
+    ${escapeHtml(so)}
+  </div>
+
+  <div style="margin-top:6px;">
+    <strong>ACK:</strong> ${escapeHtml(ack)}
+  </div>
+
+  <div>
+    <strong>Retailer:</strong> ${escapeHtml(retailer)}
+  </div>
+
+  <div>
+    <strong>Delivered:</strong> ${escapeHtml(deliveryDate)}
+  </div>
+
+</div>
+
+                    <img src="${escapeHtml(url)}" alt="POD photo ${index + 1}"/>
+
+                    <a
+                      href="${escapeHtml(url)}"
+                      download="${escapeHtml(fileName)}"
+                      class="btn btn-primary"
+                      style="min-width:180px;text-align:center;"
+                    >
+                      Download Photo
+                    </a>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          `
+          : `<div class="occ-memo-modal-text">No POD photos available.</div>`
       }
-    });
+    </section>
+  `;
 
-    document.body.appendChild(modal);
-  }
+  modal.addEventListener("click", event => {
+    if (event.target === modal || event.target.hasAttribute("data-close")) {
+      modal.remove();
+    }
+  });
+
+  document.body.appendChild(modal);
+}
 
   function openManualOpsModal(orderId) {
     const order = allOrders.find(row => String(row.id) === String(orderId));
@@ -3323,6 +3584,24 @@ document.head.appendChild(style);
 
     showToast("Invoice generator not available.", "err");
   }
+
+async function generateDeliveryLabels(orderId) {
+  const order = allOrders.find(row => String(row.id) === String(orderId));
+
+  if (!order) {
+    showToast("Order not found for delivery labels.", "err");
+    return;
+  }
+
+  if (window.DeliveryLabelGenerator?.generate) {
+    await window.DeliveryLabelGenerator.generate(orderId);
+    await loadOrders();
+    showToast("Delivery labels generated.", "ok");
+    return;
+  }
+
+  showToast("Delivery Label Generator not available.", "err");
+}
 
   async function generateCombinedInvoice() {
     const orders = getSelectedOrders();

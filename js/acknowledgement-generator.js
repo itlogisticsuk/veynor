@@ -994,9 +994,14 @@
   }
 
   async function uploadPdf(client, companyId, order, blob) {
-    const orderPart = safeFilePart(order.order_number || order.id);
-    const fileName = `acknowledgement-${orderPart}.pdf`;
-    const storagePath = `${companyId}/${order.id}/${fileName}`;
+const soPart = safeFilePart(order.order_number || order.id);
+const ackPart = safeFilePart(order.external_reference || "");
+
+const fileName = ackPart
+  ? `Acknowledgement ${soPart} ${ackPart}.pdf`
+  : `Acknowledgement ${soPart}.pdf`;
+
+const storagePath = `${companyId}/${order.id}/${fileName}`;
 
     const { error } = await client.storage
       .from(DOCUMENT_BUCKET)

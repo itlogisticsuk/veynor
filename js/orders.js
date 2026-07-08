@@ -18,6 +18,13 @@
   let allStops = [];
   let activeVehicles = [];
   let driverUsers = [];
+let storedDeliveryGroups = [];
+let warehouseCostSettings = {
+  handlingInPerColli: 0,
+  handlingOutPerColli: 0,
+  storagePerM3: 0,
+  vasPerColli: 0
+};
 
   let selectedOrderId = null;
   let selectedVehicleId = "";
@@ -145,6 +152,92 @@
   function getOrderVolume(order) {
     return toNumber(order?.planning_volume_m3 ?? order?.volume_m3, 0);
   }
+
+function makeRetailerCode(postcode, retailerName) {
+  const pc = String(postcode || "")
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+
+  const name = String(retailerName || "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 3);
+
+  return `${pc || "NOPC"}-${name || "RET"}`;
+}
+
+function getDeliveryGroupKey(order) {
+  const postcode = String(order.delivery_postcode || "")
+    .toUpperCase()
+    .replace(/\s+/g, "");
+
+  const retailerCode =
+    order.retailer_code ||
+    makeRetailerCode(order.delivery_postcode, getRetailerName(order));
+
+  return [
+    order.customer_id || "",
+    retailerCode,
+    postcode
+  ].join("|");
+}
+
+function markBelowMinimumOrders() {
+  const groups = new Map();
+
+  allOrders.forEach(order => {
+    order.belowMinimumVolume = false;
+
+    const state = getCompletionState(order);
+
+const status = normalize(order.status || "");
+const warehouseStatus = normalize(order.warehouse_status || "");
+const overallStatus = normalize(order.overall_status || "");
+
+const isReady =
+  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(state) ||
+  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(status) ||
+  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(warehouseStatus) ||
+  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(overallStatus) ||
+  order.planning_release === true;
+
+if (!isReady) return;
+
+    const key = getDeliveryGroupKey(order);
+    const volume = getOrderVolume(order);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        volume: 0,
+        ids: []
+      });
+    }
+
+    const group = groups.get(key);
+    group.volume += volume;
+    group.ids.push(String(order.id));
+  });
+
+  groups.forEach(group => {
+    const stored = storedDeliveryGroups.find(row =>
+      row.group_key === group.key
+    );
+
+    const approved = normalize(stored?.status) === "approved";
+
+    if (approved) return;
+
+    if (group.volume > 0 && group.volume < 1.25) {
+      allOrders.forEach(order => {
+        if (group.ids.includes(String(order.id))) {
+          order.belowMinimumVolume = true;
+        }
+      });
+    }
+  });
+}
 
   function getOrderColli(order) {
     return toNumber(order?.planning_colli, 0);
@@ -383,6 +476,12 @@
     if (error) throw error;
 
     const map = new Map((data || []).map(row => [row.setting_key, row.setting_value || ""]));
+warehouseCostSettings = {
+  handlingInPerColli: toNumber(map.get("warehouse_handling_in_per_colli_gbp"), 0),
+  handlingOutPerColli: toNumber(map.get("warehouse_handling_out_per_colli_gbp"), 0),
+  storagePerM3: toNumber(map.get("warehouse_storage_per_m3_gbp"), 0),
+  vasPerColli: toNumber(map.get("warehouse_repack_per_colli_gbp"), 0)
+};
 
     const depotLat = Number(map.get("home_depot_lat"));
     const depotLng = Number(map.get("home_depot_lng"));
@@ -471,6 +570,23 @@
     log("Active vehicles loaded:", activeVehicles);
   }
 
+async function loadStoredDeliveryGroups() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("delivery_groups")
+    .select("*")
+    .eq("company_id", cid);
+
+  if (error) {
+    console.warn("[orders.js] Delivery groups skipped:", error.message);
+    storedDeliveryGroups = [];
+    return;
+  }
+
+  storedDeliveryGroups = data || [];
+}
+
   async function loadOrders() {
     const cid = await getCompanyId();
 
@@ -484,7 +600,6 @@
         )
       `)
       .eq("company_id", cid)
-      .eq("planning_release", true)
       .in("status", [
         "ready_for_planning",
         "ready_for_picking",
@@ -505,13 +620,16 @@
 
     if (error) throw error;
 
-    allOrders = (data || []).map(row => ({
-      ...row,
-      product_owner_name: row.customers?.name || row.customer_name || "—",
-      customer_name: row.customers?.name || row.customer_name || "—",
-      retailer_name: getRetailerName(row),
-      __line_revenue_gbp: 0
-    }));
+allOrders = (data || []).map(row => ({
+  ...row,
+  product_owner_name: row.customers?.name || row.customer_name || "—",
+  customer_name: row.customers?.name || row.customer_name || "—",
+  retailer_name: getRetailerName(row),
+  __line_revenue_gbp: 0,
+  belowMinimumVolume: false
+}));
+
+markBelowMinimumOrders();
 
     await loadOrderRevenueOverlay();
   }
@@ -1026,10 +1144,42 @@ window.visibleRoutesMapRows = selectedDateRoutes;
     window.activeVehiclesMapRows = activeVehicles;
     window.selectedOrderIdsForMap = [...selectedOrderIds];
 
-    window.VeynorPlannerData = {
-      companyId,
-      allOrders,
-      filteredOrders,
+const planningOrders = allOrders.filter(order => {
+  if (normalize(order.transport_type) !== "charter") {
+    return true;
+  }
+
+  const planningDate =
+    order.planned_route_date ||
+    order.expected_delivery_date ||
+    "";
+
+  return (
+    !planningDate ||
+    planningDate === selectedPlanningDate
+  );
+});
+
+const filteredPlanningOrders = filteredOrders.filter(order => {
+  if (normalize(order.transport_type) !== "charter") {
+    return true;
+  }
+
+  const planningDate =
+    order.planned_route_date ||
+    order.expected_delivery_date ||
+    "";
+
+  return (
+    !planningDate ||
+    planningDate === selectedPlanningDate
+  );
+});
+
+window.VeynorPlannerData = {
+  companyId,
+  allOrders: planningOrders,
+  filteredOrders: filteredPlanningOrders,
       allRoutes,
       allStops,
       activeVehicles,
@@ -1064,8 +1214,9 @@ window.visibleRoutesMapRows = selectedDateRoutes;
     await loadDrivers();
     await loadActiveVehicles();
     await loadRoutes();
-    await loadRouteStops();
-    await loadOrders();
+await loadRouteStops();
+await loadStoredDeliveryGroups();
+await loadOrders();
 
     renderSelects();
     renderAll();
@@ -1080,7 +1231,106 @@ function closePlanningModal() {
   if (modal) modal.remove();
 }
 
-function openPlanningConfirmModal() {
+function openCarrierConfirmModal() {
+  const selectedIds = [...selectedOrderIds];
+
+  if (!selectedIds.length) {
+    showToast("Select at least one order first.", "err");
+    return;
+  }
+
+  const vehicle = activeVehicles.find(v => String(v.id) === String(selectedVehicleId));
+
+  if (!vehicle) {
+    showToast("Select FDS / carrier first.", "err");
+    return;
+  }
+
+  const selectedOrders = selectedIds
+    .map(id => getOrderById(id))
+    .filter(Boolean);
+
+  const volume = selectedOrders.reduce((sum, order) => sum + getOrderVolume(order), 0);
+  const colli = selectedOrders.reduce((sum, order) => sum + getOrderColli(order), 0);
+  const revenue = selectedOrders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
+
+  closePlanningModal();
+
+  const modal = document.createElement("div");
+  modal.id = "planningConfirmModal";
+
+  modal.innerHTML = `
+    <div style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div style="width:min(560px,100%);background:#fff;border-radius:18px;box-shadow:0 24px 70px rgba(15,23,42,.32);overflow:hidden;">
+        
+        <div style="padding:18px 20px;border-bottom:1px solid var(--border);background:#f8fafc;">
+          <h2 style="margin:0;font-size:18px;font-weight:950;">Confirm Carrier Assignment</h2>
+          <p style="margin:6px 0 0;color:var(--muted);font-size:12.5px;">
+            Assign selected orders to ${escapeHtml(vehicle.name || vehicle.vehicle_name || "carrier")} without creating a route.
+          </p>
+        </div>
+
+        <div style="padding:18px 20px;display:grid;gap:14px;">
+          <div class="field">
+            <label>Carrier Collection / Delivery Date</label>
+            <input id="modalCarrierDate" class="input" type="date" value="${escapeHtml(getManualRouteDeliveryDate())}">
+          </div>
+
+          <div style="border:1px solid var(--border);border-radius:14px;padding:14px;background:#fbfdff;display:grid;gap:8px;">
+            <strong>${escapeHtml(vehicle.name || vehicle.vehicle_name || "FDS")}</strong>
+            <div>Action: <strong>Assign to carrier only</strong></div>
+            <div>Route creation: <strong style="color:#dc2626;">No route will be created</strong></div>
+            <div>Status after confirmation: <strong>Export for Charter</strong></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+            <div class="mini-card">
+              <div class="mini-label">Orders</div>
+              <div class="mini-value">${formatNumber(selectedOrders.length)}</div>
+            </div>
+            <div class="mini-card">
+              <div class="mini-label">Colli</div>
+              <div class="mini-value">${formatNumber(colli)}</div>
+            </div>
+            <div class="mini-card">
+              <div class="mini-label">Volume</div>
+              <div class="mini-value">${formatNumber(volume, 2)} m³</div>
+            </div>
+          </div>
+
+          <div class="mini-card">
+            <div class="mini-label">Revenue</div>
+            <div class="mini-value">${formatMoney(revenue)}</div>
+          </div>
+        </div>
+
+        <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:#fff;">
+          <button id="modalCancelPlanning" class="planner-btn" type="button">Cancel</button>
+          <button id="modalConfirmCarrier" class="planner-btn primary" type="button">Assign to Carrier</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  byId("modalCancelPlanning")?.addEventListener("click", closePlanningModal);
+
+  byId("modalConfirmCarrier")?.addEventListener("click", async () => {
+    const date = byId("modalCarrierDate")?.value || getManualRouteDeliveryDate();
+
+    const dateInput = byId("manualRouteDeliveryDate");
+    if (dateInput) dateInput.value = date;
+
+    selectedPlanningDate = date;
+
+    closePlanningModal();
+
+    await assignSelectedToCarrierNoRoute(date);
+  });
+}
+
+async function openPlanningConfirmModal() {
   const selectedIds = [...selectedOrderIds];
 
   if (!selectedIds.length) {
@@ -1285,7 +1535,75 @@ function openPlanningConfirmModal() {
     }
   }
 
+function isSelectedVehicleCarrier() {
+  const vehicle = activeVehicles.find(v => String(v.id) === String(selectedVehicleId));
+  return normalize(vehicle?.vehicle_type || vehicle?.type) === "carrier";
+}
 
+async function assignSelectedToCarrierNoRoute(carrierDate = null) {
+  try {
+    const selectedIds = [...selectedOrderIds];
+
+    if (!selectedIds.length) {
+      showToast("Select at least one order first.", "err");
+      return;
+    }
+
+    if (!selectedVehicleId) {
+      showToast("Select FDS / carrier first.", "err");
+      return;
+    }
+
+    const vehicle = activeVehicles.find(v =>
+      String(v.id) === String(selectedVehicleId)
+    );
+
+    if (!vehicle || normalize(vehicle.vehicle_type || vehicle.type) !== "carrier") {
+      showToast("Selected resource is not a carrier.", "err");
+      return;
+    }
+
+    const cid = await getCompanyId();
+    const date = carrierDate || getManualRouteDeliveryDate();
+
+    const { error } = await client
+      .from("orders")
+      .update({
+        transport_type: "charter",
+        status: "export_for_charter",
+        route_id: null,
+        carrier_vehicle_id: selectedVehicleId,
+        transport_status: "export_for_charter",
+        planned_route_date: date || null,
+        expected_delivery_date: date || null,
+        driver_user_id: null,
+        driver_profile_id: null,
+        driver_name: null,
+        driver_email: null,
+        delivery_eta_from: null,
+        delivery_eta_to: null,
+        delivery_eta_status: "carrier",
+        last_activity_at: new Date().toISOString()
+      })
+      .eq("company_id", cid)
+      .in("id", selectedIds);
+
+    if (error) throw error;
+
+    selectedOrderIds.clear();
+    selectedOrderId = null;
+
+    await refreshAll();
+
+    showToast(
+      `Selected orders assigned to ${vehicle.name || vehicle.vehicle_name || "carrier"} without route.`,
+      "ok"
+    );
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not assign orders to carrier.", "err");
+  }
+}
 function getRouteDateValue(route) {
   return route?.planned_delivery_date || route?.route_date || "";
 }
@@ -1294,19 +1612,57 @@ function getRoutesForPlanningDate(date) {
   return allRoutes.filter(route => getRouteDateValue(route) === date);
 }
 
+function getOrdersForRoute(route) {
+  const routeId = String(route?.id || "");
+
+  const orderIds = allStops
+    .filter(stop => String(stop.route_id) === routeId)
+    .map(stop => String(stop.order_id || ""))
+    .filter(Boolean);
+
+  return orderIds
+    .map(id => getOrderById(id))
+    .filter(Boolean);
+}
+
+function getRouteWarehouseCost(route) {
+  const orders = getOrdersForRoute(route);
+
+  const colli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
+  const volume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
+
+  const handlingIn = colli * warehouseCostSettings.handlingInPerColli;
+  const handlingOut = colli * warehouseCostSettings.handlingOutPerColli;
+  const storage = volume * warehouseCostSettings.storagePerM3;
+  const vas = 0;
+
+  return handlingIn + handlingOut + storage + vas;
+}
+
 function getRouteCost(route) {
-  return Math.max(
+  const transportCost = Math.max(
     toNumber(route?.estimated_cost_total_gbp, 0),
     toNumber(route?.total_cost_gbp, 0)
   );
+
+  return transportCost + getRouteWarehouseCost(route);
 }
 
 function getRouteRevenue(route) {
-  return Math.max(
+  const routeRevenue = Math.max(
     toNumber(route?.estimated_revenue_gbp, 0),
     toNumber(route?.total_revenue_gbp, 0),
     toNumber(route?.revenue_gbp, 0)
   );
+
+  if (routeRevenue > 0) return routeRevenue;
+
+  const routeOrders = allStops
+    .filter(stop => String(stop.route_id) === String(route.id))
+    .map(stop => getOrderById(stop.order_id))
+    .filter(Boolean);
+
+  return routeOrders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
 }
 
 function getRouteVolume(route) {
@@ -1843,7 +2199,15 @@ byId("planningCalendarBtn")?.addEventListener("click", openPlanningCalendarModal
       }
     });
 
-    byId("btnAutoPlanRoutes")?.addEventListener("click", openPlanningConfirmModal);
+byId("btnAutoPlanRoutes")?.addEventListener("click", () => {
+  if (isSelectedVehicleCarrier()) {
+    openCarrierConfirmModal();
+    return;
+  }
+
+  openPlanningConfirmModal();
+});
+
     byId("btnExportCharter")?.addEventListener("click", exportSelectedForCharter);
 
     byId("btnFitUkMap")?.addEventListener("click", () => {
@@ -1883,29 +2247,34 @@ byId("planningCalendarBtn")?.addEventListener("click", openPlanningCalendarModal
       notifyDataChanged();
     });
 
-    window.addEventListener("veynor:map-send-to-planner", async event => {
-      const ids = Array.isArray(event.detail?.selectedOrderIds)
-        ? event.detail.selectedOrderIds
-        : [];
+window.addEventListener("veynor:map-send-to-planner", async event => {
+  const ids = Array.isArray(event.detail?.selectedOrderIds)
+    ? event.detail.selectedOrderIds
+    : [];
 
-      selectedOrderIds.clear();
-      ids.forEach(id => selectedOrderIds.add(String(id)));
+  selectedOrderIds.clear();
+  ids.forEach(id => selectedOrderIds.add(String(id)));
 
-      if (event.detail?.selectedVehicleId) {
-        selectedVehicleId = event.detail.selectedVehicleId;
-        window.pendingPreferredVehicleId = selectedVehicleId;
+  if (event.detail?.selectedVehicleId) {
+    selectedVehicleId = event.detail.selectedVehicleId;
+    window.pendingPreferredVehicleId = selectedVehicleId;
 
-        const vehicleSelect = byId("manualVehicleSelect");
-        if (vehicleSelect) vehicleSelect.value = selectedVehicleId;
-      }
+    const vehicleSelect = byId("manualVehicleSelect");
+    if (vehicleSelect) vehicleSelect.value = selectedVehicleId;
+  }
 
-      renderSelectionSummary();
-      renderOrdersTable();
-      notifySelectionChanged();
-      notifyDataChanged();
+  renderSelectionSummary();
+  renderOrdersTable();
+  notifySelectionChanged();
+  notifyDataChanged();
 
-      openPlanningConfirmModal();
-    });
+  if (isSelectedVehicleCarrier()) {
+    openCarrierConfirmModal();
+    return;
+  }
+
+  openPlanningConfirmModal();
+});
 
     window.addEventListener("veynor:vehicle-selected", event => {
   selectedVehicleId = event.detail?.vehicleId || "";

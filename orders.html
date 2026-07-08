@@ -14,13 +14,23 @@
     crossorigin=""
   />
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="/js/supabase.js"></script>
-  <script src="/js/page-guard.js" defer></script>
-  <script src="/js/layout.js" defer></script>
-  <script src="/js/planning-engine.js" defer></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/supabase.js"></script>
+
+<script src="/js/page-guard.js" defer></script>
+<script src="/js/layout.js" defer></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+
+<script src="/js/planning-engine.js" defer></script>
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  crossorigin=""
+></script>
+
 <script src="/js/orders-map.js" defer></script>
+<script src="/js/occ-tools/fds-notice-generator.js" defer></script>
 <script src="/js/available-vehicles.js" defer></script>
 <script src="/js/orders.js" defer></script>
 
@@ -418,8 +428,8 @@
           <section class="vehicles-card">
             <div class="card-head">
               <div>
-                <h3>Available Vehicles</h3>
-                <div class="planner-panel-sub">Assign routes, drivers, delivery dates and send routes to the driver app.</div>
+                <h3>Available Fleet & Carriers</h3>
+                <div class="planner-panel-sub">Assign fleet vehicles and external carriers to routes.</div>
               </div>
             </div>
 

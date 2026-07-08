@@ -217,23 +217,67 @@
     return "circle-blue";
   }
 
-  function getMarkerFillColor(row) {
-    if (selectedOrderIds.has(String(row.id))) return "#111827";
-
-    const status = normalize(row.status || row.transport_status || "");
-
-    if (["delivered", "completed"].includes(status)) return "#16a34a";
-    if (["delivery_issue", "partial_delivery", "partially_delivered", "issue"].includes(status)) return "#f59e0b";
-    if (["failed_delivery", "not_delivered", "returned", "delivery_failed"].includes(status)) return "#dc2626";
-
-    if (String(row.route_id || "") === String(getSelectedRouteId() || "")) return "#2563eb";
-
-    const transport = normalize(row.transport_type || "");
-    if (transport === "own_transport") return "#16a34a";
-    if (transport === "charter") return "#f59e0b";
-
-    return "#2563eb";
+function getMarkerFillColor(row) {
+  // Selected order
+  if (selectedOrderIds.has(String(row.id))) {
+    return "#111827"; // Black
   }
+
+  const status = normalize(row.status || row.transport_status || "");
+  const transport = normalize(row.transport_type || "");
+  const hasRoute = !!row.route_id;
+
+  // Delivered
+  if (["delivered", "completed"].includes(status)) {
+    return "#16a34a"; // Green
+  }
+
+  // Delivery issues
+  if ([
+    "delivery_issue",
+    "partial_delivery",
+    "partially_delivered",
+    "issue"
+  ].includes(status)) {
+    return "#f59e0b"; // Orange
+  }
+
+  // Failed deliveries
+  if ([
+    "failed_delivery",
+    "not_delivered",
+    "returned",
+    "delivery_failed"
+  ].includes(status)) {
+    return "#dc2626"; // Red
+  }
+
+  // Delivery Groups (shared with OCC)
+  const deliveryGroups = window.VeynorDeliveryGroups;
+
+// Minimum delivery approval required
+if (row.belowMinimumVolume === true) {
+  return "#7c3aed"; // Purple
+}
+
+  // Planned on own transport
+  if (hasRoute && transport === "own_transport") {
+    return "#16a34a"; // Green
+  }
+
+  // Planned on FDS / Carrier
+  if (hasRoute && transport === "charter") {
+    return "#f97316"; // Orange
+  }
+
+  // Assigned to FDS but not yet planned
+if (!hasRoute && transport === "charter") {
+    return "#f97316";
+}
+
+  // Default: open order
+  return "#2563eb"; // Blue
+}
 
   function buildOrderShapeIcon(row) {
     const shapeType = getMarkerShapeType(row);
@@ -507,10 +551,25 @@
         flex:0 0 auto;
       }
 
-      .legend-circle{
-        border-radius:999px;
-        background:#2563eb;
-      }
+.legend-circle{
+    border-radius:999px;
+    background:#2563eb;
+}
+
+.legend-own{
+    border-radius:999px;
+    background:#16a34a;
+}
+
+.legend-charter{
+    border-radius:999px;
+    background:#f97316;
+}
+
+.legend-minimum{
+    border-radius:999px;
+    background:#7c3aed;
+}
 
       .legend-square{
         background:#2563eb;
@@ -805,8 +864,8 @@ selectedStops.forEach((stop, index) => {
         routeStopLayer.addLayer(marker);
       });
 
-      if (points.length) fitToBounds(points);
-      return;
+// Do not auto-zoom when selecting/clicking markers.
+// User can use Fit UK manually.      return;
     }
 
     const grouped = new Map();
@@ -860,68 +919,69 @@ allLatLngs.push(...points);
       });
     });
 
-    if (allLatLngs.length) fitToBounds(allLatLngs);
+// Do not auto-fit routes during normal reload.
   }
 
-  function installLegendControl() {
-    if (!map || legendControl) return;
+function installLegendControl() {
+  if (!map || legendControl) return;
 
-    legendControl = L.control({ position: "bottomright" });
+  legendControl = L.control({ position: "bottomright" });
 
-    legendControl.onAdd = function () {
-      const wrapper = L.DomUtil.create("div", "orders-map-legend");
-      wrapper.innerHTML = `
-        <div class="orders-map-legend-title">Map legend</div>
-        <div class="orders-map-legend-item"><span class="legend-shape legend-circle"></span><span>Standard order</span></div>
-        <div class="orders-map-legend-item"><span class="legend-triangle-blue"></span><span>Low-emission zone</span></div>
-        <div class="orders-map-legend-item"><span class="legend-shape legend-square"></span><span>7.5t limit area</span></div>
-        <div class="orders-map-legend-item"><span class="legend-triangle-red"></span><span>Low-emission + 7.5t limit</span></div>
-      `;
+  legendControl.onAdd = function () {
+    const wrapper = L.DomUtil.create("div", "orders-map-legend");
 
-      L.DomEvent.disableClickPropagation(wrapper);
-      return wrapper;
-    };
+   wrapper.innerHTML = `
+  <div class="orders-map-legend-title">Map legend</div>
 
-    legendControl.addTo(map);
+  <div class="orders-map-legend-item">
+    <span class="legend-shape legend-circle"></span>
+    <span>Open order</span>
+  </div>
+
+  <div class="orders-map-legend-item">
+    <span class="legend-shape legend-own"></span>
+    <span>Own transport</span>
+  </div>
+
+  <div class="orders-map-legend-item">
+    <span class="legend-shape legend-charter"></span>
+    <span>FDS / Carrier</span>
+  </div>
+
+  <div class="orders-map-legend-item">
+    <span class="legend-shape legend-minimum"></span>
+    <span>Approval required (&lt; 1.25 m³)</span>
+  </div>
+`;
+
+    L.DomEvent.disableClickPropagation(wrapper);
+    return wrapper;
+  };
+
+  legendControl.addTo(map);
+}
+function reload() {
+  if (!map) return;
+
+  selectedOrderIds = new Set(
+    Array.isArray(window.selectedOrderIdsForMap)
+      ? window.selectedOrderIdsForMap.map(String)
+      : []
+  );
+
+  if (!selectedVehicleId && window.pendingPreferredVehicleId) {
+    selectedVehicleId = window.pendingPreferredVehicleId;
   }
 
-  function reload() {
-    if (!map) return;
+  map.invalidateSize(true);
 
-    selectedOrderIds = new Set(
-      Array.isArray(window.selectedOrderIdsForMap)
-        ? window.selectedOrderIdsForMap.map(String)
-        : []
-    );
+  clearMainLayers();
+  renderDepot();
+  renderOrders();
+  renderRoutesToMap();
 
-    if (!selectedVehicleId && window.pendingPreferredVehicleId) {
-      selectedVehicleId = window.pendingPreferredVehicleId;
-    }
-
-    map.invalidateSize(true);
-
-    clearMainLayers();
-    renderDepot();
-    renderOrders();
-    renderRoutesToMap();
-
-    if (!getSelectedRouteId() && !getShowRouteLines()) {
-      const latlngs = getVisibleOrders()
-        .map(row => [getLatitude(row), getLongitude(row)])
-        .filter(xy => Number.isFinite(xy[0]) && Number.isFinite(xy[1]));
-
-      const depot = getDepotPoint();
-
-      if (depot && Number.isFinite(Number(depot.latitude)) && Number.isFinite(Number(depot.longitude))) {
-        latlngs.push([Number(depot.latitude), Number(depot.longitude)]);
-      }
-
-      if (latlngs.length) fitToBounds(latlngs);
-      else fitUk();
-    }
-
-    refreshSelectionPanel();
-  }
+  refreshSelectionPanel();
+}
 
   function buildHintText() {
     if (selectionMode === "circle") {

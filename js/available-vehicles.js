@@ -14,6 +14,12 @@
   let driverUsers = [];
   let selectedOrderIds = [];
   let selectedPlanningDate = "";
+let warehouseCostSettings = {
+  handlingInPerColli: 0,
+  handlingOutPerColli: 0,
+  storagePerM3: 0,
+  vasPerColli: 0
+};
 
   const expandedVehicleIds = new Set();
   const expandedRouteIds = new Set();
@@ -287,6 +293,15 @@
     return toNumber(order?.planning_colli, 0);
   }
 
+function getOrderWeight(order) {
+  return toNumber(
+    order?.planning_weight_kg ??
+    order?.weight_kg ??
+    order?.total_weight_kg,
+    0
+  );
+}
+
   function getRetailerName(order, stop = null) {
     return (
       order?.retailer_name ||
@@ -301,73 +316,98 @@
   }
 
   function getRouteSummary(route) {
-    const stops = getStopsForRoute(route.id);
-    const orders = getOrdersForRoute(route.id);
+  const stops = getStopsForRoute(route.id);
+  const orders = getOrdersForRoute(route.id);
 
-    const totalStops =
-      stops.length ||
-      toNumber(route?.planned_stops, 0) ||
-      toNumber(route?.total_stops, 0);
+  const totalStops =
+    stops.length ||
+    toNumber(route?.planned_stops, 0) ||
+    toNumber(route?.total_stops, 0);
 
-    const totalOrders =
-      orders.length ||
-      toNumber(route?.planned_orders, 0);
+  const totalOrders =
+    orders.length ||
+    toNumber(route?.planned_orders, 0);
 
-    const totalVolume =
-      stops.reduce((sum, stop) => sum + toNumber(stop.planned_volume_m3, 0), 0) ||
-      orders.reduce((sum, order) => sum + getOrderVolume(order), 0) ||
-      toNumber(route?.planned_volume_m3 ?? route?.total_volume_m3, 0);
+  const totalVolume =
+    stops.reduce((sum, stop) => sum + toNumber(stop.planned_volume_m3, 0), 0) ||
+    orders.reduce((sum, order) => sum + getOrderVolume(order), 0) ||
+    toNumber(route?.planned_volume_m3 ?? route?.total_volume_m3, 0);
 
-    const totalColli =
-      stops.reduce((sum, stop) => sum + toNumber(stop.planned_colli, 0), 0) ||
-      orders.reduce((sum, order) => sum + getOrderColli(order), 0);
+  const totalColli =
+    stops.reduce((sum, stop) => sum + toNumber(stop.planned_colli, 0), 0) ||
+    orders.reduce((sum, order) => sum + getOrderColli(order), 0);
 
-    const distanceKm =
-      toNumber(route?.estimated_distance_km, 0) ||
-      toNumber(route?.planned_distance_km, 0);
+  const distanceKm =
+    toNumber(route?.estimated_distance_km, 0) ||
+    toNumber(route?.planned_distance_km, 0);
 
-    const distanceMiles =
-      toNumber(route?.estimated_distance_miles, 0) ||
-      distanceKm * 0.621371;
+  const distanceMiles =
+    toNumber(route?.estimated_distance_miles, 0) ||
+    distanceKm * 0.621371;
 
-    const totalHours =
-      toNumber(route?.estimated_total_hours, 0) ||
-      (
-        toNumber(route?.estimated_drive_hours, 0) +
-        toNumber(route?.estimated_service_hours, 0)
-      );
+  const totalHours =
+    toNumber(route?.estimated_total_hours, 0) ||
+    (
+      toNumber(route?.estimated_drive_hours, 0) +
+      toNumber(route?.estimated_service_hours, 0)
+    );
 
-   const revenue =
-  toNumber(route?.estimated_revenue_gbp, 0) ||
-  orders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
+  const revenue =
+    toNumber(route?.estimated_revenue_gbp, 0) ||
+    orders.reduce((sum, order) => sum + getOrderRevenue(order), 0);
 
-const fuelCost =
-  toNumber(route?.estimated_cost_fuel_gbp, 0);
+  const fuelCost = toNumber(route?.estimated_cost_fuel_gbp, 0);
+  const fuelLitres = toNumber(route?.estimated_fuel_litres, 0);
 
-const fuelLitres =
-  toNumber(route?.estimated_fuel_litres, 0);
+  const transportCost =
+    toNumber(route?.estimated_cost_total_gbp, 0) ||
+    toNumber(route?.total_cost_gbp, 0);
 
-const cost =
-  toNumber(route?.estimated_cost_total_gbp, 0) ||
-  toNumber(route?.total_cost_gbp, 0);
+const warehouseCost =
+  toNumber(route?.estimated_cost_warehouse_gbp, 0) ||
+  getRouteWarehouseCost(route);
 
-const result = revenue - cost;
+const cost = transportCost;
+  const result = revenue - cost;
 
-    return {
-      totalStops,
-      totalOrders,
-      totalVolume,
-      totalColli,
-      distanceKm,
-      distanceMiles,
-      totalHours,
-	fuelCost,
-	fuelLitres,
-      revenue,
-      cost,
-      result
-    };
-  }
+  return {
+    totalStops,
+    totalOrders,
+    totalVolume,
+    totalColli,
+    distanceKm,
+    distanceMiles,
+    totalHours,
+    fuelCost,
+    fuelLitres,
+    transportCost,
+    warehouseCost,
+    revenue,
+    cost,
+    result
+  };
+}
+
+function getRouteWarehouseCost(route) {
+
+  const orders = getOrdersForRoute(route.id);
+
+  const colli = orders.reduce(
+    (sum, order) => sum + getOrderColli(order),
+    0
+  );
+
+  const volume = orders.reduce(
+    (sum, order) => sum + getOrderVolume(order),
+    0
+  );
+
+  return (
+    (colli * warehouseCostSettings.handlingInPerColli) +
+    (colli * warehouseCostSettings.handlingOutPerColli) +
+    (volume * warehouseCostSettings.storagePerM3)
+  );
+}
 
   function getSelectedOrdersSummary() {
     const orders = selectedOrderIds
@@ -618,7 +658,7 @@ const result = revenue - cost;
   if (!activeVehicles.length) {
     mount.innerHTML = `
       <div class="av-empty">
-        No vehicles available. Check Settings → Transport and make sure vehicles are active and enabled for planning.
+        No fleet vehicles or carriers available. Check Settings → Transport and make sure resources are active and enabled for planning.
       </div>
     `;
     return;
@@ -635,7 +675,7 @@ const result = revenue - cost;
     <div class="av-stack">
       <div class="av-day-head">
         <div>
-          <div class="av-day-title">Available Vehicles</div>
+          <div class="av-day-title">Available Fleet & Carriers</div>
           <div class="av-day-sub">
             ${formatNumber(dayRoutes.length)} route(s)
             · ${formatNumber(selectedSummary.count)} selected order(s)
@@ -667,36 +707,168 @@ const result = revenue - cost;
   bindEvents(mount);
 }
 
+function getCarrierOrderDate(order) {
+  return (
+    order.planned_route_date ||
+    order.expected_delivery_date ||
+    order.confirmed_delivery_date ||
+    ""
+  );
+}
+
+function getCarrierOrders(vehicle) {
+  return allOrders.filter(order => {
+    const orderDate = getCarrierOrderDate(order);
+
+    return (
+      normalize(order.transport_type) === "charter" &&
+      normalize(order.status) === "export_for_charter" &&
+      !order.route_id &&
+      String(order.carrier_vehicle_id || "") === String(vehicle.id) &&
+      (
+        !selectedPlanningDate ||
+        !orderDate ||
+        orderDate === selectedPlanningDate
+      )
+    );
+  });
+}
+
+function renderCarrierOrders(vehicle) {
+  const orders = getCarrierOrders(vehicle);
+
+  if (!orders.length) {
+    return `<div class="av-empty">No charter orders assigned to this carrier.</div>`;
+  }
+
+const volume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
+const colli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
+const weight = orders.reduce((sum, order) => sum + getOrderWeight(order), 0);
+
+  return `
+    <div class="av-route">
+      <div class="av-route-head">
+        <div>
+          <div class="av-route-title">
+            Charter orders for ${escapeHtml(getVehicleName(vehicle))}
+            <span class="av-status active">No route</span>
+          </div>
+          <div class="av-route-sub">
+${formatNumber(orders.length)} order(s)
+· ${formatNumber(colli)} colli
+· ${formatNumber(volume,2)} m³
+· ${formatNumber(weight,0)} kg
+          </div>
+        </div>
+      </div>
+
+      <div class="av-actions" style="padding:0 10px 10px;justify-content:flex-start;">
+        <button
+          class="av-btn primary"
+          type="button"
+          data-fds-notice="${escapeHtml(vehicle.id)}">
+          FDS Notice PDF
+        </button>
+
+        <button
+          class="av-btn"
+          type="button"
+          data-fds-delivery-notes="${escapeHtml(vehicle.id)}">
+          Generate Delivery Notes
+        </button>
+
+        <button
+          class="av-btn success"
+          type="button"
+          data-fds-handover="${escapeHtml(vehicle.id)}">
+          Warehouse Handover Sheet
+        </button>
+      </div>
+
+      <div class="av-stops">
+        ${orders.map(order => `
+          <div class="av-stop">
+            <div class="av-stop-no">F</div>
+            <div>
+              <div class="av-stop-title">
+                ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
+              </div>
+              <div class="av-stop-sub">
+${escapeHtml(order.delivery_city || "—")}
+· ${escapeHtml(order.delivery_postcode || "—")}
+· ${formatNumber(getOrderColli(order))} colli
+· ${formatNumber(getOrderVolume(order), 2)} m³
+· ${formatNumber(getOrderWeight(order), 0)} kg
+              </div>
+              <div class="av-stop-sub">
+                Status:
+                <span class="av-status active">Export for Charter</span>
+              </div>
+            </div>
+            <div class="av-stop-actions">
+  <button
+    class="av-btn small danger"
+    type="button"
+    data-remove-charter="${escapeHtml(order.id)}">
+    Remove
+  </button>
+</div>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
   function renderVehicle(vehicle) {
     const vehicleId = String(vehicle.id);
-    const routes = getRoutesForVehicle(vehicle);
-    const expanded = expandedVehicleIds.has(vehicleId);
-    const capacity = getVehicleCapacity(vehicle);
-    const primaryRoute = getPrimaryRouteForVehicle(vehicle);
-    const hasRoute = routes.length > 0;
+const routes = getRoutesForVehicle(vehicle);
+const carrierOrders = getCarrierOrders(vehicle);
+const expanded = expandedVehicleIds.has(vehicleId);
+const capacity = getVehicleCapacity(vehicle);
+const primaryRoute = getPrimaryRouteForVehicle(vehicle);
+const hasRoute = routes.length > 0 || carrierOrders.length > 0;
+const highlightVehicle =
+  routes.length > 0 ||
+  (getVehicleType(vehicle) === "carrier" && carrierOrders.length > 0);
     const dotClass = routeDotClass(vehicle);
     const driverName = primaryRoute ? getRouteDriverName(primaryRoute) : "";
     const routeLabel = primaryRoute ? getRouteLabel(primaryRoute) : "";
 
     return `
-      <div class="av-vehicle ${hasRoute ? "has-route" : ""}" data-vehicle-id="${escapeHtml(vehicleId)}">
+      <div class="av-vehicle ${highlightVehicle ? "has-route" : ""}" data-vehicle-id="${escapeHtml(vehicleId)}">
         <div class="av-vehicle-head">
           <div class="av-vehicle-title">
             <span class="av-dot ${escapeHtml(dotClass)}"></span>
 
             <div>
-              <div class="av-name-row">
-                <span class="av-name">${escapeHtml(getVehicleName(vehicle))}</span>
-                ${hasRoute ? `<span class="av-route-inline">${escapeHtml(routeLabel)}</span>` : ""}
-                ${hasRoute ? `<span class="av-driver-inline">${escapeHtml(driverName)}</span>` : ""}
-              </div>
+<div class="av-name-row">
+  <span class="av-name">
+    ${getVehicleType(vehicle) === "carrier" ? "🏢 " : "🚚 "}
+    ${escapeHtml(getVehicleName(vehicle))}
+  </span>
+${
+  hasRoute
+    ? `<span class="av-route-inline">${
+        getVehicleType(vehicle) === "carrier"
+          ? `${carrierOrders.length} Charter Orders`
+          : escapeHtml(routeLabel)
+      }</span>`
+    : ""
+}
+  ${hasRoute && getVehicleType(vehicle) !== "carrier" ? `<span class="av-driver-inline">${escapeHtml(driverName)}</span>` : ""}
+</div>
 
-              <div class="av-sub">
-                ${escapeHtml(getVehicleType(vehicle))}
-                · ${escapeHtml(getVehicleRegistration(vehicle))}
-                · ${capacity ? `${formatNumber(capacity, 1)} m³` : "capacity unknown"}
-                · ${formatNumber(routes.length)} route(s)
-              </div>
+<div class="av-sub">
+  ${
+    getVehicleType(vehicle) === "carrier"
+      ? `External Carrier · ${formatNumber(routes.length)} route(s) · ${formatNumber(carrierOrders.length)} charter order(s)`
+      : `${escapeHtml(getVehicleType(vehicle))}
+        · ${escapeHtml(getVehicleRegistration(vehicle))}
+        · ${capacity ? `${formatNumber(capacity, 1)} m³` : "capacity unknown"}
+        · ${formatNumber(routes.length)} route(s)`
+  }
+</div>
             </div>
           </div>
 
@@ -711,9 +883,16 @@ const result = revenue - cost;
             ? `
               <div class="av-route-list">
                 ${
-                  routes.length
-                    ? routes.map(route => renderRoute(route, vehicle)).join("")
-                    : `<div class="av-empty">No route assigned to this vehicle for this planning date.</div>`
+                  getVehicleType(vehicle) === "carrier"
+  ? `
+      ${renderCarrierOrders(vehicle)}
+      ${routes.length ? routes.map(route => renderRoute(route, vehicle)).join("") : ""}
+    `
+  : (
+      routes.length
+        ? routes.map(route => renderRoute(route, vehicle)).join("")
+        : `<div class="av-empty">No route assigned to this vehicle for this planning date.</div>`
+    )
                 }
               </div>
             `
@@ -814,6 +993,9 @@ const result = revenue - cost;
 
 <div>Driver Cost</div>
 <div>${formatMoney(route.estimated_cost_labour_gbp || 0)}</div>
+
+<div>Warehouse Cost</div>
+<div>${formatMoney(summary.warehouseCost)}</div>
 
     <div>Total Miles</div>
     <div>${formatNumber(summary.distanceMiles, 1)} mi</div>
@@ -1088,6 +1270,12 @@ function bindEvents(mount) {
     });
   });
 
+  mount.querySelectorAll("[data-remove-charter]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await removeCharterOrder(button.dataset.removeCharter);
+    });
+  });
+
   mount.querySelectorAll("[data-save-stop-order]").forEach(button => {
     button.addEventListener("click", async () => {
       await saveStopOrder(button.dataset.saveStopOrder);
@@ -1122,7 +1310,25 @@ function bindEvents(mount) {
   });
 
   bindDragAndDrop(mount);
+  mount.querySelectorAll("[data-fds-notice]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await generateFdsNoticePdf(button.dataset.fdsNotice);
+    });
+  });
+
+  mount.querySelectorAll("[data-fds-delivery-notes]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await generateFdsDeliveryNotes(button.dataset.fdsDeliveryNotes);
+    });
+  });
+
+  mount.querySelectorAll("[data-fds-handover]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await generateFdsHandoverSheet(button.dataset.fdsHandover);
+    });
+  });
 }
+
 
   function bindDragAndDrop(mount) {
     mount.querySelectorAll(".av-stop[draggable='true']").forEach(stopEl => {
@@ -1557,6 +1763,111 @@ function bindEvents(mount) {
     }
   }
 
+async function removeCharterOrder(orderId) {
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    if (!cid) throw new Error("Company id missing.");
+    if (!orderId) throw new Error("Order id missing.");
+
+    const ok = window.confirm(
+      "Return this order to Own Transport planning?"
+    );
+
+    if (!ok) return;
+
+    const { error } = await db
+      .from("orders")
+      .update({
+        transport_type: "own_transport",
+        status: "ready_for_planning",
+        carrier_vehicle_id: null,
+        route_id: null,
+        transport_status: null,
+        planned_route_date: null,
+        expected_delivery_date: null,
+        driver_user_id: null,
+        driver_profile_id: null,
+        driver_name: null,
+        driver_email: null,
+        delivery_eta_from: null,
+        delivery_eta_to: null,
+        delivery_eta_status: "pending"
+      })
+      .eq("company_id", cid)
+      .eq("id", orderId);
+
+    if (error) throw error;
+
+    showToast("Order returned to planning.", "ok");
+    notifyRoutesChanged();
+
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not remove charter order.", "err");
+  }
+}
+
+async function generateFdsNoticePdf(vehicleId) {
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    const vehicle = activeVehicles.find(v => String(v.id) === String(vehicleId));
+    const baseOrders = vehicle ? getCarrierOrders(vehicle) : [];
+
+    if (!vehicle) throw new Error("Carrier not found.");
+    if (!baseOrders.length) throw new Error("No FDS orders found.");
+
+    if (!window.FdsNoticeGenerator?.generate) {
+      throw new Error("FDS Notice Generator not loaded.");
+    }
+
+    const orderIds = baseOrders.map(order => order.id);
+
+    const { data: fullOrders, error } = await db
+      .from("orders")
+      .select(`
+        *,
+order_lines (
+  id,
+  quantity_ordered,
+  unit_weight_kg,
+  total_line_weight_kg,
+  products (
+    id,
+    weight_kg,
+    net_weight_kg
+  )
+)
+      `)
+      .eq("company_id", cid)
+      .in("id", orderIds);
+
+    if (error) throw error;
+
+    const fullOrderMap = new Map(
+      (fullOrders || []).map(order => [String(order.id), order])
+    );
+
+    const orders = baseOrders.map(order => ({
+      ...order,
+      ...(fullOrderMap.get(String(order.id)) || {})
+    }));
+
+    await window.FdsNoticeGenerator.generate({
+      vehicle,
+      orders,
+      logoUrl: ""
+    });
+
+    showToast("FDS Notice PDF generated.", "ok");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not generate FDS Notice PDF.", "err");
+  }
+}
   function notifyRoutesChanged() {
     window.dispatchEvent(new CustomEvent("veynor:routes-changed"));
   }
@@ -1566,45 +1877,53 @@ function bindEvents(mount) {
   }
 
   function init() {
-    try {
-      ensureClient();
-      injectStyles();
+  try {
+    ensureClient();
+    injectStyles();
 
-      byId("btnVehicleModuleRefresh")?.addEventListener("click", () => {
-        notifyRoutesChanged();
-      });
+render();
+setTimeout(render, 800);
 
-      window.addEventListener("veynor:planner-data-changed", event => {
-        syncFromPlannerData(event.detail);
-        render();
-      });
+    byId("btnVehicleModuleRefresh")?.addEventListener("click", () => {
+      notifyRoutesChanged();
+    });
 
-      window.addEventListener("veynor:planner-selection-changed", event => {
-        const detail = event.detail || {};
-        selectedOrderIds = Array.isArray(detail.selectedOrderIds)
-          ? detail.selectedOrderIds.map(String)
-          : [];
-        render();
-      });
+    window.addEventListener("veynor:planner-data-changed", event => {
+      syncFromPlannerData(event.detail);
+      render();
+    });
+
+    window.addEventListener("veynor:planner-selection-changed", event => {
+      const detail = event.detail || {};
+
+      selectedOrderIds = Array.isArray(detail.selectedOrderIds)
+        ? detail.selectedOrderIds.map(String)
+        : [];
 
       render();
-      setTimeout(render, 800);
+    });
 
-      log("Available Vehicles module loaded.");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not load available vehicles module.", "err");
-    }
+    log("Available Vehicles module loaded.");
+
+  } catch (error) {
+    console.error(error);
+    showToast(
+      error.message || "Could not load available vehicles module.",
+      "err"
+    );
   }
+}
 
-  window.VeynorAvailableVehicles = {
-    refresh,
-    sendRouteToDriver,
-    saveRouteAssignment,
-    removeRoute,
-    saveStopOrder,
-    manuallyCompleteStop
-  };
+window.VeynorAvailableVehicles = {
+  refresh,
+  sendRouteToDriver,
+  saveRouteAssignment,
+  removeRoute,
+  saveStopOrder,
+  manuallyCompleteStop,
 
-  document.addEventListener("DOMContentLoaded", init);
+  generateFdsNoticePdf
+};
+
+document.addEventListener("DOMContentLoaded", init);
 })();

@@ -158,6 +158,11 @@ notes: ""
     warehouse_phone: "",
     warehouse_opening_hours: "",
     loading_hours: "",
+warehouse_handling_in_per_colli_gbp: "0.00",
+warehouse_handling_out_per_colli_gbp: "0.00",
+warehouse_storage_per_m3_gbp: "0.00",
+warehouse_repack_per_colli_gbp: "0.00",
+warehouse_qc_per_colli_gbp: "0.00",
 
     home_depot_name: "Sofa2U",
     home_depot_postcode: "SY4 4UD",
@@ -174,7 +179,7 @@ notes: ""
     max_orders_per_route: "12",
     default_transport_type: "own_transport",
    labour_cost_per_hour_gbp: "38.50",
-vehicle_cost_per_mile_gbp: "0.55",
+vehicle_cost_per_hour_gbp: "8.50",
 diesel_price_per_litre_gbp_inc_vat: "1.55",
 
    doc_default_payment_terms: "14",
@@ -713,79 +718,79 @@ console.log("FUNCTION ERROR:", error);
   await loadDriverUsers();
 }
 
-  async function addOrLinkDriver() {
-    const db = ensureClient();
-    const cid = await getCompanyId();
+ async function addOrLinkDriver() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const fullName = getFieldValue("newDriverName");
-    const email = getFieldValue("newDriverEmail");
-    const phone = getFieldValue("newDriverPhone");
-    const role = getFieldValue("newDriverRole", "driver");
-    const defaultVehicleId = getFieldValue("newDriverDefaultVehicle");
-    const useInPlanning = parseBool(getFieldValue("newDriverUseInPlanning", "true"), true);
-    const isActive = parseBool(getFieldValue("newDriverActive", "true"), true);
+  const fullName = getFieldValue("newDriverName");
+  const email = getFieldValue("newDriverEmail");
+  const phone = getFieldValue("newDriverPhone");
+  const role = getFieldValue("newDriverRole", "driver");
+  const defaultVehicleId = getFieldValue("newDriverDefaultVehicle");
 
-    if (!email) throw new Error("Driver email is required.");
+console.log("DEFAULT VEHICLE =", defaultVehicleId);
+  const useInPlanning = parseBool(getFieldValue("newDriverUseInPlanning", "true"), true);
+  const isActive = parseBool(getFieldValue("newDriverActive", "true"), true);
 
-    const existingByEmail = driverUsersCache.find(driver =>
-      normalize(getDriverEmail(driver)) === normalize(email)
+  if (!email) throw new Error("Driver email is required.");
+
+  const { data: existingUser, error: findError } = await db
+    .from("user_profiles")
+    .select("id, auth_user_id, email, full_name")
+    .eq("company_id", cid)
+    .ilike("email", email)
+    .maybeSingle();
+
+  if (findError) throw findError;
+
+  if (!existingUser?.id) {
+    throw new Error(
+      "This email does not exist in Users & Access yet. Create the user there first, then link it as driver."
     );
-
-    if (existingByEmail?.profile_id) {
-      const { error } = await db
-        .from("user_profiles")
-        .update({
-          company_id: cid,
-          full_name: fullName || getDriverName(existingByEmail),
-          role,
-          phone,
-          email,
-          is_driver: true,
-          is_active: isActive,
-          use_in_planning: useInPlanning,
-          default_vehicle_id: defaultVehicleId || null
-        })
-        .eq("id", existingByEmail.profile_id);
-
-      if (error) throw error;
-
-      showToast("Driver profile updated.", "ok");
-    } else {
-      const { error } = await db
-        .from("user_profiles")
-        .insert({
-          id: crypto.randomUUID(),
-          auth_user_id: crypto.randomUUID(),
-          company_id: cid,
-          full_name: fullName || email,
-          role,
-          phone,
-          email,
-          is_driver: true,
-          is_active: isActive,
-          use_in_planning: useInPlanning,
-          default_vehicle_id: defaultVehicleId || null
-        });
-
-      if (error) throw error;
-
-      showToast("Driver added as profile. Create/link Supabase Auth separately if login is required.", "ok");
-    }
-
-    [
-      "newDriverName",
-      "newDriverEmail",
-      "newDriverPhone",
-      "newDriverDefaultVehicle"
-    ].forEach(id => setFieldValue(id, ""));
-
-    setFieldValue("newDriverRole", "driver");
-    setFieldValue("newDriverUseInPlanning", "true");
-    setFieldValue("newDriverActive", "true");
-
-    await loadDriverUsers();
-    await loadVehicles();
   }
+
+console.log({
+  email,
+  defaultVehicleId,
+  role,
+  phone,
+  useInPlanning,
+  isActive
+});
+
+  const { error } = await db
+    .from("user_profiles")
+    .update({
+      full_name: fullName || existingUser.full_name || email,
+      role,
+      phone,
+      email,
+      is_driver: true,
+      is_active: isActive,
+      use_in_planning: useInPlanning,
+      default_vehicle_id: defaultVehicleId || null
+    })
+    .eq("id", existingUser.id)
+    .eq("company_id", cid);
+
+  if (error) throw error;
+
+  showToast("Existing user linked as driver.", "ok");
+
+  [
+    "newDriverName",
+    "newDriverEmail",
+    "newDriverPhone",
+    "newDriverDefaultVehicle"
+  ].forEach(id => setFieldValue(id, ""));
+
+  setFieldValue("newDriverRole", "driver");
+  setFieldValue("newDriverUseInPlanning", "true");
+  setFieldValue("newDriverActive", "true");
+
+  await loadDriverUsers();
+  await loadVehicles();
+}
 
   async function loadSettings() {
     const db = ensureClient();
@@ -1322,7 +1327,7 @@ function updateSalesOrderPreview() {
 
  function updateSummary() {
   const labour = toNumber(getFieldValue("labour_cost_per_hour_gbp"), 38.5);
-  const vehicle = toNumber(getFieldValue("vehicle_cost_per_mile_gbp"), 0.55);
+const vehicle = toNumber(getFieldValue("vehicle_cost_per_hour_gbp"), 8.5);
   const diesel = toNumber(getFieldValue("diesel_price_per_litre_gbp_inc_vat"), 1.55);
   const speed = toNumber(getFieldValue("average_speed_kmh"), 50);
   const stopTime = toNumber(getFieldValue("stop_time_minutes"), 15);
@@ -1330,7 +1335,7 @@ function updateSalesOrderPreview() {
   const activeCount = vehiclesCache.filter(vehicleIsActive).length;
 
   if (byId("summaryLabour")) byId("summaryLabour").textContent = `${formatMoney(labour)} / hour`;
-  if (byId("summaryVehicle")) byId("summaryVehicle").textContent = `${formatMoney(vehicle)} / mile`;
+if (byId("summaryVehicle")) byId("summaryVehicle").textContent = `${formatMoney(vehicle)} / hour`;
   if (byId("summaryDiesel")) byId("summaryDiesel").textContent = `£${diesel.toFixed(3)} / litre`;
   if (byId("summarySpeed")) byId("summarySpeed").textContent = `${formatNumber(speed, 0)} km/h`;
   if (byId("summaryStopTime")) byId("summaryStopTime").textContent = `${formatNumber(stopTime, 0)} min`;
@@ -1450,7 +1455,12 @@ function updateSalesOrderPreview() {
               <div class="field"><label>Max Stops</label><input class="input" type="number" step="1" data-field="max_stops" value="${escapeHtml(toNumber(vehicle.max_stops, 12))}"></div>
               <div class="field"><label>Max Hours</label><input class="input" type="number" step="0.1" data-field="max_route_hours" value="${escapeHtml(toNumber(vehicle.max_route_hours, 9))}"></div>
               <div class="field"><label>Average Speed</label><input class="input" type="number" step="0.1" data-field="average_speed_kmh" value="${escapeHtml(speed)}"></div>
-              <div class="field"><label>Cost / Mile</label><input class="input" type="number" step="0.01" data-field="cost_per_mile_gbp" value="${escapeHtml(toNumber(vehicle.cost_per_mile_gbp, 0.55))}"></div>
+<div class="field">
+  <label>Vehicle Cost / Hour</label>
+  <input class="input" type="number" step="0.01"
+         data-field="cost_per_hour_gbp"
+         value="${escapeHtml(toNumber(vehicle.cost_per_hour_gbp, 8.5))}">
+</div>
 <div class="field">
   <label>Fuel Usage (L / 100 km)</label>
   <input
@@ -1515,7 +1525,7 @@ max_route_hours: toNumber(read("max_route_hours"), 9),
 
 average_speed_kmh: toNumber(read("average_speed_kmh"), 50),
 
-cost_per_mile_gbp: toNumber(read("cost_per_mile_gbp"), 0.55),
+cost_per_hour_gbp: toNumber(read("cost_per_hour_gbp"), 8.5),
 
 fuel_litres_per_100km: toNumber(
   read("fuel_litres_per_100km"),
@@ -1582,7 +1592,9 @@ use_in_planning: active
       company_id: cid,
       name: getFieldValue("newVehicleName"),
       vehicle_code: getFieldValue("newVehicleCode"),
-      vehicle_type: getFieldValue("newVehicleType", "van"),
+     vehicle_type: getFieldValue("newVehicleType", "van"),
+vehicle_type: getFieldValue("newVehicleType", "van"),
+registration: getFieldValue("newVehicleRegistration"),
       registration: getFieldValue("newVehicleRegistration"),
 
       driver_user_id: newDriverUserId || null,
@@ -1597,7 +1609,7 @@ use_in_planning: active
       max_stops: toNumber(getFieldValue("newVehicleMaxStops"), 12),
       max_route_hours: toNumber(getFieldValue("newVehicleMaxHours"), 9),
       average_speed_kmh: toNumber(getFieldValue("newVehicleAverageSpeed"), 50),
-	cost_per_mile_gbp: toNumber(getFieldValue("newVehicleCostPerMile"), 0.55),
+	cost_per_hour_gbp: toNumber(getFieldValue("newVehicleCostPerHour"), 8.5),
 	fuel_litres_per_100km: toNumber(getFieldValue("newVehicleFuelLitresPer100km"), 10),
 	labour_cost_per_hour_gbp: toNumber(getFieldValue("newVehicleLabourPerHour"), 38.5),
 
@@ -1621,7 +1633,7 @@ use_in_planning: active
   "newVehicleMaxStops",
   "newVehicleMaxHours",
   "newVehicleAverageSpeed",
-  "newVehicleCostPerMile",
+  "newVehicleCostPerHour",
   "newVehicleFuelLitresPer100km",
   "newVehicleLabourPerHour"
 ].forEach(fieldId => setFieldValue(fieldId, ""));
@@ -1839,6 +1851,18 @@ byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile
       }
     });
 
+byId("btnSaveWarehouse")?.addEventListener("click", async () => {
+  try {
+    await saveSettingsByIds(
+      collectFieldsInside("tab-warehouse"),
+      "Warehouse settings saved."
+    );
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not save warehouse settings.", "err");
+  }
+});
+
     byId("btnSaveDocuments")?.addEventListener("click", async () => {
       try {
         await saveSettingsByIds(collectFieldsInside("tab-documents"), "Document settings saved.");
@@ -2033,14 +2057,14 @@ byId("btnRefreshPortalUsers")?.addEventListener("click", async () => {
       bindEvents();
 
       await getCompanyId();
-     await loadSettings();
+await loadSettings();
 await loadVehicles();
-await loadDriverUsers();
 await loadPortalUsers();
+await loadDriverUsers();
 await loadShops();
 
-      renderDriverDropdowns();
-      renderDriversTable();
+renderDriverDropdowns();
+renderDriversTable();
 
       console.log("Veynor tenant settings loaded for:", TENANT_NAME);
     } catch (error) {

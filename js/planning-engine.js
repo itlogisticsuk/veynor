@@ -15,8 +15,13 @@
     max_route_duration_hours: 9,
     max_cost_per_order_gbp: 125,
     labour_cost_per_hour_gbp: 38.5,
-    vehicle_cost_per_mile_gbp: 0.55,
-    diesel_price_per_litre_gbp_inc_vat: 1.55,
+vehicle_cost_per_hour_gbp: 0,
+diesel_price_per_litre_gbp_inc_vat: 1.55,
+
+warehouse_handling_in_per_colli_gbp: 0,
+warehouse_handling_out_per_colli_gbp: 0,
+warehouse_storage_per_m3_gbp: 0,
+warehouse_repack_per_colli_gbp: 0,
     default_departure_time: "08:00",
     default_transport_type: "own_transport",
     min_fill_rate_default: 0.75,
@@ -131,11 +136,34 @@
     settings.max_route_duration_hours = toNumber(settings.max_route_duration_hours, DEFAULT_SETTINGS.max_route_duration_hours);
     settings.max_cost_per_order_gbp = toNumber(settings.max_cost_per_order_gbp, DEFAULT_SETTINGS.max_cost_per_order_gbp);
     settings.labour_cost_per_hour_gbp = toNumber(settings.labour_cost_per_hour_gbp, DEFAULT_SETTINGS.labour_cost_per_hour_gbp);
-    settings.vehicle_cost_per_mile_gbp = toNumber(settings.vehicle_cost_per_mile_gbp, DEFAULT_SETTINGS.vehicle_cost_per_mile_gbp);
+settings.vehicle_cost_per_hour_gbp = toNumber(
+  settings.vehicle_cost_per_hour_gbp,
+  DEFAULT_SETTINGS.vehicle_cost_per_hour_gbp
+);
     settings.diesel_price_per_litre_gbp_inc_vat = toNumber(
       settings.diesel_price_per_litre_gbp_inc_vat,
       DEFAULT_SETTINGS.diesel_price_per_litre_gbp_inc_vat
     );
+
+settings.warehouse_handling_in_per_colli_gbp = toNumber(
+  settings.warehouse_handling_in_per_colli_gbp,
+  DEFAULT_SETTINGS.warehouse_handling_in_per_colli_gbp
+);
+
+settings.warehouse_handling_out_per_colli_gbp = toNumber(
+  settings.warehouse_handling_out_per_colli_gbp,
+  DEFAULT_SETTINGS.warehouse_handling_out_per_colli_gbp
+);
+
+settings.warehouse_storage_per_m3_gbp = toNumber(
+  settings.warehouse_storage_per_m3_gbp,
+  DEFAULT_SETTINGS.warehouse_storage_per_m3_gbp
+);
+
+settings.warehouse_repack_per_colli_gbp = toNumber(
+  settings.warehouse_repack_per_colli_gbp,
+  DEFAULT_SETTINGS.warehouse_repack_per_colli_gbp
+);
 
     settings.default_departure_time = settings.default_departure_time || settings.planner_default_departure_time || DEFAULT_SETTINGS.default_departure_time;
     settings.default_transport_type = settings.default_transport_type || DEFAULT_SETTINGS.default_transport_type;
@@ -195,7 +223,7 @@
     return vehicle?.driver_user_id || vehicle?.default_driver_user_id || vehicle?.default_driver_profile_id || "";
   }
 
-  async function loadVehicles(client, companyId) {
+async function loadVehicles(client, companyId, settings) {
     const { data, error } = await client
       .from("vehicles")
       .select("*")
@@ -210,7 +238,10 @@
         capacity_m3: getVehicleCapacity(v),
         max_stops: toNumber(v.max_stops, DEFAULT_SETTINGS.max_route_stops),
         max_route_hours: toNumber(v.max_route_hours, DEFAULT_SETTINGS.max_route_duration_hours),
-        cost_per_mile_gbp: toNumber(v.cost_per_mile_gbp, DEFAULT_SETTINGS.vehicle_cost_per_mile_gbp),
+vehicle_cost_per_hour_gbp: toNumber(
+  v.vehicle_cost_per_hour_gbp ?? v.cost_per_hour_gbp,
+  settings.vehicle_cost_per_hour_gbp
+),
         labour_cost_per_hour_gbp: toNumber(v.labour_cost_per_hour_gbp, DEFAULT_SETTINGS.labour_cost_per_hour_gbp),
         average_speed_kmh: toNumber(v.average_speed_kmh, DEFAULT_SETTINGS.average_speed_kmh),
         fuel_litres_per_100km: toNumber(v.fuel_litres_per_100km, 10)
@@ -433,9 +464,9 @@
       ? toNumber(vehicle.labour_cost_per_hour_gbp, settings.labour_cost_per_hour_gbp)
       : settings.labour_cost_per_hour_gbp;
 
-    const vehicleRate = vehicle
-      ? toNumber(vehicle.cost_per_mile_gbp, settings.vehicle_cost_per_mile_gbp)
-      : settings.vehicle_cost_per_mile_gbp;
+const vehicleRate = vehicle
+  ? toNumber(vehicle.vehicle_cost_per_hour_gbp, settings.vehicle_cost_per_hour_gbp)
+  : settings.vehicle_cost_per_hour_gbp;
 
     const dieselPriceExVat =
       toNumber(settings.diesel_price_per_litre_gbp_inc_vat, 1.55) / 1.20;
@@ -444,9 +475,32 @@
     const fuelLitres = (distanceKm / 100) * fuelUsage;
     const fuelCost = fuelLitres * dieselPriceExVat;
 
-    const labourCost = totalHours * labourRate;
-    const vehicleCost = distanceMiles * vehicleRate;
-    const totalCost = labourCost + vehicleCost + fuelCost;
+const labourCost = totalHours * labourRate;
+const vehicleCost = totalHours * vehicleRate;
+
+const warehouseHandlingInCost =
+  totalColli * settings.warehouse_handling_in_per_colli_gbp;
+
+const warehouseHandlingOutCost =
+  totalColli * settings.warehouse_handling_out_per_colli_gbp;
+
+const warehouseStorageCost =
+  totalVolume * settings.warehouse_storage_per_m3_gbp;
+
+const warehouseVasCost =
+  totalColli * settings.warehouse_repack_per_colli_gbp;
+
+const warehouseCost =
+  warehouseHandlingInCost +
+  warehouseHandlingOutCost +
+  warehouseStorageCost +
+  warehouseVasCost;
+
+const totalCost =
+  labourCost +
+  vehicleCost +
+  fuelCost +
+  warehouseCost;
 
     const capacity = vehicle ? getVehicleCapacity(vehicle) : 0;
     const fillRate = capacity > 0 ? totalVolume / capacity : 0;
@@ -463,11 +517,18 @@
       driveHours,
       serviceHours,
       totalHours,
-      fuelCost,
-      fuelLitres,
-      labourCost,
-      vehicleCost,
-      totalCost,
+     fuelCost,
+fuelLitres,
+labourCost,
+vehicleCost,
+
+warehouseHandlingInCost,
+warehouseHandlingOutCost,
+warehouseStorageCost,
+warehouseVasCost,
+warehouseCost,
+
+totalCost,
       costPerOrder: totalOrders ? totalCost / totalOrders : 0,
       costPerStop: totalStops ? totalCost / totalStops : 0,
       fillRate
@@ -743,8 +804,9 @@
         estimated_cost_fuel_gbp: Number(summary.fuelCost.toFixed(2)),
         estimated_fuel_litres: Number(summary.fuelLitres.toFixed(2)),
         estimated_cost_labour_gbp: Number(summary.labourCost.toFixed(2)),
-        estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
-        estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
+estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
+estimated_cost_warehouse_gbp: Number(summary.warehouseCost.toFixed(2)),
+estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
         cost_per_order_gbp: Number(summary.costPerOrder.toFixed(2)),
         cost_per_stop_gbp: Number(summary.costPerStop.toFixed(2)),
         fill_rate: Number(summary.fillRate.toFixed(4)),
@@ -855,7 +917,7 @@
     const settings = await loadSettings(client, companyId);
     const depot = depotPoint(settings);
     const drivers = await loadDrivers(client, companyId);
-    const vehicles = await loadVehicles(client, companyId);
+    const vehicles = await loadVehicles(client, companyId, settings);
     const orders = await loadOrders(client, companyId, args);
 
     if (!orders.length) {
@@ -913,7 +975,7 @@
     const companyId = await getCompanyId(client);
     const settings = await loadSettings(client, companyId);
     const depot = depotPoint(settings);
-    const vehicles = await loadVehicles(client, companyId);
+    const vehicles = await loadVehicles(client, companyId, settings);
     const orders = await loadOrders(client, companyId, args);
 
     const vehicle = await chooseVehicle(
@@ -1035,7 +1097,12 @@
       name: route.vehicle_name || route.assigned_vehicle_name || routeVehicle?.name || null,
       capacity_m3: route.assigned_vehicle_capacity_m3 || routeVehicle?.capacity_m3 || routeVehicle?.max_volume_m3 || settings.max_route_volume_m3,
       average_speed_kmh: route.assigned_vehicle_speed_kmh || routeVehicle?.average_speed_kmh || settings.average_speed_kmh,
-      cost_per_mile_gbp: routeVehicle?.cost_per_mile_gbp || route.cost_per_mile_gbp || settings.vehicle_cost_per_mile_gbp,
+      vehicle_cost_per_hour_gbp:
+  routeVehicle?.vehicle_cost_per_hour_gbp ||
+  routeVehicle?.cost_per_hour_gbp ||
+  route.vehicle_cost_per_hour_gbp ||
+  route.estimated_cost_vehicle_gbp ||
+  settings.vehicle_cost_per_hour_gbp,
       labour_cost_per_hour_gbp: routeVehicle?.labour_cost_per_hour_gbp || route.labour_cost_per_hour_gbp || settings.labour_cost_per_hour_gbp,
       fuel_litres_per_100km: routeVehicle?.fuel_litres_per_100km || route.fuel_litres_per_100km || 10
     };
@@ -1178,8 +1245,9 @@
         estimated_cost_fuel_gbp: Number(summary.fuelCost.toFixed(2)),
         estimated_fuel_litres: Number(summary.fuelLitres.toFixed(2)),
         estimated_cost_labour_gbp: Number(summary.labourCost.toFixed(2)),
-        estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
-        estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
+estimated_cost_vehicle_gbp: Number(summary.vehicleCost.toFixed(2)),
+estimated_cost_warehouse_gbp: Number(summary.warehouseCost.toFixed(2)),
+estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
         cost_per_order_gbp: Number(summary.costPerOrder.toFixed(2)),
         cost_per_stop_gbp: Number(summary.costPerStop.toFixed(2)),
 

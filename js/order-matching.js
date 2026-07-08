@@ -1546,12 +1546,20 @@ order_allocations (
       };
     }
 
-    const attempts = [
-      { address, postcode, city, country },
-      { address: "", postcode, city, country },
-      { address: "", postcode, city: "", country },
-      { address: "", postcode: "", city, country }
-    ].filter(q => q.address || q.postcode || q.city);
+  const attempts = [
+  // 1. Postcode eerst: meest betrouwbaar in UK
+  { address: "", postcode, city: "", country },
+
+  // 2. Postcode + city als extra context
+  { address: "", postcode, city, country },
+
+  // 3. Volledig adres pas daarna
+  { address, postcode, city, country },
+
+  // 4. Laatste redmiddel: city only
+  { address: "", postcode: "", city, country }
+].filter(q => q.address || q.postcode || q.city);
+
 
     for (const query of attempts) {
       try {

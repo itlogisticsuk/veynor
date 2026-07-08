@@ -144,9 +144,19 @@
     </section>
 
     <nav class="settings-tabs">
-  <button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
-  <button class="settings-tab" data-tab="transport" type="button">Transport</button>
-  <button class="settings-tab" data-tab="personnel" type="button">Personnel / Drivers</button>
+<button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
+
+<button class="settings-tab" data-tab="warehouse" type="button">
+    Warehouse
+</button>
+
+<button class="settings-tab" data-tab="transport" type="button">
+    Transport
+</button>
+
+<button class="settings-tab" data-tab="personnel" type="button">
+    Personnel / Drivers
+</button>
   <button class="settings-tab" data-tab="users" type="button">Users & Access</button>
   <button class="settings-tab" data-tab="customers" type="button">Product Owners</button>
   <button class="settings-tab" data-tab="shops" type="button">Retailers</button>
@@ -253,6 +263,128 @@
       </section>
     </section>
 
+<section id="tab-warehouse" class="settings-panel">
+
+<section class="card settings-card">
+
+<div class="section-head">
+
+<div>
+<h2 class="section-title">Warehouse Settings</h2>
+
+<p class="section-sub">
+Configure warehouse handling and storage costs.
+</p>
+</div>
+
+<button
+id="btnSaveWarehouse"
+class="btn btn-primary"
+type="button">
+Save Warehouse
+</button>
+
+</div>
+
+<div class="field-grid">
+
+<div class="field">
+<label for="warehouse_handling_in_per_colli_gbp">
+Handling In / Colli (£)
+</label>
+
+<input
+id="warehouse_handling_in_per_colli_gbp"
+class="input"
+type="number"
+step="0.01">
+</div>
+
+<div class="field">
+<label for="warehouse_handling_out_per_colli_gbp">
+Handling Out / Colli (£)
+</label>
+
+<input
+id="warehouse_handling_out_per_colli_gbp"
+class="input"
+type="number"
+step="0.01">
+</div>
+
+<div class="field">
+<label for="warehouse_storage_per_m3_gbp">
+Storage / m³ (£)
+</label>
+
+<input
+id="warehouse_storage_per_m3_gbp"
+class="input"
+type="number"
+step="0.01">
+</div>
+
+<div class="field">
+<label for="warehouse_repack_per_colli_gbp">
+Repack / Colli (£)
+</label>
+
+<input
+id="warehouse_repack_per_colli_gbp"
+class="input"
+type="number"
+step="0.01">
+</div>
+
+<div class="field">
+<label for="warehouse_qc_per_colli_gbp">
+QC Inspection / Colli (£)
+</label>
+
+<input
+id="warehouse_qc_per_colli_gbp"
+class="input"
+type="number"
+step="0.01">
+</div>
+
+</div>
+
+<div class="note-box">
+
+<strong>Warehouse Cost Settings</strong>
+
+<br><br>
+
+<b>Handling In</b><br>
+Applied once when goods are received into the warehouse.
+
+<br><br>
+
+<b>Handling Out</b><br>
+Applied once when goods leave the warehouse.
+
+<br><br>
+
+<b>Storage</b><br>
+Storage tariff per cubic metre.
+
+<br><br>
+
+
+<b>Repack</b><br>
+Repacking charge per colli.
+
+<br><br>
+
+<b>QC Inspection</b><br>
+Quality inspection charge per colli.
+
+</div>
+
+</section>
+
+</section>
     <section id="tab-transport" class="settings-panel">
       <section class="summary-grid">
         <div class="summary-box"><div class="summary-label">Labour</div><div id="summaryLabour" class="summary-value">£38.50 / hour</div><div class="summary-sub">Driver + labour</div></div>
@@ -290,7 +422,10 @@
           <div class="field"><label for="max_route_duration_hours">Max Route Duration (hours)</label><input id="max_route_duration_hours" class="input" type="number" step="0.1"/></div>
           <div class="field"><label for="max_orders_per_route">Max Orders Per Route</label><input id="max_orders_per_route" class="input" type="number" step="1"/></div>
           <div class="field"><label for="labour_cost_per_hour_gbp">Labour Cost / Hour (£)</label><input id="labour_cost_per_hour_gbp" class="input" type="number" step="0.01"/></div>
-          <div class="field"><label for="vehicle_cost_per_mile_gbp">Vehicle Cost / Mile (£)</label><input id="vehicle_cost_per_mile_gbp" class="input" type="number" step="0.01"/></div>
+<div class="field">
+  <label for="vehicle_cost_per_hour_gbp">Vehicle Cost / Hour (£)</label>
+  <input id="vehicle_cost_per_hour_gbp" class="input" type="number" step="0.01"/>
+</div>
 <div class="field">
   <label for="diesel_price_per_litre_gbp_inc_vat">
     Diesel Price / Litre incl. VAT (£)
@@ -309,15 +444,23 @@
       <section class="card settings-card">
         <div class="section-head">
           <div>
-            <h2 class="section-title">Vehicles</h2>
-            <p class="section-sub">Assign a default driver to each vehicle. Only active vehicles are visible in the route planner.</p>
+<h2 class="section-title">Fleet & Carriers</h2>
+<p class="section-sub">Manage your own fleet and external carriers used for route planning and deliveries. Only active resources are visible in the route planner.</p>
           </div>
         </div>
 
         <div class="field-grid">
-          <div class="field"><label for="newVehicleName">Vehicle Name</label><input id="newVehicleName" class="input" placeholder="Truck 1"/></div>
+          <div class="field"><label for="newVehicleName">Resource Name</label><input id="newVehicleName" class="input" placeholder="Truck 1 or FDS"/></div>
           <div class="field"><label for="newVehicleCode">Vehicle Code</label><input id="newVehicleCode" class="input" placeholder="TRK-01"/></div>
-          <div class="field"><label for="newVehicleType">Vehicle Type</label><select id="newVehicleType" class="select"><option value="van">van</option><option value="rigid">rigid</option><option value="artic">artic</option><option value="trailer">trailer</option><option value="other">other</option></select></div>
+          <div class="field"><label for="newVehicleType">Vehicle Type</label>
+<select id="newVehicleType" class="select">
+  <option value="van">van</option>
+  <option value="rigid">rigid</option>
+  <option value="artic">artic</option>
+  <option value="trailer">trailer</option>
+  <option value="carrier">carrier</option>
+  <option value="other">other</option>
+</select></div>
           <div class="field"><label for="newVehicleRegistration">Registration</label><input id="newVehicleRegistration" class="input" placeholder="AB12 CDE"/></div>
 
           <div class="field">
@@ -336,7 +479,10 @@
           <div class="field"><label for="newVehicleMaxStops">Max Stops</label><input id="newVehicleMaxStops" class="input" type="number" step="1"/></div>
           <div class="field"><label for="newVehicleMaxHours">Max Hours</label><input id="newVehicleMaxHours" class="input" type="number" step="0.1"/></div>
           <div class="field"><label for="newVehicleAverageSpeed">Average Speed</label><input id="newVehicleAverageSpeed" class="input" type="number" step="0.1"/></div>
-          <div class="field"><label for="newVehicleCostPerMile">Cost / Mile (£)</label><input id="newVehicleCostPerMile" class="input" type="number" step="0.01"/></div>
+<div class="field">
+  <label for="newVehicleCostPerHour">Vehicle Cost / Hour (£)</label>
+  <input id="newVehicleCostPerHour" class="input" type="number" step="0.01"/>
+</div>
 <div class="field">
   <label for="newVehicleFuelLitresPer100km">
     Fuel Usage (L / 100 km)
@@ -352,7 +498,7 @@
         </div>
 
         <div class="actions-row">
-          <button id="btnAddVehicle" class="btn btn-primary" type="button">Add Vehicle</button>
+          <button id="btnAddVehicle" class="btn btn-primary" type="button">Add Resource</button>
           <button id="btnResetNewVehicle" class="btn" type="button">Clear</button>
         </div>
 

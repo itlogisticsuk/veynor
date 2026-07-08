@@ -907,10 +907,17 @@ function findLine(lines, regex) {
     return dateMatch ? parseDateToIso(dateMatch[0]) : null;
   }
 
-  function extractPurchaseOrder(text) {
-    const match = String(text || "").match(/Purchase\s+Order\s*:\s*(PO\s*\d+)/i);
-    return match ? match[1].replace(/\s+/, " ").trim().toUpperCase() : "";
-  }
+function extractPurchaseOrder(text) {
+  const line = String(text || "")
+    .split(/\r?\n/)
+    .find(line => /Purchase\s+Order\s*:/i.test(line));
+
+  if (!line) return "";
+
+  return line
+    .replace(/.*Purchase\s+Order\s*:/i, "")
+    .trim();
+}
 
 function splitBillShipBlock(lines) {
   const start = lines.findIndex(line =>
@@ -1021,22 +1028,27 @@ const billToRejectKeys = new Set([
       postcodeLine || uniqueAddressLines.join(" ")
     );
 
-  if (postcodeLineIndex > 0) {
+if (postcodeLineIndex >= 0) {
+  const postcodeLine = uniqueAddressLines[postcodeLineIndex];
 
-    address.city =
-      uniqueAddressLines[postcodeLineIndex - 1] || "";
+  const postcode = extractPostcode(postcodeLine);
+  const cityFromPostcodeLine = cleanText(
+    postcodeLine.replace(postcode, "").replace(/,+$/g, "")
+  );
 
-    const remaining = uniqueAddressLines.filter((_, idx) =>
-      idx !== postcodeLineIndex &&
-      idx !== postcodeLineIndex - 1
-    );
+  address.city = cityFromPostcodeLine || "";
 
-   address.address1 = remaining[0] || "";
-address.address2 = remaining[1] || "";
-address.address3 = remaining[2] || "";
-address.address4 = remaining.slice(3).join(", ");
+  const remaining = uniqueAddressLines.filter((_, idx) =>
+    idx !== postcodeLineIndex
+  );
 
-  } else {
+  address.address1 = remaining[0] || "";
+  address.address2 = remaining[1] || "";
+  address.address3 = remaining[2] || "";
+  address.address4 = remaining.slice(3).join(", ");
+}
+
+ else {
 
     address.address1 = uniqueAddressLines[0] || "";
 address.address2 = uniqueAddressLines[1] || "";
@@ -1087,94 +1099,90 @@ if (/All deliveries must/i.test(line)) break;
     return result;
   }
 
-  function parsePdfProductLines(lines) {
-    const raw = extractItemLines(lines);
-    const rows = [];
-    let current = "";
+function parsePdfProductLines(lines) {
+  const raw = extractItemLines(lines);
+  const rows = [];
+  let current = "";
 
-    raw.forEach(line => {
-      const clean = cleanText(line);
+  raw.forEach(line => {
+    const clean = cleanText(line);
 
-      if (/^[A-Z0-9]{3,}\b/.test(clean)) {
-        if (current) rows.push(current);
-        current = clean;
-      } else if (current) {
-        current += " " + clean;
-      }
-    });
+    if (/^[A-Z0-9]{3,}\b/.test(clean)) {
+      if (current) rows.push(current);
+      current = clean;
+    } else if (current) {
+      current += " " + clean;
+    }
+  });
 
-    if (current) rows.push(current);
+  if (current) rows.push(current);
 
-    const skipZeroQty = getCheckbox("optSkipZeroQtyPdfLines", true);
+  const skipZeroQty = getCheckbox("optSkipZeroQtyPdfLines", true);
 
-    return rows.map((row, index) => {
-      const skuMatch = row.match(/^([A-Z0-9]{3,})\b\s*(.*)$/);
+  return rows.map((row, index) => {
+    const skuMatch = row.match(/^([A-Z0-9]{3,})\b\s*(.*)$/);
 
-      if (!skuMatch) {
-        return {
-          itemRaw: row,
-          itemBrand: "",
-          itemCode: "",
-          description: row,
-          quantity: 0,
-          unitVolume: 0,
-          unitWeight: 0,
-          totalVolume: 0,
-          totalWeight: 0,
-          sourceRow: index + 1,
-          parseError: "Could not parse PDF product line"
-        };
-      }
-
-      const sku = skuMatch[1].trim();
-      const rest = cleanText(skuMatch[2]);
-      const numbers = [...rest.matchAll(/\b(-?\d+)\s+(\d+(?:[.,]\d+)?)\b/g)];
-
-      if (!numbers.length) {
-        return {
-          itemRaw: row,
-          itemBrand: "",
-          itemCode: sku,
-          description: rest,
-          quantity: 0,
-          unitVolume: 0,
-          unitWeight: 0,
-          totalVolume: 0,
-          totalWeight: 0,
-          sourceRow: index + 1,
-          parseError: "Could not find shipped quantity and volume"
-        };
-      }
-
-      const last = numbers[numbers.length - 1];
-      const qty = Math.round(toNumber(last[1], 0));
-      const totalVolume = toNumber(last[2], 0);
-      const unitVolume = qty > 0 ? totalVolume / qty : 0;
-
-      const description = cleanText(
-        rest.slice(0, last.index) + " " + rest.slice(last.index + last[0].length)
-      );
-
+    if (!skuMatch) {
       return {
         itemRaw: row,
-        itemBrand: description.split(" ")[0] || "",
-        itemCode: sku,
-        description,
-        quantity: qty,
-        unitVolume,
+        itemBrand: "",
+        itemCode: "",
+        description: row,
+        quantity: 0,
+        unitVolume: 0,
         unitWeight: 0,
-        totalVolume,
+        totalVolume: 0,
         totalWeight: 0,
         sourceRow: index + 1,
-        parseError: ""
+        parseError: "Could not parse PDF product line"
       };
-    }).filter(line => {
-      if (line.parseError) return true;
-      if (skipZeroQty && toNumber(line.quantity, 0) <= 0) return false;
-      return true;
-    });
-  }
+    }
 
+    const sku = skuMatch[1].trim();
+    const rest = cleanText(skuMatch[2]);
+
+    const fullMatch = rest.match(/^(.*?)\s+(-?\d+)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)$/);
+
+    if (!fullMatch) {
+      return {
+        itemRaw: row,
+        itemBrand: "",
+        itemCode: sku,
+        description: rest,
+        quantity: 0,
+        unitVolume: 0,
+        unitWeight: 0,
+        totalVolume: 0,
+        totalWeight: 0,
+        sourceRow: index + 1,
+        parseError: "Could not find shipped quantity, volume and weight"
+      };
+    }
+
+    const description = cleanText(fullMatch[1]);
+    const qty = Math.round(toNumber(fullMatch[2], 0));
+    const totalVolume = toNumber(fullMatch[3], 0);
+    const totalWeight = toNumber(fullMatch[4], 0);
+
+    return {
+      itemRaw: row,
+      itemBrand: description.split(" ")[0] || "",
+      itemCode: sku,
+      description,
+      quantity: qty,
+      unitVolume: qty > 0 ? totalVolume / qty : 0,
+      unitWeight: qty > 0 ? totalWeight / qty : 0,
+      totalVolume,
+      totalWeight,
+      sourceRow: index + 1,
+      parseError: ""
+    };
+  }).filter(line => {
+    if (line.parseError) return true;
+    if (skipZeroQty && toNumber(line.quantity, 0) <= 0) return false;
+    return true;
+  });
+}
   function extractTotalVolume(text) {
     const match = String(text || "").match(/Total\s+Volume\s+(\d+(?:[.,]\d+)?)/i);
     return match ? toNumber(match[1], 0) : 0;
