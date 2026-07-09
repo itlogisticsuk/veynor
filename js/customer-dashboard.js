@@ -12,6 +12,8 @@
 
   let rawOrders = [];
   let filteredOrders = [];
+let activeKpiFilter = "";
+let customerDeliveryGroups = new Map();
 
   const charts = {};
 
@@ -330,6 +332,78 @@
     return "not_invoiced";
   }
 
+function getOrderVolumeM3(order) {
+  return getOrderLines(order).reduce((sum, line) => {
+    const qty = getLineRequiredQty(line) || 1;
+
+    const volume =
+      toNumber(line.total_line_volume_m3, 0) ||
+      toNumber(line.total_volume_m3, 0) ||
+      toNumber(line.unit_volume_m3, 0) * qty ||
+      toNumber(line.products?.volume_m3, 0) * qty;
+
+    return sum + volume;
+  }, 0);
+}
+
+function getDeliveryGroupKey(order) {
+  return [
+    selectedCustomerId || "",
+    normalize(order.retailer_display || getRetailerName(order)),
+    normalize(order.delivery_postcode || "")
+  ].join("|");
+}
+
+function buildCustomerDeliveryGroups() {
+  customerDeliveryGroups = new Map();
+
+  rawOrders.forEach(order => {
+    if (["delivered", "invoiced", "closed"].includes(order.lifecycle_status)) return;
+
+    const key = getDeliveryGroupKey(order);
+    const volume = getOrderVolumeM3(order);
+
+    if (!customerDeliveryGroups.has(key)) {
+      customerDeliveryGroups.set(key, {
+        key,
+        readyVolume: 0,
+        waitingVolume: 0,
+        minimumVolume: 1.25,
+        shortfall: 0
+      });
+    }
+
+    const group = customerDeliveryGroups.get(key);
+
+    if (["stock_complete", "picked"].includes(order.lifecycle_status)) {
+      group.readyVolume += volume;
+    } else if (["order_received", "awaiting_goods"].includes(order.lifecycle_status)) {
+      group.waitingVolume += volume;
+    }
+  });
+
+  customerDeliveryGroups.forEach(group => {
+    group.readyVolume = Number(group.readyVolume.toFixed(2));
+    group.waitingVolume = Number(group.waitingVolume.toFixed(2));
+    group.shortfall = Math.max(0, Number((group.minimumVolume - group.readyVolume).toFixed(2)));
+  });
+}
+
+function getCustomerDeliveryGroup(order) {
+  return customerDeliveryGroups.get(getDeliveryGroupKey(order)) || null;
+}
+
+function hasDeliveryGroupShortfall(order) {
+  const group = getCustomerDeliveryGroup(order);
+  if (!group) return false;
+
+  return (
+    group.readyVolume > 0 &&
+    group.readyVolume < group.minimumVolume &&
+    ["order_received", "awaiting_goods", "stock_complete", "picked"].includes(order.lifecycle_status)
+  );
+}
+
   function deriveLifecycleStatus(order) {
     const financeStatus = deriveFinanceStatus(order);
 
@@ -449,16 +523,20 @@
         order_lines (
           id,
           order_id,
-          quantity_ordered,
-          product_id,
-          sku_base,
-          description,
-          products (
-            id,
-            sku_base,
-            name,
-            description
-          ),
+quantity_ordered,
+product_id,
+sku_base,
+description,
+unit_volume_m3,
+total_volume_m3,
+total_line_volume_m3,
+products (
+  id,
+  sku_base,
+  name,
+  description,
+  volume_m3
+),
           order_allocations (
             id,
             allocation_status
@@ -471,9 +549,10 @@
 
     if (error) throw error;
 
-    rawOrders = (data || []).map(enrichOrder);
-    applyFilters();
-    renderAll();
+rawOrders = (data || []).map(enrichOrder);
+buildCustomerDeliveryGroups();
+applyFilters();
+renderAll();
   }
 
   function applyFilters() {
@@ -507,9 +586,15 @@
     });
   }
 
-  function isOpen(order) {
-    return !["delivered", "invoiced", "closed"].includes(order.lifecycle_status);
-  }
+function isOpen(order) {
+  if (["delivered", "invoiced", "closed"].includes(order.lifecycle_status)) return false;
+
+  const missingProducts = toNumber(order.product_completeness?.missing, 0) > 0;
+  const noDeliveryDate = !getExpectedDate(order);
+  const deliveryGroupShortfall = hasDeliveryGroupShortfall(order);
+
+  return missingProducts || noDeliveryDate || deliveryGroupShortfall;
+}
 
   function isDeliveredThisMonth(order) {
     const date = order.delivered_date_display || order.confirmed_delivery_date || order.updated_at;
@@ -565,6 +650,43 @@
 
     return reasons.join(", ") || "Attention required";
   }
+
+function actionReason(order) {
+  const reasons = [];
+  const group = getCustomerDeliveryGroup(order);
+
+  if (toNumber(order.product_completeness?.missing, 0) > 0) {
+    reasons.push("Missing stock");
+  }
+
+  if (!getExpectedDate(order)) {
+    reasons.push("No delivery date");
+  }
+
+  if (hasDeliveryGroupShortfall(order) && group) {
+    reasons.push(
+      `Below minimum delivery group: ${formatNumber(group.readyVolume, 2)} / ${formatNumber(group.minimumVolume, 2)} m³`
+    );
+  }
+
+  return reasons.join(", ") || "Ready / no action required";
+}
+
+function matchesKpiFilter(order, filter) {
+  if (!filter) return true;
+
+  if (filter === "open") return isOpen(order);
+  if (filter === "awaiting") return order.lifecycle_status === "awaiting_goods";
+  if (filter === "complete") return ["stock_complete", "picked"].includes(order.lifecycle_status);
+  if (filter === "missing") return toNumber(order.product_completeness?.missing, 0) > 0;
+  if (filter === "delivered_month") return isDeliveredThisMonth(order);
+  if (filter === "confirmed_dates") return isOpen(order) && !!getExpectedDate(order);
+  if (filter === "pod") return hasDocument(order, "pod");
+  if (filter === "invoice") return hasDocument(order, "invoice");
+  if (filter === "attention") return isAttention(order);
+
+  return true;
+}
 
   function statusLabel(status) {
     const map = {
@@ -641,6 +763,47 @@
     setText("kpiRetailers", formatNumber(retailers.size));
     setText("kpiAttention", formatNumber(attention.length));
   }
+
+function bindKpiClicks() {
+  const map = {
+    kpiOpenOrders: "open",
+    kpiAwaitingGoods: "awaiting",
+    kpiStockComplete: "complete",
+    kpiMissingProducts: "missing",
+    kpiDeliveredMonth: "delivered_month",
+    kpiConfirmedDates: "confirmed_dates",
+    kpiPodAvailable: "pod",
+    kpiInvoicesAvailable: "invoice",
+    kpiAttention: "attention"
+  };
+
+  Object.entries(map).forEach(([id, filter]) => {
+    const valueEl = byId(id);
+    const card = valueEl?.closest(".kpi-card, .metric-card, .card");
+
+    if (!card || card.dataset.kpiBound === "1") return;
+
+    card.dataset.kpiBound = "1";
+    card.dataset.kpiFilter = filter;
+    card.style.cursor = "pointer";
+
+    card.addEventListener("click", () => {
+      activeKpiFilter = activeKpiFilter === filter ? "" : filter;
+
+      document.querySelectorAll("[data-kpi-filter]").forEach(el => {
+        el.classList.toggle("kpi-active", el.dataset.kpiFilter === activeKpiFilter);
+      });
+
+      renderRecentOrders();
+
+      const recent = byId("recentOrdersBody");
+      recent?.closest("section, .card, .panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+    });
+  });
+}
 
   function groupByMonth() {
     const months = new Map();
@@ -890,7 +1053,9 @@
     const body = byId("recentOrdersBody");
     if (!body) return;
 
-    const rows = filteredOrders.slice(0, 25);
+const rows = filteredOrders
+  .filter(order => matchesKpiFilter(order, activeKpiFilter))
+  .slice(0, 50);
 
     body.innerHTML = rows.length
       ? rows.map(order => {
@@ -919,10 +1084,11 @@
               <td>${escapeHtml(formatDate(order.requested_delivery_date))}</td>
               <td>${escapeHtml(formatDate(getExpectedDate(order)))}</td>
               <td>${docs.length ? escapeHtml(docs.join(", ")) : "—"}</td>
+<td>${escapeHtml(actionReason(order))}</td>
             </tr>
           `;
         }).join("")
-      : `<tr><td colspan="9">No recent orders found.</td></tr>`;
+      : `<tr><td colspan="10">No recent orders found.</td></tr>`;
   }
 
   function renderTopRetailers() {
@@ -1024,8 +1190,8 @@
 
     const insights = [
       {
-        title: "Open order position",
-        text: `${formatNumber(open.length)} visible order(s) are currently open for this customer.`
+title: "Orders requiring action",
+text: `${formatNumber(open.length)} visible order(s) still require customer-facing action.`
       },
       {
         title: "Stock readiness",
@@ -1055,9 +1221,10 @@
     `).join("");
   }
 
-  function renderAll() {
-    renderKpis();
-    renderCharts();
+function renderAll() {
+  renderKpis();
+  bindKpiClicks();
+  renderCharts();
     renderStatusBreakdown();
     renderAttentionOrders();
     renderRecentOrders();
