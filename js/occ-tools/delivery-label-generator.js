@@ -271,132 +271,154 @@ async function loadSettings(client, companyId, orderCustomerId = null) {
     return data;
   }
 
-  async function loadItemsForOrder(client, companyId, orderId) {
-    const { data, error } = await client
-      .from("items")
-      .select(`
-        id,
-        sku_base,
-        sku_unique,
-        package_no,
-        package_total,
-        package_label,
-        volume_m3,
-        weight_kg,
-        status,
-        linked_order_id
-      `)
-      .eq("company_id", companyId)
-      .eq("linked_order_id", orderId)
-      .order("sku_base", { ascending: true })
-      .order("package_no", { ascending: true });
+async function loadItemsForOrder(client, companyId, orderId) {
+  const { data, error } = await client
+    .from("items")
+    .select(`
+      id,
+      sku_base,
+      sku_unique,
+      package_no,
+      package_total,
+      package_label,
+      volume_m3,
+      weight_kg,
+      status,
+      linked_order_id
+    `)
+    .eq("company_id", companyId)
+    .eq("linked_order_id", orderId)
+    .order("sku_base", { ascending: true })
+    .order("package_no", { ascending: true });
 
-    if (error) {
-      console.warn("Items lookup skipped:", error.message);
-      return [];
+  if (error) {
+    console.warn("Items lookup skipped:", error.message);
+    return [];
+  }
+
+  return data || [];
+}
+
+function shipToLines(order) {
+  return [
+    order.retail_name,
+    order.delivery_address_1,
+    order.delivery_address_2,
+    order.delivery_address_3,
+    order.delivery_address_4,
+    order.delivery_city,
+    order.delivery_postcode,
+    order.delivery_country || "United Kingdom"
+  ]
+    .map(clean)
+    .filter(Boolean);
+}
+
+function packageInfoFromProduct(line, packageNo) {
+  const p = line.products || {};
+
+  const volume =
+    toNum(p[`package_${packageNo}_volume_m3`], 0) ||
+    toNum(line.unit_volume_m3, 0) ||
+    toNum(p.volume_m3, 0);
+
+  const weight =
+    toNum(p[`package_${packageNo}_weight_kg`], 0) ||
+    toNum(line.unit_weight_kg, 0) ||
+    toNum(p.weight_kg, 0) ||
+    toNum(p.net_weight_kg, 0);
+
+  return { volume, weight };
+}
+
+function getPackageTotalForLine(line) {
+  const p = line.products || {};
+
+  return Math.max(
+    1,
+    Math.round(
+      toNum(
+        p.package_count ||
+          p.packages_per_unit ||
+          line.packages_per_unit ||
+          line.total_packages ||
+          1,
+        1
+      )
+    )
+  );
+}
+
+function getCalculatedOrderColli(order) {
+  return (order.order_lines || []).reduce((sum, line) => {
+    const qty = Math.max(1, Math.round(toNum(line.quantity_ordered, 1)));
+    const packageTotal = getPackageTotalForLine(line);
+
+    return sum + qty * packageTotal;
+  }, 0);
+}
+
+function buildLabels(order, items) {
+  const labels = [];
+
+  const calculatedTotalColli = getCalculatedOrderColli(order);
+
+  const totalColli =
+    calculatedTotalColli ||
+    Math.round(toNum(order.total_order_colli, 0)) ||
+    Math.round(toNum(order.planning_colli, 0)) ||
+    0;
+
+  const itemMap = new Map();
+
+  (items || []).forEach(item => {
+    const key = `${clean(item.sku_base).toUpperCase()}|${item.package_no || ""}`;
+
+    if (!itemMap.has(key)) {
+      itemMap.set(key, []);
     }
 
-    return data || [];
-  }
+    itemMap.get(key).push(item);
+  });
 
-  function shipToLines(order) {
-    return [
-      order.retail_name,
-      order.delivery_address_1,
-      order.delivery_address_2,
-      order.delivery_address_3,
-      order.delivery_address_4,
-      order.delivery_city,
-      order.delivery_postcode,
-      order.delivery_country || "United Kingdom"
-    ]
-      .map(clean)
-      .filter(Boolean);
-  }
+  (order.order_lines || []).forEach(line => {
+    const qty = Math.max(1, Math.round(toNum(line.quantity_ordered, 1)));
+    const packageTotal = getPackageTotalForLine(line);
 
-  function packageInfoFromProduct(line, packageNo) {
-    const p = line.products || {};
+    for (let unit = 1; unit <= qty; unit++) {
+      for (let packageNo = 1; packageNo <= packageTotal; packageNo++) {
+        const itemKey = `${clean(line.sku_base).toUpperCase()}|${packageNo}`;
+        const item = (itemMap.get(itemKey) || []).shift() || null;
+        const productSpecs = packageInfoFromProduct(line, packageNo);
 
-    const volume =
-      toNum(p[`package_${packageNo}_volume_m3`], 0) ||
-      toNum(line.unit_volume_m3, 0) ||
-      toNum(p.volume_m3, 0);
-
-    const weight =
-      toNum(p[`package_${packageNo}_weight_kg`], 0) ||
-      toNum(line.unit_weight_kg, 0) ||
-      toNum(p.weight_kg, 0) ||
-      toNum(p.net_weight_kg, 0);
-
-    return { volume, weight };
-  }
-
-  function buildLabels(order, items) {
-    const labels = [];
-    const totalColli =
-      Math.round(toNum(order.total_order_colli, 0)) ||
-      Math.round(toNum(order.planning_colli, 0)) ||
-      0;
-
-    const itemMap = new Map();
-
-    (items || []).forEach(item => {
-      const key = `${clean(item.sku_base).toUpperCase()}|${item.package_no || ""}`;
-      if (!itemMap.has(key)) itemMap.set(key, []);
-      itemMap.get(key).push(item);
-    });
-
-    (order.order_lines || []).forEach(line => {
-      const qty = Math.max(1, Math.round(toNum(line.quantity_ordered, 1)));
-      const packageTotal = Math.max(
-        1,
-        Math.round(
-          toNum(
-            line.packages_per_unit ||
-              line.total_packages ||
-              line.products?.packages_per_unit ||
-              line.products?.package_count ||
-              1,
-            1
-          )
-        )
-      );
-
-      for (let unit = 1; unit <= qty; unit++) {
-        for (let packageNo = 1; packageNo <= packageTotal; packageNo++) {
-          const itemKey = `${clean(line.sku_base).toUpperCase()}|${packageNo}`;
-          const item = (itemMap.get(itemKey) || []).shift() || null;
-
-          const productSpecs = packageInfoFromProduct(line, packageNo);
-
-          labels.push({
-            order,
-            line,
-            item,
-            sku: clean(line.sku_base),
-            description: clean(line.description),
-            packageNo,
-            packageTotal,
-            packageLabel: item?.package_label || `${packageNo}/${packageTotal}`,
-            totalColli,
-barcodeValue:
-  line.products?.barcode_value ||
-  line.products?.qr_value ||
-  clean(line.sku_base),
-            volume:
-              toNum(item?.volume_m3, 0) ||
-              productSpecs.volume,
-            weight:
-              toNum(item?.weight_kg, 0) ||
-              productSpecs.weight
-          });
-        }
+        labels.push({
+          order,
+          line,
+          item,
+          sku: clean(line.sku_base),
+          description: clean(line.description),
+          packageNo,
+          packageTotal,
+          packageLabel: `${packageNo}/${packageTotal}`,
+          totalColli,
+          barcodeValue:
+            item?.sku_unique ||
+            line.products?.barcode_value ||
+            line.products?.qr_value ||
+            clean(line.sku_base),
+          volume:
+            toNum(item?.volume_m3, 0) ||
+            productSpecs.volume,
+          weight:
+            toNum(item?.weight_kg, 0) ||
+            productSpecs.weight
+        });
       }
-    });
+    }
+  });
 
-    return labels;
-  }
-
+  return labels;
+}
   function setBlack(doc) {
     doc.setTextColor(0, 0, 0);
   }
@@ -611,21 +633,24 @@ const icons = {
   keepDry: await urlToDataUrl(LABEL_ICON_PATHS.keepDry)
 };
 
-    const labels = buildLabels(order, items);
+const labels = buildLabels(order, items);
 
-    if (!labels.length) {
-      throw new Error("No labels could be created for this order.");
-    }
+if (!labels.length) {
+  throw new Error("No labels could be created for this order.");
+}
 
-    labels.forEach((label, index) => {
-      if (index > 0) doc.addPage([LABEL_WIDTH_MM, LABEL_HEIGHT_MM], "landscape");
-      drawLabel(doc, label, settings, logos, icons);
-    });
+labels.forEach((label, index) => {
+  if (index > 0) {
+    doc.addPage([LABEL_WIDTH_MM, LABEL_HEIGHT_MM], "landscape");
+  }
+
+  drawLabel(doc, label, settings, logos, icons);
+});
 
 console.log("Delivery labels generated:", labels.length, "pages");
 
-    return doc.output("blob");
-  }
+return doc.output("blob");
+}
 
   async function uploadPdf(client, companyId, order, blob) {
     const fileName = `${safeFilePart(order.order_number)}-delivery-labels.pdf`;

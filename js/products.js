@@ -237,30 +237,43 @@
     return `${sku}-${getPackageLabel(row, packageNo)}`;
   }
 
-  function productHasTariff(row) {
+function productHasTariff(row) {
+  const ownerName = normalize(getOwnerName(row));
+  const isZoyProduct = ownerName.includes("zoy") || normalize(getBrand(row)).includes("zoy");
+
+  if (isZoyProduct) {
     return (
       toNumber(getProductValue(row, "storage_tariff", 0), 0) > 0 &&
-      toNumber(getProductValue(row, "admin_tariff", 0), 0) > 0 &&
-      toNumber(getProductValue(row, "handling_tariff", 0), 0) > 0 &&
       toNumber(getProductValue(row, "transport_tariff", 0), 0) > 0
     );
   }
 
-  function getMissingProductInfo(row) {
-    const missing = [];
+  return (
+    toNumber(getProductValue(row, "storage_tariff", 0), 0) > 0 &&
+    toNumber(getProductValue(row, "admin_tariff", 0), 0) > 0 &&
+    toNumber(getProductValue(row, "handling_tariff", 0), 0) > 0 &&
+    toNumber(getProductValue(row, "transport_tariff", 0), 0) > 0
+  );
+}
 
-    if (!row?.sku_base) missing.push("SKU");
-    if (!row?.name) missing.push("name");
-    if (toNumber(row?.volume_m3, 0) <= 0) missing.push("volume");
-    if (toNumber(row?.weight_kg, 0) <= 0) missing.push("gross weight");
-    if (toNumber(getProductValue(row, "net_weight_kg", 0), 0) <= 0) missing.push("net weight");
-    if (toNumber(getProductValue(row, "storage_tariff", 0), 0) <= 0) missing.push("storage");
-    if (toNumber(getProductValue(row, "admin_tariff", 0), 0) <= 0) missing.push("admin");
-    if (toNumber(getProductValue(row, "handling_tariff", 0), 0) <= 0) missing.push("pick");
-    if (toNumber(getProductValue(row, "transport_tariff", 0), 0) <= 0) missing.push("transport");
+function getMissingProductInfo(row) {
+  const missing = [];
+  const ownerName = normalize(getOwnerName(row));
+  const isZoyProduct = ownerName.includes("zoy") || normalize(getBrand(row)).includes("zoy");
 
-    return missing;
-  }
+  if (!row?.sku_base) missing.push("SKU");
+  if (!row?.name) missing.push("name");
+  if (toNumber(row?.volume_m3, 0) <= 0) missing.push("volume");
+  if (toNumber(row?.weight_kg, 0) <= 0) missing.push("gross weight");
+  if (toNumber(getProductValue(row, "net_weight_kg", 0), 0) <= 0) missing.push("net weight");
+
+  if (toNumber(getProductValue(row, "storage_tariff", 0), 0) <= 0) missing.push("storage");
+  if (!isZoyProduct && toNumber(getProductValue(row, "admin_tariff", 0), 0) <= 0) missing.push("admin");
+  if (!isZoyProduct && toNumber(getProductValue(row, "handling_tariff", 0), 0) <= 0) missing.push("pick");
+  if (toNumber(getProductValue(row, "transport_tariff", 0), 0) <= 0) missing.push("transport");
+
+  return missing;
+}
 
   function productIsComplete(row) {
     return getMissingProductInfo(row).length === 0;
@@ -443,12 +456,13 @@
       if (current && customers.some(c => String(c.id) === String(current))) {
         filterSelect.value = current;
       }
+filterSelect.addEventListener("change", applyFilters);
     }
 
     if (importSelect) {
       const current = importSelect.value || "";
-      importSelect.innerHTML =
-        `<option value="">Select product owner for import</option>` +
+importSelect.innerHTML =
+  `<option value="">All product owners</option>` +
         importOwnerOptions.map(owner => `
           <option value="${escapeHtml(owner.value)}">${escapeHtml(owner.label)}</option>
         `).join("");
@@ -1370,7 +1384,7 @@ if (field === "total_s2u_fees") payload[field] = totalS2uFees;
   return rowArray[colNumber - 1] ?? "";
 }
 
-function mapPricingWorksheetRow(rowArray, headerMap) {
+function mapBellstoneProductRow(rowArray, headerMap) {
   const brand = String(cell(rowArray, 1) || "").trim();
   const sku = String(cell(rowArray, 2) || "").trim();
   const nadaSku = String(cell(rowArray, 3) || "").trim();
@@ -1460,35 +1474,145 @@ function mapPricingWorksheetRow(rowArray, headerMap) {
 
     default_location_prefix: ""
   };
-}  async function readImportRows() {
+}  
+
+function getSelectedImportOwnerLabel() {
+  const select = byId("productsImportOwner");
+  const selected = select?.value || "";
+  const option = importOwnerOptions.find(o => o.value === selected);
+  return normalize(option?.label || option?.name || "");
+}
+
+function isZoyImport() {
+  return getSelectedImportOwnerLabel().includes("zoy");
+}
+
+function mapProductImportRow(rowArray, headerMap) {
+  if (isZoyImport()) {
+    return mapZoyProductRow(rowArray, headerMap);
+  }
+
+  return mapBellstoneProductRow(rowArray, headerMap);
+}
+
+function mapZoyProductRow(rowArray, headerMap) {
+  const sku = String(cell(rowArray, 2) || "").trim();
+  const specification = String(cell(rowArray, 3) || "").trim();
+
+  const productSize = String(cell(rowArray, 4) || "").trim();
+  const packingSize = String(cell(rowArray, 5) || "").trim();
+
+const caseCbm = toNumber(cell(rowArray, 6), 0);
+const caseWeight = toNumber(cell(rowArray, 7), 0);
+const hasCbmOrWeight = caseCbm > 0 || caseWeight > 0;
+
+  const loading40hc = toNumber(cell(rowArray, 8), 0);
+
+  const totalS2uCharge = toNumber(cell(rowArray, 9), 0);
+  const singlesDelivery = toNumber(cell(rowArray, 10), 0);
+  const fullArticDelivery = toNumber(cell(rowArray, 11), 0);
+
+  // BELANGRIJK: deze kolom wordt de prijs in Veynor
+  const deliveredCostSingles = toNumber(cell(rowArray, 12), 0);
+
+  const deliveredCostFullArtic = toNumber(cell(rowArray, 13), 0);
+  const notes = String(cell(rowArray, 14) || "").trim();
+
+  return {
+    sku_base: sku,
+    brand: "Zoy",
+    name: specification || sku,
+
+    description: [
+      specification,
+      productSize ? `Product size: ${productSize}` : "",
+      packingSize ? `Packing size: ${packingSize}` : "",
+      loading40hc ? `40HC loading: ${loading40hc}` : "",
+      fullArticDelivery ? `Full artic delivery: £${fullArticDelivery}` : "",
+      deliveredCostFullArtic ? `Delivered cost full artic: £${deliveredCostFullArtic}` : "",
+      notes
+    ].filter(Boolean).join(" | "),
+
+    barcode_value: sku,
+    qr_value: sku,
+
+    volume_m3: caseCbm,
+    net_weight_kg: caseWeight,
+    weight_kg: caseWeight,
+
+storage_tariff: totalS2uCharge,
+admin_tariff: 0,
+handling_tariff: 0,
+transport_tariff: singlesDelivery,
+
+    total_s2u_fees: round2(totalS2uCharge),
+
+    // Dit is Total S2U Delivered Cost Singles
+    total_customer_charge: round2(deliveredCostSingles),
+
+    packages_per_unit: 1,
+    package_count: 1,
+
+    package_1_qty: 1,
+    package_2_qty: 0,
+    package_3_qty: 0,
+
+    package_1_weight_kg: caseWeight,
+    package_2_weight_kg: 0,
+    package_3_weight_kg: 0,
+
+    package_1_volume_m3: caseCbm,
+    package_2_volume_m3: 0,
+    package_3_volume_m3: 0,
+
+    default_location_prefix: ""
+  };
+}
+
+async function readImportRows() {
     if (!selectedImportFile) throw new Error("Select an Excel or CSV file first.");
     if (typeof XLSX === "undefined") throw new Error("XLSX library is not loaded.");
 
     const buffer = await selectedImportFile.arrayBuffer();
     const workbook = XLSX.read(buffer, { type: "array" });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+let sheet;
+
+if (isZoyImport()) {
+    sheet = workbook.Sheets["Quote template"];
+} else {
+    sheet = workbook.Sheets[workbook.SheetNames[0]];
+}
 
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
     if (!rows.length) return [];
 
-    const headerIndex = rows.findIndex(row => {
-      const joined = row.map(v => String(v).toLowerCase()).join(" ");
-      return (
-        joined.includes("sku") &&
-        (
-          joined.includes("cbm") ||
-          joined.includes("storage") ||
-          joined.includes("delivery cost")
-        )
-      );
-    });
+const headerIndex = rows.findIndex(row => {
+  const joined = row.map(v => String(v).toLowerCase()).join(" ");
+
+  if (isZoyImport()) {
+    return (
+      joined.includes("product code") &&
+      joined.includes("case cbm") &&
+      joined.includes("case weight")
+    );
+  }
+
+  return (
+    joined.includes("sku") &&
+    (
+      joined.includes("cbm") ||
+      joined.includes("storage") ||
+      joined.includes("delivery cost")
+    )
+  );
+});
 
     const headerArray = headerIndex >= 0 ? rows[headerIndex] : rows[0];
     const headerMap = buildHeaderMap(headerArray);
 
-    return rows
+return rows
       .slice(headerIndex >= 0 ? headerIndex + 1 : 1)
-      .map(row => mapPricingWorksheetRow(row, headerMap))
+      .map(row => mapProductImportRow(row, headerMap))
       .filter(row => row.sku_base && row.name);
   }
 
@@ -1496,6 +1620,9 @@ function mapPricingWorksheetRow(rowArray, headerMap) {
     const db = ensureClient();
     const cid = await getCompanyId();
     const ownerId = await ensureImportOwnerCustomerId();
+if (byId("filterProductCustomer")) {
+  byId("filterProductCustomer").value = ownerId;
+}
 
     const mapped = await readImportRows();
 
@@ -1575,6 +1702,10 @@ package_3_volume_m3: row.package_3_volume_m3
     showToast(`${inserted} products created, ${updated} updated, ${incomplete} incomplete, ${skipped} skipped.`, "ok");
     await loadCustomers();
     await loadProducts();
+if (byId("filterProductCustomer")) {
+  byId("filterProductCustomer").value = ownerId;
+  applyFilters();
+}
   }
 
   function downloadTemplate() {
@@ -1621,6 +1752,23 @@ package_3_volume_m3: row.package_3_volume_m3
   function bindEvents() {
     byId("productSearch")?.addEventListener("input", applyFilters);
     byId("filterProductCustomer")?.addEventListener("change", applyFilters);
+byId("productsImportOwner")?.addEventListener("change", () => {
+  const selected = byId("productsImportOwner")?.value || "";
+  const filter = byId("filterProductCustomer");
+
+  if (!filter) return;
+
+  if (!selected) {
+    filter.value = "";
+    applyFilters();
+    return;
+  }
+
+  if (selected.startsWith("customer:")) {
+    filter.value = selected.replace("customer:", "");
+    applyFilters();
+  }
+});
     byId("filterProductCategory")?.addEventListener("change", applyFilters);
     byId("filterProductCompleteness")?.addEventListener("change", applyFilters);
 

@@ -1459,79 +1459,78 @@ function bindEvents(mount) {
     };
   }
 
-  async function saveRouteAssignment(routeId) {
-    try {
-      const db = ensureClient();
-      const cid = getCompanyId();
+async function saveRouteAssignment(routeId) {
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
 
-      if (!cid) throw new Error("Company id missing.");
-      if (!routeId) throw new Error("Route id missing.");
+    if (!cid) throw new Error("Company id missing.");
+    if (!routeId) throw new Error("Route id missing.");
 
-      const values = getRouteFormValues(routeId);
-      const vehicle = activeVehicles.find(v => String(v.id) === String(values.vehicleId));
-      const driver = getDriverById(values.driverId);
+    const values = getRouteFormValues(routeId);
+    const vehicle = activeVehicles.find(v => String(v.id) === String(values.vehicleId));
+    const driver = getDriverById(values.driverId);
 
-      const routePayload = {
-        vehicle_id: values.vehicleId || null,
-        assigned_vehicle_id: values.vehicleId || null,
-        vehicle_name: vehicle ? getVehicleName(vehicle) : null,
-        assigned_vehicle_name: vehicle ? getVehicleName(vehicle) : null,
-        vehicle_registration: vehicle ? getVehicleRegistration(vehicle) : null,
+    const routePayload = {
+      vehicle_id: values.vehicleId || null,
+      assigned_vehicle_id: values.vehicleId || null,
+      vehicle_name: vehicle ? getVehicleName(vehicle) : null,
+      assigned_vehicle_name: vehicle ? getVehicleName(vehicle) : null,
+      vehicle_registration: vehicle ? getVehicleRegistration(vehicle) : null,
+      driver_user_id: values.driverId || null,
+      driver_profile_id: values.driverId || null,
+      driver_name: driver ? getDriverName(driver) : null,
+      driver_email: driver ? getDriverEmail(driver) : null,
+      planned_delivery_date: values.plannedDeliveryDate || null,
+      route_date: values.plannedDeliveryDate || null,
+      planned_start_time: values.plannedStartTime || null,
+      planned_end_time: values.plannedEndTime || null,
+      eta_finalized: values.etaFinalized,
+      route_status: "planned"
+    };
 
+    const { error: routeError } = await db
+      .from("routes")
+      .update(routePayload)
+      .eq("company_id", cid)
+      .eq("id", routeId);
+
+    if (routeError) throw routeError;
+
+    const stops = getStopsForRoute(routeId);
+    const orderIds = stops.map(stop => stop.order_id).filter(Boolean);
+
+    if (orderIds.length) {
+      const orderPayload = {
         driver_user_id: values.driverId || null,
         driver_profile_id: values.driverId || null,
         driver_name: driver ? getDriverName(driver) : null,
         driver_email: driver ? getDriverEmail(driver) : null,
-
-        planned_delivery_date: values.plannedDeliveryDate || null,
-        route_date: values.plannedDeliveryDate || null,
-        planned_start_time: values.plannedStartTime || null,
-        planned_end_time: values.plannedEndTime || null,
-        eta_finalized: values.etaFinalized,
-        route_status: "planned"
+        expected_delivery_date: values.plannedDeliveryDate || null,
+        planned_route_date: values.plannedDeliveryDate || null,
+        delivery_eta_status: values.etaFinalized ? "confirmed" : "planned",
+        status: "planned",
+        transport_status: "planned",
+        transport_type: "own_transport"
       };
 
-      const { error: routeError } = await db
-        .from("routes")
-        .update(routePayload)
+      const { error: orderError } = await db
+        .from("orders")
+        .update(orderPayload)
         .eq("company_id", cid)
-        .eq("id", routeId);
+        .in("id", orderIds);
 
-      if (routeError) throw routeError;
-
-      const stops = getStopsForRoute(routeId);
-      const orderIds = stops.map(stop => stop.order_id).filter(Boolean);
-
-      if (orderIds.length) {
-        const orderPayload = {
-          driver_user_id: values.driverId || null,
-          driver_profile_id: values.driverId || null,
-          driver_name: driver ? getDriverName(driver) : null,
-          driver_email: driver ? getDriverEmail(driver) : null,
-          expected_delivery_date: values.plannedDeliveryDate || null,
-          planned_route_date: values.plannedDeliveryDate || null,
-          delivery_eta_status: values.etaFinalized ? "confirmed" : "planned",
-          status: "planned",
-          transport_status: "planned",
-          transport_type: "own_transport"
-        };
-
-        const { error: orderError } = await db
-          .from("orders")
-          .update(orderPayload)
-          .eq("company_id", cid)
-          .in("id", orderIds);
-
-        if (orderError) throw orderError;
-      }
-
-      showToast("Route assignment saved.", "ok");
-      notifyRoutesChanged();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not save route assignment.", "err");
+      if (orderError) throw orderError;
     }
+
+    showToast("Route assignment saved.", "ok");
+    notifyRoutesChanged();
+
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not save route assignment.", "err");
   }
+}
 
   async function sendRouteToDriver(routeId) {
     try {
@@ -1608,62 +1607,107 @@ function bindEvents(mount) {
   }
 
   async function manuallyCompleteStop(stopId, status) {
-    try {
-      const db = ensureClient();
-      const cid = getCompanyId();
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
 
-      if (!cid) throw new Error("Company id missing.");
+    if (!cid) throw new Error("Company id missing.");
 
-      const stop = allStops.find(s => String(s.id) === String(stopId));
-      if (!stop) throw new Error("Stop not found.");
+    const stop = allStops.find(s => String(s.id) === String(stopId));
+    if (!stop) throw new Error("Stop not found.");
 
-      const route = allRoutes.find(r => String(r.id) === String(stop.route_id));
-      const now = new Date().toISOString();
+    const route = allRoutes.find(r => String(r.id) === String(stop.route_id));
+    const now = new Date().toISOString();
 
-      const orderStatus =
-        status === "delivered" ? "delivered" :
-        status === "delivery_issue" ? "delivery_issue" :
-        "failed_delivery";
+    const orderStatus =
+      status === "delivered"
+        ? "delivered"
+        : status === "delivery_issue"
+        ? "delivery_issue"
+        : "failed_delivery";
 
-      const { error: stopError } = await db
-        .from("route_stops")
-        .update({
-          status: orderStatus,
-          delivery_status: orderStatus,
-          completed_at: now,
-          delivery_time: now,
-          delivery_date: now.slice(0, 10)
-        })
-        .eq("company_id", cid)
-        .eq("id", stopId);
+    // -----------------------------
+    // Update ONLY this route stop
+    // -----------------------------
+    const { error: stopError } = await db
+      .from("route_stops")
+      .update({
+        status: orderStatus,
+        delivery_status: orderStatus,
+        completed_at: now,
+        delivery_time: now,
+        delivery_date: now.slice(0, 10)
+      })
+      .eq("company_id", cid)
+      .eq("id", stop.id);
 
-      if (stopError) throw stopError;
+    if (stopError) throw stopError;
 
-      const { error: orderError } = await db
-        .from("orders")
-        .update({
-          status: orderStatus,
-          transport_status: orderStatus,
-          delivery_status: orderStatus,
-          last_activity_at: now,
-          delivered_at: orderStatus === "delivered" ? now : null
-        })
-        .eq("company_id", cid)
-        .eq("id", stop.order_id);
+    // -----------------------------
+    // Update ONLY this order
+    // -----------------------------
+    const orderPayload = {
+      status: orderStatus,
+      transport_status: orderStatus,
+      warehouse_status:
+        orderStatus === "delivered"
+          ? "delivered"
+          : "planned",
 
-      if (orderError) throw orderError;
+      overall_status: orderStatus,
 
-      if (route) {
-        await updateRouteStatusAfterStopChange(route.id);
-      }
+      confirmed_delivery_date:
+        orderStatus === "delivered"
+          ? now.slice(0, 10)
+          : null,
 
-      showToast(`Order marked as ${orderStatus.replaceAll("_", " ")}.`, "ok");
-      notifyRoutesChanged();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not update delivery status.", "err");
+      last_activity_at: now
+    };
+
+    const { error: orderError } = await db
+      .from("orders")
+      .update(orderPayload)
+      .eq("company_id", cid)
+      .eq("id", stop.order_id);
+
+    if (orderError) throw orderError;
+
+    // -----------------------------
+    // Update route status
+    // -----------------------------
+    if (route) {
+      await updateRouteStatusAfterStopChange(route.id);
     }
+
+    // -----------------------------
+    // Refresh planner + OCC
+    // -----------------------------
+notifyRoutesChanged();
+
+// Refresh Operations Control Center
+if (window.OCCReloadOrders) {
+    await window.OCCReloadOrders();
+}
+
+// Refresh planner
+if (window.VeynorAvailableVehicles?.refresh) {
+    window.VeynorAvailableVehicles.refresh();
+}
+
+    showToast(
+      `Order marked as ${orderStatus.replaceAll("_", " ")}.`,
+      "ok"
+    );
+
+  } catch (error) {
+    console.error(error);
+    showToast(
+      error.message || "Could not update delivery status.",
+      "err"
+    );
   }
+}
+
 
   async function updateRouteStatusAfterStopChange(routeId) {
     const db = ensureClient();
@@ -1686,18 +1730,33 @@ function bindEvents(mount) {
     else if (values.some(isIssueStatus)) routeStatus = "delivery_issue";
     else if (values.some(v => ["out_for_delivery", "loaded", "sent_to_driver"].includes(v))) routeStatus = "out_for_delivery";
 
-    const { error: routeError } = await db
-      .from("routes")
-      .update({
-        route_status: routeStatus
-      })
-      .eq("company_id", cid)
-      .eq("id", routeId);
+const routePayload = {
+  route_status: routeStatus,
+  updated_at: new Date().toISOString()
+};
 
-    if (routeError) throw routeError;
+if (routeStatus === "delivered") {
+  routePayload.completed_at = new Date().toISOString();
+
+  if ("actual_delivery_date" in (route || {})) {
+    routePayload.actual_delivery_date = new Date().toISOString().slice(0, 10);
   }
 
-  async function removeRoute(routeId) {
+  if ("completed_by" in (route || {})) {
+    routePayload.completed_by = currentUser?.id || null;
+  }
+}
+
+const { error: routeError } = await db
+  .from("routes")
+  .update(routePayload)
+  .eq("company_id", cid)
+  .eq("id", routeId);
+
+if (routeError) throw routeError;
+}
+
+async function removeRoute(routeId) {
     try {
       const db = ensureClient();
       const cid = getCompanyId();
@@ -1921,8 +1980,65 @@ window.VeynorAvailableVehicles = {
   removeRoute,
   saveStopOrder,
   manuallyCompleteStop,
+  generateFdsNoticePdf,
 
-  generateFdsNoticePdf
+  getDashboardSummary() {
+    syncFromPlannerData();
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const todayRoutes = allRoutes.filter(route => {
+      const date = getRouteDate(route);
+      return date && date === today;
+    });
+
+    const routeSummaries = todayRoutes.map(route => {
+      const summary = getRouteSummary(route);
+
+      return {
+        id: route.id,
+        label: getRouteLabel(route),
+        stops: summary.totalStops,
+        volume: summary.totalVolume,
+        revenue: summary.revenue,
+        cost: summary.cost,
+        result: summary.result
+      };
+    });
+
+    const fdsVehicle = activeVehicles.find(vehicle =>
+      getVehicleType(vehicle) === "carrier" ||
+      normalize(getVehicleName(vehicle)) === "fds"
+    );
+
+    const fdsOrders = fdsVehicle ? getCarrierOrders(fdsVehicle) : [];
+
+    return {
+      todayRoutes: routeSummaries,
+      todayRouteTotals: {
+        count: routeSummaries.length,
+        revenue: routeSummaries.reduce((sum, row) => sum + row.revenue, 0),
+        cost: routeSummaries.reduce((sum, row) => sum + row.cost, 0),
+        result: routeSummaries.reduce((sum, row) => sum + row.result, 0)
+      },
+      fds: {
+        count: fdsOrders.length,
+        colli: fdsOrders.reduce((sum, order) => sum + getOrderColli(order), 0),
+        volume: fdsOrders.reduce((sum, order) => sum + getOrderVolume(order), 0),
+        weight: fdsOrders.reduce((sum, order) => sum + getOrderWeight(order), 0),
+        orders: fdsOrders.map(order => ({
+          id: order.id,
+          order_number: order.order_number,
+          retailer: getRetailerName(order),
+          city: order.delivery_city,
+          postcode: order.delivery_postcode,
+          colli: getOrderColli(order),
+          volume: getOrderVolume(order),
+          weight: getOrderWeight(order)
+        }))
+      }
+    };
+  }
 };
 
 document.addEventListener("DOMContentLoaded", init);

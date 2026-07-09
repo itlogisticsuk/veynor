@@ -150,6 +150,9 @@
   function getProductOwnerName(order) {
     return cleanText(order?.customers?.name || order?.product_owner_name || order?.customer_name || "—");
   }
+function isZoyOrder(order) {
+  return normalize(getProductOwnerName(order)).includes("zoy");
+}
 
   function getShipToName(order) {
     return cleanText(order?.retail_name || order?.retailer_name || order?.delivery_name || "—");
@@ -415,47 +418,79 @@
     };
   }
 
-  async function loadProductOwnerProfile(client, customerId, order) {
-    if (!customerId) {
-      throw new Error("Cannot generate ACK: order has no product owner/customer_id.");
-    }
+ async function loadProductOwnerProfile(client, customerId, order, settings = {}) {
+  const ownerName = normalize(getProductOwnerName(order));
+  const ownerCode = normalize(order?.customers?.customer_code || "");
 
-    const { data: customer, error: customerError } = await client
-      .from("customers")
-      .select("*")
-      .eq("id", customerId)
-      .maybeSingle();
+  let profiles = [];
 
-    if (customerError) throw customerError;
-    if (!customer?.id) throw new Error("Cannot generate ACK: product owner/customer not found.");
+  try {
+    profiles = JSON.parse(settings.product_owner_profiles || "[]");
+  } catch {
+    profiles = [];
+  }
 
-    let address = null;
+  const profile = profiles.find(p => {
+    const values = [
+      p.key,
+      p.name,
+      p.trading_name,
+      p.customer_code,
+      p.default_source_name
+    ].map(normalize);
 
-    const { data: addresses, error: addressError } = await client
-      .from("customer_addresses")
-      .select("*")
-      .eq("customer_id", customerId)
-      .order("is_default", { ascending: false })
-      .limit(1);
+    return values.some(v =>
+      v &&
+      (
+        v === ownerName ||
+        v === ownerCode ||
+        ownerName.includes(v) ||
+        v.includes(ownerName)
+      )
+    );
+  });
 
-    if (!addressError && addresses?.length) {
-      address = addresses[0];
-    }
-
+  if (profile) {
     return {
-      id: customer.id,
-      name: customer.name || getProductOwnerName(order),
-      customerCode: customer.customer_code || "",
-      vat: customer.vat_number || customer.vat || "",
-      email: customer.billing_email || customer.email || "",
-      address1: address?.street || customer.address1 || customer.address_1 || "",
-      address2: address?.address2 || customer.address2 || customer.address_2 || "",
-      city: address?.city || customer.city || "",
-      county: address?.county || customer.county || "",
-      postcode: address?.postal_code || address?.postcode || customer.postcode || "",
-      country: address?.country || customer.country || "United Kingdom"
+      id: customerId || null,
+      name: profile.name || profile.trading_name || getProductOwnerName(order),
+      tradingName: profile.trading_name || "",
+      customerCode: profile.customer_code || "",
+      vat: profile.vat || "",
+      email: profile.invoice_email || profile.ack_email || profile.ops_email || "",
+      address1: profile.address1 || "",
+      address2: profile.address2 || "",
+      city: profile.city || "",
+      county: "",
+      postcode: profile.postcode || "",
+      country: profile.country || ""
     };
   }
+
+  const { data: customer, error: customerError } = await client
+    .from("customers")
+    .select("*")
+    .eq("id", customerId)
+    .maybeSingle();
+
+  if (customerError) throw customerError;
+  if (!customer?.id) throw new Error("Cannot generate ACK: product owner/customer not found.");
+
+  return {
+    id: customer.id,
+    name: customer.name || getProductOwnerName(order),
+    customerCode: customer.customer_code || "",
+    vat: customer.vat_number || customer.vat || "",
+    email: customer.billing_email || customer.email || "",
+    address1: customer.address1 || customer.address_1 || "",
+    address2: customer.address2 || customer.address_2 || "",
+    city: customer.city || "",
+    county: customer.county || "",
+    postcode: customer.postcode || "",
+    country: customer.country || "United Kingdom"
+  };
+}
+
 
   async function loadFreshOrderForAck(client, companyId, orderId) {
     const { data, error } = await client
@@ -648,28 +683,36 @@
     drawAddressBlock(doc, "Ship To:", shipToLines, 112, 62, 78, 36);
   }
 
-  function drawTableHeader(doc, y) {
-    setDark(doc);
+function drawTableHeader(doc, y, order) {
+  const zoy = isZoyOrder(order);
 
-    doc.setFillColor(245, 245, 245);
-    doc.rect(14, y - 5, 182, 8.5, "F");
+  setDark(doc);
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.8);
+  doc.setFillColor(245, 245, 245);
+  doc.rect(14, y - 5, 182, 8.5, "F");
 
-    doc.text("SKU", 14, y);
-    doc.text("Product Description", 33, y);
-    doc.text("Qty", 96, y, { align: "right" });
-    doc.text("Packages", 110, y);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.8);
+
+  doc.text("SKU", 14, y);
+  doc.text("Product Description", 33, y);
+  doc.text("Qty", 104, y, { align: "right" });
+  doc.text("Packages", 122, y);
+
+  if (zoy) {
+    doc.text("Price", 166, y, { align: "right" });
+    doc.text("Total", 194, y, { align: "right" });
+  } else {
     doc.text("Warehouse", 146, y, { align: "right" });
     doc.text("Transport", 166, y, { align: "right" });
     doc.text("Total", 194, y, { align: "right" });
-
-    doc.setDrawColor(85, 85, 85);
-    doc.line(14, y + 3.3, 196, y + 3.3);
-
-    return y + 8.5;
   }
+
+  doc.setDrawColor(85, 85, 85);
+  doc.line(14, y + 3.3, 196, y + 3.3);
+
+  return y + 8.5;
+}
 
   function maybeAddNewPage(doc, y, order, ctx, logoDataUrl, withTableHeader = true) {
     if (y <= PAGE.bottom) return y;
@@ -678,7 +721,7 @@
     drawHeader(doc, order, ctx, logoDataUrl, true);
 
     if (withTableHeader) {
-      return drawTableHeader(doc, 58);
+      return drawTableHeader(doc, 58, order);
     }
 
     return 58;
@@ -724,7 +767,7 @@
 
   function drawLines(doc, order, ctx, logoDataUrl, pricing) {
     let y = 108;
-    y = drawTableHeader(doc, y);
+    y = drawTableHeader(doc, y, order);
 
     const lines = getOrderLines(order);
     const regional = pricing.regional || {};
@@ -746,9 +789,17 @@
       const packageLabel = getPackageLabel(line);
       const warning = getServiceWarning(line);
 
-      const warehouseCost = getLineWarehouseCost(line);
-      const transportCost = getLineTransportCost(line, regional);
-      const total = getLineTotal(line, regional);
+const zoy = isZoyOrder(order);
+
+const warehouseCost = getLineWarehouseCost(line);
+const transportCost = getLineTransportCost(line, regional);
+
+const unitPrice = round2(toNumber(line.total_customer_charge, 0));
+const lineTotal = round2(unitPrice * qty);
+
+const total = zoy
+  ? lineTotal
+  : getLineTotal(line, regional);
 
       const descLines = splitText(doc, description, 56).slice(0, 3);
       const packageWord = packageCount === 1 ? "package" : "packages";
@@ -777,9 +828,45 @@
       doc.text(labelLines, 110, y + 3.4);
 
       doc.setFontSize(6.8);
-      doc.text(formatMoney(warehouseCost), 146, y, { align: "right" });
-      doc.text(regional.priceOnRequest ? "POR" : formatMoney(transportCost), 166, y, { align: "right" });
-      doc.text(regional.priceOnRequest ? "POR" : formatMoney(total), 194, y, { align: "right" });
+if (zoy) {
+
+  doc.text(formatMoney(unitPrice), 166, y, {
+    align: "right"
+  });
+
+  doc.text(formatMoney(lineTotal), 194, y, {
+    align: "right"
+  });
+
+} else {
+
+  doc.text(formatMoney(warehouseCost), 146, y, {
+    align: "right"
+  });
+
+  doc.text(
+    regional.priceOnRequest
+      ? "POR"
+      : formatMoney(transportCost),
+    166,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+  doc.text(
+    regional.priceOnRequest
+      ? "POR"
+      : formatMoney(total),
+    194,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+}
 
       y += rowHeight + 1;
 
@@ -844,34 +931,47 @@
     return y + boxHeight + 3;
   }
 
-  function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
-    y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
+function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
+  y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
 
-    const regional = pricing.regional || {};
-    const subtotal = regional.priceOnRequest ? null : round2(pricing.warehouse + pricing.transport);
+  const zoy = isZoyOrder(order);
+  const regional = pricing.regional || {};
 
-    const totalProducts = getTotalProducts(order);
-    const totalPackages = getTotalPackages(order);
+  const totalProducts = getTotalProducts(order);
+  const totalPackages = getTotalPackages(order);
 
-    doc.setDrawColor(90, 90, 90);
-    doc.line(14, y, 196, y);
+  doc.setDrawColor(90, 90, 90);
+  doc.line(14, y, 196, y);
 
-    y += 7;
+  y += 7;
 
-    const labelX = 118;
-    const valueX = 194;
+  const labelX = 118;
+  const valueX = 194;
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
 
-    doc.text("Total Products", labelX, y);
-    doc.text(formatNumber(totalProducts, 0), valueX, y, { align: "right" });
+  doc.text("Total Products", labelX, y);
+  doc.text(formatNumber(totalProducts, 0), valueX, y, { align: "right" });
 
-    y += 5;
-    doc.text("Total Packages", labelX, y);
-    doc.text(formatNumber(totalPackages, 0), valueX, y, { align: "right" });
+  y += 5;
+  doc.text("Total Packages", labelX, y);
+  doc.text(formatNumber(totalPackages, 0), valueX, y, { align: "right" });
 
-    y += 7;
+  y += 7;
+
+  if (zoy) {
+    const subtotal = round2(
+      getOrderLines(order).reduce((sum, line) => {
+        const qty = getLineQty(line);
+        const unitPrice = toNumber(line.total_customer_charge, 0);
+        return sum + qty * unitPrice;
+      }, 0)
+    );
+
+    const vatRate = toNumber(ctx.vatRate, DEFAULT_VAT_RATE);
+    const vat = round2(subtotal * vatRate);
+    const total = round2(subtotal + vat);
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.2);
@@ -882,30 +982,55 @@
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.6);
 
-    doc.text("Warehouse Costs", labelX, y);
-    doc.text(formatMoney(pricing.warehouse), valueX, y, { align: "right" });
+    doc.text("Subtotal", labelX, y);
+    doc.text(formatMoney(subtotal), valueX, y, { align: "right" });
 
     y += 5.2;
-    doc.text("Transport Costs", labelX, y);
-    doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport), valueX, y, { align: "right" });
-
-    if (!regional.priceOnRequest && pricing.regionalSurcharge > 0) {
-      y += 5.2;
-      doc.text(`Regional surcharge ${formatNumber(regional.percent, 0)}%`, labelX, y);
-      doc.text(formatMoney(pricing.regionalSurcharge), valueX, y, { align: "right" });
-    }
+    doc.text(`VAT ${formatNumber(vatRate * 100, 0)}%`, labelX, y);
+    doc.text(formatMoney(vat), valueX, y, { align: "right" });
 
     y += 5.8;
     doc.setFont("helvetica", "bold");
-    doc.text("Subtotal excl. fuel surcharge & VAT", labelX, y);
-    doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal), valueX, y, { align: "right" });
+    doc.text("Total", labelX, y);
+    doc.text(formatMoney(total), valueX, y, { align: "right" });
 
-    y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
-    y = drawPricingNoteBox(doc, y, ctx, order, logoDataUrl);
-
-    return y + 2;
+    return y + 8;
   }
 
+  const subtotal = regional.priceOnRequest ? null : round2(pricing.warehouse + pricing.transport);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.2);
+  doc.text("Order Total", labelX, y);
+
+  y += 6;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7.6);
+
+  doc.text("Warehouse Costs", labelX, y);
+  doc.text(formatMoney(pricing.warehouse), valueX, y, { align: "right" });
+
+  y += 5.2;
+  doc.text("Transport Costs", labelX, y);
+  doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport), valueX, y, { align: "right" });
+
+  if (!regional.priceOnRequest && pricing.regionalSurcharge > 0) {
+    y += 5.2;
+    doc.text(`Regional surcharge ${formatNumber(regional.percent, 0)}%`, labelX, y);
+    doc.text(formatMoney(pricing.regionalSurcharge), valueX, y, { align: "right" });
+  }
+
+  y += 5.8;
+  doc.setFont("helvetica", "bold");
+  doc.text("Subtotal excl. fuel surcharge & VAT", labelX, y);
+  doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal), valueX, y, { align: "right" });
+
+  y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
+  y = drawPricingNoteBox(doc, y, ctx, order, logoDataUrl);
+
+  return y + 2;
+}
   function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
     y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
@@ -979,7 +1104,18 @@
     });
 
     const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
-    const pricing = calculatePricing(order, ctx.settings || {});
+const pricing = calculatePricing(order, ctx.settings || {});
+
+if (isZoyOrder(order)) {
+  pricing.regionalSurcharge = 0;
+  pricing.regional = {
+    code: "standard",
+    label: "Standard",
+    percent: 0,
+    priceOnRequest: false,
+    note: ""
+  };
+}
 
     drawHeader(doc, order, ctx, logoDataUrl, false);
     drawBillToAndShipTo(doc, order, ctx);
@@ -1090,7 +1226,12 @@ const storagePath = `${companyId}/${order.id}/${fileName}`;
     const workingOrder = freshOrder || order;
 
     const ctx = await loadCompanySettings(client, companyId);
-    ctx.productOwner = await loadProductOwnerProfile(client, workingOrder.customer_id, workingOrder);
+ctx.productOwner = await loadProductOwnerProfile(
+  client,
+  workingOrder.customer_id,
+  workingOrder,
+  ctx.settings || {}
+);
 
     const blob = await createPdfBlob(workingOrder, ctx);
     const uploaded = await uploadPdf(client, companyId, workingOrder, blob);

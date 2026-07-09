@@ -4501,6 +4501,26 @@ if (action === "portal_events") {
     }
   });
 
+  byId("btnOpenManualChargeModal")?.addEventListener("click", () => {
+    if (window.ManualChargeTool?.open) {
+      window.ManualChargeTool.open();
+      return;
+    }
+
+    showToast("Manual Charge Tool is not loaded.", "err");
+  });
+
+  byId("btnResetFilters")?.addEventListener("click", resetFilters);
+
+byId("btnManualCharge")?.addEventListener("click", () => {
+  if (window.ManualChargeTool?.open) {
+    window.ManualChargeTool.open();
+    return;
+  }
+
+  showToast("Manual Charge Tool is not loaded.", "err");
+});
+
   byId("btnResetFilters")?.addEventListener("click", resetFilters);
 
   byId("btnSyncStatuses")?.addEventListener("click", async () => {

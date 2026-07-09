@@ -18,6 +18,7 @@
 
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js" defer></script>
+<script src="/js/available-vehicles.js" defer></script>
   <script src="/js/index.js" defer></script>
   <script src="/js/layout.js" defer></script>
 
@@ -627,6 +628,92 @@
         <div class="kpi-sub">View billing →</div>
       </article>
     </section>
+
+<section class="dashboard-grid-2">
+  <article class="card dash-card">
+    <div class="card-head">
+      <div>
+        <h2>Today's Routes</h2>
+        <p>Routes planned for today with revenue, cost and result.</p>
+      </div>
+      <a class="mini-link primary" href="./orders.html">Open Planner</a>
+    </div>
+
+    <div class="summary-list">
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Routes Today</div>
+          <div class="summary-sub">Planned routes for today</div>
+        </div>
+        <div id="todayRoutesCount" class="summary-number">0</div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Revenue</div>
+          <div class="summary-sub">Total visible route revenue</div>
+        </div>
+        <div id="todayRoutesRevenue" class="summary-number">£0.00</div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Cost</div>
+          <div class="summary-sub">Estimated route cost</div>
+        </div>
+        <div id="todayRoutesCost" class="summary-number">£0.00</div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Result</div>
+          <div class="summary-sub">Revenue minus cost</div>
+        </div>
+        <div id="todayRoutesResult" class="summary-number">£0.00</div>
+      </div>
+    </div>
+
+    <div id="todayRoutesList" class="activity-list"></div>
+  </article>
+
+  <article class="card dash-card">
+    <div class="card-head">
+      <div>
+        <h2>FDS Planning</h2>
+        <p>Charter orders planned for Friday / carrier handover.</p>
+      </div>
+      <a class="mini-link primary" href="./orders.html">Open FDS</a>
+    </div>
+
+    <div class="summary-list">
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">FDS Orders</div>
+          <div id="fdsPlanningDate" class="summary-sub">Next Friday</div>
+        </div>
+        <div id="fdsOrdersCount" class="summary-number">0</div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Volume / Colli</div>
+          <div id="fdsPlanningVolume" class="summary-sub">0.00 m³</div>
+        </div>
+        <div id="fdsPlanningColli" class="summary-number">0</div>
+      </div>
+
+      <div class="summary-row">
+        <div class="summary-main">
+          <div class="summary-title">Weight</div>
+          <div class="summary-sub">Estimated total weight</div>
+        </div>
+        <div id="fdsPlanningWeight" class="summary-number">0 kg</div>
+      </div>
+    </div>
+
+    <div id="fdsPlanningList" class="activity-list"></div>
+  </article>
+</section>
 
     <section class="dashboard-main-grid">
       <article class="card dash-card">

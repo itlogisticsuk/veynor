@@ -430,6 +430,25 @@ if (!isReady) return;
     return `status-${v.replace(/[^a-z0-9_]/g, "")}`;
   }
 
+function statusPillStyle(value, order = {}) {
+  const status = normalize(value);
+  const transport = normalize(order.transport_type);
+
+  if (status === "export_for_charter" || transport === "charter") {
+    return 'style="background:#fff7ed;color:#c2410c;border-color:#fed7aa;"';
+  }
+
+  if (transport === "own_transport" || status === "planned") {
+    return 'style="background:#dcfce7;color:#15803d;border-color:#bbf7d0;"';
+  }
+
+  if (status === "ready_for_planning" || status === "ready_for_picking") {
+    return 'style="background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe;"';
+  }
+
+  return "";
+}
+
   function transportPillClass(value) {
     const v = normalize(value || "unassigned");
     if (v === "own_transport") return "transport-own";
@@ -600,21 +619,21 @@ async function loadStoredDeliveryGroups() {
         )
       `)
       .eq("company_id", cid)
-      .in("status", [
-        "ready_for_planning",
-        "ready_for_picking",
-        "planned",
-        "sent_to_driver",
-        "out_for_delivery",
-        "loaded",
-        "delivered",
-        "delivery_issue",
-        "partial_delivery",
-        "failed_delivery",
-        "not_delivered",
-        "returned",
-        "export_for_charter"
-      ])
+.in("status", [
+  "ready_for_planning",
+  "ready_for_picking",
+  "planned",
+  "sent_to_driver",
+  "out_for_delivery",
+  "loaded",
+  "delivered",
+  "delivery_issue",
+  "partial_delivery",
+  "failed_delivery",
+  "not_delivered",
+  "returned",
+  "export_for_charter"
+])
       .order("requested_delivery_date", { ascending: true, nullsFirst: false })
       .order("order_number", { ascending: true });
 
@@ -629,9 +648,10 @@ allOrders = (data || []).map(row => ({
   belowMinimumVolume: false
 }));
 
+
 markBelowMinimumOrders();
 
-    await loadOrderRevenueOverlay();
+await loadOrderRevenueOverlay();
   }
 
   async function loadOrderRevenueOverlay() {
@@ -842,65 +862,69 @@ markBelowMinimumOrders();
   }
 
   function applyFilters() {
-    const q = normalize(byId("orderSearch")?.value || "");
-    const status = normalize(byId("filterStatus")?.value || "");
-    const completion = normalize(byId("filterCompletion")?.value || "");
-    const routeFilter = normalize(byId("filterRoute")?.value || "");
-    const transport = normalize(byId("filterTransport")?.value || "");
-    const hideCompleted = !!byId("toggleHideCompleted")?.checked;
-    const coordsOnly = !!byId("toggleOnlyWithCoordinates")?.checked;
+  const q = normalize(byId("orderSearch")?.value || "");
+  const status = normalize(byId("filterStatus")?.value || "");
+  const completion = normalize(byId("filterCompletion")?.value || "");
+  const routeFilter = normalize(byId("filterRoute")?.value || "");
+  const transport = normalize(byId("filterTransport")?.value || "");
+  const hideCompleted = !!byId("toggleHideCompleted")?.checked;
+  const coordsOnly = !!byId("toggleOnlyWithCoordinates")?.checked;
 
-    filteredOrders = allOrders.filter(order => {
-      if (q) {
-        const haystack = [
-  order.order_number,
-  order.external_reference,
-  order.purchase_order,
-  getProductOwnerName(order),
-          getRetailerName(order),
-          order.delivery_city,
-          order.delivery_postcode,
-          order.delivery_address_1,
-          order.delivery_address_2,
-          getOrderDriverName(order)
-        ].join(" ").toLowerCase();
+  filteredOrders = allOrders.filter(order => {
+    if (isDelivered(order)) return false;
 
-        if (!haystack.includes(q)) return false;
-      }
+    if (q) {
+      const haystack = [
+        order.order_number,
+        order.external_reference,
+        order.purchase_order,
+        getProductOwnerName(order),
+        getRetailerName(order),
+        order.delivery_city,
+        order.delivery_postcode,
+        order.delivery_address_1,
+        order.delivery_address_2,
+        getOrderDriverName(order)
+      ].join(" ").toLowerCase();
 
-      if (status && normalize(order.status) !== status) return false;
+      if (!haystack.includes(q)) return false;
+    }
 
-      if (completion) {
-        const state = getCompletionState(order);
-        if (completion === "open" && state !== "open" && state !== "stock_complete") return false;
-        if (completion === "stock_complete" && state !== "stock_complete") return false;
-        if (completion === "delivered" && state !== "delivered") return false;
-        if (completion === "issue" && state !== "issue") return false;
-        if (completion === "failed" && state !== "failed") return false;
-      }
+    if (status && normalize(order.status) !== status) return false;
 
-      if (routeFilter === "planned" && !order.route_id) return false;
-      if (routeFilter === "unplanned" && order.route_id) return false;
+    if (completion) {
+      const state = getCompletionState(order);
+      if (completion === "open" && state !== "open" && state !== "stock_complete") return false;
+      if (completion === "stock_complete" && state !== "stock_complete") return false;
+      if (completion === "delivered" && state !== "delivered") return false;
+      if (completion === "issue" && state !== "issue") return false;
+      if (completion === "failed" && state !== "failed") return false;
+    }
 
-      if (transport) {
-        const value = normalize(order.transport_type || "unassigned");
-        if (value !== transport) return false;
-      }
+    if (routeFilter === "planned" && !order.route_id) return false;
+    if (routeFilter === "unplanned" && order.route_id) return false;
 
-      if (hideCompleted && (isDelivered(order) || isIssue(order) || isFailed(order))) return false;
-      if (coordsOnly && !hasCoordinates(order)) return false;
+    if (transport) {
+      const value = normalize(order.transport_type || "unassigned");
+      if (value !== transport) return false;
+    }
 
-      return true;
-    });
+    if (hideCompleted && (isDelivered(order) || isIssue(order) || isFailed(order))) return false;
+    if (coordsOnly && !hasCoordinates(order)) return false;
 
-    Array.from(selectedOrderIds).forEach(id => {
-      if (!allOrders.some(row => String(row.id) === String(id))) selectedOrderIds.delete(id);
-    });
+    return true;
+  });
 
-    sortOrders();
-    updateCheckAllState();
-    setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
-  }
+  Array.from(selectedOrderIds).forEach(id => {
+    if (!allOrders.some(row => String(row.id) === String(id))) {
+      selectedOrderIds.delete(id);
+    }
+  });
+
+  sortOrders();
+  updateCheckAllState();
+  setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
+}
 
   function updateCheckAllState() {
     const checkAll = byId("checkAllOrders");
@@ -1035,7 +1059,7 @@ markBelowMinimumOrders();
           </td>
 
           <td>
-            <span class="status-pill ${statusPillClass(order.status)}">
+            <span class="status-pill ${statusPillClass(order.status)}" ${statusPillStyle(order.status, order)}>
               ${escapeHtml(titleCase(order.status || "—"))}
             </span>
           </td>

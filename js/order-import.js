@@ -394,6 +394,19 @@ function splitContactFromAddressParts(parts = []) {
     select.value = match?.key || ownerProfiles[0]?.key || "";
   }
 
+function isZoyOwner() {
+  const owner = getSelectedProductOwner();
+  const text = normalize([
+    owner?.key,
+    owner?.name,
+    owner?.trading_name,
+    owner?.customer_code,
+    owner?.default_source_name
+  ].filter(Boolean).join(" "));
+
+  return text.includes("zoy");
+}
+
   function getSelectedProductOwner() {
     const selected = getFieldValue("productOwnerName", "");
 
@@ -1188,6 +1201,133 @@ function parsePdfProductLines(lines) {
     return match ? toNumber(match[1], 0) : 0;
   }
 
+function addDaysToIsoDate(isoDate, days) {
+  const d = new Date(isoDate);
+  if (Number.isNaN(d.getTime())) return isoDate || null;
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseZoyPdfOrder(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(cleanText)
+    .filter(Boolean);
+
+  const fullText = lines.join("\n");
+
+  const orderDateMatch = fullText.match(/Order date:\s*(\d{2}\/\d{2}\/\d{4})/i);
+  const orderDate = orderDateMatch ? parseDateToIso(orderDateMatch[1]) : null;
+
+  const zoyRefMatch = fullText.match(/Zoy reference No:\s*[\r\n\s]*(\d{4,})/i);
+  const zoyReference = zoyRefMatch ? zoyRefMatch[1] : "";
+
+  const poMatch = fullText.match(/Customer order No:\s*[\r\n\s]*([A-Za-z0-9 _.-]+)/i);
+  const purchaseOrder = poMatch ? cleanText(poMatch[1]).split("\n")[0] : "";
+
+  const leadTimeMatch = fullText.match(/Estimated lead time:\s*[\r\n\s]*(\d+)\s*weeks?/i);
+  const leadWeeks = leadTimeMatch ? Math.max(0, Math.round(toNumber(leadTimeMatch[1], 3))) : 3;
+  const dueDate = orderDate ? addDaysToIsoDate(orderDate, leadWeeks * 7) : null;
+
+  const customerLine = lines.find(line =>
+    /Castlegate|Furniture|Interiors|Ltd|Limited/i.test(line) &&
+    !/Units|Sheepfoot|Tel:|Email:/i.test(line)
+  ) || "";
+
+  const deliveryLine = lines.find(line =>
+    /Units|Sheepfoot|Warehouse contact|Tel:|Email:/i.test(line)
+  ) || "";
+
+  const retailName = cleanText(
+    customerLine
+      .replace(/^Customer:\s*/i, "")
+      .replace(/Order date:.*/i, "")
+  ) || "Unknown retailer";
+
+  const postcode = extractPostcode(deliveryLine || fullText);
+
+  const shipTo = {
+    ...buildEmptyAddress(),
+    contactName: retailName,
+    companyName: retailName,
+    address1: deliveryLine || "",
+    address2: "",
+    address3: "",
+    address4: "",
+    city: "",
+    county: "",
+    postcode,
+    country: getDefaultCountry(),
+    email: (deliveryLine.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || "",
+    phone: (deliveryLine.match(/(?:\+?\d[\d\s().-]{7,}\d)/) || [])[0] || ""
+  };
+
+  const productLines = [];
+
+  lines.forEach((line, index) => {
+    if (/Surcharge/i.test(line)) return;
+
+    const match = line.match(/^([A-Za-z0-9 ]+?)\s+(.+?)\s+(\d+)\s+(\d+)\s+£/);
+    if (!match) return;
+
+    const zoyItem = cleanText(match[1]);
+    const customerSkuText = cleanText(match[2]);
+    const qty = Math.round(toNumber(match[3], 1));
+
+    productLines.push({
+      itemRaw: line,
+      itemBrand: "Zoy",
+      itemCode: zoyItem,
+      description: customerSkuText,
+      quantity: qty,
+      unitVolume: 0,
+      unitWeight: 0,
+      totalVolume: 0,
+      totalWeight: 0,
+      sourceRow: index + 1,
+      parseError: ""
+    });
+  });
+
+  const order = {
+    ...buildEmptyOrder(),
+    sourceKind: "pdf",
+    sourceType: "zoy_order_ack_pdf",
+    orderNumber: zoyReference,
+    externalReference: zoyReference,
+    purchaseOrder,
+    orderDate,
+    dueDate,
+
+    retailName,
+    customerName: retailName,
+    contactName: retailName,
+
+    address1: shipTo.address1,
+    address2: shipTo.address2,
+    address3: shipTo.address3,
+    city: shipTo.city,
+    state: shipTo.county,
+    postcode: shipTo.postcode,
+    country: shipTo.country,
+    email: shipTo.email,
+    phone: shipTo.phone,
+
+    shipTo,
+
+    memo: [
+      purchaseOrder ? `Customer order No: ${purchaseOrder}` : "",
+      zoyReference ? `Zoy reference No: ${zoyReference}` : "",
+      `Estimated lead time: ${leadWeeks} weeks`
+    ].filter(Boolean).join(" | "),
+
+    pdfTotalVolume: 0,
+    lines: productLines
+  };
+
+  return [finalizeOrder(order)];
+}
+
   function parsePackingSlip(text) {
     const lines = String(text || "")
       .split(/\r?\n/)
@@ -1276,7 +1416,9 @@ lastPdfText = await extractPdfText(selectedPdfFile);
     setProgress(true, 45, "Parsing packing slip...");
 
     rawRows = lastPdfText.split(/\r?\n/).filter(Boolean);
-    groupedOrders = parsePackingSlip(lastPdfText);
+groupedOrders = isZoyOwner()
+  ? parseZoyPdfOrder(lastPdfText)
+  : parsePackingSlip(lastPdfText);
     selectedOrderNo = groupedOrders[0]?.orderNumber || null;
 
     setProgress(true, 65, "Checking existing orders...");

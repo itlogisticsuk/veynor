@@ -14,6 +14,7 @@
   let dashboardMap = null;
   let dashboardMapLayer = null;
   let depotMarker = null;
+  let selectedFdsDate = "";
 
   const charts = {};
 
@@ -36,14 +37,14 @@
   }
 
   function toNumber(value, fallback = 0) {
-    const num = Number(String(value ?? "").replace(",", "."));
+    if (value === null || value === undefined || value === "") return fallback;
+    const num = Number(String(value).replace(",", "."));
     return Number.isFinite(num) ? num : fallback;
   }
 
   function formatNumber(value, digits = 0) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "0";
-
     return num.toLocaleString("en-GB", {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits
@@ -53,19 +54,23 @@
   function formatMoney(value) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "£0.00";
-
     return `£${num.toLocaleString("en-GB", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
     })}`;
   }
 
+  function formatDate(value) {
+    if (!value) return "—";
+    const d = new Date(String(value).slice(0, 10));
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString("en-GB");
+  }
+
   function formatDateTime(value) {
     if (!value) return "—";
-
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return String(value);
-
     return d.toLocaleString("en-GB", {
       day: "2-digit",
       month: "short",
@@ -85,6 +90,19 @@
     return d.toISOString();
   }
 
+  function getNextFridayIso() {
+    const d = new Date();
+    const day = d.getDay();
+    const diff = (5 - day + 7) % 7 || 7;
+    d.setDate(d.getDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function setText(id, value) {
+    const el = byId(id);
+    if (el) el.textContent = value;
+  }
+
   function showToast(message, type = "ok") {
     const el = byId("toast");
     if (!el) return;
@@ -96,12 +114,7 @@
     window.__dashboardToastTimer = window.setTimeout(() => {
       el.textContent = "";
       el.className = "notice";
-    }, 6000);
-  }
-
-  function setText(id, value) {
-    const el = byId(id);
-    if (el) el.textContent = value;
+    }, 5000);
   }
 
   function ensureClient() {
@@ -115,11 +128,11 @@
     return client;
   }
 
-  async function safeQuery(label, callback, fallback) {
+  async function safeQuery(label, callback, fallback = []) {
     try {
       return await callback();
     } catch (error) {
-      console.warn(`[dashboard] ${label} skipped:`, error.message);
+      console.warn(`[dashboard] ${label} skipped:`, error?.message || error);
       return fallback;
     }
   }
@@ -128,7 +141,6 @@
     if (companyId) return companyId;
 
     const db = ensureClient();
-
     const { data, error } = await db
       .from("companies")
       .select("id")
@@ -142,237 +154,111 @@
     return companyId;
   }
 
-  function isClosedStatus(value) {
-    return [
-      "delivered",
-      "closed",
-      "cancelled",
-      "paid",
-      "archived"
-    ].includes(normalize(value));
-  }
+  async function loadTable(tableName, cid, selectText = "*", options = {}) {
+    return safeQuery(tableName, async () => {
+      let q = client
+        .from(tableName)
+        .select(selectText)
+        .eq("company_id", cid);
 
-  function isOpenOrder(order) {
-    const values = [
-      order.status,
-      order.warehouse_status,
-      order.transport_status,
-      order.overall_status
-    ].map(normalize);
+      if (options.orderBy) {
+        q = q.order(options.orderBy, { ascending: options.ascending ?? false });
+      }
 
-    return !values.some(isClosedStatus);
-  }
+      if (options.limit) {
+        q = q.limit(options.limit);
+      }
 
-  function hasCoordinates(order) {
-    const lat = Number(order.delivery_lat);
-    const lng = Number(order.delivery_lng);
-
-    return (
-      Number.isFinite(lat) &&
-      Number.isFinite(lng) &&
-      lat >= 49 &&
-      lat <= 61 &&
-      lng >= -9 &&
-      lng <= 3
-    );
-  }
-
-  function getOrderVolume(order) {
-    return (
-      toNumber(order.planning_volume_m3, 0) ||
-      toNumber(order.total_order_volume_m3, 0) ||
-      toNumber(order.volume_m3, 0)
-    );
-  }
-
-  function getCustomerName(order) {
-    return (
-      order.customers?.name ||
-      order.customer_name ||
-      order.retail_name ||
-      "Unknown"
-    );
-  }
-
-  function getRetailerName(order) {
-    return (
-      order.retail_name ||
-      order.delivery_name ||
-      order.customer_name ||
-      "—"
-    );
-  }
-
-  function hasActivePlannerVehicle(vehicle) {
-    const flags = [
-      vehicle.use_in_planning,
-      vehicle.active,
-      vehicle.is_active
-    ];
-
-    return !flags.some(value => {
-      const v = normalize(value);
-      return value === false || value === 0 || ["false", "0", "no", "off", "inactive"].includes(v);
-    });
+      const { data, error } = await q;
+      if (error) throw error;
+      return data || [];
+    }, []);
   }
 
   async function loadOrders(cid) {
-    return safeQuery("orders", async () => {
+    return loadTable("orders", cid, "*");
+  }
+
+  async function loadItems(cid) {
+    return loadTable("items", cid, "*");
+  }
+
+  async function loadProducts(cid) {
+    return loadTable("products", cid, "*");
+  }
+
+  async function loadRoutes(cid) {
+    return loadTable("routes", cid, "*");
+  }
+
+  async function loadRouteStops(cid) {
+    return loadTable("route_stops", cid, "*");
+  }
+
+  async function loadVehicles(cid) {
+    return loadTable("vehicles", cid, "*");
+  }
+
+  async function loadInvoices(cid) {
+    return loadTable("invoices", cid, "*");
+  }
+
+  async function loadOrderDocuments(cid) {
+    return loadTable("order_documents", cid, "*");
+  }
+
+  async function loadOrderLines(cid) {
+    return safeQuery("order lines", async () => {
       const attempts = [
         `
-          id, company_id, customer_id, order_number, status, warehouse_status,
-          transport_status, overall_status, planning_release, planning_colli,
-          planning_volume_m3, total_order_volume_m3, volume_m3,
-          delivery_lat, delivery_lng, delivery_city, delivery_postcode,
-          delivery_country, transport_type, route_id, delivered_at,
-          actual_delivery_date, confirmed_delivery_date, requested_delivery_date,
-          created_at, retail_name, customer_name,
-          customers (id, name, customer_code)
+          *,
+          products (
+            id,
+            weight_kg,
+            net_weight_kg,
+            gross_weight_kg,
+            volume_m3
+          )
         `,
-        `
-          id, company_id, customer_id, order_number, status, warehouse_status,
-          transport_status, planning_release, planning_colli, planning_volume_m3,
-          delivery_lat, delivery_lng, delivery_city, delivery_postcode,
-          delivery_country, transport_type, route_id, delivered_at,
-          confirmed_delivery_date, requested_delivery_date,
-          created_at, retail_name, customer_name,
-          customers (id, name, customer_code)
-        `,
-        `
-          id, company_id, customer_id, order_number, status, warehouse_status,
-          transport_status, planning_release, planning_colli, planning_volume_m3,
-          delivery_lat, delivery_lng, delivery_city, delivery_postcode,
-          delivery_country, transport_type, route_id, delivered_at,
-          confirmed_delivery_date, requested_delivery_date,
-          created_at, retail_name, customer_name
-        `,
-        `
-          id, company_id, customer_id, order_number, status,
-          planning_release, planning_colli, planning_volume_m3,
-          delivery_lat, delivery_lng, delivery_city, delivery_postcode,
-          transport_type, route_id, created_at
-        `
+        "*"
       ];
 
       let lastError = null;
 
       for (const selectText of attempts) {
         const { data, error } = await client
-          .from("orders")
+          .from("order_lines")
           .select(selectText)
           .eq("company_id", cid);
 
-        if (!error) {
-          console.log("[dashboard] orders loaded:", data?.length || 0);
-          return data || [];
-        }
-
+        if (!error) return data || [];
         lastError = error;
-        console.warn("[dashboard] orders select fallback failed:", error.message);
       }
 
-      throw lastError || new Error("Orders could not be loaded.");
-    }, []);
-  }
-
-  async function loadItems(cid) {
-    return safeQuery("items", async () => {
-      const { data, error } = await client
-        .from("items")
-        .select("id, status, company_id, created_at")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
-  }
-
-  async function loadProducts(cid) {
-    return safeQuery("products", async () => {
-      const { data, error } = await client
-        .from("products")
-        .select("id, volume_m3, weight_kg, net_weight_kg, company_id")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
-  }
-
-  async function loadRoutes(cid) {
-    return safeQuery("routes", async () => {
-      const { data, error } = await client
-        .from("routes")
-        .select("id, company_id, planned_date, created_at, route_status, status")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
-  }
-
-  async function loadVehicles(cid) {
-    return safeQuery("vehicles", async () => {
-      const { data, error } = await client
-        .from("vehicles")
-        .select("*")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
-  }
-
-  async function loadInvoices(cid) {
-    return safeQuery("invoices", async () => {
-      const { data, error } = await client
-        .from("invoices")
-        .select("id, company_id, invoice_date, due_date, total_amount, subtotal, vat_amount, status, created_at")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
-  }
-
-  async function loadOrderDocuments(cid) {
-    return safeQuery("order_documents", async () => {
-      const { data, error } = await client
-        .from("order_documents")
-        .select("id, company_id, order_id, document_type, document_status, file_url, created_at")
-        .eq("company_id", cid);
-
-      if (error) throw error;
-      return data || [];
+      throw lastError;
     }, []);
   }
 
   async function loadEvents(cid) {
-    return safeQuery("warehouse_events", async () => {
-      const { data, error } = await client
-        .from("warehouse_events")
-        .select("id, event_type, entity_type, reference_no, source_module, old_status, new_status, created_at")
-        .eq("company_id", cid)
-        .order("created_at", { ascending: false })
-        .limit(8);
-
-      if (error) throw error;
-      return data || [];
-    }, []);
+    return loadTable("warehouse_events", cid, "*", {
+      orderBy: "created_at",
+      ascending: false,
+      limit: 8
+    });
   }
 
   async function loadProductOwners(cid) {
     return safeQuery("product owner profiles", async () => {
       let profiles = [];
 
-      const { data: settingsRow, error: settingsError } = await client
+      const { data: settingsRow } = await client
         .from("settings")
         .select("setting_value")
         .eq("company_id", cid)
         .eq("setting_key", PRODUCT_OWNER_PROFILES_KEY)
         .maybeSingle();
 
-      if (!settingsError && settingsRow?.setting_value) {
+      if (settingsRow?.setting_value) {
         try {
           profiles = JSON.parse(settingsRow.setting_value || "[]");
         } catch {
@@ -397,12 +283,7 @@
         ];
       }
 
-      const { data: customers, error: customersError } = await client
-        .from("customers")
-        .select("id, name, customer_code")
-        .eq("company_id", cid);
-
-      if (customersError) throw customersError;
+      const customers = await loadTable("customers", cid, "*");
 
       return profiles.map(profile => {
         const searchValues = [
@@ -413,32 +294,22 @@
           profile.key
         ].map(normalize).filter(Boolean);
 
-        const customer = (customers || []).find(c => {
-          const customerValues = [
-            c.name,
-            c.customer_code
-          ].map(normalize).filter(Boolean);
-
+        const customer = customers.find(c => {
+          const customerValues = [c.name, c.customer_code].map(normalize).filter(Boolean);
           return searchValues.some(search =>
-            customerValues.some(cv =>
-              cv === search ||
-              cv.includes(search) ||
-              search.includes(cv)
-            )
+            customerValues.some(cv => cv === search || cv.includes(search) || search.includes(cv))
           );
         });
 
-        const dashboardUrl = customer?.id
-          ? `./customer-dashboard.html?customer_id=${encodeURIComponent(customer.id)}`
-          : `./customer-dashboard.html?product_owner=${encodeURIComponent(profile.key || profile.customer_code || profile.name)}`;
-
         return {
-          id: customer?.id || profile.key || profile.customer_code,
+          id: customer?.id || profile.key || profile.customer_code || profile.name,
           key: profile.key || profile.customer_code || "",
           name: profile.trading_name || profile.name || "Product Owner",
           legal_name: profile.name || "",
           customer_code: profile.customer_code || profile.key || "",
-          dashboard_url: dashboardUrl
+          dashboard_url: customer?.id
+            ? `./customer-dashboard.html?customer_id=${encodeURIComponent(customer.id)}`
+            : `./customer-dashboard.html?product_owner=${encodeURIComponent(profile.key || profile.customer_code || profile.name || "")}`
         };
       });
     }, []);
@@ -446,25 +317,15 @@
 
   async function loadDepotSettings(cid) {
     return safeQuery("depot settings", async () => {
-      const attempts = [
-        { table: "company_settings" },
-        { table: "settings" }
-      ];
-
-      for (const attempt of attempts) {
+      for (const table of ["company_settings", "settings"]) {
         const { data, error } = await client
-          .from(attempt.table)
+          .from(table)
           .select("setting_key, setting_value")
           .eq("company_id", cid)
-          .in("setting_key", [
-            "home_depot_name",
-            "home_depot_lat",
-            "home_depot_lng"
-          ]);
+          .in("setting_key", ["home_depot_name", "home_depot_lat", "home_depot_lng"]);
 
         if (!error && Array.isArray(data)) {
           const map = new Map(data.map(row => [row.setting_key, row.setting_value]));
-
           return {
             name: map.get("home_depot_name") || "Depot",
             lat: toNumber(map.get("home_depot_lat"), null),
@@ -473,159 +334,504 @@
         }
       }
 
-      return {
-        name: "Depot",
-        lat: null,
-        lng: null
-      };
-    }, {
-      name: "Depot",
-      lat: null,
-      lng: null
+      return { name: "Depot", lat: null, lng: null };
+    }, { name: "Depot", lat: null, lng: null });
+  }
+
+  function isClosedStatus(value) {
+    return ["delivered", "closed", "cancelled", "paid", "archived", "pod_completed"].includes(normalize(value));
+  }
+
+  function isOpenOrder(order) {
+    const values = [
+      order.status,
+      order.warehouse_status,
+      order.transport_status,
+      order.overall_status
+    ].map(normalize);
+
+    return !values.some(isClosedStatus);
+  }
+
+  function isDeliveredOrder(order) {
+    return [
+      order.status,
+      order.transport_status,
+      order.warehouse_status,
+      order.overall_status
+    ].map(normalize).some(v => ["delivered", "closed", "pod_completed"].includes(v));
+  }
+
+  function hasCoordinates(order) {
+    const lat = Number(order.delivery_lat);
+    const lng = Number(order.delivery_lng);
+
+    return (
+      Number.isFinite(lat) &&
+      Number.isFinite(lng) &&
+      lat >= 49 &&
+      lat <= 61 &&
+      lng >= -9 &&
+      lng <= 3
+    );
+  }
+
+  function getOrderVolume(order) {
+    return (
+      toNumber(order.planning_volume_m3, 0) ||
+      toNumber(order.total_order_volume_m3, 0) ||
+      toNumber(order.total_volume_m3, 0) ||
+      toNumber(order.volume_m3, 0)
+    );
+  }
+
+  function getOrderColli(order) {
+    return (
+      toNumber(order.planning_colli, 0) ||
+      toNumber(order.total_order_colli, 0) ||
+      toNumber(order.total_colli, 0) ||
+      toNumber(order.colli, 0)
+    );
+  }
+
+  function getOrderRevenueDirect(order) {
+    return Math.max(
+      toNumber(order.estimated_revenue_gbp, 0),
+      toNumber(order.total_customer_charge, 0),
+      toNumber(order.customer_charge_gbp, 0),
+      toNumber(order.revenue_gbp, 0),
+      toNumber(order.order_revenue_gbp, 0),
+      toNumber(order.transport_revenue_gbp, 0),
+      toNumber(order.total_charge_gbp, 0),
+      toNumber(order.total_order_charge, 0)
+    );
+  }
+
+  function getLineRevenue(line) {
+    return Math.max(
+      toNumber(line.total_customer_charge, 0),
+      toNumber(line.total_line_charge, 0),
+      toNumber(line.line_total_gbp, 0),
+      toNumber(line.revenue_gbp, 0),
+      toNumber(line.transport_tariff_gbp, 0),
+      toNumber(line.total_line_revenue_gbp, 0)
+    );
+  }
+
+  function getOrderRevenue(order, orderLinesByOrder) {
+    const direct = getOrderRevenueDirect(order);
+    if (direct > 0) return direct;
+
+    const lines = orderLinesByOrder.get(String(order.id)) || [];
+    return lines.reduce((sum, line) => sum + getLineRevenue(line), 0);
+  }
+
+  function getOrderWeight(order, orderLinesByOrder) {
+    const direct =
+      toNumber(order.planning_weight_kg, 0) ||
+      toNumber(order.total_order_weight_kg, 0) ||
+      toNumber(order.total_weight_kg, 0) ||
+      toNumber(order.weight_kg, 0) ||
+      toNumber(order.matched_weight_kg, 0);
+
+    if (direct > 0) return direct;
+
+    const lines = orderLinesByOrder.get(String(order.id)) || [];
+
+    return lines.reduce((sum, line) => {
+      const qty =
+        toNumber(line.quantity_ordered, 0) ||
+        toNumber(line.quantity, 0) ||
+        toNumber(line.qty, 0) ||
+        1;
+
+      const total =
+        toNumber(line.total_line_weight_kg, 0) ||
+        toNumber(line.total_weight_kg, 0);
+
+      const unit =
+        toNumber(line.unit_weight_kg, 0) ||
+        toNumber(line.weight_kg, 0) ||
+        toNumber(line.products?.weight_kg, 0) ||
+        toNumber(line.products?.net_weight_kg, 0) ||
+        toNumber(line.products?.gross_weight_kg, 0);
+
+      return sum + (total || unit * qty);
+    }, 0);
+  }
+
+  function getCustomerName(order) {
+    return (
+      order.customers?.name ||
+      order.customer_name ||
+      order.customer ||
+      order.product_owner_name ||
+      order.retail_name ||
+      "Unknown"
+    );
+  }
+
+  function getRetailerName(order) {
+    return (
+      order.retail_name ||
+      order.retailer_name ||
+      order.delivery_name ||
+      order.shop_name ||
+      order.customer_name ||
+      "—"
+    );
+  }
+
+  function getRouteDate(route) {
+    return (
+      route.planned_delivery_date ||
+      route.route_date ||
+      route.planned_date ||
+      route.delivery_date ||
+      ""
+    );
+  }
+
+  function getRouteLabel(route) {
+    return (
+      route.route_code ||
+      route.route_number ||
+      route.route_name ||
+      route.name ||
+      "Route"
+    );
+  }
+
+  function getRouteCost(route) {
+    return Math.max(
+      toNumber(route.estimated_cost_total_gbp, 0),
+      toNumber(route.total_cost_gbp, 0),
+      toNumber(route.cost_gbp, 0),
+      toNumber(route.estimated_transport_cost_gbp, 0)
+    );
+  }
+
+  function getRouteRevenueDirect(route) {
+    return Math.max(
+      toNumber(route.estimated_revenue_gbp, 0),
+      toNumber(route.total_revenue_gbp, 0),
+      toNumber(route.revenue_gbp, 0),
+      toNumber(route.planned_revenue_gbp, 0)
+    );
+  }
+
+  function createIndexes(rows) {
+    const {
+      orders,
+      orderLines,
+      routeStops
+    } = rows;
+
+    const ordersById = new Map();
+    orders.forEach(order => ordersById.set(String(order.id), order));
+
+    const orderLinesByOrder = new Map();
+    orderLines.forEach(line => {
+      const key = String(line.order_id || "");
+      if (!key) return;
+      if (!orderLinesByOrder.has(key)) orderLinesByOrder.set(key, []);
+      orderLinesByOrder.get(key).push(line);
+    });
+
+    const stopsByRoute = new Map();
+    routeStops.forEach(stop => {
+      const key = String(stop.route_id || "");
+      if (!key) return;
+      if (!stopsByRoute.has(key)) stopsByRoute.set(key, []);
+      stopsByRoute.get(key).push(stop);
+    });
+
+    stopsByRoute.forEach(list => {
+      list.sort((a, b) =>
+        toNumber(a.stop_sequence || a.stop_number, 0) -
+        toNumber(b.stop_sequence || b.stop_number, 0)
+      );
+    });
+
+    return {
+      ordersById,
+      orderLinesByOrder,
+      stopsByRoute
+    };
+  }
+
+  function getOrdersForRoute(route, rows, indexes) {
+    const routeId = String(route.id);
+    const byStop = (indexes.stopsByRoute.get(routeId) || [])
+      .map(stop => indexes.ordersById.get(String(stop.order_id)))
+      .filter(Boolean);
+
+    const byOrderRouteId = rows.orders.filter(order => String(order.route_id || "") === routeId);
+
+    const map = new Map();
+    [...byStop, ...byOrderRouteId].forEach(order => map.set(String(order.id), order));
+    return [...map.values()];
+  }
+
+  function getRouteSummary(route, rows, indexes) {
+    const stops = indexes.stopsByRoute.get(String(route.id)) || [];
+    const routeOrders = getOrdersForRoute(route, rows, indexes);
+
+    const totalStops =
+      stops.length ||
+      toNumber(route.total_stops, 0) ||
+      toNumber(route.planned_stops, 0) ||
+      routeOrders.length;
+
+    const totalVolume =
+      stops.reduce((sum, stop) => sum + toNumber(stop.planned_volume_m3, 0), 0) ||
+      routeOrders.reduce((sum, order) => sum + getOrderVolume(order), 0) ||
+      toNumber(route.planned_volume_m3, 0) ||
+      toNumber(route.total_volume_m3, 0);
+
+    const totalColli =
+      stops.reduce((sum, stop) => sum + toNumber(stop.planned_colli, 0), 0) ||
+      routeOrders.reduce((sum, order) => sum + getOrderColli(order), 0) ||
+      toNumber(route.planned_colli, 0) ||
+      toNumber(route.total_colli, 0);
+
+    const revenue =
+      getRouteRevenueDirect(route) ||
+      routeOrders.reduce((sum, order) => sum + getOrderRevenue(order, indexes.orderLinesByOrder), 0);
+
+    const cost = getRouteCost(route);
+    const result =
+      toNumber(route.estimated_profit_gbp, NaN) ||
+      toNumber(route.result_gbp, NaN) ||
+      revenue - cost;
+
+    return {
+      id: route.id,
+      label: getRouteLabel(route),
+      date: getRouteDate(route),
+      status: route.route_status || route.status || "planned",
+      stops: totalStops,
+      volume: totalVolume,
+      colli: totalColli,
+      miles: toNumber(route.estimated_distance_miles, 0) || toNumber(route.estimated_distance_km, 0) * 0.621371,
+      hours: toNumber(route.estimated_total_hours, 0),
+      revenue,
+      cost,
+      result,
+      orders: routeOrders
+    };
+  }
+
+  function hasActivePlannerVehicle(vehicle) {
+    const flags = [
+      vehicle.use_in_planning,
+      vehicle.active,
+      vehicle.is_active
+    ];
+
+    return !flags.some(value => {
+      const v = normalize(value);
+      return value === false || value === 0 || ["false", "0", "no", "off", "inactive"].includes(v);
     });
   }
 
-  function calculateMetrics(rows) {
-    const {
-      orders,
-      items,
-      products,
-      routes,
-      vehicles,
-      invoices,
-      orderDocuments
-    } = rows;
+  function getVehicleName(vehicle) {
+    return (
+      vehicle.name ||
+      vehicle.vehicle_name ||
+      vehicle.registration ||
+      vehicle.vehicle_code ||
+      "Vehicle"
+    );
+  }
 
+  function getVehicleType(vehicle) {
+    return normalize(vehicle.vehicle_type || vehicle.type || "");
+  }
+
+  function getCarrierVehicle(vehicles) {
+    return vehicles.find(vehicle =>
+      getVehicleType(vehicle) === "carrier" ||
+      normalize(getVehicleName(vehicle)) === "fds" ||
+      normalize(vehicle.name).includes("fds")
+    ) || null;
+  }
+
+  function getCarrierOrderDate(order) {
+    return (
+      order.planned_route_date ||
+      order.expected_delivery_date ||
+      order.confirmed_delivery_date ||
+      order.requested_delivery_date ||
+      ""
+    );
+  }
+
+  function getFdsOrders(rows, indexes, dateFilter = "") {
+    const carrier = getCarrierVehicle(rows.vehicles);
+
+    return rows.orders.filter(order => {
+      const status = normalize(order.status);
+      const transport = normalize(order.transport_type);
+      const orderDate = getCarrierOrderDate(order);
+      const carrierMatch = !carrier || !order.carrier_vehicle_id || String(order.carrier_vehicle_id) === String(carrier.id);
+
+      const isFds =
+        transport === "charter" ||
+        transport === "fds" ||
+        status === "export_for_charter";
+
+      return (
+        isFds &&
+        status !== "delivered" &&
+        !order.route_id &&
+        carrierMatch &&
+        (!dateFilter || !orderDate || String(orderDate).slice(0, 10) === dateFilter)
+      );
+    }).sort((a, b) => String(a.order_number || "").localeCompare(String(b.order_number || "")));
+  }
+
+  function getFdsDates(rows) {
+    const dates = new Set();
+
+    rows.orders.forEach(order => {
+      const status = normalize(order.status);
+      const transport = normalize(order.transport_type);
+      const isFds = transport === "charter" || transport === "fds" || status === "export_for_charter";
+      if (!isFds || order.route_id || status === "delivered") return;
+
+      const date = String(getCarrierOrderDate(order) || "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.add(date);
+    });
+
+    return [...dates].sort();
+  }
+
+  function calculateMetrics(rows, indexes) {
     const today = todayIso();
     const monthStart = monthStartIso();
 
-    const openOrders = orders.filter(isOpenOrder);
+    const openOrders = rows.orders.filter(isOpenOrder);
     const openWithCoords = openOrders.filter(hasCoordinates);
 
-    const releasedOrders = orders.filter(o =>
-      o.planning_release === true ||
-      normalize(o.planning_release) === "true"
-    );
+    const readyPlanning = openOrders.filter(order => {
+      const status = normalize(order.status);
+      const transportStatus = normalize(order.transport_status);
+      const transport = normalize(order.transport_type);
 
-const readyPlanning = orders.filter(o => {
-  const status = normalize(o.status);
-  const transportStatus = normalize(o.transport_status);
+      const ready = ["ready_for_planning", "ready_for_picking"].includes(status);
+      const alreadyPlanned =
+        Boolean(order.route_id) ||
+        status === "planned" ||
+        transportStatus === "planned";
 
-  const isReleased =
-    o.planning_release === true ||
-    normalize(o.planning_release) === "true";
+      const charter =
+        transport === "charter" ||
+        transport === "fds" ||
+        status === "export_for_charter" ||
+        transportStatus === "export_for_charter";
 
-  const isReady =
-    status === "ready_for_planning" ||
-    status === "ready_for_picking" ||
-    isReleased;
+      return ready && !alreadyPlanned && !charter;
+    });
 
-  const isAlreadyPlanned =
-    Boolean(o.route_id) ||
-    status === "planned" ||
-    transportStatus === "planned";
-
-  return isReady && !isAlreadyPlanned;
-});
-
-    const awaitingGoods = orders.filter(o => {
-      const status = normalize(o.status);
-      const wh = normalize(o.warehouse_status);
-
+    const awaitingGoods = openOrders.filter(order => {
+      const status = normalize(order.status);
+      const wh = normalize(order.warehouse_status);
       return ["imported", "matching_review"].includes(status) ||
         ["awaiting_goods", "partial_stock"].includes(wh);
     });
 
-    const fullyMatched = orders.filter(o => {
-      const status = normalize(o.status);
-      const wh = normalize(o.warehouse_status);
-
+    const fullyMatched = openOrders.filter(order => {
+      const status = normalize(order.status);
+      const wh = normalize(order.warehouse_status);
       return ["ready_for_picking", "ready_for_planning"].includes(status) ||
         ["stock_complete", "picked"].includes(wh);
     });
 
-    const plannedOrders = openOrders.filter(o =>
-      normalize(o.status) === "planned" ||
-      normalize(o.transport_status) === "planned" ||
-      Boolean(o.route_id)
+    const plannedOrders = openOrders.filter(order =>
+      Boolean(order.route_id) ||
+      normalize(order.status) === "planned" ||
+      normalize(order.transport_status) === "planned"
     );
 
-    const deliveredToday = orders.filter(o => {
-      const dateValue = o.delivered_at || o.actual_delivery_date || o.confirmed_delivery_date;
+    const deliveredToday = rows.orders.filter(order => {
+      const dateValue = order.delivered_at || order.actual_delivery_date || order.confirmed_delivery_date;
       return dateValue && String(dateValue).slice(0, 10) === today;
     });
 
-    const routesToday = routes.filter(r => {
-      const dateValue = r.planned_date || r.created_at;
-      return dateValue && String(dateValue).slice(0, 10) === today;
+    const routeSummariesToday = rows.routes
+      .filter(route => String(getRouteDate(route)).slice(0, 10) === today)
+      .map(route => getRouteSummary(route, rows, indexes));
+
+    const podDocs = rows.orderDocuments.filter(doc => {
+      const type = normalize(doc.document_type);
+      return type === "pod" || type === "signed_delivery_note" || type.includes("pod");
     });
 
-    const podDocs = orderDocuments.filter(d => normalize(d.document_type) === "pod");
     const podOrderIds = new Set(
       podDocs
-        .filter(d => d.file_url || ["generated", "signed", "sent"].includes(normalize(d.document_status)))
-        .map(d => String(d.order_id))
+        .filter(doc => doc.file_url || ["generated", "signed", "sent"].includes(normalize(doc.document_status)))
+        .map(doc => String(doc.order_id))
     );
 
-    const deliveredOrders = orders.filter(o =>
-      isClosedStatus(o.status) ||
-      normalize(o.transport_status) === "delivered"
-    );
+    const deliveredOrders = rows.orders.filter(isDeliveredOrder);
+    const podsMissing = deliveredOrders.filter(order => !podOrderIds.has(String(order.id))).length;
 
-    const podsMissing = deliveredOrders.filter(o => !podOrderIds.has(String(o.id))).length;
-
-    const stockUnits = items.length;
-    const stockAvailable = items.filter(i => normalize(i.status) === "in_stock").length;
-    const stockReserved = items.filter(i => normalize(i.status) === "reserved").length;
-    const stockPickedLoaded = items.filter(i =>
-      ["picked", "loaded", "shipped"].includes(normalize(i.status))
-    ).length;
-    const stockBlocked = items.filter(i =>
-      ["missing", "damaged", "cancelled"].includes(normalize(i.status))
+    const productsMissingData = rows.products.filter(product =>
+      toNumber(product.volume_m3, 0) <= 0 ||
+      (
+        toNumber(product.weight_kg, 0) <= 0 &&
+        toNumber(product.net_weight_kg, 0) <= 0 &&
+        toNumber(product.gross_weight_kg, 0) <= 0
+      )
     ).length;
 
-    const productsMissingData = products.filter(p =>
-      toNumber(p.volume_m3, 0) <= 0 ||
-      (toNumber(p.weight_kg, 0) <= 0 && toNumber(p.net_weight_kg, 0) <= 0)
-    ).length;
-
-    const releasedWithCoords = releasedOrders.filter(hasCoordinates).length;
-    const missingCoords = releasedOrders.filter(o => !hasCoordinates(o)).length;
-    const charterOrders = openOrders.filter(o => normalize(o.transport_type) === "charter").length;
-    const activeVehicles = vehicles.filter(hasActivePlannerVehicle).length;
-
-    const monthInvoices = invoices.filter(inv => {
-      const dateValue = inv.invoice_date || inv.created_at;
+    const monthInvoices = rows.invoices.filter(invoice => {
+      const dateValue = invoice.invoice_date || invoice.created_at;
       return dateValue && new Date(dateValue).toISOString() >= monthStart;
     });
 
-    const revenueMonth = monthInvoices.reduce((sum, inv) => {
+    const revenueMonth = monthInvoices.reduce((sum, invoice) => {
       return sum + (
-        toNumber(inv.total_amount, 0) ||
-        toNumber(inv.subtotal, 0) + toNumber(inv.vat_amount, 0)
+        toNumber(invoice.total_amount, 0) ||
+        toNumber(invoice.gross_amount, 0) ||
+        toNumber(invoice.subtotal, 0) + toNumber(invoice.vat_amount, 0)
       );
     }, 0);
 
-    const openInvoices = invoices.filter(inv =>
-      ["generated", "sent", "partially_paid"].includes(normalize(inv.status))
+    const openInvoices = rows.invoices.filter(invoice =>
+      ["generated", "sent", "partially_paid"].includes(normalize(invoice.status))
     ).length;
 
-    const paidInvoices = invoices.filter(inv =>
-      normalize(inv.status) === "paid"
-    ).length;
+    const paidInvoices = rows.invoices.filter(invoice => normalize(invoice.status) === "paid").length;
 
-    const overdueInvoices = invoices.filter(inv => {
-      const status = normalize(inv.status);
+    const overdueInvoices = rows.invoices.filter(invoice => {
+      const status = normalize(invoice.status);
       if (["paid", "closed"].includes(status)) return false;
-      if (!inv.due_date) return false;
-      return String(inv.due_date).slice(0, 10) < today;
+      if (!invoice.due_date) return false;
+      return String(invoice.due_date).slice(0, 10) < today;
     }).length;
 
+    const stockAvailable = rows.items.filter(item => normalize(item.status) === "in_stock").length;
+    const stockReserved = rows.items.filter(item => normalize(item.status) === "reserved").length;
+    const stockPickedLoaded = rows.items.filter(item =>
+      ["picked", "loaded", "shipped"].includes(normalize(item.status))
+    ).length;
+    const stockBlocked = rows.items.filter(item =>
+      ["missing", "damaged", "cancelled"].includes(normalize(item.status))
+    ).length;
+
+    const releasedOrders = openOrders.filter(order =>
+      order.planning_release === true ||
+      normalize(order.planning_release) === "true" ||
+      ["ready_for_planning", "ready_for_picking", "planned"].includes(normalize(order.status))
+    );
+
     const completionBase = openOrders.length || 1;
-    const completionCount = openOrders.filter(o =>
-      ["planned", "loaded", "delivered", "closed"].includes(normalize(o.status)) ||
-      ["planned", "loaded", "delivered"].includes(normalize(o.transport_status)) ||
-      Boolean(o.route_id)
+    const completionCount = openOrders.filter(order =>
+      Boolean(order.route_id) ||
+      ["planned", "loaded"].includes(normalize(order.status)) ||
+      ["planned", "loaded"].includes(normalize(order.transport_status))
     ).length;
 
     const completionPct = Math.round((completionCount / completionBase) * 100);
@@ -638,17 +844,16 @@ const readyPlanning = orders.filter(o => {
       openVolume,
 
       readyPlanning: readyPlanning.length,
-      routesToday: routesToday.length,
+      plannedOrders: plannedOrders.length,
       podsMissing,
       revenueMonth,
 
       awaitingGoods: awaitingGoods.length,
       fullyMatched: fullyMatched.length,
-      plannedOrders: plannedOrders.length,
       deliveredToday: deliveredToday.length,
       completionPct,
 
-      stockUnits,
+      stockUnits: rows.items.length,
       stockAvailable,
       stockReserved,
       stockPickedLoaded,
@@ -656,15 +861,21 @@ const readyPlanning = orders.filter(o => {
       productsMissingData,
 
       releasedOrders: releasedOrders.length,
-      releasedWithCoords,
-      missingCoords,
-      charterOrders,
-      activeVehicles,
+      releasedWithCoords: releasedOrders.filter(hasCoordinates).length,
+      missingCoords: releasedOrders.filter(order => !hasCoordinates(order)).length,
+      charterOrders: openOrders.filter(order => {
+        const status = normalize(order.status);
+        const transport = normalize(order.transport_type);
+        return transport === "charter" || transport === "fds" || status === "export_for_charter";
+      }).length,
+      activeVehicles: rows.vehicles.filter(hasActivePlannerVehicle).length,
 
       openInvoices,
       paidInvoices,
       overdueInvoices,
-      monthInvoices: monthInvoices.length
+      monthInvoices: monthInvoices.length,
+
+      routeSummariesToday
     };
   }
 
@@ -686,7 +897,7 @@ const readyPlanning = orders.filter(o => {
     setText("snapDeliveredToday", formatNumber(m.deliveredToday));
 
     setText("completionPct", `${m.completionPct}%`);
-    setText("completionText", `${m.completionPct}% of open orders are planned or delivered.`);
+    setText("completionText", `${m.completionPct}% of open orders are planned or on route.`);
 
     const bar = byId("completionBar");
     if (bar) bar.style.width = `${Math.max(0, Math.min(100, m.completionPct))}%`;
@@ -697,17 +908,153 @@ const readyPlanning = orders.filter(o => {
     setText("routeCharter", formatNumber(m.charterOrders));
   }
 
+  function renderTodayRoutes(routeSummaries) {
+    const revenue = routeSummaries.reduce((sum, route) => sum + route.revenue, 0);
+    const cost = routeSummaries.reduce((sum, route) => sum + route.cost, 0);
+    const result = revenue - cost;
+
+    setText("todayRoutesCount", formatNumber(routeSummaries.length));
+    setText("todayRoutesRevenue", formatMoney(revenue));
+    setText("todayRoutesCost", formatMoney(cost));
+    setText("todayRoutesResult", formatMoney(result));
+
+    const list = byId("todayRoutesList");
+    if (!list) return;
+
+    if (!routeSummaries.length) {
+      list.innerHTML = `
+        <div class="activity-row">
+          <div class="activity-main">
+            <div class="activity-title">No routes today</div>
+            <div class="activity-sub">Nothing planned for today.</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+list.innerHTML = `
+  <details class="activity-row" style="display:block;">
+    <summary style="cursor:pointer;font-weight:950;color:#07152f;">
+      Show today's routes (${formatNumber(routeSummaries.length)})
+    </summary>
+
+    <div style="display:grid;gap:9px;margin-top:12px;">
+      ${routeSummaries.map(route => `
+        <div class="activity-row">
+          <div class="activity-main">
+            <div class="activity-title">${escapeHtml(route.label)}</div>
+            <div class="activity-sub">
+              ${formatNumber(route.stops)} stops
+              · ${formatNumber(route.volume, 2)} m³
+              · ${formatMoney(route.revenue)} revenue
+              · ${formatMoney(route.cost)} cost
+            </div>
+          </div>
+          <div class="summary-number" style="color:${route.result >= 0 ? "#16a34a" : "#dc2626"};">
+            ${formatMoney(route.result)}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  </details>
+`;
+  }
+
+  function renderFdsDateSelector(dates, currentDate) {
+    const host = byId("fdsPlanningDate");
+    if (!host) return;
+
+    const allDates = dates.length ? dates : [currentDate || getNextFridayIso()];
+    const options = allDates.map(date => `
+      <option value="${escapeHtml(date)}" ${date === currentDate ? "selected" : ""}>
+        ${escapeHtml(formatDate(date))}
+      </option>
+    `).join("");
+
+    host.innerHTML = `
+      <select id="fdsDateSelect" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:11px;font-weight:800;background:#fff;">
+        ${options}
+      </select>
+    `;
+
+    byId("fdsDateSelect")?.addEventListener("change", event => {
+      selectedFdsDate = event.target.value;
+      loadDashboard();
+    });
+  }
+
+  function renderFdsPlanning(rows, indexes) {
+    const dates = getFdsDates(rows);
+    const defaultDate = dates.includes(getNextFridayIso())
+      ? getNextFridayIso()
+      : dates[0] || getNextFridayIso();
+
+    const date = selectedFdsDate || defaultDate;
+    selectedFdsDate = date;
+
+    renderFdsDateSelector(dates, date);
+
+    const orders = getFdsOrders(rows, indexes, date);
+
+    const colli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
+    const volume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
+    const weight = orders.reduce((sum, order) => sum + getOrderWeight(order, indexes.orderLinesByOrder), 0);
+
+    setText("fdsOrdersCount", formatNumber(orders.length));
+    setText("fdsPlanningVolume", `${formatNumber(volume, 2)} m³`);
+    setText("fdsPlanningColli", formatNumber(colli));
+    setText("fdsPlanningWeight", `${formatNumber(weight, 0)} kg`);
+
+    const list = byId("fdsPlanningList");
+    if (!list) return;
+
+    if (!orders.length) {
+      list.innerHTML = `
+        <div class="activity-row">
+          <div class="activity-main">
+            <div class="activity-title">No FDS orders</div>
+            <div class="activity-sub">No charter handover currently planned for ${escapeHtml(formatDate(date))}.</div>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+list.innerHTML = `
+  <details class="activity-row warning" style="display:block;">
+    <summary style="cursor:pointer;font-weight:950;color:#07152f;">
+      Show S2U / FDS orders (${formatNumber(orders.length)})
+    </summary>
+
+    <div style="display:grid;gap:9px;margin-top:12px;">
+      ${orders.slice(0, 12).map(order => {
+        const weightKg = getOrderWeight(order, indexes.orderLinesByOrder);
+
+        return `
+          <div class="activity-row warning">
+            <div class="activity-main">
+              <div class="activity-title">
+                ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
+              </div>
+              <div class="activity-sub">
+                ${escapeHtml(order.delivery_city || "—")}
+                · ${escapeHtml(order.delivery_postcode || "—")}
+                · ${formatNumber(getOrderColli(order))} colli
+                · ${formatNumber(getOrderVolume(order), 2)} m³
+                · ${formatNumber(weightKg, 0)} kg
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  </details>
+`;
+  }
+
   function renderAlerts(m) {
     const alerts = [];
-
-    if (m.awaitingGoods > 0) {
-      alerts.push({
-        type: "warning",
-        title: "Orders awaiting goods",
-        sub: "Stock is not complete yet.",
-        count: m.awaitingGoods
-      });
-    }
 
     if (m.openMissingCoords > 0) {
       alerts.push({
@@ -715,15 +1062,6 @@ const readyPlanning = orders.filter(o => {
         title: "Open orders not shown on map",
         sub: "Open orders exist without valid UK latitude / longitude.",
         count: m.openMissingCoords
-      });
-    }
-
-    if (m.missingCoords > 0) {
-      alerts.push({
-        type: "danger",
-        title: "Released orders missing coordinates",
-        sub: "These cannot be planned correctly on the map.",
-        count: m.missingCoords
       });
     }
 
@@ -834,18 +1172,15 @@ const readyPlanning = orders.filter(o => {
       .sort((a, b) => b.orders - a.orders)
       .slice(0, 8);
 
-    if (!rows.length) {
-      body.innerHTML = `<tr><td colspan="3">No open orders found.</td></tr>`;
-      return;
-    }
-
-    body.innerHTML = rows.map(row => `
-      <tr>
-        <td>${escapeHtml(row.name)}</td>
-        <td>${formatNumber(row.orders)}</td>
-        <td>${formatNumber(row.volume, 2)} m³</td>
-      </tr>
-    `).join("");
+    body.innerHTML = rows.length
+      ? rows.map(row => `
+          <tr>
+            <td>${escapeHtml(row.name)}</td>
+            <td>${formatNumber(row.orders)}</td>
+            <td>${formatNumber(row.volume, 2)} m³</td>
+          </tr>
+        `).join("")
+      : `<tr><td colspan="3">No open orders found.</td></tr>`;
   }
 
   function customerInitials(name) {
@@ -896,7 +1231,6 @@ const readyPlanning = orders.filter(o => {
   function renderChart(id, config) {
     const canvas = byId(id);
     if (!canvas || !window.Chart) return;
-
     destroyChart(id);
     charts[id] = new Chart(canvas, config);
   }
@@ -905,21 +1239,16 @@ const readyPlanning = orders.filter(o => {
     renderChart("completionChart", {
       type: "doughnut",
       data: {
-        labels: ["Planned / delivered", "Open remaining"],
+        labels: ["Planned / on route", "Open remaining"],
         datasets: [{
-          data: [
-            m.completionPct,
-            Math.max(0, 100 - m.completionPct)
-          ]
+          data: [m.completionPct, Math.max(0, 100 - m.completionPct)]
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         cutout: "68%",
-        plugins: {
-          legend: { position: "bottom" }
-        }
+        plugins: { legend: { position: "bottom" } }
       }
     });
 
@@ -929,26 +1258,14 @@ const readyPlanning = orders.filter(o => {
         labels: ["Available", "Reserved", "Picked / Loaded", "Blocked"],
         datasets: [{
           label: "Stock items",
-          data: [
-            m.stockAvailable,
-            m.stockReserved,
-            m.stockPickedLoaded,
-            m.stockBlocked
-          ]
+          data: [m.stockAvailable, m.stockReserved, m.stockPickedLoaded, m.stockBlocked]
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { precision: 0 }
-          }
-        }
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
       }
     });
 
@@ -958,12 +1275,7 @@ const readyPlanning = orders.filter(o => {
         labels: ["Revenue", "Open invoices", "Paid", "Overdue"],
         datasets: [{
           label: "Finance",
-          data: [
-            m.revenueMonth,
-            m.openInvoices,
-            m.paidInvoices,
-            m.overdueInvoices
-          ]
+          data: [m.revenueMonth, m.openInvoices, m.paidInvoices, m.overdueInvoices]
         }]
       },
       options: {
@@ -973,25 +1285,21 @@ const readyPlanning = orders.filter(o => {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: ctx => {
-                if (ctx.dataIndex === 0) return formatMoney(ctx.parsed.y);
-                return formatNumber(ctx.parsed.y);
-              }
+              label: ctx => ctx.dataIndex === 0 ? formatMoney(ctx.parsed.y) : formatNumber(ctx.parsed.y)
             }
           }
         },
-        scales: {
-          y: { beginAtZero: true }
-        }
+        scales: { y: { beginAtZero: true } }
       }
     });
   }
 
   function getMarkerColour(order) {
+    const status = normalize(order.status);
     const transport = normalize(order.transport_type);
 
-    if (transport === "charter") return "#f59e0b";
-    if (transport === "own_transport" || order.planning_release === true) return "#16a34a";
+    if (transport === "charter" || transport === "fds" || status === "export_for_charter") return "#f59e0b";
+    if (transport === "own_transport" || status === "planned" || Boolean(order.route_id)) return "#16a34a";
     return "#2563eb";
   }
 
@@ -1002,7 +1310,7 @@ const readyPlanning = orders.filter(o => {
         <div>${escapeHtml(getCustomerName(order))}</div>
         <div>${escapeHtml(getRetailerName(order))}</div>
         <div>${escapeHtml(order.delivery_city || "—")} · ${escapeHtml(order.delivery_postcode || "—")}</div>
-        <div>${formatNumber(order.planning_colli || 0)} colli · ${formatNumber(getOrderVolume(order), 2)} m³</div>
+        <div>${formatNumber(getOrderColli(order))} colli · ${formatNumber(getOrderVolume(order), 2)} m³</div>
         <div>${escapeHtml((order.transport_type || "unassigned").replaceAll("_", " "))}</div>
       </div>
     `;
@@ -1041,11 +1349,17 @@ const readyPlanning = orders.filter(o => {
       depotMarker = null;
     }
 
-    const openOrders = orders.filter(isOpenOrder);
     const boundsPoints = [];
 
-    if (depot && depot.lat !== null && depot.lng !== null) {
-      depotMarker = L.circleMarker([depot.lat, depot.lng], {
+    if (
+      depot &&
+      Number.isFinite(Number(depot.lat)) &&
+      Number.isFinite(Number(depot.lng))
+    ) {
+      const lat = Number(depot.lat);
+      const lng = Number(depot.lng);
+
+      depotMarker = L.circleMarker([lat, lng], {
         radius: 10,
         weight: 3,
         color: "#ffffff",
@@ -1056,14 +1370,14 @@ const readyPlanning = orders.filter(o => {
       depotMarker.bindPopup(`
         <div style="display:grid;gap:4px;min-width:160px;">
           <strong>${escapeHtml(depot.name || "Depot")}</strong>
-          <div>${formatNumber(depot.lat, 6)}, ${formatNumber(depot.lng, 6)}</div>
+          <div>${formatNumber(lat, 6)}, ${formatNumber(lng, 6)}</div>
         </div>
       `);
 
-      boundsPoints.push([depot.lat, depot.lng]);
+      boundsPoints.push([lat, lng]);
     }
 
-    openOrders.forEach(order => {
+    orders.filter(isOpenOrder).forEach(order => {
       if (!hasCoordinates(order)) return;
 
       const lat = Number(order.delivery_lat);
@@ -1114,10 +1428,7 @@ const readyPlanning = orders.filter(o => {
   }
 
   function bindEvents() {
-    byId("btnRefreshDashboard")?.addEventListener("click", async () => {
-      await loadDashboard();
-    });
-
+    byId("btnRefreshDashboard")?.addEventListener("click", loadDashboard);
     byId("btnFitDashboardMap")?.addEventListener("click", fitDashboardMap);
 
     document.querySelectorAll("[data-go]").forEach(card => {
@@ -1148,9 +1459,11 @@ const readyPlanning = orders.filter(o => {
         items,
         products,
         routes,
+        routeStops,
         vehicles,
         invoices,
         orderDocuments,
+        orderLines,
         events,
         productOwners,
         depot
@@ -1159,25 +1472,34 @@ const readyPlanning = orders.filter(o => {
         loadItems(cid),
         loadProducts(cid),
         loadRoutes(cid),
+        loadRouteStops(cid),
         loadVehicles(cid),
         loadInvoices(cid),
         loadOrderDocuments(cid),
+        loadOrderLines(cid),
         loadEvents(cid),
         loadProductOwners(cid),
         loadDepotSettings(cid)
       ]);
 
-      const metrics = calculateMetrics({
+      const rows = {
         orders,
         items,
         products,
         routes,
+        routeStops,
         vehicles,
         invoices,
-        orderDocuments
-      });
+        orderDocuments,
+        orderLines
+      };
+
+      const indexes = createIndexes(rows);
+      const metrics = calculateMetrics(rows, indexes);
 
       renderKpis(metrics);
+      renderTodayRoutes(metrics.routeSummariesToday);
+      renderFdsPlanning(rows, indexes);
       renderAlerts(metrics);
       renderRecentActivity(events);
       renderTopCustomers(orders);
