@@ -230,15 +230,19 @@ function isZoyOrder(order) {
     return qty <= 1 ? labels.join(" & ") : `${labels.join(" & ")} × ${qty}`;
   }
 
-  function getServiceWarning(line) {
-    if (!isServiceLine(line)) return "";
+function getServiceWarning(line, order) {
 
-    const label =
-      line.requested_package_label ||
-      `${Math.round(toNumber(line.requested_package_no, 0))}/${Math.round(toNumber(line.requested_package_total, 0))}`;
+  // Zoy orders krijgen deze melding nooit
+  if (isZoyOrder(order)) return "";
 
-    return `SERVICE / PARTIAL ORDER: This acknowledgement relates to package ${label} only. Remaining packages are not part of this order.`;
-  }
+  if (!isServiceLine(line)) return "";
+
+  const label =
+    line.requested_package_label ||
+    `${Math.round(toNumber(line.requested_package_no, 0))}/${Math.round(toNumber(line.requested_package_total, 0))}`;
+
+  return `SERVICE / PARTIAL ORDER: This acknowledgement relates to package ${label} only. Remaining packages are not part of this order.`;
+}
 
   function getTotalProducts(order) {
     return getOrderLines(order).reduce((sum, line) => sum + getLineQty(line), 0);
@@ -418,7 +422,7 @@ function isZoyOrder(order) {
     };
   }
 
- async function loadProductOwnerProfile(client, customerId, order, settings = {}) {
+async function loadProductOwnerProfile(client, customerId, order, settings = {}) {
   const ownerName = normalize(getProductOwnerName(order));
   const ownerCode = normalize(order?.customers?.customer_code || "");
 
@@ -437,15 +441,15 @@ function isZoyOrder(order) {
       p.trading_name,
       p.customer_code,
       p.default_source_name
-    ].map(normalize);
+    ].filter(Boolean).map(normalize);
 
-    return values.some(v =>
-      v &&
+    return values.some(value =>
+      value &&
       (
-        v === ownerName ||
-        v === ownerCode ||
-        ownerName.includes(v) ||
-        v.includes(ownerName)
+        value === ownerName ||
+        value === ownerCode ||
+        ownerName.includes(value) ||
+        value.includes(ownerName)
       )
     );
   });
@@ -453,17 +457,10 @@ function isZoyOrder(order) {
   if (profile) {
     return {
       id: customerId || null,
+      ...profile,
       name: profile.name || profile.trading_name || getProductOwnerName(order),
       tradingName: profile.trading_name || "",
-      customerCode: profile.customer_code || "",
-      vat: profile.vat || "",
-      email: profile.invoice_email || profile.ack_email || profile.ops_email || "",
-      address1: profile.address1 || "",
-      address2: profile.address2 || "",
-      city: profile.city || "",
-      county: "",
-      postcode: profile.postcode || "",
-      country: profile.country || ""
+      customerCode: profile.customer_code || ""
     };
   }
 
@@ -490,7 +487,6 @@ function isZoyOrder(order) {
     country: customer.country || "United Kingdom"
   };
 }
-
 
   async function loadFreshOrderForAck(client, companyId, orderId) {
     const { data, error } = await client
@@ -787,7 +783,7 @@ function drawTableHeader(doc, y, order) {
       const qty = getLineQty(line);
       const packageCount = getLinePackageCount(line);
       const packageLabel = getPackageLabel(line);
-      const warning = getServiceWarning(line);
+      const warning = getServiceWarning(line, order);
 
 const zoy = isZoyOrder(order);
 
@@ -884,7 +880,7 @@ if (zoy) {
   }
 
   function drawPricingNoteBox(doc, y, ctx, order, logoDataUrl) {
-    const note = cleanText(ctx.pricingAckNote || "");
+    const note = cleanText(ctx.productOwner?.pricing_ack_note || ctx.pricingAckNote || "");
     if (!note) return y;
 
     y = maybeAddNewPage(doc, y + 2, order, ctx, logoDataUrl, false);
@@ -955,6 +951,7 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
   doc.text(formatNumber(totalProducts, 0), valueX, y, { align: "right" });
 
   y += 5;
+
   doc.text("Total Packages", labelX, y);
   doc.text(formatNumber(totalPackages, 0), valueX, y, { align: "right" });
 
@@ -969,9 +966,13 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
       }, 0)
     );
 
-    const vatRate = toNumber(ctx.vatRate, DEFAULT_VAT_RATE);
-    const vat = round2(subtotal * vatRate);
-    const total = round2(subtotal + vat);
+    const regionalSurcharge = regional.priceOnRequest
+      ? 0
+      : round2(toNumber(pricing.regionalSurcharge, 0));
+
+    const total = regional.priceOnRequest
+      ? null
+      : round2(subtotal + regionalSurcharge);
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.2);
@@ -985,19 +986,35 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
     doc.text("Subtotal", labelX, y);
     doc.text(formatMoney(subtotal), valueX, y, { align: "right" });
 
-    y += 5.2;
-    doc.text(`VAT ${formatNumber(vatRate * 100, 0)}%`, labelX, y);
-    doc.text(formatMoney(vat), valueX, y, { align: "right" });
+    if (!regional.priceOnRequest && regionalSurcharge > 0) {
+      y += 5.2;
+
+      doc.text(
+        `Transport surcharge (${regional.label} ${formatNumber(regional.percent, 0)}%)`,
+        labelX,
+        y
+      );
+
+      doc.text(formatMoney(regionalSurcharge), valueX, y, { align: "right" });
+    }
 
     y += 5.8;
+
     doc.setFont("helvetica", "bold");
     doc.text("Total", labelX, y);
-    doc.text(formatMoney(total), valueX, y, { align: "right" });
+    doc.text(
+      regional.priceOnRequest ? "Price on Request" : formatMoney(total),
+      valueX,
+      y,
+      { align: "right" }
+    );
 
     return y + 8;
   }
 
-  const subtotal = regional.priceOnRequest ? null : round2(pricing.warehouse + pricing.transport);
+  const subtotal = regional.priceOnRequest
+    ? null
+    : round2(pricing.warehouse + pricing.transport);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.2);
@@ -1012,60 +1029,112 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
   doc.text(formatMoney(pricing.warehouse), valueX, y, { align: "right" });
 
   y += 5.2;
+
   doc.text("Transport Costs", labelX, y);
-  doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport), valueX, y, { align: "right" });
+  doc.text(
+    regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport),
+    valueX,
+    y,
+    { align: "right" }
+  );
 
   if (!regional.priceOnRequest && pricing.regionalSurcharge > 0) {
     y += 5.2;
-    doc.text(`Regional surcharge ${formatNumber(regional.percent, 0)}%`, labelX, y);
+
+    doc.text(
+      `Transport surcharge (${regional.label} ${formatNumber(regional.percent, 0)}%)`,
+      labelX,
+      y
+    );
+
     doc.text(formatMoney(pricing.regionalSurcharge), valueX, y, { align: "right" });
   }
 
   y += 5.8;
+
   doc.setFont("helvetica", "bold");
   doc.text("Subtotal excl. fuel surcharge & VAT", labelX, y);
-  doc.text(regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal), valueX, y, { align: "right" });
+  doc.text(
+    regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal),
+    valueX,
+    y,
+    { align: "right" }
+  );
 
   y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
   y = drawPricingNoteBox(doc, y, ctx, order, logoDataUrl);
 
   return y + 2;
 }
-  function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
-    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
-    const memo = getMemo(order);
+function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
+  y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
-    if (memo) {
-      const memoLines = splitText(doc, memo, 170).slice(0, 2);
-      const boxHeight = Math.max(10, memoLines.length * 3.5 + 6);
+  const memo = getMemo(order);
 
-      doc.setFillColor(248, 248, 248);
-      doc.setDrawColor(210, 210, 210);
-      doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
+  if (memo) {
+    const memoLines = splitText(doc, memo, 170).slice(0, 3);
+    const boxHeight = Math.max(10, memoLines.length * 3.5 + 6);
 
-      setDark(doc);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7.2);
-      doc.text("Memo", 17, y + 1);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7);
-      doc.text(memoLines, 37, y + 1);
-
-      y += boxHeight + 2;
-    }
-
-    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+    doc.setFillColor(248, 248, 248);
+    doc.setDrawColor(210, 210, 210);
+    doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
 
     setDark(doc);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.2);
-    const noteLines = splitText(doc, DAMAGE_NOTE, 180);
-    doc.text(noteLines.slice(0, 2), 14, y);
+    doc.text("Memo", 17, y + 1);
 
-    return y + 5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(memoLines, 37, y + 1);
+
+    y += boxHeight + 2;
   }
+
+  const regional = ctx.pricing?.regional || {};
+  const regionalSurcharge = toNumber(ctx.pricing?.regionalSurcharge, 0);
+
+  if (
+    isZoyOrder(order) &&
+    regional.code !== "standard" &&
+    !regional.priceOnRequest &&
+    regionalSurcharge > 0
+  ) {
+    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+
+    const info =
+      `This surcharge is calculated over the transport element only and is not applied to the product value.`;
+
+    const infoLines = splitText(doc, info, 170);
+    const boxHeight = Math.max(10, infoLines.length * 3.5 + 6);
+
+    doc.setFillColor(245, 248, 255);
+    doc.setDrawColor(191, 219, 254);
+    doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.2);
+    doc.text("Transport surcharge", 17, y + 1);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(7);
+    doc.text(infoLines, 17, y + 5);
+
+    y += boxHeight + 2;
+  }
+
+  y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+
+  setDark(doc);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.2);
+
+  const noteLines = splitText(doc, DAMAGE_NOTE, 180);
+  doc.text(noteLines.slice(0, 2), 14, y);
+
+  return y + 5;
+}
 
   function drawBusinessFooter(doc, company) {
     const pageCount = doc.getNumberOfPages();
@@ -1090,44 +1159,62 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
     }
   }
 
-  async function createPdfBlob(order, ctx) {
-    if (!window.jspdf?.jsPDF) {
-      throw new Error("jsPDF is not loaded. Add jsPDF before acknowledgement-generator.js in the HTML.");
-    }
-
-    const { jsPDF } = window.jspdf;
-
-    const doc = new jsPDF({
-      orientation: "portrait",
-      unit: "mm",
-      format: "a4"
-    });
-
-    const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
-const pricing = calculatePricing(order, ctx.settings || {});
-
-if (isZoyOrder(order)) {
-  pricing.regionalSurcharge = 0;
-  pricing.regional = {
-    code: "standard",
-    label: "Standard",
-    percent: 0,
-    priceOnRequest: false,
-    note: ""
-  };
-}
-
-    drawHeader(doc, order, ctx, logoDataUrl, false);
-    drawBillToAndShipTo(doc, order, ctx);
-
-    const result = drawLines(doc, order, ctx, logoDataUrl, pricing);
-    let y = drawTotalsBlock(doc, result.y, pricing, ctx, order, logoDataUrl);
-    y = drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl);
-
-    drawBusinessFooter(doc, ctx.company);
-
-    return doc.output("blob");
+async function createPdfBlob(order, ctx) {
+  if (!window.jspdf?.jsPDF) {
+    throw new Error("jsPDF is not loaded. Add jsPDF before acknowledgement-generator.js in the HTML.");
   }
+
+  const { jsPDF } = window.jspdf;
+
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4"
+  });
+
+  const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
+
+  const pricing = calculatePricing(order, {
+    ...(ctx.settings || {}),
+
+    regional_surcharge_enabled:
+      ctx.productOwner?.regional_surcharge_enabled ??
+      ctx.settings?.regional_surcharge_enabled,
+
+    surcharge_edinburgh_glasgow_percent:
+      ctx.productOwner?.surcharge_edinburgh_glasgow_percent ??
+      ctx.settings?.surcharge_edinburgh_glasgow_percent,
+
+    surcharge_highlands_islands_percent:
+      ctx.productOwner?.surcharge_highlands_islands_percent ??
+      ctx.settings?.surcharge_highlands_islands_percent,
+
+    pricing_ireland_mode:
+      ctx.productOwner?.pricing_ireland_mode ??
+      ctx.settings?.pricing_ireland_mode,
+
+    fuel_surcharge_enabled:
+      ctx.productOwner?.fuel_surcharge_enabled ??
+      ctx.settings?.fuel_surcharge_enabled,
+
+    fuel_surcharge_percent:
+      ctx.productOwner?.fuel_surcharge_percent ??
+      ctx.settings?.fuel_surcharge_percent
+  });
+
+  ctx.pricing = pricing;
+
+  drawHeader(doc, order, ctx, logoDataUrl, false);
+  drawBillToAndShipTo(doc, order, ctx);
+
+  const result = drawLines(doc, order, ctx, logoDataUrl, pricing);
+  let y = drawTotalsBlock(doc, result.y, pricing, ctx, order, logoDataUrl);
+  y = drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl);
+
+  drawBusinessFooter(doc, ctx.company);
+
+  return doc.output("blob");
+}
 
   async function uploadPdf(client, companyId, order, blob) {
 const soPart = safeFilePart(order.order_number || order.id);

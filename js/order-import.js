@@ -2192,6 +2192,39 @@ delivery_region: null,
     };
   }
 
+async function createOrderImportedNotification(order, result, companyId) {
+  try {
+    await client
+      .from("system_notifications")
+      .insert({
+        company_id: companyId,
+        customer_id: result.customerId || null,
+
+        recipient_role: null,
+
+        notification_type: "order_imported",
+
+        title: "New Order Imported",
+
+        message:
+          `Order ${order.orderNumber || "Unknown"} has been imported for ${order.retailName || "the retailer"}.`,
+
+        severity: "info",
+
+        entity_type: "order",
+        entity_id: result.orderId,
+
+        action_url: `./operations-control-center.html?order_id=${result.orderId}`,
+
+        is_read: false,
+        popup_shown: false
+      });
+
+  } catch (error) {
+    console.warn("Order import notification could not be created:", error.message);
+  }
+}
+
   async function importOrders() {
     if (!groupedOrders.length) {
       showToast("Read a file first.", "err");
@@ -2236,6 +2269,7 @@ delivery_region: null,
 
       try {
         const result = await insertOrder(order, cid);
+await createOrderImportedNotification(order, result, cid);
 
         if (order.sourceKind === "pdf") {
           try {

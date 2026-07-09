@@ -46,6 +46,17 @@ minimum_delivery_owner_can_approve: true,
 minimum_delivery_manual_override: true,
 minimum_delivery_invoice_label: "Minimum Delivery Charge",
 
+regional_surcharge_enabled: true,
+surcharge_edinburgh_glasgow_percent: "20",
+surcharge_highlands_islands_percent: "40",
+pricing_ireland_mode: "price_on_request",
+
+fuel_surcharge_enabled: true,
+fuel_surcharge_percent: "8.5",
+
+pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
+pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
+
 notes: ""
     },
     {
@@ -78,6 +89,17 @@ minimum_delivery_requires_approval: true,
 minimum_delivery_owner_can_approve: true,
 minimum_delivery_manual_override: true,
 minimum_delivery_invoice_label: "Minimum Delivery Charge",
+
+regional_surcharge_enabled: true,
+surcharge_edinburgh_glasgow_percent: "20",
+surcharge_highlands_islands_percent: "40",
+pricing_ireland_mode: "price_on_request",
+
+fuel_surcharge_enabled: false,
+fuel_surcharge_percent: "0",
+
+pricing_ack_note: "",
+pricing_invoice_note: "",
 
 notes: ""
     }
@@ -1158,6 +1180,15 @@ updateSummary();
 "minimum_delivery_manual_override",
 "minimum_delivery_invoice_label",
 
+"regional_surcharge_enabled",
+"surcharge_edinburgh_glasgow_percent",
+"surcharge_highlands_islands_percent",
+"pricing_ireland_mode",
+"fuel_surcharge_enabled",
+"fuel_surcharge_percent",
+"pricing_ack_note",
+"pricing_invoice_note",
+
 "notes"
 ].forEach(field => {
   setFieldValue(`owner_${field}`, owner?.[field] ?? "");
@@ -1202,6 +1233,17 @@ minimum_delivery_requires_approval: parseBool(getFieldValue("owner_minimum_deliv
 minimum_delivery_owner_can_approve: parseBool(getFieldValue("owner_minimum_delivery_owner_can_approve", "true"), true),
 minimum_delivery_manual_override: parseBool(getFieldValue("owner_minimum_delivery_manual_override", "true"), true),
 minimum_delivery_invoice_label: getFieldValue("owner_minimum_delivery_invoice_label", "Minimum Delivery Charge"),
+
+regional_surcharge_enabled: parseBool(getFieldValue("owner_regional_surcharge_enabled", "true"), true),
+surcharge_edinburgh_glasgow_percent: getFieldValue("owner_surcharge_edinburgh_glasgow_percent", "20"),
+surcharge_highlands_islands_percent: getFieldValue("owner_surcharge_highlands_islands_percent", "40"),
+pricing_ireland_mode: getFieldValue("owner_pricing_ireland_mode", "price_on_request"),
+
+fuel_surcharge_enabled: parseBool(getFieldValue("owner_fuel_surcharge_enabled", "true"), true),
+fuel_surcharge_percent: getFieldValue("owner_fuel_surcharge_percent", "8.5"),
+
+pricing_ack_note: getFieldValue("owner_pricing_ack_note", ""),
+pricing_invoice_note: getFieldValue("owner_pricing_invoice_note", ""),
 
 notes: getFieldValue("owner_notes")
     };
@@ -1285,6 +1327,17 @@ minimum_delivery_requires_approval: true,
 minimum_delivery_owner_can_approve: true,
 minimum_delivery_manual_override: true,
 minimum_delivery_invoice_label: "Minimum Delivery Charge",
+
+regional_surcharge_enabled: true,
+surcharge_edinburgh_glasgow_percent: "20",
+surcharge_highlands_islands_percent: "40",
+pricing_ireland_mode: "price_on_request",
+
+fuel_surcharge_enabled: true,
+fuel_surcharge_percent: "8.5",
+
+pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
+pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
 
 notes: ""
     });

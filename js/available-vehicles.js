@@ -315,6 +315,13 @@ function getOrderWeight(order) {
     );
   }
 
+function getCustomerOrderLabel(order) {
+  const po = order?.purchase_order ? `PO ${order.purchase_order}` : "";
+  const ref = order?.external_reference ? `Ref ${order.external_reference}` : "";
+
+  return [po, ref].filter(Boolean).join(" · ");
+}
+
   function getRouteSummary(route) {
   const stops = getStopsForRoute(route.id);
   const orders = getOrdersForRoute(route.id);
@@ -538,6 +545,18 @@ function getRouteWarehouseCost(route) {
     style.id = "availableVehiclesStyles";
     style.textContent = `
       .av-stack{display:grid;gap:10px;}
+.av-owner-badge{
+  display:inline-flex;
+  align-items:center;
+  margin-left:8px;
+  padding:2px 8px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:900;
+  color:#fff;
+  background:#7c3aed;   /* paars */
+  line-height:1;
+}
       .av-day-head{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--border);background:#fbfdff;border-radius:10px;padding:10px 12px;}
       .av-day-title{font-size:13px;font-weight:900;color:#111827;}
       .av-day-sub{font-size:11.5px;color:#6b7280;margin-top:3px;}
@@ -790,9 +809,27 @@ ${formatNumber(orders.length)} order(s)
           <div class="av-stop">
             <div class="av-stop-no">F</div>
             <div>
-              <div class="av-stop-title">
-                ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
-              </div>
+<div class="av-stop-title">
+  ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
+
+  <span class="av-owner-badge">
+    ${escapeHtml(
+      order.product_owner_name ||
+      order.customer_name ||
+      order.customers?.name ||
+      "Unknown"
+    )}
+  </span>
+</div>
+
+<div class="av-stop-sub">
+  ${order.purchase_order ? `PO: ${escapeHtml(order.purchase_order)}` : ""}
+  ${
+    order.external_reference
+      ? `${order.purchase_order ? " · " : ""}Ref: ${escapeHtml(order.external_reference)}`
+      : ""
+  }
+</div>
               <div class="av-stop-sub">
 ${escapeHtml(order.delivery_city || "—")}
 · ${escapeHtml(order.delivery_postcode || "—")}
@@ -1122,7 +1159,8 @@ ${
 
   const city = stop.city || order?.delivery_city || "—";
   const postcode = stop.postcode || order?.delivery_postcode || "—";
-  const title = order?.order_number || stop.stop_name || "Stop";
+ const customerOrderLabel = getCustomerOrderLabel(order);
+const title = order?.order_number || stop.stop_name || "Stop";
   const retailer = getRetailerName(order, stop);
 
   return `
@@ -1139,6 +1177,7 @@ ${
       <div>
         <div class="av-stop-title">
           ${escapeHtml(title)} · ${escapeHtml(retailer)}
+${customerOrderLabel ? `<span class="av-stop-sub">${escapeHtml(customerOrderLabel)}</span>` : ""}
         </div>
 
         <div class="av-stop-sub">

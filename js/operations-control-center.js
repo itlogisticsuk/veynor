@@ -18,6 +18,7 @@ let deliveryGroupsMap = new Map();
 let showDeliveryGroups = false;
 let orderViewMode = "active";
 let editRemovedLineIds = new Set();
+let ackDownloadedOrderIds = new Set();
 
   const selectedOrderIds = new Set();
   const expandedOrderIds = new Set();
@@ -481,6 +482,52 @@ function getProductOwnerName(order) {
     const docs = Array.isArray(order.order_documents) ? order.order_documents : [];
     return docs.find(doc => normalize(doc.document_type) === normalize(type)) || null;
   }
+
+function isAckDownloaded(order) {
+  return ackDownloadedOrderIds.has(String(order.id));
+}
+
+async function loadAckDownloadStatus() {
+  const cid = await getCompanyId();
+  const profileId = currentProfile?.id || "";
+
+  if (!profileId) {
+    ackDownloadedOrderIds = new Set();
+    return;
+  }
+
+  const { data, error } = await client
+    .from("portal_events")
+    .select("user_profile_id, event_type, metadata")
+    .eq("company_id", cid)
+    .eq("user_profile_id", profileId)
+    .in("event_type", [
+      "ack_downloaded",
+      "acknowledgement_downloaded"
+    ]);
+
+  if (error) {
+    console.warn("ACK download status skipped:", error.message);
+    ackDownloadedOrderIds = new Set();
+    return;
+  }
+
+  ackDownloadedOrderIds = new Set(
+    (data || [])
+      .filter(row => {
+        const docType = String(row.metadata?.document_type || "").toLowerCase();
+        const action = String(row.metadata?.action || "").toLowerCase();
+
+        return (
+          (docType === "ack" || docType === "acknowledgement") &&
+          action === "downloaded"
+        );
+      })
+      .map(row => row.metadata?.order_id)
+      .filter(Boolean)
+      .map(String)
+  );
+}
 
   function docStatus(order, type) {
     return getDoc(order, type)?.document_status || "not_generated";
@@ -1073,8 +1120,9 @@ async function loadStoredDeliveryGroups() {
 async function loadOrders() {
   const cid = await getCompanyId();
 
-  await loadOwnerProfilesForMinimumRules();
+await loadOwnerProfilesForMinimumRules();
 await loadStoredDeliveryGroups();
+await loadAckDownloadStatus();
 
     let query = client
       .from("orders")
@@ -1568,20 +1616,21 @@ const docs = [
     return !!doc?.file_url || (doc && normalize(doc.document_status) !== "not_generated");
   }
 
-  function renderCompactDocuments(order) {
-    const docs = getVisibleDocumentTypes(order);
-    const total = docs.length;
-    const generated = docs.filter(([type]) => documentIsGenerated(order, type)).length;
+function renderCompactDocuments(order) {
+  const docs = getVisibleDocumentTypes(order);
+  const total = docs.length;
+  const generated = docs.filter(([type]) => documentIsGenerated(order, type)).length;
 
-    const cls = generated === total ? "good" : generated > 0 ? "warn" : "bad";
+  const cls = generated === total ? "good" : generated > 0 ? "warn" : "bad";
 
-    return `
-      <div class="doc-compact">
-        <span class="doc-icon">📄</span>
-        <span class="doc-count ${cls}">${generated}/${total}</span>
-      </div>
-    `;
-  }
+  return `
+    <div class="doc-compact">
+      <span class="doc-icon">📄</span>
+      <span class="doc-count ${cls}">${generated}/${total}</span>
+      ${isAckDownloaded(order) ? `<span class="ack-dot" title="ACK downloaded by customer"></span>` : ""}
+    </div>
+  `;
+}
 
 function getIsoWeekNumber(value) {
   if (!value) return "";
@@ -1826,18 +1875,35 @@ function renderDocumentAction(order, type, label) {
   const status = doc?.document_status || "not_generated";
   const url = type === "pod" ? getPodDocumentUrl(order) : doc?.file_url || "";
 
-  if (url) {
+if (url) {
+  const ackDownloaded =
+    ["acknowledgement", "legacy_acknowledgement"].includes(normalize(type)) &&
+    isAckDownloaded(order);
+
+  return `
+    <a
+      class="quick-action ${ackDownloaded ? "ack-downloaded" : ""}"
+      href="${escapeHtml(url)}"
+      target="_blank"
+      rel="noopener"
+      ${renderPortalDocAttrs(order, type, "downloaded", url)}
+    >
+      <span>${escapeHtml(label)}</span>
+      <span>${ackDownloaded ? "Downloaded ✓" : "Download"}</span>
+    </a>
+  `;
+}
+
+  if (type === "legacy_acknowledgement" && canGenerateDocuments()) {
     return `
-      <a
+      <button
         class="quick-action"
-        href="${escapeHtml(url)}"
-        target="_blank"
-        rel="noopener"
-        ${renderPortalDocAttrs(order, type, "downloaded", url)}
+        type="button"
+        data-upload-legacy-ack="${escapeHtml(order.id)}"
       >
         <span>${escapeHtml(label)}</span>
-        <span>Download</span>
-      </a>
+        <span>Upload PDF</span>
+      </button>
     `;
   }
 
@@ -2449,8 +2515,22 @@ byId("deliveryGroupsWrap").style.display = "none";
 </td>
 
 <td>
-  <strong>${escapeHtml(order.external_reference || "—")}</strong>
-  <span class="subline">Supplier / ACK ref</span>
+  <strong>
+    ${escapeHtml(order.external_reference || "—")}
+    ${
+      isAckDownloaded(order)
+        ? `<span class="ack-ref-check" title="ACK downloaded by this user">✓</span>`
+        : ""
+    }
+  </strong>
+  <span class="subline">
+    Supplier / ACK ref
+    ${
+      isAckDownloaded(order)
+        ? `<span class="ack-ref-text">Downloaded</span>`
+        : ""
+    }
+  </span>
 </td>
 
           ${
@@ -2646,42 +2726,57 @@ tbody.querySelectorAll("[data-order-actions]").forEach(button => {
         openTariffModal(button.getAttribute("data-open-tariff-modal"));
       });
     });
+tbody.querySelectorAll("[data-doc-action]").forEach(button => {
+  button.addEventListener("click", async event => {
+    event.stopPropagation();
 
-    tbody.querySelectorAll("[data-doc-action]").forEach(button => {
-      button.addEventListener("click", async event => {
-        event.stopPropagation();
+tbody.querySelectorAll("[data-portal-doc-type='ack']").forEach(link => {
+  link.addEventListener("click", () => {
+    const orderId = link.getAttribute("data-order-id");
 
-        const orderId = button.getAttribute("data-order-id");
-        const docType = button.getAttribute("data-doc-action");
+    if (orderId) {
+      ackDownloadedOrderIds.add(String(orderId));
+      renderTable();
+    }
+  });
+});
 
-        try {
-if (docType === "acknowledgement") return generateAcknowledgement(orderId);
-if (docType === "delivery_note") return generateDeliveryNote(orderId);
-if (docType === "delivery_labels") return generateDeliveryLabels(orderId);
-if (docType === "invoice") return generateSingleInvoice(orderId);
+    const orderId = button.getAttribute("data-order-id");
+    const docType = button.getAttribute("data-doc-action");
 
-if (docType === "credit_note") {
+    try {
+      if (docType === "acknowledgement") return generateAcknowledgement(orderId);
+      if (docType === "delivery_note") return generateDeliveryNote(orderId);
+      if (docType === "delivery_labels") return generateDeliveryLabels(orderId);
+      if (docType === "invoice") return generateSingleInvoice(orderId);
 
-  const order = getOrderById(orderId);
+      if (docType === "credit_note") {
+        const order = getOrderById(orderId);
+        const existing = getDoc(order, "credit_note");
 
-  const existing = getDoc(order, "credit_note");
-
-  if (existing?.file_url) {
-    window.open(existing.file_url, "_blank");
-    return;
-  }
-
-  showToast("Credit Note PDF not found.", "err");
-  return;
-}
-
-          return createPlaceholderDocument(orderId, docType);
-        } catch (error) {
-          console.error(error);
-          showToast(error.message || "Could not generate document.", "err");
+        if (existing?.file_url) {
+          window.open(existing.file_url, "_blank");
+          return;
         }
-      });
-    });
+
+        showToast("Credit Note PDF not found.", "err");
+        return;
+      }
+
+      return createPlaceholderDocument(orderId, docType);
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not generate document.", "err");
+    }
+  });
+});
+
+tbody.querySelectorAll("[data-upload-legacy-ack]").forEach(button => {
+  button.addEventListener("click", event => {
+    event.stopPropagation();
+    openLegacyAckUpload(button.getAttribute("data-upload-legacy-ack"));
+  });
+});
 
     tbody.querySelectorAll("[data-memo-order-id]").forEach(el => {
       el.addEventListener("click", event => {
@@ -2719,15 +2814,35 @@ style.textContent = `
     display:flex;
     align-items:center;
     justify-content:center;
-    padding:24px
+    padding:24px;
   }
+.ack-ref-check{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:15px;
+  height:15px;
+  margin-left:6px;
+  border-radius:999px;
+  background:#16a34a;
+  color:#fff;
+  font-size:10px;
+  font-weight:950;
+  vertical-align:middle;
+}
 
-.occ-memo-modal-card{
-  width:min(1120px,96vw);
+.ack-ref-text{
+  margin-left:6px;
+  color:#047857;
+  font-weight:950;
+}
+
+  .occ-memo-modal-card{
+    width:min(1120px,96vw);
     background:#fff;
     border-radius:18px;
     box-shadow:0 24px 60px rgba(15,23,42,.25);
-    padding:18px
+    padding:18px;
   }
 
   .occ-memo-modal-head{
@@ -2735,7 +2850,7 @@ style.textContent = `
     justify-content:space-between;
     gap:12px;
     align-items:center;
-    margin-bottom:12px
+    margin-bottom:12px;
   }
 
   .occ-memo-modal-text{
@@ -2746,7 +2861,7 @@ style.textContent = `
     min-height:140px;
     max-height:60vh;
     overflow:auto;
-    background:#f8fafc
+    background:#f8fafc;
   }
 
   .occ-photo-grid{
@@ -2764,22 +2879,22 @@ style.textContent = `
     gap:14px;
   }
 
-.occ-photo-modal-card{
-  width:min(620px,94vw);
-}
+  .occ-photo-modal-card{
+    width:min(620px,94vw);
+  }
 
-.occ-photo-meta{
-  width:100%;
-  max-width:360px;
-  background:#f8fafc;
-  border:1px solid #dce5f2;
-  border-radius:12px;
-  padding:10px 14px;
-  text-align:center;
-  font-size:13px;
-  line-height:1.5;
-  color:#334155;
-}
+  .occ-photo-meta{
+    width:100%;
+    max-width:360px;
+    background:#f8fafc;
+    border:1px solid #dce5f2;
+    border-radius:12px;
+    padding:10px 14px;
+    text-align:center;
+    font-size:13px;
+    line-height:1.5;
+    color:#334155;
+  }
 
   .occ-photo-grid img{
     width:auto;
@@ -2804,7 +2919,7 @@ style.textContent = `
   .manual-tariff-table{
     width:100%;
     min-width:980px;
-    border-collapse:collapse
+    border-collapse:collapse;
   }
 
   .manual-tariff-table th,
@@ -2813,7 +2928,7 @@ style.textContent = `
     border-bottom:1px solid #e5edf7;
     text-align:left;
     vertical-align:top;
-    font-size:12px
+    font-size:12px;
   }
 
   .manual-tariff-table th{
@@ -2822,7 +2937,7 @@ style.textContent = `
     font-size:10px;
     font-weight:950;
     text-transform:uppercase;
-    letter-spacing:.04em
+    letter-spacing:.04em;
   }
 
   .manual-tariff-table input,
@@ -2833,13 +2948,13 @@ style.textContent = `
     border-radius:9px;
     padding:7px 9px;
     font-size:12px;
-    background:#fff
+    background:#fff;
   }
 
   .manual-tariff-total{
     font-weight:950;
     color:#07152f;
-    white-space:nowrap
+    white-space:nowrap;
   }
 
   .manual-tariff-footer{
@@ -2847,54 +2962,76 @@ style.textContent = `
     justify-content:space-between;
     gap:12px;
     align-items:center;
-    flex-wrap:wrap
+    flex-wrap:wrap;
   }
 
   .manual-tariff-summary{
     font-size:12px;
     color:#334155;
-    font-weight:850
+    font-weight:850;
   }
 
-.edit-products-table{
-  min-width:1120px;
-  table-layout:fixed;
-}
+  .edit-products-table{
+    min-width:1120px;
+    table-layout:fixed;
+  }
 
-.edit-products-table th:nth-child(1),
-.edit-products-table td:nth-child(1){ width:300px; }
+  .edit-products-table th:nth-child(1),
+  .edit-products-table td:nth-child(1){ width:300px; }
 
-.edit-products-table th:nth-child(2),
-.edit-products-table td:nth-child(2){ width:230px; }
+  .edit-products-table th:nth-child(2),
+  .edit-products-table td:nth-child(2){ width:230px; }
 
-.edit-products-table th:nth-child(3),
-.edit-products-table td:nth-child(3){ width:80px; }
+  .edit-products-table th:nth-child(3),
+  .edit-products-table td:nth-child(3){ width:80px; }
 
-.edit-products-table th:nth-child(4),
-.edit-products-table td:nth-child(4){ width:95px; }
+  .edit-products-table th:nth-child(4),
+  .edit-products-table td:nth-child(4){ width:95px; }
 
-.edit-products-table th:nth-child(5),
-.edit-products-table td:nth-child(5){ width:115px; }
+  .edit-products-table th:nth-child(5),
+  .edit-products-table td:nth-child(5){ width:115px; }
 
-.edit-products-table th:nth-child(6),
-.edit-products-table td:nth-child(6){ width:115px; }
+  .edit-products-table th:nth-child(6),
+  .edit-products-table td:nth-child(6){ width:115px; }
 
-.edit-products-table th:nth-child(7),
-.edit-products-table td:nth-child(7){
-  width:120px;
-  text-align:right;
-}
+  .edit-products-table th:nth-child(7),
+  .edit-products-table td:nth-child(7){
+    width:120px;
+    text-align:right;
+  }
 
-.edit-products-table td:nth-child(4),
-.edit-products-table td:nth-child(5),
-.edit-products-table td:nth-child(6){
-  white-space:nowrap;
-  font-weight:800;
-}`;
+  .edit-products-table td:nth-child(4),
+  .edit-products-table td:nth-child(5),
+  .edit-products-table td:nth-child(6){
+    white-space:nowrap;
+    font-weight:800;
+  }
+
+  .quick-action.ack-downloaded{
+    background:#ecfdf5 !important;
+    border-color:#bbf7d0 !important;
+    color:#047857 !important;
+  }
+
+  .quick-action.ack-downloaded span:last-child{
+    color:#047857 !important;
+    font-weight:950;
+  }
+
+  .ack-dot{
+    display:inline-flex;
+    width:10px;
+    height:10px;
+    border-radius:999px;
+    background:#16a34a;
+    box-shadow:0 0 0 3px rgba(22,163,74,.16);
+    margin-left:6px;
+    vertical-align:middle;
+  }
+`;
 
 document.head.appendChild(style);
 }
-
   function openMemoModal(orderId) {
     ensurePageStyles();
 
@@ -4286,6 +4423,114 @@ await safeUpdateOrder(order.id, {
 
   showToast("Order saved. Matching completed for missing products.", "ok");
 }
+
+async function openLegacyAckUpload(orderId) {
+  const order = getOrderById(orderId);
+
+  if (!order) {
+    showToast("Order not found.", "err");
+    return;
+  }
+
+  if (!isTenantRole()) {
+    showToast("Only Sofa2U users can upload Legacy ACK files.", "err");
+    return;
+  }
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "application/pdf,.pdf";
+
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      showToast("Please choose a PDF file.", "err");
+      return;
+    }
+
+    try {
+      const cid = await getCompanyId();
+
+      const path = [
+        cid,
+        order.customer_id || "no-owner",
+        order.id,
+        `Legacy_ACK_${safeFileName(order.order_number || order.id)}_${Date.now()}.pdf`
+      ].join("/");
+
+      const { error: uploadError } = await client
+        .storage
+        .from("order-documents")
+        .upload(path, file, {
+          cacheControl: "3600",
+          upsert: true,
+          contentType: "application/pdf"
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicData } = client
+        .storage
+        .from("order-documents")
+        .getPublicUrl(path);
+
+      const fileUrl = publicData?.publicUrl || "";
+
+      const existing = getDoc(order, "legacy_acknowledgement");
+
+      if (existing?.id) {
+        const { error: updateError } = await client
+          .from("order_documents")
+          .update({
+            document_status: "generated",
+            file_url: fileUrl,
+            storage_path: path,
+            customer_visible: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", existing.id);
+
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await client
+          .from("order_documents")
+          .insert({
+            company_id: cid,
+            customer_id: order.customer_id || null,
+            order_id: order.id,
+            document_type: "legacy_acknowledgement",
+            document_number: order.external_reference || order.order_number || "Legacy ACK",
+            document_status: "generated",
+            file_url: fileUrl,
+            storage_path: path,
+            customer_visible: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (insertError) throw insertError;
+      }
+
+      await insertOrderActivity(
+        order.id,
+        `Legacy ACK uploaded manually for ${order.order_number || "order"}.`,
+        "legacy_ack_uploaded"
+      );
+
+      await loadOrders();
+      showToast("Legacy ACK uploaded.", "ok");
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Could not upload Legacy ACK.", "err");
+    }
+  });
+
+  input.click();
+}
+
 function bindEvents() {
   [
     "filterSearch",

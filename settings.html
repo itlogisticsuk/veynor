@@ -736,7 +736,10 @@ Quality inspection charge per colli.
     <strong>Transport Volume Restrictions</strong><br>
     Configure minimum delivery volume and transport surcharge rules for this product owner.
   </div>
+
+
 </div>
+
 
 <div class="field">
   <label for="owner_minimum_delivery_enabled">Enable Minimum Delivery Rule</label>
@@ -787,6 +790,63 @@ Quality inspection charge per colli.
     class="input"
     value="Minimum delivery surcharge"
   />
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <div class="note-box">
+    <strong>Product Owner Pricing</strong><br>
+    Configure postcode based regional surcharge, Ireland pricing and fuel surcharge for this product owner.
+  </div>
+</div>
+
+<div class="field">
+  <label for="owner_regional_surcharge_enabled">Enable Regional Surcharge</label>
+  <select id="owner_regional_surcharge_enabled" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_surcharge_edinburgh_glasgow_percent">Edinburgh / Glasgow %</label>
+  <input id="owner_surcharge_edinburgh_glasgow_percent" class="input" type="number" step="0.01"/>
+</div>
+
+<div class="field">
+  <label for="owner_surcharge_highlands_islands_percent">Highlands & Islands %</label>
+  <input id="owner_surcharge_highlands_islands_percent" class="input" type="number" step="0.01"/>
+</div>
+
+<div class="field">
+  <label for="owner_pricing_ireland_mode">Ireland Pricing</label>
+  <select id="owner_pricing_ireland_mode" class="select">
+    <option value="price_on_request">Price on request</option>
+    <option value="allow_manual_price">Allow manual quotation</option>
+    <option value="normal">Normal pricing</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_fuel_surcharge_enabled">Enable Fuel Surcharge</label>
+  <select id="owner_fuel_surcharge_enabled" class="select">
+    <option value="true">true</option>
+    <option value="false">false</option>
+  </select>
+</div>
+
+<div class="field">
+  <label for="owner_fuel_surcharge_percent">Fuel Surcharge %</label>
+  <input id="owner_fuel_surcharge_percent" class="input" type="number" step="0.01"/>
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <label for="owner_pricing_ack_note">ACK Pricing Note</label>
+  <textarea id="owner_pricing_ack_note" class="textarea"></textarea>
+</div>
+
+<div class="field" style="grid-column:1 / -1;">
+  <label for="owner_pricing_invoice_note">Invoice Pricing Note</label>
+  <textarea id="owner_pricing_invoice_note" class="textarea"></textarea>
 </div>
 
 <div class="field" style="grid-column:1 / -1;">

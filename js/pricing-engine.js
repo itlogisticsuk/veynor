@@ -144,65 +144,14 @@
     return false;
   }
 
-  function getRegionalPricing(order, settings = {}) {
-    const postcode = getOrderPostcode(order);
+function getRegionalPricing(order, settings = {}) {
+  const postcode = getOrderPostcode(order);
 
-    if (isNorthernIreland(order)) {
-      return {
-        code: "northern_ireland",
-        label: "Northern Ireland",
-        percent: 0,
-        multiplier: 1,
-        priceOnRequest: true,
-        note: "Price on request for Northern Ireland."
-      };
-    }
+  const regionalEnabled = String(
+    getSetting(settings, "regional_surcharge_enabled", "true")
+  ).toLowerCase() !== "false";
 
-    if (isRepublicOfIreland(order)) {
-      return {
-        code: "republic_of_ireland",
-        label: "Republic of Ireland",
-        percent: 0,
-        multiplier: 1,
-        priceOnRequest: true,
-        note: "Price on request for Republic of Ireland."
-      };
-    }
-
-    if (isHighlandsOrIslands(postcode)) {
-      const percent = getPercent(
-        settings,
-        "surcharge_highlands_islands_percent",
-        DEFAULTS.surcharge_highlands_islands_percent
-      );
-
-      return {
-        code: "highlands_islands",
-        label: "Highlands & Islands",
-        percent,
-        multiplier: 1 + percent / 100,
-        priceOnRequest: false,
-        note: `${percent}% regional surcharge for Highlands & Islands.`
-      };
-    }
-
-   if (isScotlandLowlands(postcode)) {
-      const percent = getPercent(
-        settings,
-        "surcharge_edinburgh_glasgow_percent",
-        DEFAULTS.surcharge_edinburgh_glasgow_percent
-      );
-
-      return {
-        code: "edinburgh_glasgow",
-        label: "Edinburgh / Glasgow",
-        percent,
-        multiplier: 1 + percent / 100,
-        priceOnRequest: false,
-        note: `${percent}% regional surcharge for Edinburgh / Glasgow.`
-      };
-    }
-
+  if (!regionalEnabled) {
     return {
       code: "standard",
       label: "Standard UK mainland",
@@ -213,6 +162,71 @@
     };
   }
 
+  if (isNorthernIreland(order)) {
+    return {
+      code: "northern_ireland",
+      label: "Northern Ireland",
+      percent: 0,
+      multiplier: 1,
+      priceOnRequest: true,
+      note: "Price on request for Northern Ireland."
+    };
+  }
+
+  if (isRepublicOfIreland(order)) {
+    return {
+      code: "republic_of_ireland",
+      label: "Republic of Ireland",
+      percent: 0,
+      multiplier: 1,
+      priceOnRequest: true,
+      note: "Price on request for Republic of Ireland."
+    };
+  }
+
+  if (isHighlandsOrIslands(postcode)) {
+    const percent = getPercent(
+      settings,
+      "surcharge_highlands_islands_percent",
+      DEFAULTS.surcharge_highlands_islands_percent
+    );
+
+    return {
+      code: "highlands_islands",
+      label: "Highlands & Islands",
+      percent,
+      multiplier: 1 + percent / 100,
+      priceOnRequest: false,
+      note: `${percent}% regional surcharge for Highlands & Islands.`
+    };
+  }
+
+  if (isScotlandLowlands(postcode)) {
+    const percent = getPercent(
+      settings,
+      "surcharge_edinburgh_glasgow_percent",
+      DEFAULTS.surcharge_edinburgh_glasgow_percent
+    );
+
+    return {
+      code: "edinburgh_glasgow",
+      label: "Edinburgh / Glasgow",
+      percent,
+      multiplier: 1 + percent / 100,
+      priceOnRequest: false,
+      note: `${percent}% regional surcharge for Edinburgh / Glasgow.`
+    };
+  }
+
+  return {
+    code: "standard",
+    label: "Standard UK mainland",
+    percent: 0,
+    multiplier: 1,
+    priceOnRequest: false,
+    note: ""
+  };
+}
   function getLineWarehouseCost(line) {
     return round2(
       toNumber(line?.tariff_storage, 0) +

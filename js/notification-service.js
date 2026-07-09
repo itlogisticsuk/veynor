@@ -50,37 +50,40 @@
     return profile?.customer_id || null;
   }
 
-  function typeText(type) {
-    const t = String(type || "").toLowerCase();
+function typeText(type) {
+  const t = String(type || "").toLowerCase();
 
-    if (t.includes("ack")) return "Acknowledgement";
-    if (t.includes("invoice")) return "Invoice";
-    if (t.includes("pod")) return "POD";
-    if (t.includes("delivery")) return "Delivery";
-    if (t.includes("warehouse") || t.includes("stock") || t.includes("received")) return "Warehouse";
-    if (t.includes("message")) return "Message";
-    if (t.includes("announcement")) return "Announcement";
-    if (t.includes("credit")) return "Credit";
+  if (t.includes("order_imported")) return "Order Imported";
+  if (t.includes("ack")) return "Acknowledgement";
+  if (t.includes("invoice")) return "Invoice";
+  if (t.includes("pod")) return "Proof of Delivery";
+  if (t.includes("delivery")) return "Delivery";
+  if (t.includes("warehouse") || t.includes("stock") || t.includes("received")) return "Warehouse";
+  if (t.includes("message")) return "Message";
+  if (t.includes("announcement")) return "Announcement";
+  if (t.includes("credit")) return "Credit Note";
 
-    return "Notification";
-  }
+  return "Notification";
+}
 
-  function iconFor(type, severity) {
-    const t = String(type || "").toLowerCase();
+function iconFor(type, severity) {
+  const t = String(type || "").toLowerCase();
 
-    if (severity === "critical" || severity === "error") return "⚠️";
-    if (severity === "warning" || severity === "high") return "⚠️";
-    if (t.includes("invoice")) return "📄";
-    if (t.includes("ack")) return "🧾";
-    if (t.includes("pod")) return "✍️";
-    if (t.includes("delivery") || t.includes("route")) return "🚚";
-    if (t.includes("warehouse") || t.includes("stock") || t.includes("received")) return "📦";
-    if (t.includes("message")) return "💬";
-    if (t.includes("credit")) return "💳";
-    if (t.includes("announcement")) return "📢";
+  if (severity === "critical" || severity === "error") return "⚠️";
+  if (severity === "warning" || severity === "high") return "⚠️";
 
-    return "🔔";
-  }
+  if (t.includes("order_imported")) return "🛒";
+  if (t.includes("invoice")) return "📄";
+  if (t.includes("ack")) return "🧾";
+  if (t.includes("pod")) return "✍️";
+  if (t.includes("delivery") || t.includes("route")) return "🚚";
+  if (t.includes("warehouse") || t.includes("stock") || t.includes("received")) return "📦";
+  if (t.includes("message")) return "💬";
+  if (t.includes("credit")) return "💳";
+  if (t.includes("announcement")) return "📢";
+
+  return "🔔";
+}
 
   function ctaFor(type) {
     const t = String(type || "").toLowerCase();
