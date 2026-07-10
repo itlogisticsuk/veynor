@@ -517,6 +517,170 @@
         grid-template-columns: 1fr;
       }
     }
+
+/* =========================================
+   RESPONSIVE CUSTOMER DASHBOARD FIX
+   ========================================= */
+
+.customer-page,
+.customer-page > *,
+.dash-grid-2,
+.dash-grid-3,
+.dash-card,
+.chart-box,
+.document-hub-grid,
+.kpi-grid {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* KPI-tegels passen zichzelf automatisch aan */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    auto-fit,
+    minmax(210px, 1fr)
+  );
+  gap: 12px;
+}
+
+/* Order Flow + Document Hub */
+.dash-grid-2 {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.65fr)
+    minmax(360px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+/* Voorkomt dat kaarten buiten hun grid drukken */
+.dash-grid-2 > *,
+.dash-grid-3 > * {
+  min-width: 0;
+  width: 100%;
+}
+
+/* Grafieken schalen mee met de beschikbare ruimte */
+.chart-box {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.chart-box.small {
+  min-height: 220px;
+}
+
+.chart-box canvas {
+  display: block;
+  max-width: 100%;
+}
+
+.chart-box.small {
+  height: 260px;
+  min-height: 260px;
+  max-height: 260px;
+}
+
+.chart-box.small canvas {
+  width: 100% !important;
+  height: 260px !important;
+  max-height: 260px !important;
+}
+
+/* Document Hub blijft bruikbaar op smallere kaarten */
+.document-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    3,
+    minmax(0, 1fr)
+  );
+  gap: 12px;
+}
+
+.document-hub-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Tabellen blijven binnen hun kaart en krijgen
+   horizontaal scrollen wanneer dat nodig is */
+.table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.data-table {
+  width: 100%;
+  min-width: 760px;
+}
+
+/* Middelgrote schermen / half browservenster */
+@media (max-width: 1500px) {
+  .dash-grid-2,
+  .dash-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .document-hub-grid {
+    grid-template-columns: repeat(
+      3,
+      minmax(0, 1fr)
+    );
+  }
+
+  .chart-box {
+    min-height: 250px;
+  }
+}
+
+/* Laptop en kleinere vensters */
+@media (max-width: 1050px) {
+  .kpi-grid {
+    grid-template-columns: repeat(
+      2,
+      minmax(0, 1fr)
+    );
+  }
+
+  .document-hub-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-header,
+  .dash-toolbar {
+    align-items: stretch;
+  }
+
+  .toolbar-fields {
+    width: 100%;
+  }
+}
+
+/* Mobiel / zeer smal scherm */
+@media (max-width: 700px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field,
+  .input,
+  .select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chart-box {
+    min-height: 220px;
+  }
+}
   </style>
 </head>
 

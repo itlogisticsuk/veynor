@@ -23,10 +23,10 @@ let ackDownloadedOrderIds = new Set();
   const selectedOrderIds = new Set();
   const expandedOrderIds = new Set();
 
-  const sortState = {
-    key: "activity",
-    direction: "desc"
-  };
+const sortState = {
+  key: "order",
+  direction: "desc"
+};
 
 const STATUS_LABELS = {
   order_received: "Order received",
