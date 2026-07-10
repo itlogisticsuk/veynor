@@ -287,30 +287,127 @@
 }
 
   function calculateOrderRevenue(order) {
-    const pick = round2(toNumber(order?.total_handling_tariff, 0));
-    const warehouse = round2(toNumber(order?.total_storage_tariff, 0));
-    const admin = round2(toNumber(order?.total_admin_tariff, 0));
-    const transport = round2(toNumber(order?.total_transport_tariff, 0));
+  const lines = Array.isArray(order?.order_lines)
+    ? order.order_lines
+    : [];
 
-    const calculatedNet = round2(pick + warehouse + admin + transport);
-    const explicitNet = round2(toNumber(order?.total_customer_charge, 0));
-    const net = explicitNet !== 0 ? explicitNet : calculatedNet;
+  const linePick = round2(
+    lines.reduce(
+      (sum, line) =>
+        sum + toNumber(line.tariff_handling, 0),
+      0
+    )
+  );
 
-    const vat = round2(net * VAT_RATE);
-    const gross = round2(net + vat);
+  const lineWarehouse = round2(
+    lines.reduce(
+      (sum, line) =>
+        sum + toNumber(line.tariff_storage, 0),
+      0
+    )
+  );
 
-    return {
-      pick,
-      warehouse,
-      admin,
-      transport,
-      net,
-      vat,
-      gross,
-      colli: toNumber(order?.total_order_colli, 0) || toNumber(order?.planning_colli, 0),
-      volume: toNumber(order?.total_order_volume_m3, 0) || toNumber(order?.planning_volume_m3, 0)
-    };
-  }
+  const lineAdmin = round2(
+    lines.reduce(
+      (sum, line) =>
+        sum + toNumber(line.tariff_admin, 0),
+      0
+    )
+  );
+
+  const lineTransport = round2(
+    lines.reduce(
+      (sum, line) =>
+        sum + toNumber(line.tariff_transport, 0),
+      0
+    )
+  );
+
+  const pick =
+    linePick !== 0
+      ? linePick
+      : round2(
+          toNumber(
+            order?.total_handling_tariff,
+            0
+          )
+        );
+
+  const warehouse =
+    lineWarehouse !== 0
+      ? lineWarehouse
+      : round2(
+          toNumber(
+            order?.total_storage_tariff,
+            0
+          )
+        );
+
+  const admin =
+    lineAdmin !== 0
+      ? lineAdmin
+      : round2(
+          toNumber(
+            order?.total_admin_tariff,
+            0
+          )
+        );
+
+  const transport =
+    lineTransport !== 0
+      ? lineTransport
+      : round2(
+          toNumber(
+            order?.total_transport_tariff,
+            0
+          )
+        );
+
+  const net = round2(
+    pick +
+    warehouse +
+    admin +
+    transport
+  );
+
+  const vat = round2(
+    net * VAT_RATE
+  );
+
+  const gross = round2(
+    net + vat
+  );
+
+  return {
+    pick,
+    warehouse,
+    admin,
+    transport,
+    net,
+    vat,
+    gross,
+
+    colli:
+      toNumber(
+        order?.total_order_colli,
+        0
+      ) ||
+      toNumber(
+        order?.planning_colli,
+        0
+      ),
+
+    volume:
+      toNumber(
+        order?.total_order_volume_m3,
+        0
+      ) ||
+      toNumber(
+        order?.planning_volume_m3,
+        0
+      )
+  };
+}
 
   function nearestCardForId(id) {
     const el = byId(id);
@@ -694,10 +791,20 @@ function getSupplierReference(order) {
         total_admin_tariff,
         total_handling_tariff,
         total_transport_tariff,
-        total_s2u_fees,
-        total_customer_charge,
-        memo,
-        customers (
+total_s2u_fees,
+total_customer_charge,
+memo,
+
+order_lines (
+  id,
+  order_id,
+  tariff_storage,
+  tariff_admin,
+  tariff_handling,
+  tariff_transport
+),
+
+customers (
           id,
           name,
           customer_code,
@@ -751,24 +858,53 @@ function getSupplierReference(order) {
         totals = addTotals(totals, calculateOrderRevenue(order));
       });
 
-      const subtotal = toNumber(inv.subtotal, 0);
-      const vatAmount = toNumber(inv.vat_amount, 0);
-      const totalAmount = toNumber(inv.total_amount, 0);
+     const subtotal = round2(
+  toNumber(inv.subtotal, 0)
+);
 
-      if (totals.net <= 0 && subtotal > 0) {
-        totals.net = round2(subtotal);
-        totals.vat = round2(vatAmount || subtotal * VAT_RATE);
-        totals.gross = round2(totalAmount || totals.net + totals.vat);
-      }
+const vatAmount = round2(
+  toNumber(inv.vat_amount, 0)
+);
 
-      if (totals.net > 0 && totals.vat <= 0) {
-        totals.vat = round2(totals.net * VAT_RATE);
-        totals.gross = round2(totals.net + totals.vat);
-      }
+const totalAmount = round2(
+  toNumber(inv.total_amount, 0)
+);
 
-      if (totals.gross <= 0 && totalAmount > 0) {
-        totals.gross = round2(totalAmount);
-      }
+/*
+ * De invoice-record is leidend voor:
+ * - totaal excl. VAT
+ * - VAT
+ * - totaal incl. VAT
+ *
+ * Deze bedragen bevatten ook de fuel surcharge
+ * en eventuele Minimum Delivery Charges.
+ */
+if (subtotal !== 0) {
+  totals.net = subtotal;
+} else {
+  totals.net = round2(
+    totals.pick +
+    totals.warehouse +
+    totals.admin +
+    totals.transport
+  );
+}
+
+if (vatAmount !== 0) {
+  totals.vat = vatAmount;
+} else {
+  totals.vat = round2(
+    totals.net * VAT_RATE
+  );
+}
+
+if (totalAmount !== 0) {
+  totals.gross = totalAmount;
+} else {
+  totals.gross = round2(
+    totals.net + totals.vat
+  );
+}
 
       const firstOrder = orders[0] || null;
       const customerId = inv.customer_id || firstOrder?.customer_id || docs[0]?.customer_id || "";
@@ -1220,10 +1356,9 @@ const internalCellsHtml = "";
           <td class="money-cell">${formatMoney(t.vat)}</td>
           <td class="total-cell">${formatMoney(t.gross)}</td>
 
-          <td>
-            ${pill(invoice.status)}
-            ${paymentNote(invoice.status)}
-          </td>
+<td>
+  ${pill(invoice.status)}
+</td>
 
           <td>
             <div class="mini-actions">

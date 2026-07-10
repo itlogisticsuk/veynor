@@ -207,6 +207,10 @@
     return loadTable("order_documents", cid, "*");
   }
 
+async function loadDeliveryGroups(cid) {
+  return loadTable("delivery_groups", cid, "*");
+}
+
   async function loadOrderLines(cid) {
     return safeQuery("order lines", async () => {
       const attempts = [
@@ -417,6 +421,138 @@
       toNumber(line.total_line_revenue_gbp, 0)
     );
   }
+
+function getOrderWarehouseRevenue(order) {
+  return (
+    toNumber(order.total_storage_tariff, 0) +
+    toNumber(order.total_handling_tariff, 0) +
+    toNumber(order.total_admin_tariff, 0)
+  );
+}
+
+function getOrderTransportRevenue(order) {
+  return toNumber(
+    order.total_transport_tariff,
+    0
+  );
+}
+
+function getInvoiceDocuments(invoice, orderDocuments) {
+  const invoiceNumber = normalize(
+    invoice.invoice_number || ""
+  );
+
+  if (!invoiceNumber) return [];
+
+  return orderDocuments.filter(document =>
+    normalize(document.document_type) === "invoice" &&
+    normalize(document.document_number) === invoiceNumber
+  );
+}
+
+function calculateMonthlyRevenueBreakdown(rows, monthInvoices) {
+  let warehouseRevenue = 0;
+  let transportRevenue = 0;
+  let deliveryGroupSurcharge = 0;
+  let invoiceSubtotal = 0;
+
+  const countedOrderIds = new Set();
+
+  monthInvoices.forEach(invoice => {
+    invoiceSubtotal += toNumber(
+      invoice.subtotal,
+      0
+    );
+
+    const documents = getInvoiceDocuments(
+      invoice,
+      rows.orderDocuments
+    );
+
+    const orderIds = [
+      ...new Set(
+        documents
+          .map(document => String(document.order_id || ""))
+          .filter(Boolean)
+      )
+    ];
+
+    orderIds.forEach(orderId => {
+      const uniqueKey =
+        `${invoice.id || invoice.invoice_number}|${orderId}`;
+
+      if (countedOrderIds.has(uniqueKey)) {
+        return;
+      }
+
+      countedOrderIds.add(uniqueKey);
+
+      const order = rows.orders.find(row =>
+        String(row.id) === String(orderId)
+      );
+
+      if (!order) return;
+
+      warehouseRevenue +=
+        getOrderWarehouseRevenue(order);
+
+      transportRevenue +=
+        getOrderTransportRevenue(order);
+    });
+
+    deliveryGroupSurcharge += (
+      rows.deliveryGroups || []
+    )
+      .filter(group =>
+        String(group.invoice_id || "") ===
+        String(invoice.id || "")
+      )
+      .reduce(
+        (sum, group) =>
+          sum +
+          toNumber(
+            group.applied_surcharge ??
+            group.calculated_surcharge,
+            0
+          ),
+        0
+      );
+  });
+
+  warehouseRevenue = Math.round(
+    (warehouseRevenue + Number.EPSILON) * 100
+  ) / 100;
+
+  transportRevenue = Math.round(
+    (transportRevenue + Number.EPSILON) * 100
+  ) / 100;
+
+  deliveryGroupSurcharge = Math.round(
+    (deliveryGroupSurcharge + Number.EPSILON) * 100
+  ) / 100;
+
+  invoiceSubtotal = Math.round(
+    (invoiceSubtotal + Number.EPSILON) * 100
+  ) / 100;
+
+  const fuelSurcharge = Math.round(
+    (
+      invoiceSubtotal -
+      warehouseRevenue -
+      transportRevenue -
+      deliveryGroupSurcharge +
+      Number.EPSILON
+    ) * 100
+  ) / 100;
+
+  return {
+    revenueExVat: invoiceSubtotal,
+    warehouseRevenue,
+    transportRevenue,
+    fuelSurcharge,
+    deliveryGroupSurcharge
+  };
+}
 
   function getOrderRevenue(order, orderLinesByOrder) {
     const direct = getOrderRevenueDirect(order);
@@ -791,13 +927,14 @@
       return dateValue && new Date(dateValue).toISOString() >= monthStart;
     });
 
-    const revenueMonth = monthInvoices.reduce((sum, invoice) => {
-      return sum + (
-        toNumber(invoice.total_amount, 0) ||
-        toNumber(invoice.gross_amount, 0) ||
-        toNumber(invoice.subtotal, 0) + toNumber(invoice.vat_amount, 0)
-      );
-    }, 0);
+const monthlyRevenue =
+  calculateMonthlyRevenueBreakdown(
+    rows,
+    monthInvoices
+  );
+
+const revenueMonth =
+  monthlyRevenue.revenueExVat;
 
     const openInvoices = rows.invoices.filter(invoice =>
       ["generated", "sent", "partially_paid"].includes(normalize(invoice.status))
@@ -837,16 +974,28 @@
     const completionPct = Math.round((completionCount / completionBase) * 100);
     const openVolume = openOrders.reduce((sum, order) => sum + getOrderVolume(order), 0);
 
-    return {
-      openOrders: openOrders.length,
-      openWithCoords: openWithCoords.length,
-      openMissingCoords: openOrders.length - openWithCoords.length,
-      openVolume,
+ return {
+  openOrders: openOrders.length,
+  openWithCoords: openWithCoords.length,
+  openMissingCoords:
+    openOrders.length - openWithCoords.length,
+  openVolume,
 
-      readyPlanning: readyPlanning.length,
-      plannedOrders: plannedOrders.length,
-      podsMissing,
-      revenueMonth,
+  readyPlanning: readyPlanning.length,
+  plannedOrders: plannedOrders.length,
+  podsMissing,
+
+  revenueMonth,
+  transportRevenueMonth:
+    monthlyRevenue.transportRevenue,
+  warehouseRevenueMonth:
+    monthlyRevenue.warehouseRevenue,
+  fuelSurchargeMonth:
+    monthlyRevenue.fuelSurcharge,
+  deliveryGroupSurchargeMonth:
+    monthlyRevenue.deliveryGroupSurcharge,
+
+  awaitingGoods: awaitingGoods.length,
 
       awaitingGoods: awaitingGoods.length,
       fullyMatched: fullyMatched.length,
@@ -886,6 +1035,25 @@
     setText("kpiPlannedOrders", formatNumber(m.plannedOrders));
     setText("kpiPodsMissing", formatNumber(m.podsMissing));
     setText("kpiRevenueMonth", formatMoney(m.revenueMonth));
+setText(
+  "kpiTransportRevenueMonth",
+  formatMoney(m.transportRevenueMonth)
+);
+
+setText(
+  "kpiWarehouseRevenueMonth",
+  formatMoney(m.warehouseRevenueMonth)
+);
+
+setText(
+  "kpiFuelSurchargeMonth",
+  formatMoney(m.fuelSurchargeMonth)
+);
+
+setText(
+  "kpiDeliveryGroupSurchargeMonth",
+  formatMoney(m.deliveryGroupSurchargeMonth)
+);
 
     setText("mapOpenMarkers", formatNumber(m.openWithCoords));
     setText("mapMissingGeo", formatNumber(m.openMissingCoords));
@@ -1454,20 +1622,21 @@ list.innerHTML = `
         year: "numeric"
       }));
 
-      const [
-        orders,
-        items,
-        products,
-        routes,
-        routeStops,
-        vehicles,
-        invoices,
-        orderDocuments,
-        orderLines,
-        events,
-        productOwners,
-        depot
-      ] = await Promise.all([
+  const [
+  orders,
+  items,
+  products,
+  routes,
+  routeStops,
+  vehicles,
+  invoices,
+  orderDocuments,
+  orderLines,
+  deliveryGroups,
+  events,
+  productOwners,
+  depot
+] = await Promise.all([
         loadOrders(cid),
         loadItems(cid),
         loadProducts(cid),
@@ -1477,22 +1646,24 @@ list.innerHTML = `
         loadInvoices(cid),
         loadOrderDocuments(cid),
         loadOrderLines(cid),
+loadDeliveryGroups(cid),
         loadEvents(cid),
         loadProductOwners(cid),
         loadDepotSettings(cid)
       ]);
 
-      const rows = {
-        orders,
-        items,
-        products,
-        routes,
-        routeStops,
-        vehicles,
-        invoices,
-        orderDocuments,
-        orderLines
-      };
+const rows = {
+  orders,
+  items,
+  products,
+  routes,
+  routeStops,
+  vehicles,
+  invoices,
+  orderDocuments,
+  orderLines,
+  deliveryGroups
+};
 
       const indexes = createIndexes(rows);
       const metrics = calculateMetrics(rows, indexes);

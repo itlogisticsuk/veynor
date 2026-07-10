@@ -499,6 +499,80 @@ function formatDays(value) {
     );
   }
 
+function getUniqueInvoices(orders = filteredOrders) {
+  const invoiceMap = new Map();
+
+  orders.forEach(order => {
+    (order.order_documents || [])
+      .filter(doc =>
+        normalize(doc.document_type) === "invoice" &&
+        (
+          doc.file_url ||
+          [
+            "generated",
+            "sent",
+            "paid"
+          ].includes(
+            normalize(doc.document_status)
+          )
+        )
+      )
+      .forEach(doc => {
+        const key = normalize(
+          doc.document_number ||
+          doc.file_url ||
+          doc.id
+        );
+
+        if (!key) return;
+
+        if (!invoiceMap.has(key)) {
+          invoiceMap.set(key, {
+            key,
+            document_number:
+              doc.document_number || "",
+            file_url:
+              doc.file_url || "",
+            status:
+              normalize(
+                doc.document_status ||
+                order.finance_status ||
+                order.finance_status_derived
+              )
+          });
+
+          return;
+        }
+
+        const existing =
+          invoiceMap.get(key);
+
+        const statuses = [
+          existing.status,
+          normalize(
+            doc.document_status ||
+            order.finance_status ||
+            order.finance_status_derived
+          )
+        ];
+
+        if (
+          statuses.includes("paid") ||
+          statuses.includes("closed")
+        ) {
+          existing.status = "paid";
+        } else if (
+          statuses.includes("sent") ||
+          statuses.includes("invoice_sent")
+        ) {
+          existing.status = "sent";
+        }
+      });
+  });
+
+  return [...invoiceMap.values()];
+}
+
   function deriveFinanceStatus(order) {
     const explicit = normalize(
       order.finance_status || ""
@@ -1792,13 +1866,8 @@ function getCompleteDate(order) {
         )
       ).length;
 
-    const invoicesAvailable =
-      orders.filter(order =>
-        hasDocument(
-          order,
-          "invoice"
-        )
-      ).length;
+const invoicesAvailable =
+  getUniqueInvoices(orders).length;
 
     const retailers = new Set(
       orders
@@ -1937,87 +2006,90 @@ const avgCompleteToDelivered =
   }
 
   function bindKpiClicks() {
-    const map = {
-      kpiOpenOrders:
-        "open",
-      kpiAwaitingGoods:
-        "awaiting",
-      kpiStockComplete:
-        "complete",
-      kpiMissingProducts:
-        "missing",
-      kpiConfirmedDates:
-        "confirmed_dates",
-      kpiPodAvailable:
-        "pod",
-      kpiInvoicesAvailable:
-        "invoice",
-      kpiAttention:
-        "attention"
-    };
+  const map = {
+    kpiOpenOrders: "open",
+    kpiAwaitingGoods: "awaiting",
+    kpiStockComplete: "complete",
+    kpiMissingProducts: "missing",
+    kpiConfirmedDates: "confirmed_dates",
+    kpiPodAvailable: "pod",
+    kpiAttention: "attention"
+  };
 
-    Object.entries(map).forEach(
-      ([id, filter]) => {
-        const valueElement =
-          byId(id);
+  Object.entries(map).forEach(([id, filter]) => {
+    const valueElement = byId(id);
 
-        const card =
-          valueElement?.closest(
-            ".kpi-card, .metric-card, .card"
+    const card = valueElement?.closest(
+      ".kpi-card, .metric-card, .card"
+    );
+
+    if (
+      !card ||
+      card.dataset.kpiBound === "1"
+    ) {
+      return;
+    }
+
+    card.dataset.kpiBound = "1";
+    card.dataset.kpiFilter = filter;
+    card.style.cursor = "pointer";
+
+    card.addEventListener("click", () => {
+      activeKpiFilter =
+        activeKpiFilter === filter
+          ? ""
+          : filter;
+
+      document
+        .querySelectorAll("[data-kpi-filter]")
+        .forEach(element => {
+          element.classList.toggle(
+            "kpi-active",
+            element.dataset.kpiFilter ===
+              activeKpiFilter
           );
+        });
 
-        if (
-          !card ||
-          card.dataset.kpiBound === "1"
-        ) {
-          return;
-        }
+      renderRecentOrders();
 
-        card.dataset.kpiBound = "1";
-        card.dataset.kpiFilter = filter;
-        card.style.cursor = "pointer";
+      const recent = byId(
+        "recentOrdersBody"
+      );
 
-        card.addEventListener(
-          "click",
-          () => {
-            activeKpiFilter =
-              activeKpiFilter === filter
-                ? ""
-                : filter;
+      recent
+        ?.closest(
+          "section, .card, .panel"
+        )
+        ?.scrollIntoView({
+          behavior: "smooth",
+          block: "start"
+        });
+    });
+  });
 
-            document
-              .querySelectorAll(
-                "[data-kpi-filter]"
-              )
-              .forEach(element => {
-                element.classList.toggle(
-                  "kpi-active",
-                  element.dataset
-                    .kpiFilter ===
-                    activeKpiFilter
-                );
-              });
+  const invoiceKpi =
+    byId("kpiInvoicesAvailable")
+      ?.closest(
+        ".kpi-card, .metric-card, .card"
+      );
 
-            renderRecentOrders();
+  if (
+    invoiceKpi &&
+    invoiceKpi.dataset.billingBound !== "1"
+  ) {
+    invoiceKpi.dataset.billingBound = "1";
+    invoiceKpi.style.cursor = "pointer";
 
-            const recent =
-              byId(
-                "recentOrdersBody"
-              );
-
-            recent
-              ?.closest(
-                "section, .card, .panel"
-              )
-              ?.scrollIntoView({
-                behavior: "smooth",
-                block: "start"
-              });
-          }
-        );
+    invoiceKpi.addEventListener(
+      "click",
+      () => {
+        window.location.href =
+          "./billing.html";
       }
     );
   }
+}
+
 
   function groupOrderFlowLast30Days() {
     const days = new Map();
@@ -2814,29 +2886,28 @@ const avgCompleteToDelivered =
           )
       ).length;
 
-    const invoiceOrders =
-      orders.filter(order =>
-        hasDocument(
-          order,
-          "invoice"
-        )
-      );
+const uniqueInvoices =
+  getUniqueInvoices(orders);
 
-    const invoicePaid =
-      invoiceOrders.filter(
-        order =>
-          normalize(
-            order.finance_status
-          ) === "paid"
-      ).length;
+const invoicePaid =
+  uniqueInvoices.filter(invoice =>
+    [
+      "paid",
+      "closed"
+    ].includes(
+      normalize(invoice.status)
+    )
+  ).length;
 
-    const invoicePending =
-      invoiceOrders.filter(
-        order =>
-          normalize(
-            order.finance_status
-          ) !== "paid"
-      ).length;
+const invoicePending =
+  uniqueInvoices.filter(invoice =>
+    ![
+      "paid",
+      "closed"
+    ].includes(
+      normalize(invoice.status)
+    )
+  ).length;
 
     setText(
       "documentHubAckAvailable",
@@ -2965,36 +3036,42 @@ const avgCompleteToDelivered =
         button.dataset
           .documentBound = "1";
 
-        button.addEventListener(
-          "click",
-          () => {
-            const type =
-              button.dataset
-                .documentFilter || "";
+button.addEventListener(
+  "click",
+  () => {
+    const type =
+      button.dataset
+        .documentFilter || "";
 
-            activeDocumentFilter =
-              activeDocumentFilter === type
-                ? ""
-                : type;
+    if (type === "invoice") {
+      window.location.href =
+        "./billing.html";
+      return;
+    }
 
-            renderDocumentHub();
-            renderDocumentQueue();
+    activeDocumentFilter =
+      activeDocumentFilter === type
+        ? ""
+        : type;
 
-            const queue =
-              byId(
-                "documentQueueBody"
-              );
+    renderDocumentHub();
+    renderDocumentQueue();
 
-            queue
-              ?.closest(
-                "section, .card, .panel, article"
-              )
-              ?.scrollIntoView({
-                behavior: "smooth",
-                block: "start"
-              });
-          }
-        );
+    const queue =
+      byId(
+        "documentQueueBody"
+      );
+
+    queue
+      ?.closest(
+        "section, .card, .panel, article"
+      )
+      ?.scrollIntoView({
+        behavior: "smooth",
+        block: "start"
+      });
+  }
+);
       });
   }
 
