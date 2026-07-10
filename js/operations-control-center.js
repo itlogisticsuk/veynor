@@ -502,18 +502,11 @@ function isAckDownloaded(order) {
 
 async function loadAckDownloadStatus() {
   const cid = await getCompanyId();
-  const profileId = currentProfile?.id || "";
-
-  if (!profileId) {
-    ackDownloadedOrderIds = new Set();
-    return;
-  }
 
   const { data, error } = await client
     .from("portal_events")
     .select("user_profile_id, event_type, metadata")
     .eq("company_id", cid)
-    .eq("user_profile_id", profileId)
     .in("event_type", [
       "ack_downloaded",
       "acknowledgement_downloaded"
@@ -528,11 +521,19 @@ async function loadAckDownloadStatus() {
   ackDownloadedOrderIds = new Set(
     (data || [])
       .filter(row => {
-        const docType = String(row.metadata?.document_type || "").toLowerCase();
-        const action = String(row.metadata?.action || "").toLowerCase();
+        const docType = normalize(
+          row.metadata?.document_type ||
+          row.metadata?.doc_type ||
+          ""
+        );
+
+        const action = normalize(
+          row.metadata?.action ||
+          "downloaded"
+        );
 
         return (
-          (docType === "ack" || docType === "acknowledgement") &&
+          ["ack", "acknowledgement"].includes(docType) &&
           action === "downloaded"
         );
       })
@@ -541,7 +542,6 @@ async function loadAckDownloadStatus() {
       .map(String)
   );
 }
-
   function docStatus(order, type) {
     return getDoc(order, type)?.document_status || "not_generated";
   }
@@ -1928,6 +1928,12 @@ if (url) {
     ["acknowledgement", "legacy_acknowledgement"].includes(normalize(type)) &&
     isAckDownloaded(order);
 
+console.log(
+    order.order_number,
+    type,
+    ackDownloaded
+);
+
   return `
 <a
   class="quick-action ${ackDownloaded ? "ack-downloaded" : ""}"
@@ -1938,7 +1944,7 @@ if (url) {
   ${renderPortalDocAttrs(order, type, "downloaded", url)}
 >
       <span>${escapeHtml(label)}</span>
-      <span>${ackDownloaded ? "Downloaded ✓" : "Download"}</span>
+      <span>${ackDownloaded ? "Downloaded" : "Download"}</span>
     </a>
   `;
 }
@@ -2900,22 +2906,12 @@ byId("deliveryGroupsWrap").style.display = "none";
 </td>
 
 <td>
-  <strong>
-    ${escapeHtml(order.external_reference || "—")}
-    ${
-      isAckDownloaded(order)
-        ? `<span class="ack-ref-check" title="ACK downloaded by this user">✓</span>`
-        : ""
-    }
-  </strong>
-  <span class="subline">
+<strong class="ack-ref ${isAckDownloaded(order) ? "ack-ref-downloaded" : ""}">
+  ${escapeHtml(order.external_reference || "—")}
+</strong>
+<span class="subline">
     Supplier / ACK ref
-    ${
-      isAckDownloaded(order)
-        ? `<span class="ack-ref-text">Downloaded</span>`
-        : ""
-    }
-  </span>
+</span>
 </td>
 
           ${
@@ -3217,6 +3213,21 @@ style.textContent = `
   vertical-align:middle;
 }
 
+.ack-ref{
+    display:inline-flex;
+    align-items:center;
+    padding:3px 8px;
+    border-radius:8px;
+    font-weight:700;
+    border:1px solid transparent;
+}
+
+.ack-ref-downloaded{
+    background:#ecfdf5;
+    border-color:#bbf7d0;
+    color:#15803d;
+}
+
 .ack-ref-text{
   margin-left:6px;
   color:#047857;
@@ -3393,11 +3404,17 @@ style.textContent = `
     font-weight:800;
   }
 
-  .quick-action.ack-downloaded{
-    background:#ecfdf5 !important;
-    border-color:#bbf7d0 !important;
-    color:#047857 !important;
-  }
+.quick-action.ack-downloaded{
+    background:#dcfce7 !important;
+    border:1px solid #86efac !important;
+    color:#166534 !important;
+    font-weight:700;
+}
+
+.quick-action.ack-downloaded span{
+    color:#166534 !important;
+    font-weight:700;
+}
 
   .quick-action.ack-downloaded span:last-child{
     color:#047857 !important;
@@ -5264,12 +5281,14 @@ showToast(`${action} save function is not connected yet.`, "ok");
 
 }
 
-  async function init() {
-    try {
-      ensureClient();
-      await loadCurrentProfile();
-      bindEvents();
-      await loadOrders();
+async function init() {
+  try {
+    ensureClient();
+    ensurePageStyles();
+
+    await loadCurrentProfile();
+    bindEvents();
+    await loadOrders();
       showToast("Operations loaded.", "ok");
     } catch (error) {
       console.error(error);
