@@ -2460,12 +2460,109 @@ await createOrderImportedNotification(order, result, cid);
     }
   }
 
-async function loadManualProducts() {
-  const cid = await getCompanyId();
+async function getSelectedProductOwnerCustomerId(cid) {
+  const owner = getSelectedProductOwner();
+  if (!owner) return null;
+
+  if (owner.customer_id) return owner.customer_id;
+
+  const ownerText = [
+    owner.name,
+    owner.trading_name,
+    owner.customer_code,
+    owner.key,
+    owner.default_source_name
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const { data, error } = await client
+    .from("customers")
+    .select("id, name, customer_code")
+    .eq("company_id", cid)
+    .limit(1000);
+
+  if (error) throw error;
+
+  const match = (data || []).find(row => {
+    const rowText = `${row.name || ""} ${row.customer_code || ""}`.toLowerCase();
+
+    if (ownerText.includes("zoy") && rowText.includes("zoy")) return true;
+    if (ownerText.includes("bellstone") && rowText.includes("bellstone")) return true;
+
+    return false;
+  });
+
+  return match?.id || null;
+}
+
+function fillManualOwnerFields() {
   const owner = getSelectedProductOwner();
   if (!owner) return;
 
-  const ownerId = await getOrCreateProductOwnerCustomer(owner, cid);
+  const isOtherCustomer = byId("manualUnknownOwner")?.checked;
+
+  if (byId("manualOwnerSelect")) {
+    byId("manualOwnerSelect").value =
+      owner.key ||
+      owner.customer_code ||
+      owner.trading_name ||
+      owner.name ||
+      "";
+  }
+
+  if (!isOtherCustomer) {
+    if (byId("manualCustomerName")) {
+      byId("manualCustomerName").value = owner.name || owner.trading_name || "";
+    }
+
+    if (byId("manualCustomerCode")) {
+      byId("manualCustomerCode").value = owner.customer_code || owner.key || "";
+    }
+
+    if (byId("manualCustomerEmail")) {
+      byId("manualCustomerEmail").value =
+        owner.invoice_email ||
+        owner.ops_email ||
+        owner.ack_email ||
+        "";
+    }
+
+    if (byId("manualCustomerPhone")) {
+      byId("manualCustomerPhone").value = owner.phone || "";
+    }
+
+    if (byId("manualCustomerAddress1")) {
+      byId("manualCustomerAddress1").value = owner.address1 || "";
+    }
+
+    if (byId("manualCustomerAddress2")) {
+      byId("manualCustomerAddress2").value = owner.address2 || "";
+    }
+
+    if (byId("manualCustomerCity")) {
+      byId("manualCustomerCity").value = owner.city || "";
+    }
+
+    if (byId("manualCustomerPostcode")) {
+      byId("manualCustomerPostcode").value = owner.postcode || "";
+    }
+
+    if (byId("manualCustomerCountry")) {
+      byId("manualCustomerCountry").value = owner.country || getDefaultCountry();
+    }
+  }
+}
+
+async function loadManualProducts() {
+  const cid = await getCompanyId();
+  const ownerId = await getSelectedProductOwnerCustomerId(cid);
+
+  manualProducts = [];
+
+  if (!ownerId) {
+    renderManualProductOptions();
+    showToast("No product owner customer found for selected owner.", "err");
+    return;
+  }
 
   const { data, error } = await client
     .from("products")
@@ -2476,7 +2573,7 @@ async function loadManualProducts() {
 
   if (error) {
     console.warn("Manual products skipped:", error.message);
-    manualProducts = [];
+    renderManualProductOptions();
     return;
   }
 
@@ -2499,59 +2596,6 @@ function findManualProduct(sku) {
   return manualProducts.find(p => normalize(p.sku_base) === normalize(sku)) || null;
 }
 
-function isTenantRole() {
-  const role = normalize(window.VEYNOR_CURRENT_PROFILE?.role || "");
-  return ["veynor_admin", "tenant_admin", "tenant_user"].includes(role);
-}
-
-function getManualPackageTotal(product) {
-  return Math.max(
-    1,
-    Math.round(toNumber(
-      product?.package_count ||
-      product?.packages_per_unit ||
-      1,
-      1
-    ))
-  );
-}
-
-function fillManualPackageOptions(row, product) {
-  const select = row.querySelector(".manualPackageChoice");
-  if (!select) return;
-
-  const total = getManualPackageTotal(product);
-
-  select.innerHTML =
-    `<option value="full">Full Product (${total}/${total})</option>` +
-    Array.from({ length: total }, (_, index) => {
-      const no = index + 1;
-      return `<option value="${no}/${total}">Package ${no}/${total}</option>`;
-    }).join("");
-}
-
-function applyManualFinanceVisibility() {
-  const allowed = isTenantRole();
-
-  document.querySelectorAll(".manual-line-finance").forEach(el => {
-    el.style.display = allowed ? "" : "none";
-  });
-
-  const unknownOwner = byId("manualUnknownOwner");
-  const unknownOwnerLabel = unknownOwner?.closest("label");
-
-  if (unknownOwner) {
-    unknownOwner.disabled = !allowed;
-    if (!allowed) unknownOwner.checked = false;
-  }
-
-  if (unknownOwnerLabel) {
-    unknownOwnerLabel.style.display = allowed ? "" : "none";
-  }
-
-  toggleManualUnknownOwnerFields();
-}
-
 function fillManualLineFromSku(input) {
   const row = input.closest(".manual-line-row");
   if (!row) return;
@@ -2559,38 +2603,79 @@ function fillManualLineFromSku(input) {
   const product = findManualProduct(input.value);
   if (!product) return;
 
-  const desc = row.querySelector(".manualDescription");
-  const volume = row.querySelector(".manualVolume");
-  const weight = row.querySelector(".manualWeight");
-  const storage = row.querySelector(".manualStorageTariff");
-  const admin = row.querySelector(".manualAdminTariff");
-  const handling = row.querySelector(".manualHandlingTariff");
-  const transport = row.querySelector(".manualTransportTariff");
+  const packageTotal = Math.max(1, Math.round(toNumber(product.package_count || product.packages_per_unit || 1, 1)));
+  const packageSelect = row.querySelector(".manualPackageChoice");
+
+  if (packageSelect) {
+    packageSelect.innerHTML =
+      `<option value="full">Full Product (${packageTotal}/${packageTotal})</option>` +
+      Array.from({ length: packageTotal }, (_, index) => {
+        const no = index + 1;
+        return `<option value="${no}/${packageTotal}">Package ${no}/${packageTotal}</option>`;
+      }).join("");
+  }
+
+  row.querySelector(".manualDescription").value = product.description || product.name || "";
+  row.querySelector(".manualVolume").value = product.volume_m3 || 0;
+  row.querySelector(".manualWeight").value = product.weight_kg || product.net_weight_kg || 0;
+
+  row.querySelector(".manualStorageTariff").value = product.storage_tariff || product.tariff_storage || 0;
+  row.querySelector(".manualAdminTariff").value = product.admin_tariff || 0;
+  row.querySelector(".manualHandlingTariff").value = product.handling_tariff || product.tariff_handling || 0;
+  row.querySelector(".manualTransportTariff").value = product.transport_tariff || product.tariff_transport || 0;
+
   const missing = row.querySelector(".manualProductMissing");
   const hint = row.querySelector(".manualProductHint");
 
-  fillManualPackageOptions(row, product);
-
-  if (desc) desc.value = product.description || product.name || "";
-  if (volume) volume.value = product.volume_m3 || 0;
-  if (weight) weight.value = product.weight_kg || product.net_weight_kg || 0;
-
-  if (isTenantRole()) {
-    if (storage) storage.value = product.storage_tariff || 0;
-    if (admin) admin.value = product.admin_tariff || 0;
-    if (handling) handling.value = product.handling_tariff || 0;
-    if (transport) transport.value = product.transport_tariff || 0;
-  } else {
-    if (storage) storage.value = 0;
-    if (admin) admin.value = 0;
-    if (handling) handling.value = 0;
-    if (transport) transport.value = 0;
-  }
-
   if (missing) missing.checked = false;
   if (hint) hint.textContent = "Product found in master data.";
+}
 
-  applyManualFinanceVisibility();
+function syncManualOwnerSelect() {
+  const select = byId("manualOwnerSelect");
+  if (!select) return;
+
+  select.innerHTML = ownerProfiles.map(owner => {
+    const label = owner.trading_name || owner.name || owner.customer_code || owner.key || "Product owner";
+    const value = owner.key || owner.customer_code || owner.trading_name || owner.name || "";
+
+    return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
+  }).join("");
+
+  select.value = getFieldValue("productOwnerName", "");
+}
+
+function toggleManualUnknownOwnerFields() {
+  const checkbox = byId("manualUnknownOwner");
+  const fields = byId("manualUnknownOwnerFields");
+  if (!checkbox || !fields) return;
+
+  fields.classList.toggle("hidden", !checkbox.checked);
+  fillManualOwnerFields();
+}
+
+async function openManualOrderModal() {
+  syncManualOwnerSelect();
+  fillManualOwnerFields();
+  toggleManualUnknownOwnerFields();
+
+  await loadManualProducts();
+
+  byId("manualOrderModal")?.classList.add("open");
+
+  const dateInput = byId("manualRequestedDate");
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().slice(0, 10);
+  }
+
+  const orderInput = byId("manualOrderNumber");
+  if (orderInput && !orderInput.value) {
+    orderInput.value = `MAN-${Date.now().toString().slice(-6)}`;
+  }
+}
+
+function closeManualOrderModal() {
+  byId("manualOrderModal")?.classList.remove("open");
 }
 
 async function loadManualRetailers() {
@@ -2599,13 +2684,13 @@ async function loadManualRetailers() {
   const { data, error } = await client
     .from("orders")
     .select(`
-  retail_name,
-  delivery_address_1,
-  delivery_address_2,
-  delivery_city,
-  delivery_postcode,
-  delivery_country
-`)
+      retail_name,
+      delivery_address_1,
+      delivery_address_2,
+      delivery_city,
+      delivery_postcode,
+      delivery_country
+    `)
     .eq("company_id", cid)
     .not("retail_name", "is", null)
     .order("retail_name", { ascending: true })
@@ -2614,6 +2699,7 @@ async function loadManualRetailers() {
   if (error) {
     console.warn("Manual retailers skipped:", error.message);
     manualRetailers = [];
+    renderManualRetailerOptions();
     return;
   }
 
@@ -2669,76 +2755,6 @@ function fillManualRetailerFromSelect() {
   byId("manualPostcode").value = retailer.postcode || "";
   byId("manualCountry").value = retailer.country || getDefaultCountry();
 }
-
-
-function syncManualOwnerSelect() {
-  const select = byId("manualOwnerSelect");
-  const owner = getSelectedProductOwner();
-
-  if (!select || !owner) return;
-
-  const label =
-    owner.trading_name ||
-    owner.name ||
-    owner.customer_code ||
-    owner.key ||
-    "Product owner";
-
-  const value =
-    owner.key ||
-    owner.customer_code ||
-    owner.trading_name ||
-    owner.name ||
-    "";
-
-  select.innerHTML = `
-    <option value="${escapeHtml(value)}">${escapeHtml(label)}</option>
-  `;
-
-  select.value = value;
-}
-
-function toggleManualUnknownOwnerFields() {
-  const checkbox = byId("manualUnknownOwner");
-  const fields = byId("manualUnknownOwnerFields");
-
-  if (!checkbox || !fields) return;
-
-  fields.classList.toggle("hidden", !checkbox.checked);
-}
-
-function openManualOrderModal() {
-  syncManualOwnerSelect();
-  toggleManualUnknownOwnerFields();
-
-  byId("manualOrderModal")?.classList.add("open");
-
-  const dateInput = byId("manualRequestedDate");
-  if (dateInput && !dateInput.value) {
-    dateInput.value = new Date().toISOString().slice(0, 10);
-  }
-
-  const orderInput = byId("manualOrderNumber");
-  if (orderInput && !orderInput.value) {
-    orderInput.value = `MAN-${Date.now().toString().slice(-6)}`;
-  }
-
-  document.querySelectorAll("#manualLines .manual-line-row").forEach(row => {
-    const sku = row.querySelector(".manualSku")?.value || "";
-    const product = findManualProduct(sku);
-
-    if (product) {
-    fillManualLineFromSku(row.querySelector(".manualSku"));
-}
-  });
-
-  applyManualFinanceVisibility();
-}
-
-function closeManualOrderModal() {
-  byId("manualOrderModal")?.classList.remove("open");
-}
-
 
 function addManualLine() {
   const wrap = byId("manualLines");
@@ -2814,8 +2830,6 @@ function addManualLine() {
       </div>
     </div>
   `);
-
-  applyManualFinanceVisibility();
 }
 
 function getManualLines() {
@@ -2824,13 +2838,11 @@ function getManualLines() {
       const sku = row.querySelector(".manualSku")?.value.trim() || "";
       const description = row.querySelector(".manualDescription")?.value.trim() || "";
       const qty = Math.max(1, Math.round(toNumber(row.querySelector(".manualQty")?.value, 1)));
-
       const unitVolume = toNumber(row.querySelector(".manualVolume")?.value, 0);
       const unitWeight = toNumber(row.querySelector(".manualWeight")?.value, 0);
-const packageChoice = row.querySelector(".manualPackageChoice")?.value || "full";
-const packageParts = packageChoice !== "full" ? packageChoice.split("/") : [];
-const requestedPackageNo = packageParts.length ? toNumber(packageParts[0], null) : null;
-const requestedPackageTotal = packageParts.length ? toNumber(packageParts[1], null) : null;
+
+      const packageChoice = row.querySelector(".manualPackageChoice")?.value || "full";
+      const packageParts = packageChoice !== "full" ? packageChoice.split("/") : [];
 
       return {
         itemRaw: sku,
@@ -2842,15 +2854,13 @@ const requestedPackageTotal = packageParts.length ? toNumber(packageParts[1], nu
         totalVolume: qty * unitVolume,
         unitWeight,
         totalWeight: qty * unitWeight,
-packageChoice,
-requested_package_no: requestedPackageNo,
-requested_package_total: requestedPackageTotal,
-
-tariff_storage: isTenantRole() ? toNumber(row.querySelector(".manualStorageTariff")?.value, 0) : 0,
-tariff_admin: isTenantRole() ? toNumber(row.querySelector(".manualAdminTariff")?.value, 0) : 0,
-tariff_handling: isTenantRole() ? toNumber(row.querySelector(".manualHandlingTariff")?.value, 0) : 0,
-tariff_transport: isTenantRole() ? toNumber(row.querySelector(".manualTransportTariff")?.value, 0) : 0,
-        productMissingManual: !!row.querySelector(".manualProductMissing")?.checked,
+        packageChoice,
+        requested_package_no: packageParts.length ? toNumber(packageParts[0], null) : null,
+        requested_package_total: packageParts.length ? toNumber(packageParts[1], null) : null,
+        tariff_storage: toNumber(row.querySelector(".manualStorageTariff")?.value, 0),
+        tariff_admin: toNumber(row.querySelector(".manualAdminTariff")?.value, 0),
+        tariff_handling: toNumber(row.querySelector(".manualHandlingTariff")?.value, 0),
+        tariff_transport: toNumber(row.querySelector(".manualTransportTariff")?.value, 0),
         sourceRow: index + 1
       };
     })
@@ -2858,53 +2868,31 @@ tariff_transport: isTenantRole() ? toNumber(row.querySelector(".manualTransportT
 }
 
 async function saveManualOrder() {
-  if (!getSelectedProductOwner()) {
-    showToast("Select a product owner first.", "err");
-    return;
-  }
-
   const orderNumber = getFieldValue("manualOrderNumber", "");
   const retailerName = getFieldValue("manualRetailerName", "");
   const postcode = getFieldValue("manualPostcode", "");
   const city = getFieldValue("manualCity", "");
   const lines = getManualLines();
 
-  if (!orderNumber) {
-    showToast("Manual order number is required.", "err");
-    return;
-  }
-
-  if (!retailerName) {
-    showToast("Retailer / shop name is required.", "err");
-    return;
-  }
-
-  if (!postcode && !city) {
-    showToast("City or postcode is required.", "err");
-    return;
-  }
-
-  if (!lines.length) {
-    showToast("Add at least one product line.", "err");
-    return;
-  }
+  if (!orderNumber) return showToast("Manual order number is required.", "err");
+  if (!retailerName) return showToast("Retailer / shop name is required.", "err");
+  if (!postcode && !city) return showToast("City or postcode is required.", "err");
+  if (!lines.length) return showToast("Add at least one product line.", "err");
 
   currentSourceKind = "manual";
 
- const shipTo = {
-  ...buildEmptyAddress(),
-  contactName: getFieldValue("manualContactName", ""),
-  companyName: retailerName,
-
-  address1: getFieldValue("manualAddress1", ""),
-  address2: getFieldValue("manualAddress2", ""),
-  address3: getFieldValue("manualAddress3", ""),
-  address4: getFieldValue("manualAddress4", ""),
-
-  city: getFieldValue("manualCity", ""),
-  postcode,
-  country: getFieldValue("manualCountry", getDefaultCountry())
-};
+  const shipTo = {
+    ...buildEmptyAddress(),
+    contactName: getFieldValue("manualContactName", ""),
+    companyName: retailerName,
+    address1: getFieldValue("manualAddress1", ""),
+    address2: getFieldValue("manualAddress2", ""),
+    address3: getFieldValue("manualAddress3", ""),
+    address4: getFieldValue("manualAddress4", ""),
+    city,
+    postcode,
+    country: getFieldValue("manualCountry", getDefaultCountry())
+  };
 
   let manualOrder = {
     ...buildEmptyOrder(),
@@ -2920,6 +2908,7 @@ async function saveManualOrder() {
     contactName: getFieldValue("manualContactName", ""),
     address1: shipTo.address1,
     address2: shipTo.address2,
+    address3: shipTo.address3,
     city: shipTo.city,
     postcode: shipTo.postcode,
     country: shipTo.country,
@@ -2942,12 +2931,13 @@ async function saveManualOrder() {
 
   showToast("Manual order added to preview. Click Import Previewed Orders to save it.", "ok");
 }
-  function bindEvents() {
+
+function bindEvents() {
   const excelInput = byId("ordersImportFile");
 
   if (excelInput) {
-    excelInput.addEventListener("change", e => {
-      selectedExcelFile = e.target.files?.[0] || null;
+    excelInput.addEventListener("change", event => {
+      selectedExcelFile = event.target.files?.[0] || null;
       setText(
         "excelFileStatus",
         selectedExcelFile ? `${selectedExcelFile.name} selected` : "No Excel file selected."
@@ -2955,39 +2945,38 @@ async function saveManualOrder() {
     });
   }
 
-byId("manualLines")?.addEventListener("change", event => {
-  const input = event.target.closest(".manualSku");
-  if (!input) return;
-  fillManualLineFromSku(input);
-});
+  byId("manualOwnerSelect")?.addEventListener("change", async event => {
+    event.preventDefault();
 
-byId("manualRetailerSelect")?.addEventListener("change", () => {
-  fillManualRetailerFromSelect();
-});
+    const mainOwnerSelect = byId("productOwnerName");
+    if (mainOwnerSelect) mainOwnerSelect.value = event.target.value;
 
-byId("manualUnknownOwner")?.addEventListener("change", () => {
-  toggleManualUnknownOwnerFields();
-});
+    fillManualOwnerFields();
+    await loadManualProducts();
+  });
 
-byId("productOwnerName")?.addEventListener("change", async () => {
-  groupedOrders = groupedOrders.map(finalizeOrder);
+  byId("manualLines")?.addEventListener("change", event => {
+    const input = event.target.closest(".manualSku");
+    if (!input) return;
+    fillManualLineFromSku(input);
+  });
 
-  await loadManualProducts();
+  byId("manualRetailerSelect")?.addEventListener("change", fillManualRetailerFromSelect);
+  byId("manualUnknownOwner")?.addEventListener("change", toggleManualUnknownOwnerFields);
 
-  if (groupedOrders.length) {
-    try {
-      await markMissingProducts();
-    } catch (error) {
-      console.warn("Product check after owner change skipped:", error.message);
-    }
-  }
+  byId("productOwnerName")?.addEventListener("change", async () => {
+    fillManualOwnerFields();
+    await loadManualProducts();
 
-  renderAll();
-});
+    groupedOrders = groupedOrders.map(finalizeOrder);
+    renderAll();
+  });
 
   bindPdfDropZone();
 
-  firstEl(["btnReadExcelFile", "btnReadFile"])?.addEventListener("click", async () => {
+  firstEl(["btnReadExcelFile", "btnReadFile"])?.addEventListener("click", async event => {
+    event.preventDefault();
+
     try {
       if (!getSelectedProductOwner()) {
         showToast("Select a product owner first.", "err");
@@ -3002,7 +2991,9 @@ byId("productOwnerName")?.addEventListener("change", async () => {
     }
   });
 
-  byId("btnReadPdfFile")?.addEventListener("click", async () => {
+  byId("btnReadPdfFile")?.addEventListener("click", async event => {
+    event.preventDefault();
+
     try {
       await readPdfFile();
     } catch (error) {
@@ -3012,9 +3003,14 @@ byId("productOwnerName")?.addEventListener("change", async () => {
     }
   });
 
-  byId("btnShowPdfText")?.addEventListener("click", togglePdfTextPanel);
+  byId("btnShowPdfText")?.addEventListener("click", event => {
+    event.preventDefault();
+    togglePdfTextPanel();
+  });
 
-  byId("btnImportOrders")?.addEventListener("click", async () => {
+  byId("btnImportOrders")?.addEventListener("click", async event => {
+    event.preventDefault();
+
     try {
       await importOrders();
     } catch (error) {
@@ -3024,16 +3020,40 @@ byId("productOwnerName")?.addEventListener("change", async () => {
     }
   });
 
-  byId("btnClearPreview")?.addEventListener("click", clearPreview);
+  byId("btnClearPreview")?.addEventListener("click", event => {
+    event.preventDefault();
+    clearPreview();
+  });
 
   ["optSkipExisting", "optSkipZeroQtyPdfLines", "optUsePdfTotalVolume"].forEach(id => {
     byId(id)?.addEventListener("change", renderAll);
   });
 
-  byId("btnOpenManualOrder")?.addEventListener("click", openManualOrderModal);
-  byId("btnCloseManualOrder")?.addEventListener("click", closeManualOrderModal);
-  byId("btnCancelManualOrder")?.addEventListener("click", closeManualOrderModal);
-  byId("btnAddManualLine")?.addEventListener("click", addManualLine);
+  byId("btnOpenManualOrder")?.addEventListener("click", async event => {
+    event.preventDefault();
+
+    try {
+      await openManualOrderModal();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || "Manual order popup could not be opened.", "err");
+    }
+  });
+
+  byId("btnCloseManualOrder")?.addEventListener("click", event => {
+    event.preventDefault();
+    closeManualOrderModal();
+  });
+
+  byId("btnCancelManualOrder")?.addEventListener("click", event => {
+    event.preventDefault();
+    closeManualOrderModal();
+  });
+
+  byId("btnAddManualLine")?.addEventListener("click", event => {
+    event.preventDefault();
+    addManualLine();
+  });
 
   byId("manualOrderModal")?.addEventListener("click", event => {
     if (event.target.id === "manualOrderModal") {
@@ -3042,47 +3062,53 @@ byId("productOwnerName")?.addEventListener("change", async () => {
   });
 
   byId("manualLines")?.addEventListener("click", event => {
-  const btn = event.target.closest(".btnRemoveManualLine");
-  if (!btn) return;
+    const btn = event.target.closest(".btnRemoveManualLine");
+    if (!btn) return;
 
-  const rows = document.querySelectorAll("#manualLines .manual-line-row");
-  if (rows.length <= 1) {
-    showToast("At least one product line is required.", "err");
-    return;
-  }
+    event.preventDefault();
 
-  btn.closest(".manual-line-row")?.remove();
-});
+    const rows = document.querySelectorAll("#manualLines .manual-line-row");
+    if (rows.length <= 1) {
+      showToast("At least one product line is required.", "err");
+      return;
+    }
 
-byId("btnSaveManualOrder")?.addEventListener("click", async () => {
-  try {
-    await saveManualOrder();
-  } catch (error) {
-    console.error(error);
-    showToast(error.message || "Manual order could not be created.", "err");
-  }
-});
-    hideDeprecatedOptions();
-  }
+    btn.closest(".manual-line-row")?.remove();
+  });
 
-  document.addEventListener("DOMContentLoaded", async () => {
+  byId("btnSaveManualOrder")?.addEventListener("click", async event => {
+    event.preventDefault();
+    event.stopPropagation();
+
     try {
-      if (typeof sb !== "function") {
-        throw new Error("Supabase helper sb() is not available.");
-      }
-
-      client = sb();
-
-     await getCompanyId();
-await loadSettings();
-await loadManualProducts();
-await loadManualRetailers();
-
-bindEvents();
-renderAll();
+      await saveManualOrder();
     } catch (error) {
       console.error(error);
-      showToast(error.message || "Order import page failed to load.", "err");
+      showToast(error.message || "Manual order could not be created.", "err");
     }
   });
+
+  hideDeprecatedOptions();
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  try {
+    if (typeof sb !== "function") {
+      throw new Error("Supabase helper sb() is not available.");
+    }
+
+    client = sb();
+
+    await getCompanyId();
+    await loadSettings();
+    await loadManualProducts();
+    await loadManualRetailers();
+
+    bindEvents();
+    renderAll();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Order import page failed to load.", "err");
+  }
+});
 })();

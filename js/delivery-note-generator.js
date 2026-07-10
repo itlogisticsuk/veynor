@@ -611,26 +611,27 @@ function getLineWeight(line) {
     drawAddressBlock(doc, "SHIP TO", shipToLines, 110, 72, 86, 47);
   }
 
-  function drawTableHeader(doc, y) {
-    doc.setFillColor(245, 247, 250);
-    doc.rect(14, y - 6, 182, 9, "F");
+function drawTableHeader(doc, y) {
+  doc.setFillColor(245, 247, 250);
+  doc.rect(14, y - 6, 182, 9, "F");
 
-    setDark(doc);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.1);
+  setDark(doc);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.1);
 
-    doc.text("Item", 14, y);
-    doc.text("Description", 34, y);
-    doc.text("Packages", 116, y);
-    doc.text("Delivered", 150, y, { align: "right" });
-    doc.text("Volume", 174, y, { align: "right" });
-    doc.text("Weight", 194, y, { align: "right" });
+  doc.text("Qty", 14, y);
+  doc.text("Item", 26, y);
+  doc.text("Description", 46, y);
+  doc.text("Packages", 116, y);
+  doc.text("Delivered", 150, y, { align: "right" });
+  doc.text("Volume", 174, y, { align: "right" });
+  doc.text("Weight", 194, y, { align: "right" });
 
-    doc.setDrawColor(70, 80, 95);
-    doc.line(14, y + 3.5, 196, y + 3.5);
+  doc.setDrawColor(70, 80, 95);
+  doc.line(14, y + 3.5, 196, y + 3.5);
 
-    return y + 8.5;
-  }
+  return y + 8.5;
+}
 
   function maybeAddPage(doc, y, order, ctx, tenantLogoDataUrl) {
     if (y <= 262) return y;
@@ -664,20 +665,12 @@ const qty = getLineQty(line);
 const packageCount = getLinePackageCount(line);
 const packageLabel = getPackageLabel(line);
 
-const serviceWarning =
-  line.requested_package_no && line.requested_package_total
-    ? `ATTENTION: Service delivery / partial order - Deliver package ${line.requested_package_label} only.`
-    : "";
-
 const volume = getLineVolume(line);
 const weight = getLineWeight(line);
 
-      const fullDescription =
-  serviceWarning
-    ? `${description}\n${serviceWarning}`
-    : description;
+const fullDescription = description;
 
-const descLines = splitText(doc, fullDescription, 76);
+const descLines = splitText(doc, fullDescription, 66);
       const packageWord = packageCount === 1 ? "package" : "packages";
       const packageLines = splitText(doc, `${packageCount} ${packageWord}`, 28);
       const labelLines = splitText(doc, packageLabel, 34);
@@ -689,8 +682,9 @@ const descLines = splitText(doc, fullDescription, 76);
       );
 
       setDark(doc);
-      doc.text(sku, 14, y);
-      doc.text(descLines, 34, y);
+doc.text(formatNumber(qty, 0), 14, y);
+doc.text(sku, 26, y);
+doc.text(descLines, 46, y);
 
       doc.setFont("helvetica", "bold");
       doc.text(packageLines, 116, y);
@@ -833,10 +827,16 @@ const descLines = splitText(doc, fullDescription, 76);
     return doc.output("blob");
   }
 
-  async function uploadPdf(client, companyId, order, blob) {
-    const orderPart = safeFilePart(order.order_number || order.id);
-    const fileName = `delivery-note-${orderPart}.pdf`;
-    const storagePath = `${companyId}/${order.id}/${fileName}`;
+async function uploadPdf(client, companyId, order, blob) {
+  const orderPart = safeFilePart(order.order_number || order.id);
+  const supplierPart = safeFilePart(order.external_reference || "");
+  const versionPart = Date.now();
+
+  const fileName = supplierPart
+    ? `Delivery Note ${orderPart} ${supplierPart} ${versionPart}.pdf`
+    : `Delivery Note ${orderPart} ${versionPart}.pdf`;
+
+  const storagePath = `${companyId}/${order.id}/${fileName}`;
 
     const { error } = await client.storage
       .from(DOCUMENT_BUCKET)
@@ -1005,8 +1005,8 @@ package_3_weight_kg
     const ctx = await loadCompanySettings(client, companyId);
     ctx.productOwner = await loadProductOwnerProfile(client, workingOrder, ctx.ownerProfiles);
 
-    const blob = await createPdfBlob(workingOrder, ctx);
-    const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
+const blob = await createPdfBlob(workingOrder, ctx);
+const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
 
     if (!uploaded.fileUrl || !uploaded.storagePath) {
       throw new Error("Delivery note PDF was uploaded, but no file URL/storage path was returned.");

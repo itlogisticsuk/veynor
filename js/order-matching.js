@@ -744,7 +744,8 @@ order_allocations (
 
 .eq("company_id", cid)
 .or("planning_release.is.null,planning_release.eq.false")
-.not("status", "in", '("loaded","delivered","cancelled")')
+.not("status", "in", '("loaded","delivered","cancelled","export_for_charter")')
+.neq("transport_type", "charter")
 .order("requested_delivery_date", { ascending: true, nullsFirst: false })
 .order("order_number", { ascending: true });
 

@@ -150,8 +150,16 @@
   function getProductOwnerName(order) {
     return cleanText(order?.customers?.name || order?.product_owner_name || order?.customer_name || "—");
   }
-function isZoyOrder(order) {
-  return normalize(getProductOwnerName(order)).includes("zoy");
+function isZoyOrder(order, ctx = {}) {
+  return (
+    normalize(ctx?.productOwner?.key) === "zoy" ||
+    normalize(ctx?.productOwner?.customerCode) === "zoy" ||
+    normalize(ctx?.productOwner?.customer_code) === "zoy" ||
+    normalize(ctx?.productOwner?.default_source_name) === "zoy" ||
+    normalize(ctx?.productOwner?.tradingName).includes("zoy") ||
+    normalize(ctx?.productOwner?.trading_name).includes("zoy") ||
+    normalize(order?.customers?.customer_code) === "zoy"
+  );
 }
 
   function getShipToName(order) {
@@ -679,8 +687,8 @@ async function loadProductOwnerProfile(client, customerId, order, settings = {})
     drawAddressBlock(doc, "Ship To:", shipToLines, 112, 62, 78, 36);
   }
 
-function drawTableHeader(doc, y, order) {
-  const zoy = isZoyOrder(order);
+function drawTableHeader(doc, y, order, ctx = {}) {
+  const zoy = isZoyOrder(order, ctx);
 
   setDark(doc);
 
@@ -717,7 +725,7 @@ function drawTableHeader(doc, y, order) {
     drawHeader(doc, order, ctx, logoDataUrl, true);
 
     if (withTableHeader) {
-      return drawTableHeader(doc, 58, order);
+      return drawTableHeader(doc, 58, order, ctx);
     }
 
     return 58;
@@ -763,7 +771,7 @@ function drawTableHeader(doc, y, order) {
 
   function drawLines(doc, order, ctx, logoDataUrl, pricing) {
     let y = 108;
-    y = drawTableHeader(doc, y, order);
+    y = drawTableHeader(doc, y, order, ctx);
 
     const lines = getOrderLines(order);
     const regional = pricing.regional || {};
@@ -785,7 +793,7 @@ function drawTableHeader(doc, y, order) {
       const packageLabel = getPackageLabel(line);
       const warning = getServiceWarning(line, order);
 
-const zoy = isZoyOrder(order);
+const zoy = isZoyOrder(order, ctx);
 
 const warehouseCost = getLineWarehouseCost(line);
 const transportCost = getLineTransportCost(line, regional);
@@ -930,7 +938,7 @@ if (zoy) {
 function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
   y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
 
-  const zoy = isZoyOrder(order);
+  const zoy = isZoyOrder(order, ctx);
   const regional = pricing.regional || {};
 
   const totalProducts = getTotalProducts(order);
@@ -966,13 +974,8 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
       }, 0)
     );
 
-    const regionalSurcharge = regional.priceOnRequest
-      ? 0
-      : round2(toNumber(pricing.regionalSurcharge, 0));
-
-    const total = regional.priceOnRequest
-      ? null
-      : round2(subtotal + regionalSurcharge);
+    const regionalSurcharge = round2(toNumber(pricing.regionalSurcharge, 0));
+    const total = round2(subtotal + regionalSurcharge);
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.2);
@@ -1001,15 +1004,12 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
     y += 5.8;
 
     doc.setFont("helvetica", "bold");
-    doc.text("Total", labelX, y);
-    doc.text(
-      regional.priceOnRequest ? "Price on Request" : formatMoney(total),
-      valueX,
-      y,
-      { align: "right" }
-    );
+    doc.text("Subtotal excl. VAT", labelX, y);
+    doc.text(formatMoney(total), valueX, y, { align: "right" });
 
-    return y + 8;
+    y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
+
+    return y + 2;
   }
 
   const subtotal = regional.priceOnRequest
@@ -1053,7 +1053,7 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
   y += 5.8;
 
   doc.setFont("helvetica", "bold");
-  doc.text("Subtotal excl. fuel surcharge & VAT", labelX, y);
+  doc.text("Subtotal excl. VAT", labelX, y);
   doc.text(
     regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal),
     valueX,
@@ -1066,7 +1066,6 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
 
   return y + 2;
 }
-
 function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
   y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
@@ -1088,38 +1087,6 @@ function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
     doc.text(memoLines, 37, y + 1);
-
-    y += boxHeight + 2;
-  }
-
-  const regional = ctx.pricing?.regional || {};
-  const regionalSurcharge = toNumber(ctx.pricing?.regionalSurcharge, 0);
-
-  if (
-    isZoyOrder(order) &&
-    regional.code !== "standard" &&
-    !regional.priceOnRequest &&
-    regionalSurcharge > 0
-  ) {
-    y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
-
-    const info =
-      `This surcharge is calculated over the transport element only and is not applied to the product value.`;
-
-    const infoLines = splitText(doc, info, 170);
-    const boxHeight = Math.max(10, infoLines.length * 3.5 + 6);
-
-    doc.setFillColor(245, 248, 255);
-    doc.setDrawColor(191, 219, 254);
-    doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(7.2);
-    doc.text("Transport surcharge", 17, y + 1);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.text(infoLines, 17, y + 5);
 
     y += boxHeight + 2;
   }
@@ -1202,7 +1169,11 @@ async function createPdfBlob(order, ctx) {
       ctx.settings?.fuel_surcharge_percent
   });
 
-  ctx.pricing = pricing;
+ctx.pricing = pricing;
+
+console.log("Product owner:", ctx.productOwner);
+console.log("Order:", order);
+console.log("Is Zoy:", isZoyOrder(order, ctx));
 
   drawHeader(doc, order, ctx, logoDataUrl, false);
   drawBillToAndShipTo(doc, order, ctx);
@@ -1220,9 +1191,11 @@ async function createPdfBlob(order, ctx) {
 const soPart = safeFilePart(order.order_number || order.id);
 const ackPart = safeFilePart(order.external_reference || "");
 
+const versionPart = Date.now();
+
 const fileName = ackPart
-  ? `Acknowledgement ${soPart} ${ackPart}.pdf`
-  : `Acknowledgement ${soPart}.pdf`;
+  ? `Acknowledgement ${soPart} ${ackPart} ${versionPart}.pdf`
+  : `Acknowledgement ${soPart} ${versionPart}.pdf`;
 
 const storagePath = `${companyId}/${order.id}/${fileName}`;
 

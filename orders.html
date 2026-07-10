@@ -21,6 +21,7 @@
 <script src="/js/layout.js" defer></script>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js" defer></script>
 
 <script src="/js/planning-engine.js" defer></script>
 
@@ -31,10 +32,12 @@
 
 <script src="/js/orders-map.js" defer></script>
 <script src="/js/occ-tools/fds-notice-generator.js" defer></script>
+<script src="/js/delivery-note-generator.js" defer></script>
+<script src="/js/occ-tools/delivery-label-generator.js" defer></script>
 <script src="/js/available-vehicles.js" defer></script>
 <script src="/js/orders.js" defer></script>
 
-  <style>
+<style>
     .planner-page{display:grid;gap:14px;padding-bottom:24px}
     .planner-title-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
     .planner-title h1{margin:0;font-size:22px;font-weight:900}

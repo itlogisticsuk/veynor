@@ -27,6 +27,20 @@
     return map[String(value || "").toLowerCase()] || String(value || "—").replaceAll("_", " ");
   }
 
+function cancellationReasonLabel(value) {
+  const map = {
+    customer_cancelled: "Customer cancelled",
+    duplicate_order: "Duplicate order",
+    stock_unavailable: "Stock unavailable",
+    damaged: "Damaged",
+    other: "Other"
+  };
+
+  const key = String(value || "").trim().toLowerCase();
+
+  return map[key] || String(value || "—").replaceAll("_", " ");
+}
+
   async function open(orderId) {
     if (!window.getOrderById) {
       console.error("getOrderById not available");
@@ -101,14 +115,32 @@ if (status === "stock_complete") {
       };
     }
 
-    if (status === "cancelled") {
-      return {
-        status: "cancelled",
-        warehouse_status: "cancelled",
-        transport_status: "cancelled",
-        overall_status: "cancelled"
-      };
-    }
+if (status === "cancelled") {
+  return {
+    status: "cancelled",
+    warehouse_status: "cancelled",
+    transport_status: "cancelled",
+    overall_status: "cancelled",
+
+    route_id: null,
+    carrier_vehicle_id: null,
+
+    driver_user_id: null,
+    driver_profile_id: null,
+    driver_name: null,
+    driver_email: null,
+
+    confirmed_delivery_date: null,
+    expected_delivery_date: null,
+    planned_route_date: null,
+
+    delivery_eta_from: null,
+    delivery_eta_to: null,
+    delivery_eta_status: "cancelled",
+
+    sent_to_driver_at: null
+  };
+}
 
     return null;
   }
@@ -142,23 +174,78 @@ if (status === "stock_complete") {
       return;
     }
 
-    if (status === "cancelled") {
-      container.innerHTML = `
-        <label>Cancellation reason</label>
-        <select class="input" id="statusCancelReason">
-          <option value="">Select...</option>
-          <option>Customer cancelled</option>
-          <option>Duplicate order</option>
-          <option>Stock unavailable</option>
-          <option>Damaged</option>
-          <option>Other</option>
-        </select>
+if (status === "cancelled") {
+  container.innerHTML = `
+    <label>Cancellation reason</label>
 
-        <label style="margin-top:10px;">Notes</label>
-        <textarea class="input" id="statusCancelNotes"></textarea>
-      `;
-      return;
+    <select class="input" id="statusCancelReason">
+      <option value="">Select...</option>
+      <option value="customer_cancelled">Customer cancelled</option>
+      <option value="duplicate_order">Duplicate order</option>
+      <option value="stock_unavailable">Stock unavailable</option>
+      <option value="damaged">Damaged</option>
+      <option value="other">Other</option>
+    </select>
+
+    <label style="margin-top:10px;">Cancellation notes</label>
+
+    <textarea
+      class="input"
+      id="statusCancelNotes"
+      rows="3"
+      placeholder="Optional cancellation notes..."
+    ></textarea>
+
+    <label style="margin-top:10px;">Charge customer</label>
+
+    <select class="input" id="statusCancelChargeable">
+      <option value="">Select...</option>
+      <option value="false">No — do not invoice</option>
+      <option value="true">Yes — keep available for invoicing</option>
+    </select>
+
+    <div
+      style="
+        margin-top:10px;
+        padding:10px 12px;
+        border:1px solid #dbe3ee;
+        border-radius:9px;
+        background:#f8fafc;
+        color:#64748b;
+        font-size:12px;
+        line-height:1.45;
+      "
+    >
+      Choosing “No” marks the order as not chargeable.
+      Choosing “Yes” keeps the cancelled order available for invoicing.
+    </div>
+  `;
+
+  const reasonSelect = byId("statusCancelReason");
+  const chargeableSelect = byId("statusCancelChargeable");
+
+  reasonSelect?.addEventListener("change", () => {
+    if (!chargeableSelect || chargeableSelect.value) return;
+
+    const reason = reasonSelect.value;
+
+    if (
+      reason === "customer_cancelled" ||
+      reason === "duplicate_order"
+    ) {
+      chargeableSelect.value = "false";
     }
+
+    if (
+      reason === "stock_unavailable" ||
+      reason === "damaged"
+    ) {
+      chargeableSelect.value = "true";
+    }
+  });
+
+  return;
+}
 
     container.innerHTML = "";
   }
@@ -189,6 +276,47 @@ if (status === "stock_complete") {
             <span class="detail-label">Current lifecycle</span>
             <span class="detail-value">${label(order.derived_lifecycle_status)}</span>
           </div>
+
+${
+  String(order.derived_lifecycle_status || "").toLowerCase() === "cancelled" ||
+  String(order.status || "").toLowerCase() === "cancelled"
+    ? `
+      <div class="detail-line">
+        <span class="detail-label">Reason</span>
+        <span class="detail-value">
+          ${cancellationReasonLabel(order.cancellation_reason)}
+        </span>
+      </div>
+
+      ${
+        order.cancellation_notes
+          ? `
+            <div class="detail-line">
+              <span class="detail-label">Notes</span>
+              <span class="detail-value">
+                ${clean(order.cancellation_notes)}
+              </span>
+            </div>
+          `
+          : ""
+      }
+
+      <div class="detail-line">
+        <span class="detail-label">Charge customer</span>
+        <span class="detail-value">
+          ${order.is_chargeable === true ? "Yes" : "No"}
+        </span>
+      </div>
+
+      <div class="detail-line">
+        <span class="detail-label">Finance</span>
+        <span class="detail-value">
+          ${label(order.finance_status)}
+        </span>
+      </div>
+    `
+    : ""
+}
 
           <div class="detail-line">
             <span class="detail-label">Warehouse</span>
@@ -290,6 +418,24 @@ if (status === "stock_complete") {
     }
   }
 
+async function removeCancelledOrderFromPlanning(order) {
+  const client = window.sb ? window.sb() : null;
+
+  if (!client || !order?.id) return;
+
+  const { error: stopError } = await client
+    .from("route_stops")
+    .delete()
+    .eq("order_id", order.id);
+
+  if (stopError) {
+    console.warn(
+      "Could not remove cancelled order from route stops:",
+      stopError.message
+    );
+  }
+}
+
   async function save() {
     const client = window.sb ? window.sb() : null;
     if (!client) throw new Error("Supabase client not available.");
@@ -306,6 +452,10 @@ if (status === "stock_complete") {
     const reason = clean(byId("changeStatusReason")?.value);
 
     payload.last_activity_at = new Date().toISOString();
+if (selectedStatus !== "cancelled") {
+  payload.cancellation_reason = null;
+  payload.cancellation_notes = null;
+}
 
     if (selectedStatus === "planned_transport") {
       const deliveryDate = byId("statusDeliveryDate")?.value || "";
@@ -333,9 +483,41 @@ if (status === "stock_complete") {
       }
     }
 
-    if (selectedStatus === "cancelled") {
-      await releaseAllocationsForCancelledOrder(order);
-    }
+if (selectedStatus === "cancelled") {
+  const cancelReason =
+    clean(byId("statusCancelReason")?.value);
+
+  const cancelNotes =
+    clean(byId("statusCancelNotes")?.value);
+
+  const chargeableValue =
+    byId("statusCancelChargeable")?.value || "";
+
+  if (!cancelReason) {
+    throw new Error("Select a cancellation reason.");
+  }
+
+  if (!["true", "false"].includes(chargeableValue)) {
+    throw new Error(
+      "Choose whether the customer should be charged."
+    );
+  }
+
+  const isChargeable =
+    chargeableValue === "true";
+
+  payload.cancellation_reason = cancelReason;
+  payload.cancellation_notes = cancelNotes || null;
+
+  payload.is_chargeable = isChargeable;
+
+  payload.finance_status = isChargeable
+    ? "not_invoiced"
+    : "cancelled";
+
+  await releaseAllocationsForCancelledOrder(order);
+  await removeCancelledOrderFromPlanning(order);
+}
 
     const { error } = await client
       .from("orders")
@@ -346,12 +528,40 @@ if (status === "stock_complete") {
 
     let description = `Status changed manually to ${label(selectedStatus)}.`;
 
-    if (selectedStatus === "cancelled") {
-      const cancelReason = clean(byId("statusCancelReason")?.value);
-      const cancelNotes = clean(byId("statusCancelNotes")?.value);
-      if (cancelReason) description += ` Reason: ${cancelReason}.`;
-      if (cancelNotes) description += ` Notes: ${cancelNotes}.`;
-    }
+if (selectedStatus === "cancelled") {
+  const cancelReasonValue =
+    clean(byId("statusCancelReason")?.value);
+
+  const cancelNotes =
+    clean(byId("statusCancelNotes")?.value);
+
+  const chargeable =
+    byId("statusCancelChargeable")?.value === "true";
+
+  const cancelReasonLabels = {
+    customer_cancelled: "Customer cancelled",
+    duplicate_order: "Duplicate order",
+    stock_unavailable: "Stock unavailable",
+    damaged: "Damaged",
+    other: "Other"
+  };
+
+  const cancelReason =
+    cancelReasonLabels[cancelReasonValue] ||
+    cancelReasonValue;
+
+  if (cancelReason) {
+    description += ` Cancellation reason: ${cancelReason}.`;
+  }
+
+  if (cancelNotes) {
+    description += ` Notes: ${cancelNotes}.`;
+  }
+
+  description += chargeable
+    ? " Customer charge retained; order remains available for invoicing."
+    : " Order marked as not chargeable and excluded from invoicing.";
+}
 
     if (selectedStatus === "delivered") {
       const receivedBy = clean(byId("statusReceivedBy")?.value);

@@ -19,6 +19,7 @@
   let activeVehicles = [];
   let driverUsers = [];
 let storedDeliveryGroups = [];
+let productOwnerProfiles = [];
 let warehouseCostSettings = {
   handlingInPerColli: 0,
   handlingOutPerColli: 0,
@@ -588,6 +589,51 @@ warehouseCostSettings = {
 
     log("Active vehicles loaded:", activeVehicles);
   }
+async function loadProductOwnerProfiles() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_value")
+    .eq("company_id", cid)
+    .eq("setting_key", "product_owner_profiles")
+    .maybeSingle();
+
+  if (error) {
+    console.warn(
+      "[orders.js] Product owner profiles could not be loaded:",
+      error.message
+    );
+
+    productOwnerProfiles = [];
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(data?.setting_value || "[]");
+
+    productOwnerProfiles = Array.isArray(parsed)
+      ? parsed
+      : [];
+  } catch (error) {
+    console.warn(
+      "[orders.js] Product owner profiles contain invalid JSON:",
+      error
+    );
+
+    productOwnerProfiles = [];
+  }
+}
+
+function getProductOwnerProfile(customerCode) {
+  const code = normalize(customerCode);
+
+  if (!code) return null;
+
+  return productOwnerProfiles.find(profile =>
+    normalize(profile?.customer_code) === code
+  ) || null;
+}
 
 async function loadStoredDeliveryGroups() {
   const cid = await getCompanyId();
@@ -606,54 +652,86 @@ async function loadStoredDeliveryGroups() {
   storedDeliveryGroups = data || [];
 }
 
-  async function loadOrders() {
-    const cid = await getCompanyId();
+async function loadOrders() {
+  const cid = await getCompanyId();
 
-    const { data, error } = await client
-      .from("orders")
-      .select(`
-        *,
-        customers (
-          id,
-          name
-        )
-      `)
-      .eq("company_id", cid)
-.in("status", [
-  "ready_for_planning",
-  "ready_for_picking",
-  "planned",
-  "sent_to_driver",
-  "out_for_delivery",
-  "loaded",
-  "delivered",
-  "delivery_issue",
-  "partial_delivery",
-  "failed_delivery",
-  "not_delivered",
-  "returned",
-  "export_for_charter"
-])
-      .order("requested_delivery_date", { ascending: true, nullsFirst: false })
-      .order("order_number", { ascending: true });
+  const { data, error } = await client
+    .from("orders")
+    .select(`
+      *,
+      customers (
+        id,
+        name,
+        customer_code
+      )
+    `)
+    .eq("company_id", cid)
+    .in("status", [
+      "ready_for_planning",
+      "ready_for_picking",
+      "planned",
+      "sent_to_driver",
+      "out_for_delivery",
+      "loaded",
+      "delivered",
+      "delivery_issue",
+      "partial_delivery",
+      "failed_delivery",
+      "not_delivered",
+      "returned",
+      "export_for_charter"
+    ])
+    .order("requested_delivery_date", {
+      ascending: true,
+      nullsFirst: false
+    })
+    .order("order_number", {
+      ascending: true
+    });
 
-    if (error) throw error;
+  if (error) throw error;
 
-allOrders = (data || []).map(row => ({
-  ...row,
-  product_owner_name: row.customers?.name || row.customer_name || "—",
-  customer_name: row.customers?.name || row.customer_name || "—",
-  retailer_name: getRetailerName(row),
-  __line_revenue_gbp: 0,
-  belowMinimumVolume: false
-}));
+  allOrders = (data || []).map(row => {
+    const customerCode =
+      row.customers?.customer_code ||
+      "";
 
+    const ownerProfile =
+      getProductOwnerProfile(customerCode);
 
-markBelowMinimumOrders();
+    return {
+      ...row,
 
-await loadOrderRevenueOverlay();
-  }
+      product_owner_name:
+        row.customers?.name ||
+        row.customer_name ||
+        "—",
 
+      product_owner_code:
+        customerCode,
+
+      product_owner_display_code:
+        ownerProfile?.display_code ||
+        customerCode ||
+        "—",
+
+      customer_name:
+        row.customers?.name ||
+        row.customer_name ||
+        "—",
+
+      retailer_name:
+        getRetailerName(row),
+
+      __line_revenue_gbp: 0,
+      belowMinimumVolume: false
+    };
+  });
+
+  markBelowMinimumOrders();
+
+  await loadOrderRevenueOverlay();
+}
   async function loadOrderRevenueOverlay() {
     const cid = await getCompanyId();
     const ids = allOrders.map(row => row.id).filter(Boolean);
@@ -1233,14 +1311,15 @@ window.VeynorPlannerData = {
     }));
   }
 
-  async function refreshAll() {
-    await loadDepotSettings();
-    await loadDrivers();
-    await loadActiveVehicles();
-    await loadRoutes();
-await loadRouteStops();
-await loadStoredDeliveryGroups();
-await loadOrders();
+async function refreshAll() {
+  await loadDepotSettings();
+  await loadProductOwnerProfiles();
+  await loadDrivers();
+  await loadActiveVehicles();
+  await loadRoutes();
+  await loadRouteStops();
+  await loadStoredDeliveryGroups();
+  await loadOrders();
 
     renderSelects();
     renderAll();

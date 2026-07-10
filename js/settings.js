@@ -19,8 +19,9 @@ let portalUsersCache = [];
       key: "bellstone",
       name: "Bellstone Furniture Distributors Ltd",
       trading_name: "Bellstone",
-      customer_code: "BELLSTONE",
-      vat: "503290623",
+customer_code: "BELLSTONE",
+display_code: "BS",
+vat: "503290623",
       address1: "2ND FLOOR, RAINHAM HOUSE",
       address2: "NEW ROAD",
       city: "Rainham",
@@ -63,8 +64,9 @@ notes: ""
       key: "zoy",
       name: "Zoy",
       trading_name: "Zoy",
-      customer_code: "ZOY",
-      vat: "",
+customer_code: "ZOY",
+display_code: "ZY",
+vat: "",
       address1: "",
       address2: "",
       city: "",
@@ -1151,10 +1153,11 @@ updateSummary();
         : "Select product owner";
     }
 
-    [
+ [
   "name",
   "trading_name",
   "customer_code",
+  "display_code",
   "vat",
   "address1",
   "address2",
@@ -1207,8 +1210,14 @@ updateSummary();
       ...owner,
       name: getFieldValue("owner_name"),
       trading_name: getFieldValue("owner_trading_name"),
-      customer_code: getFieldValue("owner_customer_code"),
-      vat: getFieldValue("owner_vat"),
+customer_code: getFieldValue("owner_customer_code"),
+
+display_code: getFieldValue("owner_display_code")
+  .trim()
+  .toUpperCase()
+  .slice(0, 3),
+
+vat: getFieldValue("owner_vat"),
       address1: getFieldValue("owner_address1"),
       address2: getFieldValue("owner_address2"),
       city: getFieldValue("owner_city"),
@@ -1301,8 +1310,18 @@ notes: getFieldValue("owner_notes")
       key,
       name,
       trading_name: name,
-      customer_code: key.toUpperCase(),
-      vat: "",
+customer_code: key.toUpperCase(),
+
+display_code: name
+  .trim()
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map(word => word.charAt(0).toUpperCase())
+  .join("")
+  .slice(0, 3),
+
+vat: "",
       address1: "",
       address2: "",
       city: "",

@@ -23,6 +23,7 @@ let warehouseCostSettings = {
 
   const expandedVehicleIds = new Set();
   const expandedRouteIds = new Set();
+const signedNoticeOrderIds = new Set();
 
   let draggedStopId = null;
 
@@ -315,6 +316,18 @@ function getOrderWeight(order) {
     );
   }
 
+function getProductOwnerDisplayCode(order) {
+  const code = String(
+    order?.product_owner_display_code ||
+    order?.product_owner_code ||
+    ""
+  )
+    .trim()
+    .toUpperCase();
+
+  return code || "—";
+}
+
 function getCustomerOrderLabel(order) {
   const po = order?.purchase_order ? `PO ${order.purchase_order}` : "";
   const ref = order?.external_reference ? `Ref ${order.external_reference}` : "";
@@ -546,16 +559,23 @@ function getRouteWarehouseCost(route) {
     style.textContent = `
       .av-stack{display:grid;gap:10px;}
 .av-owner-badge{
-  display:inline-flex;
-  align-items:center;
-  margin-left:8px;
-  padding:2px 8px;
+  width:28px;
+  height:28px;
   border-radius:999px;
-  font-size:10px;
-  font-weight:900;
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  background:#475467;
   color:#fff;
-  background:#7c3aed;   /* paars */
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.2px;
   line-height:1;
+  box-shadow:none;
+}
+
+.av-owner-badge[title]{
+  cursor:help;
 }
       .av-day-head{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid var(--border);background:#fbfdff;border-radius:10px;padding:10px 12px;}
       .av-day-title{font-size:13px;font-weight:900;color:#111827;}
@@ -586,7 +606,21 @@ function getRouteWarehouseCost(route) {
       .av-btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
       .av-btn.success{background:#16a34a;border-color:#16a34a;color:#fff;}
       .av-btn.warning{background:#f59e0b;border-color:#f59e0b;color:#fff;}
-      .av-btn.danger{background:#dc2626;border-color:#dc2626;color:#fff;}
+.av-btn.danger{
+  background:#f87171;
+  border-color:#f87171;
+  color:#fff;
+}
+
+.av-btn.danger:hover{
+  background:#ef4444;
+  border-color:#ef4444;
+}
+
+.av-btn.danger:hover{
+  background:#dc2626;
+  border-color:#dc2626;
+}
       .av-btn.small{height:26px;padding:0 8px;font-size:10.5px;}
 
       .av-route-list{display:grid;gap:8px;padding:10px 12px;border-top:1px solid var(--border);background:#fafafa;}
@@ -635,6 +669,915 @@ function getRouteWarehouseCost(route) {
       .av-drag-hint{font-size:10.5px;color:#6b7280;font-weight:800;}
       .av-empty{border:1px dashed var(--border);border-radius:10px;padding:14px;color:#6b7280;font-size:12px;line-height:1.5;background:#fff;}
 
+/* =========================================================
+   FDS / CARRIER LAYOUT
+   Alleen van toepassing op externe carriers
+   ========================================================= */
+
+.av-vehicle.av-carrier-vehicle.has-route{
+  border-color:#d9e0e8;
+  box-shadow:none;
+}
+
+.av-vehicle.av-carrier-vehicle .av-vehicle-head{
+  padding:13px 14px;
+}
+
+.av-vehicle.av-carrier-vehicle .av-route-inline{
+  background:#eef7ef;
+  border-color:#c8e6cc;
+  color:#28723a;
+}
+
+.av-route-list.av-carrier-route-list{
+  padding:12px;
+  gap:12px;
+  background:#f8fafc;
+  border-top:1px solid #e7ebf0;
+}
+
+.av-carrier-panel{
+  border:0;
+  border-radius:0;
+  background:transparent;
+  overflow:visible;
+}
+
+.av-carrier-panel .av-route-head{
+  padding:0 0 2px;
+  border:0;
+}
+
+.av-carrier-summary{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  width:100%;
+}
+
+.av-carrier-summary-main{
+  min-width:0;
+}
+
+.av-carrier-title-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.av-carrier-title{
+  font-size:13px;
+  font-weight:900;
+  color:#172033;
+}
+
+.av-carrier-count{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:22px;
+  padding:2px 8px;
+  border-radius:999px;
+  background:#eef7ef;
+  border:1px solid #c8e6cc;
+  color:#28723a;
+  font-size:10px;
+  font-weight:900;
+  white-space:nowrap;
+}
+
+.av-carrier-totals{
+  margin-top:4px;
+  font-size:11px;
+  line-height:1.45;
+  color:#667085;
+}
+
+/* Documents section */
+
+.av-carrier-documents{
+  border:1px solid #dfe5ec;
+  border-radius:11px;
+  background:#fff;
+  overflow:hidden;
+}
+
+.av-carrier-documents-head{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:12px 13px;
+  border-bottom:1px solid #edf0f4;
+}
+
+.av-carrier-documents-icon{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+  background:#eff6ff;
+  color:#2563eb;
+  font-size:15px;
+  font-weight:900;
+}
+
+.av-carrier-documents-title{
+  font-size:12.5px;
+  font-weight:900;
+  color:#172033;
+}
+
+.av-carrier-documents-sub{
+  margin-top:2px;
+  font-size:10.5px;
+  color:#667085;
+}
+
+.av-carrier-documents-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+  padding:10px;
+}
+
+.av-carrier-document-btn{
+  width:100%;
+  min-height:38px;
+  height:auto;
+  padding:7px 9px;
+  background:#fff;
+  border-color:#d9e0e8;
+  color:#344054;
+  line-height:1.25;
+}
+
+.av-carrier-document-btn:hover{
+  background:#f8fafc;
+  border-color:#b8c2cf;
+}
+
+.av-carrier-document-btn.primary-document{
+  color:#175cd3;
+}
+
+.av-signed-notice{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin:0 10px 10px;
+  padding:10px 11px;
+  border:1px solid #d9e6dc;
+  border-radius:9px;
+  background:#f7fbf8;
+}
+
+.av-signed-notice-main{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+}
+
+.av-signed-notice-icon{
+  width:27px;
+  height:27px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+  background:#3f9b55;
+  color:#fff;
+  font-size:14px;
+  font-weight:900;
+}
+
+.av-signed-notice-title{
+  font-size:11.5px;
+  font-weight:900;
+  color:#1f2937;
+}
+
+.av-signed-notice-sub{
+  margin-top:2px;
+  font-size:10px;
+  color:#667085;
+}
+
+.av-signed-replace{
+  background:#fff;
+  border-color:#cfd8e3;
+  color:#344054;
+}
+
+/* Charter order section */
+
+.av-charter-section{
+  border:1px solid #dfe5ec;
+  border-radius:11px;
+  background:#fff;
+  overflow:hidden;
+}
+
+.av-charter-section-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  padding:12px 13px;
+  border-bottom:1px solid #e7ebf0;
+}
+
+.av-charter-section-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  font-size:12.5px;
+  font-weight:900;
+  color:#172033;
+}
+
+.av-charter-section-sub{
+  margin-top:4px;
+  font-size:10.5px;
+  color:#667085;
+}
+
+.av-charter-list{
+  display:block;
+  background:#fff;
+}
+
+.av-charter-row{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:10px;
+  align-items:center;
+  min-height:76px;
+  padding:10px 11px;
+  border:0;
+  border-bottom:1px solid #e7ebf0;
+  border-radius:0;
+  background:#fff;
+}
+
+.av-charter-row:last-child{
+  border-bottom:0;
+}
+
+.av-charter-row:hover{
+  background:#fafbfc;
+}
+
+.av-charter-arrow{
+  width:25px;
+  height:25px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+  border:1px solid #d9e0e8;
+  background:#fff;
+  color:#344054;
+  font-size:17px;
+  font-weight:700;
+  line-height:1;
+}
+
+.av-charter-content{
+  min-width:0;
+}
+
+.av-charter-title{
+  color:#172033;
+  font-size:11.8px;
+  font-weight:900;
+  line-height:1.35;
+}
+
+.av-charter-reference{
+  margin-top:3px;
+  color:#667085;
+  font-size:10.5px;
+  line-height:1.35;
+}
+
+.av-charter-details{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  flex-wrap:wrap;
+  margin-top:5px;
+  color:#667085;
+  font-size:10.5px;
+  line-height:1.35;
+}
+
+.av-charter-status{
+  display:inline-flex;
+  align-items:center;
+  min-height:20px;
+  padding:2px 7px;
+  border-radius:999px;
+  border:1px solid #fed7aa;
+  background:#fff7ed;
+  color:#c2410c;
+  font-size:9.5px;
+  font-weight:800;
+  white-space:nowrap;
+}
+
+.av-charter-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px;
+  flex-wrap:nowrap;
+}
+
+.av-owner-badge{
+  width:28px;
+  height:28px;
+  border-radius:999px;
+  display:inline-grid;
+  place-items:center;
+  flex:0 0 auto;
+  background:#475467;
+  color:#fff;
+  font-size:9px;
+  font-weight:900;
+  letter-spacing:.1px;
+  line-height:1;
+  box-shadow:none;
+}
+
+.av-owner-badge[title]{
+  cursor:help;
+}
+
+.av-charter-remove{
+  min-width:58px;
+}
+
+@media(max-width:1200px){
+  .av-carrier-documents-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+@media(max-width:720px){
+  .av-carrier-summary,
+  .av-charter-section-head{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+
+  .av-carrier-documents-grid{
+    grid-template-columns:1fr;
+  }
+
+  .av-charter-row{
+    grid-template-columns:auto minmax(0,1fr);
+  }
+
+  .av-charter-actions{
+    grid-column:1 / -1;
+    justify-content:flex-end;
+    padding-left:35px;
+  }
+}
+
+/* =========================================================
+   OWN TRANSPORT ROUTES
+   Rustige stijl, passend bij het FDS-paneel
+   ========================================================= */
+
+.av-own-route{
+  border:1px solid #dfe5ec;
+  border-radius:11px;
+  background:#fff;
+  overflow:hidden;
+  box-shadow:none;
+}
+
+.av-own-route.open{
+  border-color:#a9c7ff;
+  box-shadow:0 0 0 1px rgba(37,99,235,.06);
+}
+
+.av-own-route-head{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:14px;
+  align-items:start;
+  padding:13px 14px 10px;
+}
+
+.av-own-route-heading{
+  min-width:0;
+}
+
+.av-own-route-title-row{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.av-own-route-title{
+    font-size:15px;
+  font-weight:900;
+  color:#172033;
+}
+
+.av-own-route-meta{
+  margin-top:4px;
+  color:#667085;
+  font-size:10.8px;
+  line-height:1.4;
+}
+
+.av-own-route-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px;
+  flex-wrap:wrap;
+}
+
+.av-own-action-btn{
+  min-height:31px;
+  height:auto;
+  padding:6px 11px;
+  border:1px solid #d7dee8;
+  border-radius:8px;
+  background:#fff;
+  color:#344054;
+  font-size:11.8px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.av-own-action-btn:hover{
+  background:#f8fafc;
+  border-color:#b7c0cc;
+}
+
+.av-own-action-send{
+  border-color:#a7d7b7;
+  color:#18753a;
+}
+
+.av-own-action-send:hover{
+  background:#f3faf5;
+  border-color:#78c190;
+}
+
+.av-own-action-remove{
+  border-color:#f5b5b5;
+  color:#c83c3c;
+}
+
+.av-own-action-remove:hover{
+  background:#fff5f5;
+  border-color:#ef8f8f;
+}
+
+/* Status badges */
+
+.av-own-route .av-status{
+  min-height:20px;
+  padding:2px 7px;
+  font-size:9.5px;
+  line-height:1;
+}
+
+.av-own-route .av-status.planned{
+  background:#f4f7fb;
+  border-color:#cfd9e8;
+  color:#35567e;
+}
+
+.av-own-route .av-status.sent{
+  background:#f5f3ff;
+  border-color:#d7d0f4;
+  color:#65559b;
+}
+
+.av-own-route .av-status.active{
+  background:#fff8eb;
+  border-color:#f5d9a7;
+  color:#9b621b;
+}
+
+.av-own-route .av-status.done{
+  background:#f0f9f2;
+  border-color:#bfe3c7;
+  color:#287b3e;
+}
+
+.av-own-route .av-status.issue{
+  background:#fff7ed;
+  border-color:#fed7aa;
+  color:#b45309;
+}
+
+.av-own-route .av-status.failed{
+  background:#fff2f2;
+  border-color:#f3b6b6;
+  color:#b83939;
+}
+
+/* KPI's */
+
+.av-own-route-kpis{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:7px;
+  padding:0 14px 12px;
+}
+
+.av-own-route-kpi{
+  min-width:0;
+  border:1px solid #dfe5ec;
+  border-radius:8px;
+  background:#fbfcfe;
+  padding:8px 9px;
+}
+
+.av-own-route-kpi span{
+  display:block;
+  color:#667085;
+  font-size:10px;
+  font-weight:900;
+  line-height:1.2;
+  text-transform:uppercase;
+}
+
+.av-own-route-kpi strong{
+  display:block;
+  margin-top:3px;
+  color:#172033;
+  font-size:14px;
+  font-weight:900;
+  line-height:1.2;
+}
+
+.av-own-route-kpi.result-positive strong{
+  color:#16823b;
+}
+
+.av-own-route-kpi.result-negative strong{
+  color:#c2410c;
+}
+
+.av-own-route-cost-toggle{
+  cursor:pointer;
+}
+
+.av-own-route-cost-toggle:hover{
+  background:#f7f9fc;
+}
+
+/* Cost breakdown */
+
+.av-own-cost-panel{
+  display:none;
+  margin:0 14px 12px;
+  padding:13px;
+  border:1px solid #dfe5ec;
+  border-radius:9px;
+  background:#fff;
+}
+
+.av-own-cost-panel.visible{
+  display:block;
+}
+
+.av-own-cost-title{
+  margin-bottom:10px;
+  color:#172033;
+  font-size:12.5px;
+  font-weight:900;
+}
+
+.av-own-cost-grid{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  column-gap:18px;
+  row-gap:5px;
+  color:#344054;
+  font-size:12.3px;
+  line-height:1.25;
+}
+
+.av-own-cost-grid .value{
+  text-align:right;
+  white-space:nowrap;
+}
+
+.av-own-cost-divider{
+  grid-column:1 / -1;
+  height:1px;
+  margin:5px 0 2px;
+  background:#e7ebf0;
+}
+
+.av-own-cost-total{
+    color:#172033;
+    font-weight:900;
+    font-size:13px;
+}
+
+.av-own-cost-result-positive{
+    color:#16823b;
+    font-weight:900;
+    font-size:13px;
+}
+
+.av-own-cost-result-negative{
+    color:#c2410c;
+    font-weight:900;
+    font-size:13px;
+}
+
+/* Opengeklapte route */
+
+.av-own-route-extra{
+  display:none;
+  border-top:1px solid #e7ebf0;
+  padding:13px 14px 14px;
+  background:#fff;
+}
+
+.av-own-route.open .av-own-route-extra{
+  display:grid;
+  gap:15px;
+}
+
+/* Assignment */
+
+.av-own-assignment{
+  background:#fff;
+}
+
+.av-own-section-title{
+  margin-bottom:3px;
+  color:#172033;
+  font-size:14px;
+  font-weight:900;
+}
+
+.av-own-section-sub{
+  color:#667085;
+  font-size:11.5px;
+  line-height:1.4;
+}
+
+.av-own-assignment-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px 12px;
+  margin-top:10px;
+}
+
+.av-own-field{
+  display:grid;
+  gap:5px;
+}
+
+.av-own-field label{
+  color:#344054;
+  font-size:11px;
+  font-weight:900;
+}
+
+.av-own-field .av-input,
+.av-own-field .av-select{
+  min-height:35px;
+  padding:7px 9px;
+  border:1px solid #d7dee8;
+  border-radius:8px;
+  background:#fff;
+  color:#172033;
+  font-size:12px;
+}
+
+.av-own-assignment-footer{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:10px;
+}
+
+.av-own-save-btn{
+  min-width:120px;
+}
+
+/* Route order */
+
+.av-own-stops-section{
+  border-top:1px solid #edf0f4;
+  padding-top:13px;
+}
+
+.av-own-stops-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:9px;
+}
+
+.av-own-stops-list{
+  display:block;
+  border:1px solid #dfe5ec;
+  border-radius:9px;
+  background:#fff;
+  overflow:hidden;
+}
+
+.av-own-stop{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr) auto;
+  gap:10px;
+  align-items:center;
+  min-height:68px;
+  padding:9px 10px;
+  border:0;
+  border-bottom:1px solid #e7ebf0;
+  border-radius:0;
+  background:#fff;
+}
+
+.av-own-stop:last-child{
+  border-bottom:0;
+}
+
+.av-own-stop:hover{
+  background:#fafbfc;
+}
+
+.av-own-stop.dragging{
+  opacity:.45;
+  background:#f4f7fb;
+}
+
+.av-own-stop.drop-target{
+  background:#f3f7ff;
+  box-shadow:inset 3px 0 0 #6695e8;
+}
+
+.av-own-stop-number{
+  width:25px;
+  height:25px;
+  border:1px solid #d7dee8;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  background:#fff;
+  color:#475467;
+  font-size:10px;
+  font-weight:900;
+}
+
+.av-own-stop-content{
+  min-width:0;
+}
+
+.av-own-stop-title{
+  color:#172033;
+  font-size:13px;
+  font-weight:900;
+  line-height:1.35;
+}
+
+.av-own-stop-ref{
+  margin-top:2px;
+  color:#667085;
+  font-size:11px;
+  line-height:1.35;
+}
+
+.av-own-stop-detail{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  flex-wrap:wrap;
+  margin-top:3px;
+  color:#667085;
+  font-size:10px;
+  line-height:1.35;
+}
+
+.av-own-stop-status{
+  color:#287b3e;
+  font-weight:900;
+}
+
+.av-own-stop-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  flex-wrap:nowrap;
+}
+
+.av-stop-action-btn{
+  min-height:27px;
+  height:auto;
+  padding:4px 8px;
+  border:1px solid #d7dee8;
+  border-radius:7px;
+  background:#fff;
+  color:#475467;
+  font-size:9.5px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.av-stop-action-btn:hover{
+  background:#f8fafc;
+}
+
+.av-stop-action-delivered{
+  border-color:#add7ba;
+  color:#18753a;
+}
+
+.av-stop-action-issue{
+  border-color:#f0d09b;
+  color:#9c6216;
+}
+
+.av-stop-action-failed{
+  border-color:#efb4b4;
+  color:#b83b3b;
+}
+
+/* Eigen voertuigheader minder blauw */
+
+.av-vehicle:not(.av-carrier-vehicle) .av-btn.primary{
+  background:#fff;
+  border-color:#d7dee8;
+  color:#344054;
+}
+
+.av-vehicle:not(.av-carrier-vehicle) .av-btn.primary:hover{
+  background:#f8fafc;
+  border-color:#b7c0cc;
+}
+
+.av-vehicle:not(.av-carrier-vehicle) .av-driver-inline{
+  background:#f4f7fb;
+  border-color:#d0dbea;
+  color:#3d5f89;
+}
+
+.av-vehicle:not(.av-carrier-vehicle) .av-route-inline{
+  background:#f0f8f2;
+  border-color:#c6e4ce;
+  color:#287b3e;
+}
+
+@media(max-width:1200px){
+  .av-own-route-kpis{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+
+@media(max-width:760px){
+  .av-own-route-head{
+    grid-template-columns:1fr;
+  }
+
+  .av-own-route-actions{
+    justify-content:flex-start;
+  }
+
+  .av-own-route-kpis{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .av-own-assignment-grid{
+    grid-template-columns:1fr;
+  }
+
+  .av-own-stop{
+    grid-template-columns:auto minmax(0,1fr);
+  }
+
+  .av-own-stop-actions{
+    grid-column:1 / -1;
+    justify-content:flex-end;
+    padding-left:35px;
+  }
+}
+
       @media(max-width:920px){
         .av-day-head,.av-vehicle-head,.av-route-head,.av-form-grid{grid-template-columns:1fr;}
         .av-summary,.av-route-kpis{grid-template-columns:1fr;}
@@ -663,6 +1606,35 @@ function getRouteWarehouseCost(route) {
 
     selectedPlanningDate = src.selectedPlanningDate || selectedPlanningDate || new Date().toISOString().slice(0, 10);
   }
+
+async function loadSignedFdsNoticeStatus() {
+  const db = ensureClient();
+  const cid = getCompanyId();
+
+  signedNoticeOrderIds.clear();
+
+  if (!cid) return;
+
+  const { data, error } = await db
+    .from("order_documents")
+    .select("order_id")
+    .eq("company_id", cid)
+    .eq("document_type", "fds_signed_collection_notice");
+
+  if (error) {
+    console.warn(
+      "Signed FDS notice status could not be loaded:",
+      error.message
+    );
+    return;
+  }
+
+  (data || []).forEach(documentRow => {
+    if (documentRow.order_id) {
+      signedNoticeOrderIds.add(String(documentRow.order_id));
+    }
+  });
+}
 
   function render() {
   injectStyles();
@@ -757,106 +1729,258 @@ function renderCarrierOrders(vehicle) {
   const orders = getCarrierOrders(vehicle);
 
   if (!orders.length) {
-    return `<div class="av-empty">No charter orders assigned to this carrier.</div>`;
+    return `
+      <div class="av-empty">
+        No charter orders assigned to this carrier.
+      </div>
+    `;
   }
 
-const volume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
-const colli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
-const weight = orders.reduce((sum, order) => sum + getOrderWeight(order), 0);
+  const hasSignedNotice = orders.some(order =>
+    signedNoticeOrderIds.has(String(order.id))
+  );
+
+  const volume = orders.reduce(
+    (sum, order) => sum + getOrderVolume(order),
+    0
+  );
+
+  const colli = orders.reduce(
+    (sum, order) => sum + getOrderColli(order),
+    0
+  );
+
+  const weight = orders.reduce(
+    (sum, order) => sum + getOrderWeight(order),
+    0
+  );
 
   return `
-    <div class="av-route">
+    <div class="av-route av-carrier-panel">
+
       <div class="av-route-head">
-        <div>
-          <div class="av-route-title">
-            Charter orders for ${escapeHtml(getVehicleName(vehicle))}
-            <span class="av-status active">No route</span>
-          </div>
-          <div class="av-route-sub">
-${formatNumber(orders.length)} order(s)
-· ${formatNumber(colli)} colli
-· ${formatNumber(volume,2)} m³
-· ${formatNumber(weight,0)} kg
+        <div class="av-carrier-summary">
+          <div class="av-carrier-summary-main">
+            <div class="av-carrier-title-row">
+              <span class="av-carrier-title">
+                Charter orders for ${escapeHtml(getVehicleName(vehicle))}
+              </span>
+
+              <span class="av-carrier-count">
+                ${formatNumber(orders.length)} orders
+              </span>
+            </div>
+
+            <div class="av-carrier-totals">
+              Total:
+              ${formatNumber(colli)} colli
+              · ${formatNumber(volume, 2)} m³
+              · ${formatNumber(weight, 0)} kg
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="av-actions" style="padding:0 10px 10px;justify-content:flex-start;">
-        <button
-          class="av-btn primary"
-          type="button"
-          data-fds-notice="${escapeHtml(vehicle.id)}">
-          FDS Notice PDF
-        </button>
+      <div class="av-carrier-documents">
+        <div class="av-carrier-documents-head">
+          <div class="av-carrier-documents-icon">
+            ▤
+          </div>
 
-        <button
-          class="av-btn"
-          type="button"
-          data-fds-delivery-notes="${escapeHtml(vehicle.id)}">
-          Generate Delivery Notes
-        </button>
+          <div>
+            <div class="av-carrier-documents-title">
+              Documents
+            </div>
 
-        <button
-          class="av-btn success"
-          type="button"
-          data-fds-handover="${escapeHtml(vehicle.id)}">
-          Warehouse Handover Sheet
-        </button>
+            <div class="av-carrier-documents-sub">
+              Create and download documents for FDS.
+            </div>
+          </div>
+        </div>
+
+        <div class="av-carrier-documents-grid">
+          <button
+            class="av-btn av-carrier-document-btn primary-document"
+            type="button"
+            data-fds-notice="${escapeHtml(vehicle.id)}"
+          >
+            FDS Notice PDF
+          </button>
+
+          ${
+            !hasSignedNotice
+              ? `
+                <button
+                  class="av-btn av-carrier-document-btn"
+                  type="button"
+                  data-fds-upload-signed="${escapeHtml(vehicle.id)}"
+                >
+                  Upload Signed Notice
+                </button>
+              `
+              : ""
+          }
+
+          <input
+            type="file"
+            accept="application/pdf,image/jpeg,image/png"
+            data-fds-upload-input="${escapeHtml(vehicle.id)}"
+            hidden
+          >
+
+          <button
+            class="av-btn av-carrier-document-btn"
+            type="button"
+            data-fds-delivery-notes="${escapeHtml(vehicle.id)}"
+          >
+            Generate Delivery Notes
+          </button>
+
+          <button
+            class="av-btn av-carrier-document-btn"
+            type="button"
+            data-fds-labels="${escapeHtml(vehicle.id)}"
+          >
+            Generate Labels
+          </button>
+        </div>
+
+        ${
+          hasSignedNotice
+            ? `
+              <div class="av-signed-notice">
+                <div class="av-signed-notice-main">
+                  <div class="av-signed-notice-icon">
+                    ✓
+                  </div>
+
+                  <div>
+                    <div class="av-signed-notice-title">
+                      Signed Notice
+                    </div>
+
+                    <div class="av-signed-notice-sub">
+                      A signed FDS notice is linked to these orders.
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  class="av-btn av-signed-replace"
+                  type="button"
+                  data-fds-upload-signed="${escapeHtml(vehicle.id)}"
+                >
+                  Replace
+                </button>
+              </div>
+            `
+            : ""
+        }
       </div>
 
-      <div class="av-stops">
-        ${orders.map(order => `
-          <div class="av-stop">
-            <div class="av-stop-no">F</div>
-            <div>
-<div class="av-stop-title">
-  ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
+      <div class="av-charter-section">
+        <div class="av-charter-section-head">
+          <div>
+            <div class="av-charter-section-title">
+              Charter orders for ${escapeHtml(getVehicleName(vehicle))}
 
-  <span class="av-owner-badge">
-    ${escapeHtml(
-      order.product_owner_name ||
-      order.customer_name ||
-      order.customers?.name ||
-      "Unknown"
-    )}
-  </span>
-</div>
-
-<div class="av-stop-sub">
-  ${order.purchase_order ? `PO: ${escapeHtml(order.purchase_order)}` : ""}
-  ${
-    order.external_reference
-      ? `${order.purchase_order ? " · " : ""}Ref: ${escapeHtml(order.external_reference)}`
-      : ""
-  }
-</div>
-              <div class="av-stop-sub">
-${escapeHtml(order.delivery_city || "—")}
-· ${escapeHtml(order.delivery_postcode || "—")}
-· ${formatNumber(getOrderColli(order))} colli
-· ${formatNumber(getOrderVolume(order), 2)} m³
-· ${formatNumber(getOrderWeight(order), 0)} kg
-              </div>
-              <div class="av-stop-sub">
-                Status:
-                <span class="av-status active">Export for Charter</span>
-              </div>
+              <span class="av-carrier-count">
+                ${formatNumber(orders.length)} orders
+              </span>
             </div>
-            <div class="av-stop-actions">
-  <button
-    class="av-btn small danger"
-    type="button"
-    data-remove-charter="${escapeHtml(order.id)}">
-    Remove
-  </button>
-</div>
+
+            <div class="av-charter-section-sub">
+              Total:
+              ${formatNumber(volume, 2)} m³
+              · ${formatNumber(weight, 0)} kg
+            </div>
           </div>
-        `).join("")}
+        </div>
+
+        <div class="av-charter-list">
+          ${orders.map(order => {
+            const customerOrderLabel = getCustomerOrderLabel(order);
+
+            return `
+              <div class="av-charter-row">
+                <span class="av-charter-arrow">
+                  ›
+                </span>
+
+                <div class="av-charter-content">
+                  <div class="av-charter-title">
+                    ${escapeHtml(order.order_number || "—")}
+                    ·
+                    ${escapeHtml(getRetailerName(order))}
+                  </div>
+
+                  ${
+                    customerOrderLabel
+                      ? `
+                        <div class="av-charter-reference">
+                          ${escapeHtml(customerOrderLabel)}
+                        </div>
+                      `
+                      : ""
+                  }
+
+                  <div class="av-charter-details">
+                    <span>
+                      ${escapeHtml(order.delivery_city || "—")}
+                      · ${escapeHtml(order.delivery_postcode || "—")}
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(getOrderColli(order))} colli
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(getOrderVolume(order), 2)} m³
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(getOrderWeight(order), 0)} kg
+                    </span>
+
+                    <span class="av-charter-status">
+                      Export for Charter
+                    </span>
+                  </div>
+                </div>
+
+                <div class="av-charter-actions">
+                  <span
+                    class="av-owner-badge"
+                    title="${escapeHtml(
+                      order.product_owner_name ||
+                      "Unknown product owner"
+                    )}"
+                  >
+                    ${escapeHtml(getProductOwnerDisplayCode(order))}
+                  </span>
+
+                  <button
+                    class="av-btn small danger av-charter-remove"
+                    type="button"
+                    data-remove-charter="${escapeHtml(order.id)}"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
       </div>
     </div>
   `;
 }
-
   function renderVehicle(vehicle) {
     const vehicleId = String(vehicle.id);
 const routes = getRoutesForVehicle(vehicle);
@@ -873,7 +1997,14 @@ const highlightVehicle =
     const routeLabel = primaryRoute ? getRouteLabel(primaryRoute) : "";
 
     return `
-      <div class="av-vehicle ${highlightVehicle ? "has-route" : ""}" data-vehicle-id="${escapeHtml(vehicleId)}">
+      <div
+  class="av-vehicle ${
+    getVehicleType(vehicle) === "carrier"
+      ? "av-carrier-vehicle"
+      : ""
+  } ${highlightVehicle ? "has-route" : ""}"
+  data-vehicle-id="${escapeHtml(vehicleId)}"
+>
         <div class="av-vehicle-head">
           <div class="av-vehicle-title">
             <span class="av-dot ${escapeHtml(dotClass)}"></span>
@@ -918,7 +2049,13 @@ ${
         ${
           expanded
             ? `
-              <div class="av-route-list">
+              <div
+  class="av-route-list ${
+    getVehicleType(vehicle) === "carrier"
+      ? "av-carrier-route-list"
+      : ""
+  }"
+>
                 ${
                   getVehicleType(vehicle) === "carrier"
   ? `
@@ -940,216 +2077,389 @@ ${
   }
 
   function renderRoute(route, vehicle) {
-    const summary = getRouteSummary(route);
-    const routeId = String(route.id);
-    const open = expandedRouteIds.has(routeId);
-    const routeStatus = getRouteCompletionStatus(route);
-    const statusClass = statusClassFromValue(routeStatus);
+  const summary = getRouteSummary(route);
+  const routeId = String(route.id);
+  const open = expandedRouteIds.has(routeId);
+  const routeStatus = getRouteCompletionStatus(route);
+  const statusClass = statusClassFromValue(routeStatus);
 
-    return `
-      <div class="av-route ${open ? "open" : ""}" data-route-id="${escapeHtml(routeId)}">
-        <div class="av-route-head">
-          <div>
-            <div class="av-route-title">
+  const resultClass =
+    summary.result > 0
+      ? "result-positive"
+      : summary.result < 0
+      ? "result-negative"
+      : "";
+
+  return `
+    <div
+      class="av-route av-own-route ${open ? "open" : ""}"
+      data-route-id="${escapeHtml(routeId)}"
+    >
+      <div class="av-own-route-head">
+        <div class="av-own-route-heading">
+          <div class="av-own-route-title-row">
+            <span class="av-own-route-title">
               ${escapeHtml(getRouteLabel(route))}
-              <span class="av-status ${escapeHtml(statusClass)}">${escapeHtml(titleCase(routeStatus))}</span>
-            </div>
+            </span>
 
-            <div class="av-route-sub">
-              ${escapeHtml(formatDate(getRouteDate(route)))}
-              · Driver: ${escapeHtml(getRouteDriverName(route))}
-              · ${escapeHtml(formatTime(route.planned_start_time || route.start_time))}
-              → ${escapeHtml(formatTime(route.planned_end_time || route.end_time))}
-            </div>
+            <span class="av-status ${escapeHtml(statusClass)}">
+              ${escapeHtml(titleCase(routeStatus))}
+            </span>
           </div>
 
-          <div class="av-actions">
-            <button class="av-btn" type="button" data-toggle-route="${escapeHtml(routeId)}">${open ? "Close" : "Details"}</button>
-            <button class="av-btn primary" type="button" data-add-selected-route="${escapeHtml(routeId)}">Add selected</button>
-<button class="av-btn success" type="button" data-send-driver="${escapeHtml(routeId)}">Send</button>
-<button class="av-btn danger" type="button" data-remove-route="${escapeHtml(routeId)}">Remove</button>
+          <div class="av-own-route-meta">
+            ${escapeHtml(formatDate(getRouteDate(route)))}
+            · Driver: ${escapeHtml(getRouteDriverName(route))}
+            · ${escapeHtml(
+              formatTime(route.planned_start_time || route.start_time)
+            )}
+            → ${escapeHtml(
+              formatTime(route.planned_end_time || route.end_time)
+            )}
           </div>
         </div>
 
-        <div class="av-route-kpis">
-  <div class="av-kpi">
-    <span>Stops</span>
-    <strong>${formatNumber(summary.totalStops)}</strong>
-  </div>
+        <div class="av-own-route-actions">
+          <button
+            class="av-own-action-btn"
+            type="button"
+            data-toggle-route="${escapeHtml(routeId)}"
+          >
+            ${open ? "Close" : "Details"}
+          </button>
 
-  <div class="av-kpi">
-    <span>Volume</span>
-    <strong>${formatNumber(summary.totalVolume, 1)} m³</strong>
-  </div>
+          <button
+            class="av-own-action-btn"
+            type="button"
+            data-add-selected-route="${escapeHtml(routeId)}"
+          >
+            Add selected
+          </button>
 
-  <div class="av-kpi">
-    <span>Miles</span>
-    <strong>${formatNumber(summary.distanceMiles, 1)} mi</strong>
-  </div>
+          <button
+            class="av-own-action-btn av-own-action-send"
+            type="button"
+            data-send-driver="${escapeHtml(routeId)}"
+          >
+            Send
+          </button>
 
-  <div class="av-kpi">
-    <span>Hours</span>
-    <strong>${formatNumber(summary.totalHours, 1)} h</strong>
-  </div>
-
-  <div class="av-kpi">
-    <span>Revenue</span>
-    <strong>${formatMoney(summary.revenue)}</strong>
-  </div>
-
-  <div class="av-kpi av-cost-breakdown-toggle"
-       data-route-cost="${route.id}"
-       style="cursor:pointer;">
-    <span>Cost ▼</span>
-    <strong>${formatMoney(summary.cost)}</strong>
-  </div>
-
-  <div class="av-kpi">
-    <span>Result</span>
-    <strong>${formatMoney(summary.result)}</strong>
-  </div>
-</div>
-
-<div class="av-cost-breakdown"
-     id="cost-breakdown-${route.id}"
-     style="display:none;margin:10px;padding:12px;border:1px solid var(--border);border-radius:8px;background:#fafafa;">
-
-  <div style="font-weight:900;margin-bottom:10px;">
-    Route Cost Breakdown
-  </div>
-
-  <div style="display:grid;grid-template-columns:1fr auto;gap:4px;">
-   <div>Fuel Cost</div>
-<div>${formatMoney(route.estimated_cost_fuel_gbp || 0)}</div>
-
-<div>Fuel Used</div>
-<div>${formatNumber(route.estimated_fuel_litres || 0, 1)} L</div>
-
-<div>Vehicle Cost</div>
-<div>${formatMoney(route.estimated_cost_vehicle_gbp || 0)}</div>
-
-<div>Driver Cost</div>
-<div>${formatMoney(route.estimated_cost_labour_gbp || 0)}</div>
-
-<div>Warehouse Cost</div>
-<div>${formatMoney(summary.warehouseCost)}</div>
-
-    <div>Total Miles</div>
-    <div>${formatNumber(summary.distanceMiles, 1)} mi</div>
-
-    <div>Total Hours</div>
-    <div>${formatNumber(summary.totalHours, 1)} h</div>
-
-    <div style="font-weight:900;margin-top:8px;">Total Cost</div>
-    <div style="font-weight:900;margin-top:8px;">
-      ${formatMoney(summary.cost)}
-    </div>
-
-    <div style="font-weight:900;">Revenue</div>
-    <div style="font-weight:900;">
-      ${formatMoney(summary.revenue)}
-    </div>
-
-    <div style="font-weight:900;">Result</div>
-    <div style="font-weight:900;color:${summary.result >= 0 ? '#16a34a' : '#dc2626'};">
-      ${formatMoney(summary.result)}
-    </div>
-  </div>
-</div>
-
-        <div class="av-route-extra">
-          ${renderRouteAssignment(route, vehicle)}
-          ${renderRouteStops(route)}
+          <button
+            class="av-own-action-btn av-own-action-remove"
+            type="button"
+            data-remove-route="${escapeHtml(routeId)}"
+          >
+            Remove
+          </button>
         </div>
       </div>
-    `;
-  }
 
-  function renderRouteAssignment(route, vehicle) {
-    const routeId = String(route.id);
-    const vehicleId = route.vehicle_id || route.assigned_vehicle_id || vehicle?.id || "";
-    const driverId = getRouteDriverId(route);
-    const routeDate = getRouteDate(route) || selectedPlanningDate;
-    const start = formatTime(route.planned_start_time || route.start_time || "08:00").replace("—", "");
-    const end = formatTime(route.planned_end_time || route.end_time || "").replace("—", "");
+      <div class="av-own-route-kpis">
+        <div class="av-own-route-kpi">
+          <span>Stops</span>
+          <strong>${formatNumber(summary.totalStops)}</strong>
+        </div>
 
-    return `
-      <div class="av-form-grid">
-        <div class="av-field">
+        <div class="av-own-route-kpi">
+          <span>Volume</span>
+          <strong>${formatNumber(summary.totalVolume, 1)} m³</strong>
+        </div>
+
+        <div class="av-own-route-kpi">
+          <span>Miles</span>
+          <strong>${formatNumber(summary.distanceMiles, 1)} mi</strong>
+        </div>
+
+        <div class="av-own-route-kpi">
+          <span>Hours</span>
+          <strong>${formatNumber(summary.totalHours, 1)} h</strong>
+        </div>
+
+        <div class="av-own-route-kpi">
+          <span>Revenue</span>
+          <strong>${formatMoney(summary.revenue)}</strong>
+        </div>
+
+        <div
+          class="av-own-route-kpi av-own-route-cost-toggle"
+          data-route-cost="${escapeHtml(routeId)}"
+        >
+          <span>Cost ▼</span>
+          <strong>${formatMoney(summary.cost)}</strong>
+        </div>
+
+        <div class="av-own-route-kpi ${resultClass}">
+          <span>Result</span>
+          <strong>${formatMoney(summary.result)}</strong>
+        </div>
+      </div>
+
+      <div
+        class="av-own-cost-panel"
+        id="cost-breakdown-${escapeHtml(routeId)}"
+      >
+        <div class="av-own-cost-title">
+          Route Cost Breakdown
+        </div>
+
+        <div class="av-own-cost-grid">
+          <div>Fuel Cost</div>
+          <div class="value">
+            ${formatMoney(route.estimated_cost_fuel_gbp || 0)}
+          </div>
+
+          <div>Fuel Used</div>
+          <div class="value">
+            ${formatNumber(route.estimated_fuel_litres || 0, 1)} L
+          </div>
+
+          <div>Vehicle Cost</div>
+          <div class="value">
+            ${formatMoney(route.estimated_cost_vehicle_gbp || 0)}
+          </div>
+
+          <div>Driver Cost</div>
+          <div class="value">
+            ${formatMoney(route.estimated_cost_labour_gbp || 0)}
+          </div>
+
+          <div>Warehouse Cost</div>
+          <div class="value">
+            ${formatMoney(summary.warehouseCost)}
+          </div>
+
+          <div>Total Miles</div>
+          <div class="value">
+            ${formatNumber(summary.distanceMiles, 1)} mi
+          </div>
+
+          <div>Total Hours</div>
+          <div class="value">
+            ${formatNumber(summary.totalHours, 1)} h
+          </div>
+
+          <div class="av-own-cost-divider"></div>
+
+          <div class="av-own-cost-total">Total Cost</div>
+          <div class="value av-own-cost-total">
+            ${formatMoney(summary.cost)}
+          </div>
+
+          <div class="av-own-cost-total">Revenue</div>
+          <div class="value av-own-cost-total">
+            ${formatMoney(summary.revenue)}
+          </div>
+
+          <div class="av-own-cost-total">Result</div>
+          <div class="value ${
+            summary.result >= 0
+              ? "av-own-cost-result-positive"
+              : "av-own-cost-result-negative"
+          }">
+            ${formatMoney(summary.result)}
+          </div>
+        </div>
+      </div>
+
+      <div class="av-own-route-extra">
+        ${renderRouteAssignment(route, vehicle)}
+        ${renderRouteStops(route)}
+      </div>
+    </div>
+  `;
+}
+
+function renderRouteAssignment(route, vehicle) {
+  const routeId = String(route.id);
+
+  const vehicleId =
+    route.vehicle_id ||
+    route.assigned_vehicle_id ||
+    vehicle?.id ||
+    "";
+
+  const driverId = getRouteDriverId(route);
+
+  const routeDate =
+    getRouteDate(route) ||
+    selectedPlanningDate;
+
+  const start = formatTime(
+    route.planned_start_time ||
+    route.start_time ||
+    "08:00"
+  ).replace("—", "");
+
+  const end = formatTime(
+    route.planned_end_time ||
+    route.end_time ||
+    ""
+  ).replace("—", "");
+
+  return `
+    <div class="av-own-assignment">
+      <div class="av-own-section-title">
+        Assignment
+      </div>
+
+      <div class="av-own-section-sub">
+        Change the vehicle, driver, delivery date and ETA status for this route.
+      </div>
+
+      <div class="av-own-assignment-grid">
+        <div class="av-own-field">
           <label>Vehicle</label>
-          <select class="av-select" data-field="vehicle_id" data-route-id="${escapeHtml(routeId)}">
+
+          <select
+            class="av-select"
+            data-field="vehicle_id"
+            data-route-id="${escapeHtml(routeId)}"
+          >
             ${vehicleOptionsHtml(vehicleId)}
           </select>
         </div>
 
-        <div class="av-field">
+        <div class="av-own-field">
           <label>Driver</label>
-          <select class="av-select" data-field="driver_user_id" data-route-id="${escapeHtml(routeId)}">
+
+          <select
+            class="av-select"
+            data-field="driver_user_id"
+            data-route-id="${escapeHtml(routeId)}"
+          >
             ${driverOptionsHtml(driverId)}
           </select>
         </div>
 
-        <div class="av-field">
+        <div class="av-own-field">
           <label>Delivery Date</label>
-          <input class="av-input" type="date" value="${escapeHtml(routeDate || "")}" data-field="planned_delivery_date" data-route-id="${escapeHtml(routeId)}"/>
+
+          <input
+            class="av-input"
+            type="date"
+            value="${escapeHtml(routeDate || "")}"
+            data-field="planned_delivery_date"
+            data-route-id="${escapeHtml(routeId)}"
+          />
         </div>
 
-        <div class="av-field">
+        <div class="av-own-field">
           <label>Start Time</label>
-          <input class="av-input" type="time" value="${escapeHtml(start || "")}" data-field="planned_start_time" data-route-id="${escapeHtml(routeId)}"/>
+
+          <input
+            class="av-input"
+            type="time"
+            value="${escapeHtml(start || "")}"
+            data-field="planned_start_time"
+            data-route-id="${escapeHtml(routeId)}"
+          />
         </div>
 
-        <div class="av-field">
+        <div class="av-own-field">
           <label>End Time</label>
-          <input class="av-input" type="time" value="${escapeHtml(end || "")}" data-field="planned_end_time" data-route-id="${escapeHtml(routeId)}"/>
+
+          <input
+            class="av-input"
+            type="time"
+            value="${escapeHtml(end || "")}"
+            data-field="planned_end_time"
+            data-route-id="${escapeHtml(routeId)}"
+          />
         </div>
 
-        <div class="av-field">
+        <div class="av-own-field">
           <label>ETA</label>
-          <select class="av-select" data-field="eta_finalized" data-route-id="${escapeHtml(routeId)}">
-            <option value="false" ${route.eta_finalized === true ? "" : "selected"}>Planned only</option>
-            <option value="true" ${route.eta_finalized === true ? "selected" : ""}>Confirmed to customer</option>
+
+          <select
+            class="av-select"
+            data-field="eta_finalized"
+            data-route-id="${escapeHtml(routeId)}"
+          >
+            <option
+              value="false"
+              ${route.eta_finalized === true ? "" : "selected"}
+            >
+              Planned only
+            </option>
+
+            <option
+              value="true"
+              ${route.eta_finalized === true ? "selected" : ""}
+            >
+              Confirmed to customer
+            </option>
           </select>
         </div>
       </div>
 
-      <div class="av-actions">
-        <button class="av-btn primary" type="button" data-save-route="${escapeHtml(routeId)}">Save Assignment</button>
+      <div class="av-own-assignment-footer">
+        <button
+          class="av-own-action-btn av-own-save-btn"
+          type="button"
+          data-save-route="${escapeHtml(routeId)}"
+        >
+          Save Assignment
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function renderRouteStops(route) {
+  const stops = getStopsForRoute(route.id);
+  const routeId = String(route.id);
+
+  if (!stops.length) {
+    return `
+      <div class="av-empty">
+        No route stops found for this route.
       </div>
     `;
   }
 
-  function renderRouteStops(route) {
-    const stops = getStopsForRoute(route.id);
-    const routeId = String(route.id);
-
-    if (!stops.length) {
-      return `<div class="av-empty">No route stops found for this route.</div>`;
-    }
-
-    return `
-      <div class="av-stops-head">
+  return `
+    <div class="av-own-stops-section">
+      <div class="av-own-stops-head">
         <div>
-          <div class="av-stops-title">Route order</div>
-          <div class="av-drag-hint">Drag stops to change the order. Then press Save order.</div>
+          <div class="av-own-section-title">
+            Route order
+          </div>
+
+          <div class="av-own-section-sub">
+            Drag stops to change their order, then save the new sequence.
+          </div>
         </div>
 
-        <button class="av-btn primary" type="button" data-save-stop-order="${escapeHtml(routeId)}">
+        <button
+          class="av-own-action-btn"
+          type="button"
+          data-save-stop-order="${escapeHtml(routeId)}"
+        >
           Save order
         </button>
       </div>
 
-      <div class="av-stops" data-route-stops="${escapeHtml(routeId)}">
+      <div
+        class="av-stops av-own-stops-list"
+        data-route-stops="${escapeHtml(routeId)}"
+      >
         ${stops.map(stop => renderStop(stop)).join("")}
       </div>
-    `;
-  }
+    </div>
+  `;
+}
 
-  function renderStop(stop) {
+function renderStop(stop) {
   const order = getOrderById(stop.order_id);
-  const statusValue = getStatusValueFromStop(stop, order);
-  const cls = statusClassFromValue(statusValue);
-  const stopNumber = stop.stop_sequence || stop.stop_number || "—";
+
+  const statusValue =
+    getStatusValueFromStop(stop, order);
+
+  const stopNumber =
+    stop.stop_sequence ||
+    stop.stop_number ||
+    "—";
+
   const eta = formatTime(
     stop.planned_arrival_time ||
     stop.arrival_eta ||
@@ -1157,46 +2467,81 @@ ${
     stop.planned_time
   );
 
-  const city = stop.city || order?.delivery_city || "—";
-  const postcode = stop.postcode || order?.delivery_postcode || "—";
- const customerOrderLabel = getCustomerOrderLabel(order);
-const title = order?.order_number || stop.stop_name || "Stop";
-  const retailer = getRetailerName(order, stop);
+  const city =
+    stop.city ||
+    order?.delivery_city ||
+    "—";
+
+  const postcode =
+    stop.postcode ||
+    order?.delivery_postcode ||
+    "—";
+
+  const customerOrderLabel =
+    getCustomerOrderLabel(order);
+
+  const title =
+    order?.order_number ||
+    stop.stop_name ||
+    "Stop";
+
+  const retailer =
+    getRetailerName(order, stop);
 
   return `
     <div
-      class="av-stop ${escapeHtml(cls)}"
+      class="av-stop av-own-stop"
       draggable="true"
       data-stop-id="${escapeHtml(stop.id)}"
       data-route-id="${escapeHtml(stop.route_id)}"
     >
-      <div class="av-stop-no ${escapeHtml(cls)}">
+      <div class="av-stop-no av-own-stop-number">
         ${escapeHtml(stopNumber)}
       </div>
 
-      <div>
-        <div class="av-stop-title">
-          ${escapeHtml(title)} · ${escapeHtml(retailer)}
-${customerOrderLabel ? `<span class="av-stop-sub">${escapeHtml(customerOrderLabel)}</span>` : ""}
+      <div class="av-own-stop-content">
+        <div class="av-own-stop-title">
+          ${escapeHtml(title)}
+          ·
+          ${escapeHtml(retailer)}
         </div>
 
-        <div class="av-stop-sub">
-          ${escapeHtml(city)}
-          · ${escapeHtml(postcode)}
-          · ETA ${escapeHtml(eta)}
-        </div>
+        ${
+          customerOrderLabel
+            ? `
+              <div class="av-own-stop-ref">
+                ${escapeHtml(customerOrderLabel)}
+              </div>
+            `
+            : ""
+        }
 
-        <div class="av-stop-sub">
-          Status:
-          <span class="av-status ${escapeHtml(cls)}">
-            ${escapeHtml(titleCase(statusValue))}
+        <div class="av-own-stop-detail">
+          <span>
+            ${escapeHtml(city)}
+            · ${escapeHtml(postcode)}
+          </span>
+
+          <span>·</span>
+
+          <span>
+            ETA ${escapeHtml(eta)}
+          </span>
+
+          <span>·</span>
+
+          <span>
+            Status:
+            <span class="av-own-stop-status">
+              ${escapeHtml(titleCase(statusValue))}
+            </span>
           </span>
         </div>
       </div>
 
-      <div class="av-stop-actions">
+      <div class="av-stop-actions av-own-stop-actions">
         <button
-          class="av-btn small success"
+          class="av-stop-action-btn av-stop-action-delivered"
           type="button"
           data-manual-delivered="${escapeHtml(stop.id)}"
         >
@@ -1204,7 +2549,7 @@ ${customerOrderLabel ? `<span class="av-stop-sub">${escapeHtml(customerOrderLabe
         </button>
 
         <button
-          class="av-btn small warning"
+          class="av-stop-action-btn av-stop-action-issue"
           type="button"
           data-manual-issue="${escapeHtml(stop.id)}"
         >
@@ -1212,7 +2557,7 @@ ${customerOrderLabel ? `<span class="av-stop-sub">${escapeHtml(customerOrderLabe
         </button>
 
         <button
-          class="av-btn small danger"
+          class="av-stop-action-btn av-stop-action-failed"
           type="button"
           data-manual-failed="${escapeHtml(stop.id)}"
         >
@@ -1277,19 +2622,19 @@ function bindEvents(mount) {
     });
   });
 
-  mount.querySelectorAll("[data-route-cost]").forEach(card => {
-    card.addEventListener("click", () => {
-      const routeId = card.dataset.routeCost;
-      const panel = document.getElementById(`cost-breakdown-${routeId}`);
+mount.querySelectorAll("[data-route-cost]").forEach(card => {
+  card.addEventListener("click", () => {
+    const routeId = card.dataset.routeCost;
 
-      if (!panel) return;
+    const panel = document.getElementById(
+      `cost-breakdown-${routeId}`
+    );
 
-      panel.style.display =
-        panel.style.display === "none"
-          ? "block"
-          : "none";
-    });
+    if (!panel) return;
+
+    panel.classList.toggle("visible");
   });
+});
 
   mount.querySelectorAll("[data-save-route]").forEach(button => {
     button.addEventListener("click", async () => {
@@ -1355,17 +2700,43 @@ function bindEvents(mount) {
     });
   });
 
+mount.querySelectorAll("[data-fds-upload-signed]").forEach(button => {
+  button.addEventListener("click", () => {
+    const vehicleId = button.dataset.fdsUploadSigned;
+
+    const input = mount.querySelector(
+      `[data-fds-upload-input="${CSS.escape(String(vehicleId))}"]`
+    );
+
+    input?.click();
+  });
+});
+
+mount.querySelectorAll("[data-fds-upload-input]").forEach(input => {
+  input.addEventListener("change", async () => {
+    const vehicleId = input.dataset.fdsUploadInput;
+    const file = input.files?.[0];
+
+    if (!file) return;
+
+    await uploadSignedFdsNotice(vehicleId, file);
+    input.value = "";
+  });
+});
+
   mount.querySelectorAll("[data-fds-delivery-notes]").forEach(button => {
     button.addEventListener("click", async () => {
       await generateFdsDeliveryNotes(button.dataset.fdsDeliveryNotes);
     });
   });
 
-  mount.querySelectorAll("[data-fds-handover]").forEach(button => {
-    button.addEventListener("click", async () => {
-      await generateFdsHandoverSheet(button.dataset.fdsHandover);
-    });
+mount.querySelectorAll("[data-fds-labels]").forEach(button => {
+  button.addEventListener("click", async () => {
+    await generateFdsDeliveryLabels(button.dataset.fdsLabels);
   });
+});
+
+
 }
 
 
@@ -1928,17 +3299,17 @@ async function generateFdsNoticePdf(vehicleId) {
       .from("orders")
       .select(`
         *,
-order_lines (
-  id,
-  quantity_ordered,
-  unit_weight_kg,
-  total_line_weight_kg,
-  products (
-    id,
-    weight_kg,
-    net_weight_kg
-  )
-)
+        order_lines (
+          id,
+          quantity_ordered,
+          unit_weight_kg,
+          total_line_weight_kg,
+          products (
+            id,
+            weight_kg,
+            net_weight_kg
+          )
+        )
       `)
       .eq("company_id", cid)
       .in("id", orderIds);
@@ -1966,6 +3337,324 @@ order_lines (
     showToast(error.message || "Could not generate FDS Notice PDF.", "err");
   }
 }
+
+async function uploadSignedFdsNotice(vehicleId, file) {
+  const button = document.querySelector(
+    `[data-fds-upload-signed="${CSS.escape(String(vehicleId))}"]`
+  );
+
+  const oldText = button?.textContent || "Upload Signed Notice";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Uploading... ⏳";
+    }
+
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    if (!cid) throw new Error("Company id missing.");
+    if (!file) throw new Error("No file selected.");
+
+    const allowedTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/png"
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      throw new Error("Upload a PDF, JPG or PNG file.");
+    }
+
+    const maxSize = 15 * 1024 * 1024;
+
+    if (file.size > maxSize) {
+      throw new Error("The file may not be larger than 15 MB.");
+    }
+
+    const vehicle = activeVehicles.find(
+      row => String(row.id) === String(vehicleId)
+    );
+
+    if (!vehicle) throw new Error("Carrier not found.");
+
+    const orders = getCarrierOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error("No FDS orders found.");
+    }
+
+    const extension =
+      file.name.split(".").pop()?.toLowerCase() ||
+      (file.type === "application/pdf" ? "pdf" : "jpg");
+
+    const timestamp = Date.now();
+    const datePart = new Date().toISOString().slice(0, 10);
+
+    const fileName =
+      `FDS-Signed-Collection-Notice-${datePart}-${timestamp}.${extension}`;
+
+    const storagePath =
+      `${cid}/fds-signed-notices/${datePart}/${fileName}`;
+
+    showToast("Uploading signed FDS notice...", "ok");
+
+    const { error: uploadError } = await db.storage
+      .from("order-documents")
+      .upload(storagePath, file, {
+        contentType: file.type,
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = db.storage
+      .from("order-documents")
+      .getPublicUrl(storagePath);
+
+    const fileUrl = publicUrlData?.publicUrl || "";
+
+    if (!fileUrl) {
+      throw new Error("The uploaded file URL could not be created.");
+    }
+
+    const now = new Date().toISOString();
+
+    for (const order of orders) {
+      const payload = {
+        company_id: cid,
+        customer_id: order.customer_id || null,
+        order_id: order.id,
+        document_type: "fds_signed_collection_notice",
+        document_number: `FDS-${datePart}`,
+        document_status: "signed",
+        file_url: fileUrl,
+        storage_path: storagePath,
+        customer_visible: false,
+        updated_at: now
+      };
+
+      const { data: existing, error: findError } = await db
+        .from("order_documents")
+        .select("id")
+        .eq("order_id", order.id)
+        .eq("document_type", "fds_signed_collection_notice")
+        .maybeSingle();
+
+      if (findError) throw findError;
+
+      if (existing?.id) {
+        const { error: updateError } = await db
+          .from("order_documents")
+          .update(payload)
+          .eq("id", existing.id);
+
+        if (updateError) throw updateError;
+      } else {
+        const { error: insertError } = await db
+          .from("order_documents")
+          .insert({
+            ...payload,
+            created_at: now
+          });
+
+        if (insertError) throw insertError;
+      }
+    }
+
+orders.forEach(order => {
+  signedNoticeOrderIds.add(String(order.id));
+});
+
+if (button) {
+  button.textContent = "Signed Notice ✓";
+  button.classList.remove("warning");
+  button.classList.add("success");
+}
+
+showToast(
+  `Signed FDS notice linked to ${orders.length} order(s).`,
+  "ok"
+);  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message || "Could not upload signed FDS notice.",
+      "err"
+    );
+
+    if (button) {
+      button.textContent = oldText;
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function generateFdsDeliveryNotes(vehicleId) {
+  const button = document.querySelector(
+    `[data-fds-delivery-notes="${CSS.escape(String(vehicleId))}"]`
+  );
+  const oldText = button?.textContent || "Generate Delivery Notes";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating... ⏳";
+    }
+
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    const vehicle = activeVehicles.find(v => String(v.id) === String(vehicleId));
+    if (!vehicle) throw new Error("Carrier not found.");
+
+    const orders = getCarrierOrders(vehicle);
+    if (!orders.length) throw new Error("No FDS orders found.");
+
+    if (!window.DeliveryNoteGenerator?.generate) {
+      throw new Error("Delivery Note Generator is not loaded.");
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error("pdf-lib is not loaded.");
+    }
+
+    showToast("Generating and combining delivery notes...", "ok");
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded = await window.DeliveryNoteGenerator.generate(order, db, cid);
+        if (uploaded?.fileUrl) pdfUrls.push(uploaded.fileUrl);
+      } catch (error) {
+        console.warn(`Delivery note skipped for ${order.order_number}:`, error.message);
+      }
+    }
+
+    if (!pdfUrls.length) throw new Error("No delivery note PDFs were generated.");
+
+    const mergedPdf = await window.PDFLib.PDFDocument.create();
+
+    for (const url of pdfUrls) {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+
+      const bytes = await response.arrayBuffer();
+      const pdf = await window.PDFLib.PDFDocument.load(bytes);
+      const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+      pages.forEach(page => mergedPdf.addPage(page));
+    }
+
+    const mergedBytes = await mergedPdf.save();
+    const blob = new Blob([mergedBytes], { type: "application/pdf" });
+    const blobUrl = URL.createObjectURL(blob);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = `FDS Delivery Notes ${today}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    showToast("FDS delivery notes downloaded.", "ok");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not generate delivery notes.", "err");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+async function generateFdsDeliveryLabels(vehicleId) {
+  const button = document.querySelector(
+    `[data-fds-labels="${CSS.escape(String(vehicleId))}"]`
+  );
+  const oldText = button?.textContent || "Generate Labels";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating... ⏳";
+    }
+
+    const vehicle = activeVehicles.find(v => String(v.id) === String(vehicleId));
+    if (!vehicle) throw new Error("Carrier not found.");
+
+    const orders = getCarrierOrders(vehicle);
+    if (!orders.length) throw new Error("No FDS orders found.");
+
+    if (!window.DeliveryLabelGenerator?.generate) {
+      throw new Error("Delivery Label Generator is not loaded.");
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error("pdf-lib is not loaded.");
+    }
+
+    showToast("Generating labels...", "ok");
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded = await window.DeliveryLabelGenerator.generate(order.id);
+        if (uploaded?.fileUrl) pdfUrls.push(uploaded.fileUrl);
+      } catch (error) {
+        console.warn(`Labels skipped for ${order.order_number}:`, error.message);
+      }
+    }
+
+    if (!pdfUrls.length) throw new Error("No label PDFs were generated.");
+
+    showToast("Combining labels...", "ok");
+
+    const mergedPdf = await window.PDFLib.PDFDocument.create();
+
+    for (const url of pdfUrls) {
+      const response = await fetch(url);
+      if (!response.ok) continue;
+
+      const bytes = await response.arrayBuffer();
+      const pdf = await window.PDFLib.PDFDocument.load(bytes);
+      const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+      pages.forEach(page => mergedPdf.addPage(page));
+    }
+
+    const mergedBytes = await mergedPdf.save();
+    const blob = new Blob([mergedBytes], { type: "application/pdf" });
+    const blobUrl = URL.createObjectURL(blob);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = `FDS Delivery Labels ${today}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    showToast("FDS labels downloaded.", "ok");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Could not generate labels.", "err");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
   function notifyRoutesChanged() {
     window.dispatchEvent(new CustomEvent("veynor:routes-changed"));
   }
@@ -1974,23 +3663,33 @@ order_lines (
     render();
   }
 
-  function init() {
+async function init() {
   try {
-    ensureClient();
-    injectStyles();
+ensureClient();
+injectStyles();
+syncFromPlannerData();
+
+await loadSignedFdsNoticeStatus();
 
 render();
-setTimeout(render, 800);
 
+setTimeout(async () => {
+  syncFromPlannerData();
+  await loadSignedFdsNoticeStatus();
+  render();
+}, 800);
     byId("btnVehicleModuleRefresh")?.addEventListener("click", () => {
       notifyRoutesChanged();
     });
 
-    window.addEventListener("veynor:planner-data-changed", event => {
-      syncFromPlannerData(event.detail);
-      render();
-    });
-
+window.addEventListener(
+  "veynor:planner-data-changed",
+  async event => {
+    syncFromPlannerData(event.detail);
+    await loadSignedFdsNoticeStatus();
+    render();
+  }
+);
     window.addEventListener("veynor:planner-selection-changed", event => {
       const detail = event.detail || {};
 

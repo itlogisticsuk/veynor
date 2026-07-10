@@ -28,14 +28,15 @@ let ackDownloadedOrderIds = new Set();
     direction: "desc"
   };
 
-  const STATUS_LABELS = {
-    order_received: "Order received",
-    awaiting_goods: "Awaiting goods",
-    stock_complete: "Stock complete",
-    planned: "Planned",
-    on_transport: "On Transport",
-    delivered: "Delivered",
-    issue: "Issue",
+const STATUS_LABELS = {
+  order_received: "Order received",
+  awaiting_goods: "Awaiting goods",
+  stock_complete: "Stock complete",
+  planned: "Planned",
+  on_transport: "On Transport",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+  issue: "Issue",
     pending: "Pending",
     confirmed: "Confirmed",
     not_generated: "Not generated",
@@ -252,6 +253,7 @@ if (isProductOwnerRole()) {
     "supplier_packing_slip",
     "delivery_note",
     "delivery_labels",
+    "fds_signed_collection_notice",
     "pod",
     "signed_delivery_note",
     "invoice"
@@ -277,7 +279,18 @@ if (isProductOwnerRole()) {
     if (["stock_complete", "generated", "sent", "signed", "invoice_sent", "confirmed"].includes(v)) return "green";
     if (["on_transport", "out_for_delivery", "sent_to_driver", "loaded", "dispatched"].includes(v)) return "purple";
     if (["delivered", "paid"].includes(v)) return "green";
-    if (["overdue", "issue", "delivery_issue", "returned", "failed_delivery"].includes(v)) return "red";
+if (
+  [
+    "overdue",
+    "issue",
+    "delivery_issue",
+    "returned",
+    "failed_delivery",
+    "cancelled"
+  ].includes(v)
+) {
+  return "red";
+}
 
     return "gray";
   }
@@ -822,11 +835,21 @@ function getProductCompleteness(order) {
     return "not_invoiced";
   }
 
- function deriveLifecycleStatus(order) {
+function deriveLifecycleStatus(order) {
   const status = normalize(order.status || "");
   const transportStatus = normalize(order.transport_status || "");
   const warehouseStatus = normalize(order.warehouse_status || "");
+  const overallStatus = normalize(order.overall_status || "");
   const completeness = getProductCompleteness(order);
+
+  if (
+    status === "cancelled" ||
+    transportStatus === "cancelled" ||
+    warehouseStatus === "cancelled" ||
+    overallStatus === "cancelled"
+  ) {
+    return "cancelled";
+  }
 
   if (normalize(order.order_type) === "legacy") {
     return "delivered";
@@ -875,14 +898,17 @@ function getProductCompleteness(order) {
   return "order_received";
 }
 
-  function compactLifecycleStep(order) {
-    const status = normalize(order.derived_lifecycle_status || "");
+function compactLifecycleStep(order) {
+  const status =
+    normalize(order.derived_lifecycle_status || "");
 
-    if (status === "delivered") return 4;
-    if (["on_transport", "planned"].includes(status)) return 3;
-    if (status === "stock_complete") return 2;
-    return 1;
-  }
+  if (status === "cancelled") return 0;
+  if (status === "delivered") return 4;
+  if (["on_transport", "planned"].includes(status)) return 3;
+  if (status === "stock_complete") return 2;
+
+  return 1;
+}
 
 function getOrderVolumeM3(order) {
   return (order.order_lines || []).reduce((sum, line) => {
@@ -1498,64 +1524,86 @@ setText(
     setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
   }
 
-  function renderCompactLifecycle(order) {
-    const step = compactLifecycleStep(order);
-    const isIssue = order.derived_lifecycle_status === "issue";
+function renderCompactLifecycle(order) {
+  const lifecycle =
+    normalize(order.derived_lifecycle_status || "");
 
-    const statusText = isIssue
-      ? "Issue"
-      : step === 4
-        ? "Delivered"
-        : step === 3
-          ? "Planned / Transport"
-          : step === 2
-            ? "Stock Complete"
-            : "Order Received";
-
-    function stepClass(index) {
-      if (isIssue && index === 1) return "wait";
-      if (index > step) return "";
-      if (index === 1) return "done";
-      if (index === 2) return "stock";
-      if (index === 3) return "transport";
-      if (index === 4) return "delivery";
-      return "";
-    }
-
-    function connectorClass(index) {
-      if (index >= step) return "";
-      if (index === 1) return "done";
-      if (index === 2) return "stock";
-      if (index === 3) return "transport";
-      return "";
-    }
-
-    const labelClass =
-      isIssue ? "orange" :
-      step === 1 ? "blue" :
-      step === 2 ? "green" :
-      step === 3 ? "purple" :
-      "green";
-
+  if (lifecycle === "cancelled") {
     return `
       <div class="mini-lifecycle">
         <div class="mini-lifecycle-line">
-          <span class="mini-life-step ${stepClass(1)}">1</span>
-          <span class="mini-life-connector ${connectorClass(1)}"></span>
-          <span class="mini-life-step ${stepClass(2)}">2</span>
-          <span class="mini-life-connector ${connectorClass(2)}"></span>
-          <span class="mini-life-step ${stepClass(3)}">3</span>
-          <span class="mini-life-connector ${connectorClass(3)}"></span>
-          <span class="mini-life-step ${stepClass(4)}">4</span>
+          <span class="mini-life-step wait">×</span>
+          <span class="mini-life-connector"></span>
+          <span class="mini-life-step"></span>
+          <span class="mini-life-connector"></span>
+          <span class="mini-life-step"></span>
+          <span class="mini-life-connector"></span>
+          <span class="mini-life-step"></span>
         </div>
 
-        <div class="mini-life-label ${labelClass}">
-          ${escapeHtml(statusText)}
+        <div class="mini-life-label red">
+          Cancelled
         </div>
       </div>
     `;
   }
 
+  const step = compactLifecycleStep(order);
+  const isIssue = lifecycle === "issue";
+
+  const statusText = isIssue
+    ? "Issue"
+    : step === 4
+      ? "Delivered"
+      : step === 3
+        ? "Planned / Transport"
+        : step === 2
+          ? "Stock Complete"
+          : "Order Received";
+
+  function stepClass(index) {
+    if (isIssue && index === 1) return "wait";
+    if (index > step) return "";
+    if (index === 1) return "done";
+    if (index === 2) return "stock";
+    if (index === 3) return "transport";
+    if (index === 4) return "delivery";
+    return "";
+  }
+
+  function connectorClass(index) {
+    if (index >= step) return "";
+    if (index === 1) return "done";
+    if (index === 2) return "stock";
+    if (index === 3) return "transport";
+    return "";
+  }
+
+  const labelClass =
+    isIssue ? "orange" :
+    step === 1 ? "blue" :
+    step === 2 ? "green" :
+    step === 3 ? "purple" :
+    "green";
+
+  return `
+    <div class="mini-lifecycle">
+      <div class="mini-lifecycle-line">
+        <span class="mini-life-step ${stepClass(1)}">1</span>
+        <span class="mini-life-connector ${connectorClass(1)}"></span>
+        <span class="mini-life-step ${stepClass(2)}">2</span>
+        <span class="mini-life-connector ${connectorClass(2)}"></span>
+        <span class="mini-life-step ${stepClass(3)}">3</span>
+        <span class="mini-life-connector ${connectorClass(3)}"></span>
+        <span class="mini-life-step ${stepClass(4)}">4</span>
+      </div>
+
+      <div class="mini-life-label ${labelClass}">
+        ${escapeHtml(statusText)}
+      </div>
+    </div>
+  `;
+}
   function renderCompletenessDonut(order) {
     const c = order.product_completeness || getProductCompleteness(order);
     const pct = Math.max(0, Math.min(100, toNumber(c.pct, 0)));
@@ -1595,10 +1643,10 @@ const docs = [
   ["supplier_packing_slip", "Packing Slip"],
   ["delivery_note", "Delivery Note"],
   ["delivery_labels", "Delivery Labels"],
+  ["fds_signed_collection_notice", "FDS Signed Notice"],
   ["pod", "POD"],
   ["invoice", "Invoice"]
 ];
-
   if (
     normalize(order.order_type) === "credit" &&
     getDoc(order, "credit_note")
@@ -1881,13 +1929,14 @@ if (url) {
     isAckDownloaded(order);
 
   return `
-    <a
-      class="quick-action ${ackDownloaded ? "ack-downloaded" : ""}"
-      href="${escapeHtml(url)}"
-      target="_blank"
-      rel="noopener"
-      ${renderPortalDocAttrs(order, type, "downloaded", url)}
-    >
+<a
+  class="quick-action ${ackDownloaded ? "ack-downloaded" : ""}"
+  href="${escapeHtml(url)}"
+  ${["delivery_note", "delivery_labels", "supplier_packing_slip"].includes(normalize(type))
+    ? `target="_blank" rel="noopener" download="${escapeHtml(`${label}-${order.order_number || "order"}.pdf`)}"`
+    : `target="_blank" rel="noopener"`}
+  ${renderPortalDocAttrs(order, type, "downloaded", url)}
+>
       <span>${escapeHtml(label)}</span>
       <span>${ackDownloaded ? "Downloaded ✓" : "Download"}</span>
     </a>
@@ -1936,7 +1985,11 @@ function renderDocumentsPanel(order) {
 
   return `
     <div class="quick-action-list">
-      ${docs.map(([type, label]) => renderDocumentAction(order, type, label)).join("")}
+      ${docs
+        .map(([type, label]) => {
+          return renderDocumentAction(order, type, label);
+        })
+        .join("")}
 
       ${
         canSeeDocumentType("pod")
@@ -1946,25 +1999,45 @@ function renderDocumentsPanel(order) {
                 class="quick-action"
                 type="button"
                 data-open-pod-photos="${escapeHtml(order.id)}"
-                ${renderPortalDocAttrs(order, "pod_photos", "viewed")}
+                ${renderPortalDocAttrs(
+                  order,
+                  "pod_photos",
+                  "viewed"
+                )}
               >
                 <span>Delivery Photos</span>
                 <span>${photos.length}/5</span>
               </button>
             `
-            : `<div class="quick-action" style="opacity:.7;"><span>Delivery Photos</span><span>No photos</span></div>`
+            : `
+              <div
+                class="quick-action"
+                style="opacity:.7;"
+              >
+                <span>Delivery Photos</span>
+                <span>No photos</span>
+              </div>
+            `
           : ""
       }
 
       ${
         isTenantRole()
           ? `
-            <button class="quick-action" type="button" data-manual-ops-order-id="${escapeHtml(order.id)}">
+            <button
+              class="quick-action"
+              type="button"
+              data-manual-ops-order-id="${escapeHtml(order.id)}"
+            >
               <span>Manual delivery / POD</span>
               <span>Open</span>
             </button>
 
-            <button class="quick-action" type="button" data-open-tariff-modal="${escapeHtml(order.id)}">
+            <button
+              class="quick-action"
+              type="button"
+              data-open-tariff-modal="${escapeHtml(order.id)}"
+            >
               <span>Finance / Tariffs</span>
               <span>Edit</span>
             </button>
@@ -1975,66 +2048,378 @@ function renderDocumentsPanel(order) {
   `;
 }
 
-  function renderExpandedRow(order) {
-    const c = order.product_completeness || getProductCompleteness(order);
-    const latestActivity = Array.isArray(order.order_activity_log) ? order.order_activity_log[0] : null;
+function renderExpandedRow(order) {
+  const c =
+    order.product_completeness ||
+    getProductCompleteness(order);
 
-    return `
-      <tr class="expanded-row" data-expanded-order-id="${escapeHtml(order.id)}">
-        <td colspan="13">
-          <div class="order-expanded-panel">
-            <div class="expanded-tabs">
-              <button class="expanded-tab active" type="button">Overview</button>
-              <button class="expanded-tab" type="button">Documents</button>
-              <button class="expanded-tab" type="button">Products</button>
-              <button class="expanded-tab" type="button">Delivery</button>
-              ${canSeeFinance() ? `<button class="expanded-tab" type="button">Finance</button>` : ""}
-            </div>
+  const latestActivity =
+    Array.isArray(order.order_activity_log) &&
+    order.order_activity_log.length
+      ? order.order_activity_log[0]
+      : null;
 
-            <div class="expanded-grid">
-              <section class="detail-box">
-                <h3>Order Details</h3>
-              <div class="detail-line"><span class="detail-label">Order</span><span class="detail-value">${escapeHtml(order.order_number || "—")}</span></div>
-<div class="detail-line"><span class="detail-label">Supplier ref</span><span class="detail-value">${escapeHtml(order.external_reference || "—")}</span></div>
-<div class="detail-line"><span class="detail-label">PO</span><span class="detail-value">${escapeHtml(order.purchase_order || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">Owner</span><span class="detail-value">${escapeHtml(order.product_owner_name || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">Retailer</span><span class="detail-value">${escapeHtml(order.retailer_name || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">Ship to</span><span class="detail-value">${escapeHtml(order.ship_to_address || "—")}</span></div>
-              </section>
+  const isCancelled =
+    normalize(order.derived_lifecycle_status) === "cancelled" ||
+    normalize(order.status) === "cancelled" ||
+    normalize(order.overall_status) === "cancelled";
 
-              <section class="detail-box">
-                <h3>Lifecycle</h3>
-                <div class="detail-line"><span class="detail-label">Current</span><span class="detail-value">${pill(order.derived_lifecycle_status)}</span></div>
-                <div class="detail-line"><span class="detail-label">Completeness</span><span class="detail-value">${formatNumber(c.matched, 0)} / ${formatNumber(c.required, 0)} packages · ${formatNumber(c.pct, 0)}%</span></div>
-                <div class="detail-line"><span class="detail-label">Requested</span><span class="detail-value">${escapeHtml(formatDate(getRequestedDeliveryDate(order)))}</span></div>
-                <div class="detail-line"><span class="detail-label">Expected</span><span class="detail-value">${escapeHtml(formatDate(getExpectedDeliveryDate(order)))}</span></div>
-                <div class="detail-line"><span class="detail-label">ETA</span><span class="detail-value">${escapeHtml(getEtaDisplay(order))}</span></div>
-              </section>
+  const cancellationReasonLabels = {
+    customer_cancelled: "Customer cancelled",
+    duplicate_order: "Duplicate order",
+    stock_unavailable: "Stock unavailable",
+    damaged: "Damaged",
+    other: "Other"
+  };
 
-              <section class="detail-box">
-                <h3>Documents</h3>
-                ${renderDocumentsPanel(order)}
-              </section>
+  const cancellationReason =
+    cancellationReasonLabels[
+      normalize(order.cancellation_reason)
+    ] ||
+    cleanText(order.cancellation_reason) ||
+    "—";
 
-              <section class="detail-box">
-                <h3>Products</h3>
-                ${renderProductLines(order)}
-              </section>
+  const financeStatus =
+    order.derived_finance_status ||
+    order.finance_status ||
+    "not_invoiced";
 
-              <section class="detail-box">
-                <h3>${canSeeFinance() ? "Finance / Activity" : "Activity"}</h3>
-                ${canSeeFinance() ? `<div class="detail-line"><span class="detail-label">Finance</span><span class="detail-value">${pill(order.derived_finance_status)}</span></div>` : ""}
-                ${canSeeInternalPlanningData() ? `<div class="detail-line"><span class="detail-label">Revenue</span><span class="detail-value">${formatMoney(getOrderRevenue(order))}</span></div>` : ""}
-                <div class="detail-line"><span class="detail-label">Route</span><span class="detail-value">${escapeHtml(order.routes?.route_code || order.routes?.name || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">Driver</span><span class="detail-value">${escapeHtml(order.routes?.driver_name || "—")}</span></div>
-                <div class="detail-line"><span class="detail-label">Last activity</span><span class="detail-value">${escapeHtml(latestActivity?.description || order.delivery_status_label || "—")}</span></div>
-              </section>
-            </div>
+  return `
+    <tr
+      class="expanded-row"
+      data-expanded-order-id="${escapeHtml(order.id)}"
+    >
+      <td colspan="13">
+        <div class="order-expanded-panel">
+
+          <div class="expanded-tabs">
+            <button
+              class="expanded-tab active"
+              type="button"
+            >
+              Overview
+            </button>
+
+            <button
+              class="expanded-tab"
+              type="button"
+            >
+              Documents
+            </button>
+
+            <button
+              class="expanded-tab"
+              type="button"
+            >
+              Products
+            </button>
+
+            <button
+              class="expanded-tab"
+              type="button"
+            >
+              Delivery
+            </button>
+
+            ${
+              canSeeFinance()
+                ? `
+                  <button
+                    class="expanded-tab"
+                    type="button"
+                  >
+                    Finance
+                  </button>
+                `
+                : ""
+            }
           </div>
-        </td>
-      </tr>
-    `;
-  }
+
+          <div class="expanded-grid">
+
+            <!-- ORDER DETAILS -->
+            <section class="detail-box">
+              <h3>Order Details</h3>
+
+              <div class="detail-line">
+                <span class="detail-label">Order</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(order.order_number || "—")}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">Supplier ref</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(order.external_reference || "—")}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">PO</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(order.purchase_order || "—")}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">Owner</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.product_owner_name ||
+                    getProductOwnerName(order) ||
+                    "—"
+                  )}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">Retailer</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.retailer_name ||
+                    getRetailerName(order) ||
+                    "—"
+                  )}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">Ship to</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.ship_to_address ||
+                    getAddressText(order) ||
+                    "—"
+                  )}
+                </span>
+              </div>
+            </section>
+
+            <!-- LIFECYCLE -->
+            <section class="detail-box">
+              <h3>Lifecycle</h3>
+
+              <div class="detail-line">
+                <span class="detail-label">Current</span>
+
+                <span class="detail-value">
+                  ${pill(order.derived_lifecycle_status)}
+                </span>
+              </div>
+
+              ${
+                isCancelled
+                  ? `
+                    <div class="detail-line">
+                      <span class="detail-label">Reason</span>
+
+                      <span class="detail-value">
+                        ${escapeHtml(cancellationReason)}
+                      </span>
+                    </div>
+
+                    ${
+                      order.cancellation_notes
+                        ? `
+                          <div class="detail-line">
+                            <span class="detail-label">Notes</span>
+
+                            <span class="detail-value">
+                              ${escapeHtml(
+                                order.cancellation_notes
+                              )}
+                            </span>
+                          </div>
+                        `
+                        : ""
+                    }
+
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Charge customer
+                      </span>
+
+                      <span class="detail-value">
+                        ${
+                          order.is_chargeable === true
+                            ? "Yes"
+                            : "No"
+                        }
+                      </span>
+                    </div>
+
+                    <div class="detail-line">
+                      <span class="detail-label">Finance</span>
+
+                      <span class="detail-value">
+                        ${pill(financeStatus)}
+                      </span>
+                    </div>
+                  `
+                  : `
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Completeness
+                      </span>
+
+                      <span class="detail-value">
+                        ${formatNumber(c.matched, 0)} /
+                        ${formatNumber(c.required, 0)}
+                        packages ·
+                        ${formatNumber(c.pct, 0)}%
+                      </span>
+                    </div>
+
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Requested
+                      </span>
+
+                      <span class="detail-value">
+                        ${escapeHtml(
+                          formatDate(
+                            getRequestedDeliveryDate(order)
+                          )
+                        )}
+                      </span>
+                    </div>
+
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Expected
+                      </span>
+
+                      <span class="detail-value">
+                        ${escapeHtml(
+                          formatDate(
+                            getExpectedDeliveryDate(order)
+                          )
+                        )}
+                      </span>
+                    </div>
+
+                    <div class="detail-line">
+                      <span class="detail-label">ETA</span>
+
+                      <span class="detail-value">
+                        ${escapeHtml(getEtaDisplay(order))}
+                      </span>
+                    </div>
+                  `
+              }
+            </section>
+
+            <!-- DOCUMENTS -->
+            <section class="detail-box">
+              <h3>Documents</h3>
+
+              ${renderDocumentsPanel(order)}
+            </section>
+
+            <!-- PRODUCTS -->
+            <section class="detail-box">
+              <h3>Products</h3>
+
+              ${renderProductLines(order)}
+            </section>
+
+            <!-- FINANCE / ACTIVITY -->
+            <section class="detail-box">
+              <h3>
+                ${
+                  canSeeFinance()
+                    ? "Finance / Activity"
+                    : "Activity"
+                }
+              </h3>
+
+              ${
+                canSeeFinance()
+                  ? `
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Finance
+                      </span>
+
+                      <span class="detail-value">
+                        ${pill(financeStatus)}
+                      </span>
+                    </div>
+                  `
+                  : ""
+              }
+
+              ${
+                canSeeInternalPlanningData()
+                  ? `
+                    <div class="detail-line">
+                      <span class="detail-label">
+                        Revenue
+                      </span>
+
+                      <span class="detail-value">
+                        ${formatMoney(
+                          getOrderRevenue(order)
+                        )}
+                      </span>
+                    </div>
+                  `
+                  : ""
+              }
+
+              <div class="detail-line">
+                <span class="detail-label">Route</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.routes?.route_code ||
+                    order.routes?.route_name ||
+                    order.routes?.name ||
+                    "—"
+                  )}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">Driver</span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.routes?.driver_name ||
+                    order.driver_name ||
+                    "—"
+                  )}
+                </span>
+              </div>
+
+              <div class="detail-line">
+                <span class="detail-label">
+                  Last activity
+                </span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    latestActivity?.description ||
+                    order.delivery_status_label ||
+                    "—"
+                  )}
+                </span>
+              </div>
+            </section>
+
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
 
 function getStoredDeliveryGroup(group) {
   if (!group?.key) return null;
@@ -2728,6 +3113,7 @@ tbody.querySelectorAll("[data-order-actions]").forEach(button => {
     });
 tbody.querySelectorAll("[data-doc-action]").forEach(button => {
   button.addEventListener("click", async event => {
+    event.preventDefault();
     event.stopPropagation();
 
 tbody.querySelectorAll("[data-portal-doc-type='ack']").forEach(link => {
@@ -3731,9 +4117,14 @@ async function generateDeliveryLabels(orderId) {
   }
 
   if (window.DeliveryLabelGenerator?.generate) {
-    await window.DeliveryLabelGenerator.generate(orderId);
+    const result = await window.DeliveryLabelGenerator.generate(orderId);
+
+if (result?.fileUrl) {
+  window.open(result.fileUrl, "_blank", "noopener");
+}
+
     await loadOrders();
-    showToast("Delivery labels generated.", "ok");
+    showToast("Delivery labels generated and downloaded.", "ok");
     return;
   }
 

@@ -134,7 +134,7 @@ const LABEL_ICON_PATHS = {
     }
   }
 
-async function loadSettings(client, companyId, orderCustomerId = null) {
+async function loadSettings(client, companyId, orderCustomerId = null, orderCustomer = null) {
   const { data, error } = await client
     .from("settings")
     .select("setting_key, setting_value")
@@ -147,28 +147,50 @@ async function loadSettings(client, companyId, orderCustomerId = null) {
 
   const map = new Map((data || []).map(r => [r.setting_key, r.setting_value]));
 
+  let customer = orderCustomer || null;
+
+  if (!customer && orderCustomerId) {
+    const { data: customerData } = await client
+      .from("customers")
+      .select("id, name, customer_code")
+      .eq("id", orderCustomerId)
+      .maybeSingle();
+
+    customer = customerData || null;
+  }
+
+  const ownerText = [
+    customer?.name,
+    customer?.customer_code,
+    orderCustomerId
+  ].join(" ").toLowerCase();
+
   let ownerLogoUrl = "";
 
-  try {
-    const rawProfiles = map.get("product_owner_profiles");
-    const profiles = rawProfiles ? JSON.parse(rawProfiles) : [];
+  if (ownerText.includes("zoy")) {
+    ownerLogoUrl = "https://giwzwmoaowabhxxxymho.supabase.co/storage/v1/object/public/company-assets/product-owners/zoy/logo.png";
+  } else {
+    try {
+      const rawProfiles = map.get("product_owner_profiles");
+      const profiles = rawProfiles ? JSON.parse(rawProfiles) : [];
 
-    const ownerProfile = Array.isArray(profiles)
-      ? profiles.find(p => {
-          return String(p.customer_id || p.id || "").toLowerCase() === String(orderCustomerId || "").toLowerCase()
-            || String(p.name || "").toLowerCase().includes("bellstone")
-            || String(p.trading_name || "").toLowerCase().includes("bellstone");
-        })
-      : null;
+      const ownerProfile = Array.isArray(profiles)
+        ? profiles.find(p =>
+            String(p.name || p.trading_name || p.customer_code || "")
+              .toLowerCase()
+              .includes("bellstone")
+          )
+        : null;
 
-    ownerLogoUrl =
-      ownerProfile?.logo_url ||
-      ownerProfile?.product_owner_logo_url ||
-      ownerProfile?.logoStorageUrl ||
-      ownerProfile?.logo_storage_url ||
-      "";
-  } catch (e) {
-    console.warn("Product owner logo lookup skipped:", e.message);
+      ownerLogoUrl =
+        ownerProfile?.logo_url ||
+        ownerProfile?.product_owner_logo_url ||
+        ownerProfile?.logoStorageUrl ||
+        ownerProfile?.logo_storage_url ||
+        "";
+    } catch (e) {
+      console.warn("Product owner logo lookup skipped:", e.message);
+    }
   }
 
   return {
@@ -193,7 +215,6 @@ async function loadSettings(client, companyId, orderCustomerId = null) {
   };
 }
 
-
   async function getPublicUrlFromStoragePath(client, path) {
     if (!path) return "";
 
@@ -205,71 +226,76 @@ async function loadSettings(client, companyId, orderCustomerId = null) {
   }
 
   async function loadOrder(client, companyId, orderId) {
-    const { data, error } = await client
-      .from("orders")
-      .select(`
+  const { data, error } = await client
+    .from("orders")
+    .select(`
+      id,
+      company_id,
+      customer_id,
+      order_number,
+      external_reference,
+      purchase_order,
+      retail_name,
+      delivery_address_1,
+      delivery_address_2,
+      delivery_address_3,
+      delivery_address_4,
+      delivery_city,
+      delivery_postcode,
+      delivery_country,
+      total_order_colli,
+      planning_colli,
+      total_order_volume_m3,
+      total_order_weight_kg,
+      customers (
         id,
-        company_id,
-        customer_id,
-        order_number,
-        external_reference,
-        purchase_order,
-        retail_name,
-        delivery_address_1,
-        delivery_address_2,
-        delivery_address_3,
-        delivery_address_4,
-        delivery_city,
-        delivery_postcode,
-        delivery_country,
-        total_order_colli,
-        planning_colli,
-        total_order_volume_m3,
-        total_order_weight_kg,
-        order_lines (
+        name,
+        customer_code
+      ),
+      order_lines (
+        id,
+        product_id,
+        line_number,
+        sku_base,
+        description,
+        quantity_ordered,
+        packages_per_unit,
+        total_packages,
+        unit_volume_m3,
+        total_line_volume_m3,
+        unit_weight_kg,
+        total_line_weight_kg,
+        products (
           id,
-          product_id,
-          line_number,
           sku_base,
-          description,
-          quantity_ordered,
+          barcode_value,
+          qr_value,
+          volume_m3,
+          weight_kg,
+          net_weight_kg,
+          package_count,
           packages_per_unit,
-          total_packages,
-          unit_volume_m3,
-          total_line_volume_m3,
-          unit_weight_kg,
-          total_line_weight_kg,
-          products (
-            id,
-            sku_base,
-            barcode_value,
-            qr_value,
-            volume_m3,
-            weight_kg,
-            net_weight_kg,
-            package_count,
-            packages_per_unit,
-            package_1_qty,
-            package_1_volume_m3,
-            package_1_weight_kg,
-            package_2_qty,
-            package_2_volume_m3,
-            package_2_weight_kg,
-            package_3_qty,
-            package_3_volume_m3,
-            package_3_weight_kg
-          )
+          package_1_qty,
+          package_1_volume_m3,
+          package_1_weight_kg,
+          package_2_qty,
+          package_2_volume_m3,
+          package_2_weight_kg,
+          package_3_qty,
+          package_3_volume_m3,
+          package_3_weight_kg
         )
-      `)
-      .eq("company_id", companyId)
-      .eq("id", orderId)
-      .maybeSingle();
+      )
+    `)
+    .eq("company_id", companyId)
+    .eq("id", orderId)
+    .maybeSingle();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error("Order not found.");
+  if (error) throw error;
+  if (!data?.id) throw new Error("Order not found.");
 
-    return data;
-  }
+  return data;
+}
 
 async function loadItemsForOrder(client, companyId, orderId) {
   const { data, error } = await client
@@ -653,7 +679,7 @@ return doc.output("blob");
 }
 
   async function uploadPdf(client, companyId, order, blob) {
-    const fileName = `${safeFilePart(order.order_number)}-delivery-labels.pdf`;
+    const fileName = `${safeFilePart(order.order_number)}-delivery-labels-${Date.now()}.pdf`;
     const storagePath = `${companyId}/${order.id}/${fileName}`;
 
     const { error } = await client.storage
@@ -726,8 +752,9 @@ return doc.output("blob");
     const companyId = await getCompanyId(client);
 
     const order = await loadOrder(client, companyId, orderId);
+console.log(order.customers);
     const items = await loadItemsForOrder(client, companyId, orderId);
-    const settings = await loadSettings(client, companyId, order.customer_id);
+    const settings = await loadSettings(client, companyId, order.customer_id, order.customers);
 
     const blob = await createPdf(order, items, settings);
     const uploaded = await uploadPdf(client, companyId, order, blob);
