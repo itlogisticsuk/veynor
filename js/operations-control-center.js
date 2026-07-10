@@ -1737,14 +1737,25 @@ function isFdsCarrierOrder(order) {
 }
 
 function getFdsWeekLabel(order) {
-  const date =
-    order.expected_delivery_date ||
+  const storedWeek = Math.round(
+    toNumber(order.fds_collection_week, 0)
+  );
+
+  if (storedWeek > 0) {
+    return `FDS Week ${storedWeek}`;
+  }
+
+  const collectionDate =
+    order.fds_collection_date ||
     order.planned_route_date ||
+    order.expected_delivery_date ||
     order.confirmed_delivery_date;
 
-  const week = getIsoWeekNumber(date);
+  const calculatedWeek = getIsoWeekNumber(collectionDate);
 
-  return week ? `FDS Week ${week}` : "FDS Week";
+  return calculatedWeek
+    ? `FDS Week ${calculatedWeek}`
+    : "FDS Week";
 }
 
 function renderDeliveryCell(order) {
@@ -1763,41 +1774,74 @@ function renderDeliveryCell(order) {
       </div>
     `;
   }
-  const expectedDate = getExpectedDeliveryDate(order);
 
-if (isFdsCarrierOrder(order)) {
-  const actualDate = order.confirmed_delivery_date || "";
+  if (isFdsCarrierOrder(order)) {
+    const fdsStatus = normalize(order.fds_status || "");
+    const isAllocated = fdsStatus === "allocated";
 
-  return `
-    <div class="delivery-cell">
-      ${pill("planned", getFdsWeekLabel(order))}
-      <span class="subline">
+    const deliveryDate = isAllocated
+      ? order.expected_delivery_date
+      : null;
+
+    const etaFrom = isAllocated
+      ? formatTime(order.delivery_eta_from)
+      : "";
+
+    const etaTo = isAllocated
+      ? formatTime(order.delivery_eta_to)
+      : "";
+
+    const etaText = etaFrom
+      ? etaTo
+        ? `${etaFrom} - ${etaTo}`
+        : etaFrom
+      : "Time not confirmed yet";
+
+    return `
+      <div class="delivery-cell">
         ${
-          actualDate
-            ? `Actual date: ${escapeHtml(formatDate(actualDate))}`
-            : `Actual date pending`
+          deliveryDate
+            ? `
+              <strong>
+                ${escapeHtml(formatDate(deliveryDate))}
+              </strong>
+            `
+            : ""
         }
-      </span>
-    </div>
-  `;
-}
+
+        ${pill("planned", getFdsWeekLabel(order))}
+
+        <span class="subline">
+          ${
+            isAllocated
+              ? escapeHtml(etaText)
+              : "Actual date pending"
+          }
+        </span>
+      </div>
+    `;
+  }
+
+  const expectedDate = getExpectedDeliveryDate(order);
   const etaStatus = getEtaStatus(order);
 
-  const etaPill = etaStatus === "confirmed"
-    ? pill("confirmed", "ETA confirmed")
-    : etaStatus === "planned"
-      ? pill("planned", "Date planned")
-      : pill("pending", "Pending");
+  const etaPill =
+    etaStatus === "confirmed"
+      ? pill("confirmed", "ETA confirmed")
+      : etaStatus === "planned"
+        ? pill("planned", "Date planned")
+        : pill("pending", "Pending");
 
   return `
     <div class="delivery-cell">
       <strong>${escapeHtml(formatDate(expectedDate))}</strong>
       ${etaPill}
-      <span class="subline">${escapeHtml(getEtaDisplay(order))}</span>
+      <span class="subline">
+        ${escapeHtml(getEtaDisplay(order))}
+      </span>
     </div>
   `;
 }
-
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
 }
@@ -5167,6 +5211,651 @@ async function openLegacyAckUpload(orderId) {
   input.click();
 }
 
+function detectCsvDelimiter(headerLine) {
+  const text = String(headerLine || "");
+
+  const commaCount = (text.match(/,/g) || []).length;
+  const semicolonCount = (text.match(/;/g) || []).length;
+
+  return semicolonCount > commaCount ? ";" : ",";
+}
+
+function parseCsvLine(line, delimiter = ",") {
+  const values = [];
+  let current = "";
+  let insideQuotes = false;
+
+  const text = String(line || "");
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    const nextChar = text[index + 1];
+
+    if (char === '"' && insideQuotes && nextChar === '"') {
+      current += '"';
+      index++;
+      continue;
+    }
+
+    if (char === '"') {
+      insideQuotes = !insideQuotes;
+      continue;
+    }
+
+    if (char === delimiter && !insideQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+
+  return values;
+}
+
+function parseCsvText(text) {
+  const lines = String(text || "")
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .filter(line => line.trim() !== "");
+
+  if (lines.length < 2) {
+    throw new Error(
+      "The selected CSV does not contain any order rows."
+    );
+  }
+
+  const delimiter = detectCsvDelimiter(lines[0]);
+
+  const headers = parseCsvLine(
+    lines[0],
+    delimiter
+  ).map(header => cleanText(header));
+
+  return lines.slice(1).map((line, index) => {
+    const values = parseCsvLine(line, delimiter);
+
+    const row = {
+      __rowNumber: index + 2
+    };
+
+    headers.forEach((header, columnIndex) => {
+      row[header] = values[columnIndex] ?? "";
+    });
+
+    return row;
+  });
+}
+
+function getCsvValue(row, possibleHeaders) {
+  const keys = Object.keys(row || {});
+
+  for (const possibleHeader of possibleHeaders) {
+    const matchingKey = keys.find(key =>
+      normalize(key) === normalize(possibleHeader)
+    );
+
+    if (matchingKey) {
+      return cleanText(row[matchingKey]);
+    }
+  }
+
+  return "";
+}
+
+function extractVeynorOrderNumbers(value) {
+  const matches = String(value || "")
+    .toUpperCase()
+    .match(/SO-\d+/g);
+
+  return [...new Set(matches || [])];
+}
+
+function parseFdsEta(value) {
+  const text = cleanText(value);
+
+  if (!text) return null;
+
+  const monthMap = {
+    JAN: "01",
+    FEB: "02",
+    MAR: "03",
+    APR: "04",
+    MAY: "05",
+    JUN: "06",
+    JUL: "07",
+    AUG: "08",
+    SEP: "09",
+    OCT: "10",
+    NOV: "11",
+    DEC: "12"
+  };
+
+  let match = text.match(
+    /^(\d{1,2})-([A-Za-z]{3})-(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/
+  );
+
+  if (match) {
+    const [, day, monthText, year, hour, minute] = match;
+    const month = monthMap[monthText.toUpperCase()];
+
+    if (!month) return null;
+
+    return {
+      date: `${year}-${month}-${String(day).padStart(2, "0")}`,
+      time:
+        hour !== undefined && minute !== undefined
+          ? `${String(hour).padStart(2, "0")}:${minute}`
+          : ""
+    };
+  }
+
+  match = text.match(
+    /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/
+  );
+
+  if (match) {
+    const [, day, month, year, hour, minute] = match;
+
+    return {
+      date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      time:
+        hour !== undefined && minute !== undefined
+          ? `${String(hour).padStart(2, "0")}:${minute}`
+          : ""
+    };
+  }
+
+  return null;
+}
+
+function parseFdsDateTime(value) {
+  const text = cleanText(value);
+
+  if (!text) return null;
+
+  let match = text.match(
+    /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\s+(\d{1,2}):(\d{2})$/
+  );
+
+  if (match) {
+    const [, day, month, year, hour, minute] = match;
+
+    return {
+      date: `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+      time: `${String(hour).padStart(2, "0")}:${minute}`
+    };
+  }
+
+  return parseFdsEta(text);
+}
+
+function getOrderMapByNumber(orders) {
+  const map = new Map();
+
+  (orders || []).forEach(order => {
+    const number = String(
+      order.order_number || ""
+    ).trim().toUpperCase();
+
+    if (number) {
+      map.set(number, order);
+    }
+  });
+
+  return map;
+}
+
+function getExistingCollectionData(order) {
+  const collectionDate =
+    order.fds_collection_date ||
+    order.expected_delivery_date ||
+    order.planned_route_date ||
+    null;
+
+  const collectionWeek =
+    Math.round(toNumber(order.fds_collection_week, 0)) ||
+    getIsoWeekNumber(collectionDate) ||
+    null;
+
+  return {
+    collectionDate,
+    collectionWeek
+  };
+}
+
+async function importFdsPlanningFile(file) {
+  if (!file) {
+    throw new Error("No FDS planning file selected.");
+  }
+
+  if (!isTenantRole()) {
+    throw new Error(
+      "Only Sofa2U users can import FDS planning."
+    );
+  }
+
+  const text = await file.text();
+  const rows = parseCsvText(text);
+  const cid = await getCompanyId();
+
+const preparedRows = rows.map(row => {
+  const orderRef = getCsvValue(row, [
+    "Order Ref",
+    "Order Reference",
+    "Order"
+  ]);
+
+  const status = normalize(
+    getCsvValue(row, ["Status"])
+  );
+
+  const plannedStart = getCsvValue(row, [
+    "Planned Start",
+    "Planned start"
+  ]);
+
+  const plannedEnd = getCsvValue(row, [
+    "Planned End",
+    "Planned end"
+  ]);
+
+  const etaActual = getCsvValue(row, [
+    "ETA/Actual",
+    "ETA / Actual",
+    "ETA Actual"
+  ]);
+
+  const etaLabel = getCsvValue(row, [
+    "ETA",
+    "ETA Label"
+  ]);
+
+  const jobRef = getCsvValue(row, [
+    "Job Ref",
+    "Job Reference",
+    "Job"
+  ]);
+
+  return {
+    rowNumber: row.__rowNumber,
+    orderRef,
+    orderNumbers: extractVeynorOrderNumbers(orderRef),
+    status,
+    plannedStart,
+    plannedEnd,
+    etaActual,
+    etaLabel,
+    jobRef
+  };
+});
+
+  const allOrderNumbers = [
+    ...new Set(
+      preparedRows.flatMap(row => row.orderNumbers)
+    )
+  ];
+
+  let existingOrders = [];
+
+  if (allOrderNumbers.length) {
+    const { data, error } = await client
+      .from("orders")
+      .select(`
+        id,
+        order_number,
+        status,
+        transport_type,
+        transport_status,
+        overall_status,
+        warehouse_status,
+        expected_delivery_date,
+        confirmed_delivery_date,
+        delivery_eta_from,
+        delivery_eta_to,
+        delivery_eta_status,
+        fds_status,
+        fds_job_ref,
+        fds_eta_label,
+        fds_last_import_at,
+        fds_collection_date,
+        fds_collection_week,
+        planned_route_date
+      `)
+      .eq("company_id", cid)
+      .in("order_number", allOrderNumbers);
+
+    if (error) throw error;
+
+    existingOrders = data || [];
+  }
+
+  const orderMap = getOrderMapByNumber(existingOrders);
+  const importTimestamp = new Date().toISOString();
+
+  const summary = {
+    rowsRead: rows.length,
+    allocatedRows: 0,
+    unallocatedRows: 0,
+    ordersUpdated: 0,
+    ordersUnchanged: 0,
+    unknownOrders: new Set(),
+    invalidEtaRows: [],
+    ignoredRows: 0,
+    errors: []
+  };
+
+  for (const row of preparedRows) {
+    if (!row.orderNumbers.length) {
+      summary.ignoredRows++;
+      continue;
+    }
+
+    if (
+      row.status !== "allocated" &&
+      row.status !== "unallocated"
+    ) {
+      summary.ignoredRows++;
+      continue;
+    }
+
+    if (row.status === "allocated") {
+      summary.allocatedRows++;
+    } else {
+      summary.unallocatedRows++;
+    }
+
+const plannedStart =
+  row.status === "allocated"
+    ? parseFdsDateTime(row.plannedStart)
+    : null;
+
+const plannedEnd =
+  row.status === "allocated"
+    ? parseFdsDateTime(row.plannedEnd)
+    : null;
+if (row.status === "allocated" && !plannedStart?.date) {
+  summary.invalidEtaRows.push({
+    row: row.rowNumber,
+    orderRef: row.orderRef,
+    plannedStart: row.plannedStart,
+    plannedEnd: row.plannedEnd
+  });
+
+  continue;
+}
+
+    for (const orderNumber of row.orderNumbers) {
+      const order = orderMap.get(
+        String(orderNumber).toUpperCase()
+      );
+
+      if (!order?.id) {
+        summary.unknownOrders.add(orderNumber);
+        continue;
+      }
+
+      try {
+        const collection =
+          getExistingCollectionData(order);
+
+        if (row.status === "allocated") {
+const deliveryDate = plannedStart.date;
+const etaFrom = plannedStart.time || "";
+const etaTo = plannedEnd?.time || "";
+          const currentDate = String(
+            order.expected_delivery_date || ""
+          ).slice(0, 10);
+
+          const currentEtaFrom = formatTime(
+            order.delivery_eta_from || ""
+          );
+
+          const currentEtaTo = formatTime(
+            order.delivery_eta_to || ""
+          );
+
+          const unchanged =
+            normalize(order.fds_status) === "allocated" &&
+            currentDate ===deliveryDate &&
+            currentEtaFrom === etaFrom &&
+            currentEtaTo === etaTo &&
+            cleanText(order.fds_job_ref || "") === row.jobRef &&
+            cleanText(order.fds_eta_label || "") === row.etaLabel;
+
+          if (unchanged) {
+            summary.ordersUnchanged++;
+            continue;
+          }
+
+          const previousDate = currentDate;
+          const previousEta = currentEtaFrom;
+
+          await safeUpdateOrder(order.id, {
+            fds_collection_date:
+              collection.collectionDate,
+
+            fds_collection_week:
+              collection.collectionWeek,
+
+            fds_status: "allocated",
+            fds_job_ref: row.jobRef || null,
+            fds_eta_label: row.etaLabel || null,
+            fds_last_import_at: importTimestamp,
+
+            expected_delivery_date: deliveryDate,
+
+            delivery_eta_from:
+              etaFrom || null,
+
+            delivery_eta_to:
+              etaTo || null,
+
+            delivery_eta_status:
+              etaFrom ? "confirmed" : "planned",
+
+            transport_type: "charter",
+            status: "export_for_charter",
+            transport_status: "planned",
+            overall_status: "planned",
+
+            last_activity_at: importTimestamp
+          });
+
+          let description =
+            `FDS planning imported from ${file.name}. ` +
+            `Status: Allocated. ` +
+            `Planned delivery: ${formatDate(deliveryDate)}`;
+
+          if (etaFrom) {
+            description +=
+              `, ETA ${etaFrom}` +
+              `${etaTo ? ` - ${etaTo}` : ""}`;
+          }
+
+          if (row.etaLabel) {
+            description +=
+              `. FDS ETA label: ${row.etaLabel}`;
+          }
+
+          if (
+            previousDate &&
+            previousDate !== deliveryDate
+          ) {
+            description +=
+              `. Previous delivery date: ${formatDate(previousDate)}`;
+          }
+
+          if (
+            previousEta &&
+            previousEta !== etaFrom
+          ) {
+            description +=
+              `. Previous ETA: ${previousEta}`;
+          }
+
+          description += ".";
+
+          await insertOrderActivity(
+            order.id,
+            description,
+            "fds_planning_allocated"
+          );
+
+          order.fds_status = "allocated";
+          order.expected_delivery_date = deliveryDate;
+          order.delivery_eta_from = etaFrom || null;
+          order.delivery_eta_to = etaTo || null;
+          order.fds_job_ref = row.jobRef || null;
+          order.fds_eta_label = row.etaLabel || null;
+
+          summary.ordersUpdated++;
+          continue;
+        }
+
+        const wasAlreadyUnallocated =
+          normalize(order.fds_status) === "unallocated" &&
+          !order.delivery_eta_from &&
+          !order.delivery_eta_to;
+
+        if (wasAlreadyUnallocated) {
+          summary.ordersUnchanged++;
+          continue;
+        }
+
+await safeUpdateOrder(order.id, {
+  fds_collection_date:
+    collection.collectionDate,
+
+  fds_collection_week:
+    collection.collectionWeek,
+
+  fds_status: "allocated",
+  fds_job_ref: row.jobRef || null,
+  fds_eta_label: row.etaLabel || null,
+  fds_last_import_at: importTimestamp,
+
+  expected_delivery_date: deliveryDate,
+  delivery_eta_from: etaFrom || null,
+  delivery_eta_to: etaTo || null,
+  delivery_eta_status:
+    etaFrom ? "confirmed" : "planned",
+
+  transport_type: "charter",
+  status: "export_for_charter",
+  transport_status: "planned",
+  overall_status: "planned",
+
+  last_activity_at: importTimestamp
+});
+
+        await insertOrderActivity(
+          order.id,
+          `FDS planning imported from ${file.name}. Status: Unallocated. No delivery date is currently confirmed.`,
+          "fds_planning_unallocated"
+        );
+
+        order.fds_status = "unallocated";
+        order.expected_delivery_date = null;
+        order.delivery_eta_from = null;
+        order.delivery_eta_to = null;
+
+        summary.ordersUpdated++;
+      } catch (error) {
+        console.error(
+          "FDS planning import failed:",
+          orderNumber,
+          error
+        );
+
+        summary.errors.push(
+          `${orderNumber}: ${
+            error.message || "Unknown import error"
+          }`
+        );
+      }
+    }
+  }
+
+  await loadOrders();
+
+  const unknownOrders = [
+    ...summary.unknownOrders
+  ];
+
+  let message =
+    `FDS planning import completed: ` +
+    `${summary.ordersUpdated} updated, ` +
+    `${summary.ordersUnchanged} unchanged, ` +
+    `${summary.unallocatedRows} unallocated row(s) processed`;
+
+  if (unknownOrders.length) {
+    message +=
+      `, ${unknownOrders.length} order(s) not found`;
+  }
+
+  if (summary.invalidEtaRows.length) {
+    message +=
+      `, ${summary.invalidEtaRows.length} invalid ETA row(s)`;
+  }
+
+  if (summary.errors.length) {
+    message +=
+      `, ${summary.errors.length} error(s)`;
+  }
+
+  showToast(
+    message + ".",
+    summary.errors.length ? "err" : "ok"
+  );
+
+  console.table({
+    "CSV rows read": summary.rowsRead,
+    "Allocated rows": summary.allocatedRows,
+    "Unallocated rows": summary.unallocatedRows,
+    "Orders updated": summary.ordersUpdated,
+    "Orders unchanged": summary.ordersUnchanged,
+    "Orders not found": unknownOrders.length,
+    "Invalid ETA rows": summary.invalidEtaRows.length,
+    "Ignored rows": summary.ignoredRows,
+    "Errors": summary.errors.length
+  });
+
+  if (unknownOrders.length) {
+    console.warn(
+      "FDS order numbers not found in Veynor:",
+      unknownOrders
+    );
+  }
+
+  if (summary.invalidEtaRows.length) {
+    console.warn(
+      "FDS rows with an invalid ETA/Actual value:",
+      summary.invalidEtaRows
+    );
+  }
+
+  if (summary.errors.length) {
+    console.error(
+      "FDS planning import errors:",
+      summary.errors
+    );
+  }
+
+  return summary;
+}
+
+function openFdsPlanningImport() {
+  byId("fdsPlanningFileInput")?.click();
+}
+
+function openFdsDeliveredImport() {
+  byId("fdsDeliveredFileInput")?.click();
+}
+
 function bindEvents() {
   [
     "filterSearch",
@@ -5412,6 +6101,74 @@ byId("btnManualCharge")?.addEventListener("click", () => {
       showToast(error.message || "Could not sync statuses.", "err");
     }
   });
+
+byId("btnImportFdsPlanning")?.addEventListener("click", () => {
+  openFdsPlanningImport();
+});
+
+byId("btnImportFdsDelivered")?.addEventListener("click", () => {
+  openFdsDeliveredImport();
+});
+
+byId("fdsPlanningFileInput")?.addEventListener(
+  "change",
+  async event => {
+    const input = event.target;
+    const file = input.files?.[0] || null;
+
+    if (!file) return;
+
+    const button = byId("btnImportFdsPlanning");
+
+    const originalButtonText =
+      button?.textContent ||
+      "Import FDS Planning";
+
+    try {
+      if (button) {
+        button.disabled = true;
+        button.textContent = "Importing...";
+      }
+
+      showToast(
+        `Importing ${file.name}...`,
+        "ok"
+      );
+
+      await importFdsPlanningFile(file);
+    } catch (error) {
+      console.error(
+        "FDS planning import failed:",
+        error
+      );
+
+      showToast(
+        error.message ||
+          "Could not import FDS planning.",
+        "err"
+      );
+    } finally {
+      input.value = "";
+
+      if (button) {
+        button.disabled = false;
+        button.textContent =
+          originalButtonText;
+      }
+    }
+  }
+);
+
+byId("fdsDeliveredFileInput")?.addEventListener("change", event => {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  console.log("FDS Delivered file selected:", file.name);
+  showToast(`Selected: ${file.name}`, "ok");
+
+  event.target.value = "";
+});
 
   byId("manualOpsCloseBtn")?.addEventListener("click", closeManualOpsModal);
   byId("manualOpsCancelBtn")?.addEventListener("click", closeManualOpsModal);

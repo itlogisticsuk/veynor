@@ -248,6 +248,33 @@ function getTotals(orders, vatRate, fuelSurchargePercent = DEFAULT_FUEL_SURCHARG
   };
 }
 
+async function reserveNextInvoiceNumber(
+  client,
+  companyId,
+  prefix = "INV"
+) {
+  const { data, error } = await client.rpc(
+    "get_next_invoice_number",
+    {
+      p_company_id: companyId
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      `Could not reserve invoice number: ${error.message}`
+    );
+  }
+
+  const number = Math.round(toNumber(data, 0));
+
+  if (number <= 0) {
+    throw new Error("Invalid invoice number returned.");
+  }
+
+  return `${prefix}-${String(number).padStart(5, "0")}`;
+}
+
   function makeInvoiceNumber(prefix = "INV") {
     const now = new Date();
     const y = now.getFullYear();
@@ -661,7 +688,7 @@ if (totals.minimumDeliverySurcharge > 0) {
     doc.text("Retailer", COL.retailer, y);
     doc.text("Delivery Address", COL.address, y);
     doc.text("Delivery Date", COL.date, y);
-    doc.text("Colli", COL.amount, y);
+doc.text("Packages", COL.amount, y);
     doc.text("Warehouse", COL.warehouse, y);
     doc.text("Transport", COL.transport, y);
     doc.text("Total", COL.total + 2, y);
@@ -1039,6 +1066,85 @@ doc.text(formatMoney(total), COL.total, y);
     }
   }
 
+async function createInvoiceGeneratedNotification(
+  client,
+  companyId,
+  orders,
+  invoiceId,
+  invoiceNumber,
+  uploaded
+) {
+  try {
+    const customerId = orders
+      .map(order => order.customer_id)
+      .find(Boolean) || null;
+
+    if (!customerId) {
+      console.warn(
+        "Invoice notification skipped: no customer_id found."
+      );
+      return;
+    }
+
+    const orderNumbers = orders
+      .map(order => cleanText(order.order_number || ""))
+      .filter(Boolean);
+
+    let orderText = "";
+
+    if (orderNumbers.length === 1) {
+      orderText = `order ${orderNumbers[0]}`;
+    } else if (orderNumbers.length > 1) {
+      orderText = `${orderNumbers.length} orders`;
+    } else {
+      orderText = "your orders";
+    }
+
+    const { error } = await client
+      .from("system_notifications")
+      .insert({
+        company_id: companyId,
+        customer_id: customerId,
+
+        recipient_profile_id: null,
+        recipient_role: null,
+
+        notification_type: "invoice_generated",
+
+        title: "New Invoice Available",
+
+        message:
+          `Invoice ${invoiceNumber} has been generated for ${orderText} and is now available.`,
+
+        severity: "info",
+
+        entity_type: "invoice",
+        entity_id: invoiceId,
+
+        action_url:
+          uploaded?.fileUrl ||
+          "./billing.html",
+
+        is_read: false,
+        popup_shown: false
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    console.log(
+      "Invoice notification created:",
+      invoiceNumber
+    );
+  } catch (error) {
+    console.warn(
+      "Invoice notification could not be created:",
+      error.message
+    );
+  }
+}
+
 async function loadApprovedDeliverySurcharges(client, companyId, orders) {
   const orderIds = orders.map(order => String(order.id)).filter(Boolean);
   if (!orderIds.length) return [];
@@ -1111,7 +1217,11 @@ async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
     ctx.productOwner = await loadProductOwnerProfile(client, productOwnerId);
 ctx.deliverySurcharges = await loadApprovedDeliverySurcharges(client, companyId, orders);
 
-    const invoiceNumber = makeInvoiceNumber(ctx.invoicePrefix);
+const invoiceNumber = await reserveNextInvoiceNumber(
+  client,
+  companyId,
+  ctx.invoicePrefix
+);
 
     const blob = await createPdfBlob(orders, invoiceNumber, ctx);
     const uploaded = await uploadPdf(client, companyId, invoiceNumber, blob);
@@ -1122,17 +1232,52 @@ ctx.deliverySurcharges = await loadApprovedDeliverySurcharges(client, companyId,
 
     const invoiceId = await createInvoiceRecord(client, companyId, orders, invoiceNumber, uploaded, ctx);
 
-    await createInvoiceOrderLinks(client, invoiceId, orders);
-    await upsertInvoiceDocumentPerOrder(client, companyId, invoiceNumber, uploaded, orders);
-    await updateOrdersAsInvoiced(client, orders);
-    await createActivityRows(client, companyId, orders, invoiceNumber);
-await markDeliverySurchargesInvoiced(client, invoiceId, ctx.deliverySurcharges);
+await createInvoiceOrderLinks(
+  client,
+  invoiceId,
+  orders
+);
 
-    return {
-      invoiceId,
-      invoiceNumber,
-      ...uploaded
-    };
+await upsertInvoiceDocumentPerOrder(
+  client,
+  companyId,
+  invoiceNumber,
+  uploaded,
+  orders
+);
+
+await updateOrdersAsInvoiced(
+  client,
+  orders
+);
+
+await createActivityRows(
+  client,
+  companyId,
+  orders,
+  invoiceNumber
+);
+
+await markDeliverySurchargesInvoiced(
+  client,
+  invoiceId,
+  ctx.deliverySurcharges
+);
+
+await createInvoiceGeneratedNotification(
+  client,
+  companyId,
+  orders,
+  invoiceId,
+  invoiceNumber,
+  uploaded
+);
+
+return {
+  invoiceId,
+  invoiceNumber,
+  ...uploaded
+};
   }
 
   window.InvoiceGenerator = {

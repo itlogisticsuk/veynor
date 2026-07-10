@@ -3441,6 +3441,14 @@ const avgCompleteToDelivered =
       );
   }
 
+function openFdsPlanningImport() {
+  byId("fdsPlanningFileInput")?.click();
+}
+
+function openFdsDeliveredImport() {
+  byId("fdsDeliveredFileInput")?.click();
+}
+
   async function init() {
     try {
       if (

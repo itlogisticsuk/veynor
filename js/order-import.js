@@ -902,23 +902,54 @@ function findLine(lines, regex) {
     return match ? match[1].toUpperCase().replace(/\s+/, " ") : "";
   }
 
-  function extractOrderNumber(lines, text) {
-    const ack = String(text || "").match(/\b(ACK\d+)\b/i);
-    if (ack) return ack[1].toUpperCase();
+function extractOrderNumber(lines, text) {
 
-    const orderLine = findLine(lines, /ORDER\s*#/i);
-    const match = orderLine.match(/\b([A-Z]{2,}\d+)\b/i);
-    return match ? match[1].toUpperCase() : "";
+  const fullText = String(text || "");
+
+  // ACK1234
+  let match = fullText.match(/\b(ACK\d+)\b/i);
+  if (match) {
+    return match[1].toUpperCase();
   }
 
-  function extractOrderDate(lines, text) {
-    const match = String(text || "").match(/\b(\d{1,2}\/\d{1,2}\/\d{4})\s+(ACK\d+)\b/i);
-    if (match) return parseDateToIso(match[1]);
-
-    const dateLine = findLine(lines, /\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
-    const dateMatch = dateLine.match(/\b\d{1,2}\/\d{1,2}\/\d{4}\b/);
-    return dateMatch ? parseDateToIso(dateMatch[0]) : null;
+  // DIS1442
+  match = fullText.match(/\b(DIS\d+)\b/i);
+  if (match) {
+    return match[1].toUpperCase();
   }
+
+  // ORDER # gevolgd door code
+  match = fullText.match(
+    /ORDER\s*#\s*[\r\n\s]*([A-Z]{2,}\d+)/i
+  );
+  if (match) {
+    return match[1].toUpperCase();
+  }
+
+  return "";
+}
+
+function extractOrderDate(lines, text) {
+  const fullText = String(text || "");
+
+  let match = fullText.match(
+    /DATE\s*(?:ORDER\s*#)?\s*[\r\n\s]*(\d{1,2}\/\d{1,2}\/\d{4})/i
+  );
+
+  if (match) {
+    return parseDateToIso(match[1]);
+  }
+
+  match = fullText.match(
+    /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/
+  );
+
+  if (match) {
+    return parseDateToIso(match[1]);
+  }
+
+  return null;
+}
 
 function extractPurchaseOrder(text) {
   const line = String(text || "")

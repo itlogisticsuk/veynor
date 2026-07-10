@@ -15,7 +15,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
  <script src="/js/pricing-engine.js" defer></script>
 <script src="/js/acknowledgement-generator.js" defer></script>
-<script src="/js/invoice-generator.js" defer></script>
+<script src="/js/invoice-generator.js?v=20260710-3" defer></script>
 <script src="/js/delivery-note-generator.js" defer></script>
 <script src="js/allocation-engine.js"></script>
 <script src="js/order-editor.js"></script>
@@ -630,9 +630,45 @@
     <button id="btnResetFilters" class="btn" type="button">Reset</button>
   </div>
 
-  <div class="actions-right tenant-only">
-    <button id="btnSyncStatuses" class="btn btn-primary" type="button">Sync Statuses</button>
-  </div>
+<div class="actions-right tenant-only">
+  <button
+    id="btnSyncStatuses"
+    class="btn btn-primary"
+    type="button"
+  >
+    Sync Statuses
+  </button>
+
+  <button
+    id="btnImportFdsPlanning"
+    class="btn btn-primary"
+    type="button"
+  >
+    Import FDS Planning
+  </button>
+
+  <button
+    id="btnImportFdsDelivered"
+    class="btn btn-primary"
+    type="button"
+  >
+    Import FDS Delivered
+  </button>
+
+  <input
+    id="fdsPlanningFileInput"
+    type="file"
+    accept=".csv,text/csv"
+    hidden
+  />
+
+  <input
+    id="fdsDeliveredFileInput"
+    type="file"
+    accept=".csv,text/csv"
+    hidden
+  />
+</div>
 </div>
 </section>
 

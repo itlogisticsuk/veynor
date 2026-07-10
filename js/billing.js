@@ -1268,11 +1268,7 @@ const internalCellsHtml = "";
       });
     });
 
-    tbody.querySelectorAll("tr[data-invoice-key]").forEach(row => {
-      row.addEventListener("click", () => {
-        toggleInvoice(row.getAttribute("data-invoice-key"));
-      });
-    });
+
 
     renderSortIndicators();
     applyRoleVisibility();
