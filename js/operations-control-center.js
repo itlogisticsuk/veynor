@@ -715,6 +715,22 @@ function getProductPackageCount(product) {
 }
 
 function getLineRequiredPackages(line) {
+  if (normalize(line.line_type) === "hard_stock") {
+    const totalPackages = toNumber(line.total_packages, 0);
+
+    if (totalPackages > 0) {
+      return Math.max(1, Math.round(totalPackages));
+    }
+
+    const qty = getLineRequiredQty(line);
+    const packagesPerUnit = Math.max(
+      1,
+      Math.round(toNumber(line.packages_per_unit, 1))
+    );
+
+    return qty * packagesPerUnit;
+  }
+
   const qty = getLineRequiredQty(line);
 
   if (
@@ -728,7 +744,16 @@ function getLineRequiredPackages(line) {
 }
 
 function getLineMatchedQty(line) {
-  const allocs = Array.isArray(line.order_allocations) ? line.order_allocations : [];
+  if (normalize(line.line_type) === "hard_stock") {
+    return Math.max(
+      0,
+      Math.round(toNumber(line.matched_quantity, 0))
+    );
+  }
+
+  const allocs = Array.isArray(line.order_allocations)
+    ? line.order_allocations
+    : [];
 
   const active = allocs.filter(allocation =>
     !["cancelled"].includes(normalize(allocation.allocation_status))
@@ -742,7 +767,10 @@ function getLineMatchedQty(line) {
   }
 
   return active.reduce((sum, allocation) => {
-    return sum + Math.max(1, Math.round(toNumber(allocation.items?.package_total, 1)));
+    return sum + Math.max(
+      1,
+      Math.round(toNumber(allocation.items?.package_total, 1))
+    );
   }, 0);
 }
 
@@ -1234,10 +1262,14 @@ await loadAckDownloadStatus();
           created_by,
           created_at
         ),
-        order_lines (
+order_lines (
   id,
   order_id,
   quantity_ordered,
+  quantity_allocated,
+  matched_quantity,
+  packages_per_unit,
+  total_packages,
   requested_package_no,
   requested_package_total,
   requested_package_label,
@@ -1870,12 +1902,16 @@ function renderProductLines(order) {
     background:${line.complete ? "#16a34a" : "#ef4444"};
   "></span>
   ${escapeHtml(shortText(line.description, 54))}
-  <span class="subline">
-    Ordered ${formatNumber(line.required, 0)}
-    · Matched ${formatNumber(line.matched, 0)}
-            ${line.missing > 0 ? `· Missing ${formatNumber(line.missing, 0)}` : `· Complete`}
-            ${canSeeFinance() ? `· ${formatMoney(line.revenue)}` : ""}
-          </span>
+<span class="subline">
+  Quantity ${formatNumber(line.orderedProducts, 0)}
+  · Packages ${formatNumber(line.required, 0)}
+  ${
+    line.missing > 0
+      ? `· Unallocated ${formatNumber(line.missing, 0)}`
+      : `· Allocated ${formatNumber(line.matched, 0)}`
+  }
+  ${canSeeFinance() ? `· ${formatMoney(line.revenue)}` : ""}
+</span>
         </span>
       </div>
     `).join("");
@@ -3261,50 +3297,174 @@ style.textContent = `
     background:#f8fafc;
   }
 
-  .occ-photo-grid{
-    display:grid;
-    grid-template-columns:1fr;
-    gap:18px;
-    justify-items:center;
-  }
+  .occ-photo-backdrop{
+  background:rgba(15,23,42,.58);
+  padding:24px;
+  overflow:hidden;
+}
 
-  .occ-photo-card{
-    width:100%;
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    gap:14px;
+.occ-photo-modal-card{
+  width:min(1180px,96vw);
+  max-height:92vh;
+  display:flex;
+  flex-direction:column;
+  background:#fff;
+  border-radius:18px;
+  box-shadow:0 24px 70px rgba(15,23,42,.28);
+  overflow:hidden;
+}
+
+.occ-photo-modal-header{
+  flex:0 0 auto;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:20px;
+  padding:18px 20px;
+  border-bottom:1px solid #dce5f2;
+  background:#fff;
+}
+
+.occ-photo-modal-header h2{
+  margin:0 0 8px;
+  font-size:20px;
+  color:#07152f;
+}
+
+.occ-photo-order-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px 16px;
+  font-size:12px;
+  color:#64748b;
+}
+
+.occ-photo-order-meta span{
+  white-space:nowrap;
+}
+
+.occ-photo-close{
+  width:38px;
+  height:38px;
+  flex:0 0 38px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid #dce5f2;
+  border-radius:10px;
+  background:#fff;
+  color:#334155;
+  font-size:26px;
+  line-height:1;
+  cursor:pointer;
+}
+
+.occ-photo-close:hover{
+  background:#f1f5f9;
+  color:#0f172a;
+}
+
+.occ-photo-modal-body{
+  flex:1 1 auto;
+  min-height:0;
+  padding:20px;
+  overflow-y:auto;
+  background:#f8fafc;
+}
+
+.occ-photo-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:20px;
+  align-items:start;
+}
+
+.occ-photo-card{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:14px;
+  border:1px solid #dce5f2;
+  border-radius:14px;
+  background:#fff;
+  box-shadow:0 4px 14px rgba(15,23,42,.06);
+}
+
+.occ-photo-number{
+  font-size:12px;
+  font-weight:850;
+  color:#475569;
+}
+
+.occ-photo-preview-link{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:260px;
+  max-height:430px;
+  overflow:hidden;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  background:#f1f5f9;
+}
+
+.occ-photo-preview-link img{
+  display:block;
+  width:100%;
+  height:100%;
+  max-height:430px;
+  object-fit:contain;
+  background:#f8fafc;
+}
+
+.occ-photo-download{
+  align-self:flex-start;
+  min-width:170px;
+  text-align:center;
+}
+
+.occ-photo-modal-footer{
+  flex:0 0 auto;
+  display:flex;
+  justify-content:flex-end;
+  padding:14px 20px;
+  border-top:1px solid #dce5f2;
+  background:#fff;
+}
+
+.occ-photo-empty{
+  padding:36px;
+  border:1px dashed #cbd5e1;
+  border-radius:12px;
+  background:#fff;
+  color:#64748b;
+  text-align:center;
+}
+
+@media (max-width:800px){
+  .occ-photo-backdrop{
+    padding:10px;
   }
 
   .occ-photo-modal-card{
-    width:min(620px,94vw);
-  }
-
-  .occ-photo-meta{
     width:100%;
-    max-width:360px;
-    background:#f8fafc;
-    border:1px solid #dce5f2;
-    border-radius:12px;
-    padding:10px 14px;
-    text-align:center;
-    font-size:13px;
-    line-height:1.5;
-    color:#334155;
+    max-height:96vh;
   }
 
-  .occ-photo-grid img{
-    width:auto;
-    max-width:100%;
-    max-height:75vh;
-    height:auto;
-    object-fit:contain;
-    border-radius:12px;
-    border:1px solid #d1d5db;
-    background:#f8fafc;
-    image-rendering:auto;
-    box-shadow:0 6px 18px rgba(0,0,0,.08);
+  .occ-photo-grid{
+    grid-template-columns:1fr;
   }
+
+  .occ-photo-order-meta{
+    display:grid;
+    gap:4px;
+  }
+
+  .occ-photo-preview-link{
+    min-height:220px;
+  }
+}
 
   .manual-tariff-table-wrap{
     overflow:auto;
@@ -3465,84 +3625,152 @@ document.head.appendChild(style);
 function openPhotoModal(orderId) {
   ensurePageStyles();
 
-  const order = allOrders.find(row => String(row.id) === String(orderId));
-  if (!order) return;
+  const order = allOrders.find(
+    row => String(row.id) === String(orderId)
+  );
+
+  if (!order) {
+    showToast("Order not found.", "err");
+    return;
+  }
 
   const photos = getPodPhotos(order);
 
   const ack = order.external_reference || "NO-ACK";
   const so = order.order_number || "Order";
-  const deliveryDate = formatDate(order.confirmed_delivery_date || order.pod_signed_at || order.updated_at || order.created_at);
-  const retailer = order.retailer_name || order.retail_name || "Retailer";
+  const retailer =
+    order.retailer_name ||
+    order.retail_name ||
+    "Retailer";
+
+  const deliveryDate = formatDate(
+    order.confirmed_delivery_date ||
+    order.pod_signed_at ||
+    order.updated_at ||
+    order.created_at
+  );
 
   const modal = document.createElement("div");
-  modal.className = "occ-memo-modal-backdrop";
+  modal.className = "occ-memo-modal-backdrop occ-photo-backdrop";
 
   modal.innerHTML = `
-    <section class="occ-memo-modal-card occ-photo-modal-card">
-      <div class="occ-memo-modal-head">
-        <strong>POD Photos · ${escapeHtml(so)}</strong>
-        <button class="mini-btn" type="button" data-close>Close</button>
+    <section class="occ-photo-modal-card">
+
+      <div class="occ-photo-modal-header">
+        <div>
+          <h2>Delivery Photos</h2>
+
+          <div class="occ-photo-order-meta">
+            <span><strong>${escapeHtml(so)}</strong></span>
+            <span>ACK: ${escapeHtml(ack)}</span>
+            <span>${escapeHtml(retailer)}</span>
+            <span>Delivered: ${escapeHtml(deliveryDate)}</span>
+          </div>
+        </div>
+
+        <button
+          class="occ-photo-close"
+          type="button"
+          data-close-photo-modal
+          aria-label="Close delivery photos"
+        >
+          ×
+        </button>
       </div>
 
-      ${
-        photos.length
-          ? `
-            <div class="occ-photo-grid">
-              ${photos.map((url, index) => {
-                const fileName = `${so}-${ack}-POD-photo-${index + 1}.jpg`;
+      <div class="occ-photo-modal-body">
+        ${
+          photos.length
+            ? `
+              <div class="occ-photo-grid">
+                ${photos.map((url, index) => {
+                  const fileName =
+                    `${so}-${ack}-POD-photo-${index + 1}.jpg`;
 
-                return `
-                  <div class="occ-photo-card">
-<div class="occ-photo-meta">
+                  return `
+                    <article class="occ-photo-card">
+                      <div class="occ-photo-number">
+                        Photo ${index + 1}
+                      </div>
 
-  <div style="font-size:18px;font-weight:700;color:#0f172a;">
-    ${escapeHtml(so)}
-  </div>
+                      <a
+                        href="${escapeHtml(url)}"
+                        target="_blank"
+                        rel="noopener"
+                        class="occ-photo-preview-link"
+                        title="Open photo in full size"
+                      >
+                        <img
+                          src="${escapeHtml(url)}"
+                          alt="POD photo ${index + 1}"
+                          loading="lazy"
+                        />
+                      </a>
 
-  <div style="margin-top:6px;">
-    <strong>ACK:</strong> ${escapeHtml(ack)}
-  </div>
+                      <a
+                        href="${escapeHtml(url)}"
+                        download="${escapeHtml(fileName)}"
+                        class="btn btn-primary occ-photo-download"
+                      >
+                        Download Photo ${index + 1}
+                      </a>
+                    </article>
+                  `;
+                }).join("")}
+              </div>
+            `
+            : `
+              <div class="occ-photo-empty">
+                No delivery photos are available for this order.
+              </div>
+            `
+        }
+      </div>
 
-  <div>
-    <strong>Retailer:</strong> ${escapeHtml(retailer)}
-  </div>
+      <div class="occ-photo-modal-footer">
+        <button
+          class="btn"
+          type="button"
+          data-close-photo-modal
+        >
+          Close
+        </button>
+      </div>
 
-  <div>
-    <strong>Delivered:</strong> ${escapeHtml(deliveryDate)}
-  </div>
-
-</div>
-
-                    <img src="${escapeHtml(url)}" alt="POD photo ${index + 1}"/>
-
-                    <a
-                      href="${escapeHtml(url)}"
-                      download="${escapeHtml(fileName)}"
-                      class="btn btn-primary"
-                      style="min-width:180px;text-align:center;"
-                    >
-                      Download Photo
-                    </a>
-                  </div>
-                `;
-              }).join("")}
-            </div>
-          `
-          : `<div class="occ-memo-modal-text">No POD photos available.</div>`
-      }
     </section>
   `;
 
+  function closePhotoModal() {
+    document.removeEventListener(
+      "keydown",
+      handlePhotoModalKeydown
+    );
+
+    modal.remove();
+  }
+
+  function handlePhotoModalKeydown(event) {
+    if (event.key === "Escape") {
+      closePhotoModal();
+    }
+  }
+
   modal.addEventListener("click", event => {
-    if (event.target === modal || event.target.hasAttribute("data-close")) {
-      modal.remove();
+    if (
+      event.target === modal ||
+      event.target.closest("[data-close-photo-modal]")
+    ) {
+      closePhotoModal();
     }
   });
 
+  document.addEventListener(
+    "keydown",
+    handlePhotoModalKeydown
+  );
+
   document.body.appendChild(modal);
 }
-
   function openManualOpsModal(orderId) {
     const order = allOrders.find(row => String(row.id) === String(orderId));
 
