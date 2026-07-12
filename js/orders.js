@@ -742,7 +742,6 @@ async function loadOrders() {
       .select(`
         id,
         order_id,
-        quantity_ordered,
         quantity,
         total_customer_charge,
         total_line_charge,
@@ -771,7 +770,9 @@ async function loadOrders() {
       const orderId = String(line.order_id || "");
       if (!orderId) return;
 
-      const qty = toNumber(line.quantity_ordered, 0) || toNumber(line.quantity, 0) || 1;
+const qty =
+  toNumber(line.quantity_ordered, 0) ||
+  1;
 
       const direct =
         toNumber(line.total_customer_charge, 0) ||

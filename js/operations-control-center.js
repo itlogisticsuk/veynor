@@ -668,6 +668,89 @@ function getLineDescription(line) {
   );
 }
 
+function getLineStockPriority(line) {
+  const value =
+    line?.order_line_stock_priorities;
+
+  const rows = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? [value]
+      : [];
+
+  return rows.find(row =>
+    ["active", "fulfilled"].includes(
+      normalize(row.priority_status)
+    )
+  ) || null;
+}
+
+function getLineStockPriorityLevel(line) {
+  return Math.round(
+    toNumber(getLineStockPriority(line)?.priority_level, 0)
+  );
+}
+
+function getLineStockPriorityLabel(line) {
+  const level = getLineStockPriorityLevel(line);
+
+  if (level === 200) return "Critical";
+  if (level === 100) return "Priority";
+
+  return "Normal";
+}
+
+function getLineStockPriorityClass(line) {
+  const level = getLineStockPriorityLevel(line);
+
+  if (level === 200) return "critical";
+  if (level === 100) return "priority";
+
+  return "normal";
+}
+
+function orderHasStockPriority(order) {
+  return (order?.order_lines || []).some(line =>
+    getLineStockPriorityLevel(line) > 0
+  );
+}
+
+function getOrderHighestStockPriority(order) {
+  return (order?.order_lines || []).reduce(
+    (highest, line) =>
+      Math.max(highest, getLineStockPriorityLevel(line)),
+    0
+  );
+}
+
+function renderOrderPriorityBadge(order) {
+  const level = getOrderHighestStockPriority(order);
+
+  if (level === 200) {
+    return `
+      <span
+        class="stock-priority-badge critical"
+        title="One or more product lines have Critical stock priority"
+      >
+        Critical
+      </span>
+    `;
+  }
+
+  if (level === 100) {
+    return `
+      <span
+        class="stock-priority-badge priority"
+        title="One or more product lines have stock priority"
+      >
+        PRIO
+      </span>
+    `;
+  }
+
+  return "";
+}
+
 function getLineRevenue(line) {
   const direct = toNumber(line.total_customer_charge, 0);
 
@@ -744,34 +827,121 @@ function getLineRequiredPackages(line) {
 }
 
 function getLineMatchedQty(line) {
+  /*
+   * Oude/hard toegewezen orderregels hebben geen
+   * fysieke order_allocations. Daarom berekenen we
+   * de toegewezen packages uit de toegewezen
+   * producthoeveelheid × packages per product.
+   */
   if (normalize(line.line_type) === "hard_stock") {
-    return Math.max(
+    const allocatedProducts = Math.max(
       0,
-      Math.round(toNumber(line.matched_quantity, 0))
+      Math.round(
+        toNumber(
+          line.matched_quantity ||
+          line.quantity_allocated,
+          0
+        )
+      )
+    );
+
+    const orderedProducts = Math.max(
+      0,
+      Math.round(
+        toNumber(
+          line.quantity_ordered,
+          0
+        )
+      )
+    );
+
+    const explicitTotalPackages = Math.max(
+      0,
+      Math.round(
+        toNumber(
+          line.total_packages,
+          0
+        )
+      )
+    );
+
+    let packagesPerProduct = Math.max(
+      1,
+      Math.round(
+        toNumber(
+          line.packages_per_unit,
+          1
+        )
+      )
+    );
+
+    /*
+     * Wanneer total_packages bekend is, is dat
+     * betrouwbaarder dan packages_per_unit.
+     *
+     * Voorbeeld:
+     * 1 × IWCRO807 = 2 packages
+     */
+    if (
+      explicitTotalPackages > 0 &&
+      orderedProducts > 0
+    ) {
+      packagesPerProduct = Math.max(
+        1,
+        Math.round(
+          explicitTotalPackages /
+          orderedProducts
+        )
+      );
+    }
+
+    return (
+      allocatedProducts *
+      packagesPerProduct
     );
   }
 
-  const allocs = Array.isArray(line.order_allocations)
+  const allocs = Array.isArray(
+    line.order_allocations
+  )
     ? line.order_allocations
     : [];
 
   const active = allocs.filter(allocation =>
-    !["cancelled"].includes(normalize(allocation.allocation_status))
+    !["cancelled"].includes(
+      normalize(
+        allocation.allocation_status
+      )
+    )
   );
 
   if (
-    toNumber(line.requested_package_no, 0) > 0 &&
-    toNumber(line.requested_package_total, 0) > 0
+    toNumber(
+      line.requested_package_no,
+      0
+    ) > 0 &&
+    toNumber(
+      line.requested_package_total,
+      0
+    ) > 0
   ) {
     return active.length;
   }
 
-  return active.reduce((sum, allocation) => {
-    return sum + Math.max(
-      1,
-      Math.round(toNumber(allocation.items?.package_total, 1))
-    );
-  }, 0);
+  return active.reduce(
+    (sum, allocation) => {
+      return sum + Math.max(
+        1,
+        Math.round(
+          toNumber(
+            allocation.items?.package_total,
+            1
+          )
+        )
+      );
+    },
+    0
+  );
 }
 
 function getProductCompleteness(order) {
@@ -1265,6 +1435,15 @@ await loadAckDownloadStatus();
 order_lines (
   id,
   order_id,
+  order_line_stock_priorities (
+    id,
+    priority_level,
+    priority_status,
+    reason,
+    created_at,
+    updated_at,
+    fulfilled_at
+  ),
   quantity_ordered,
   quantity_allocated,
   matched_quantity,
@@ -1928,45 +2107,161 @@ function renderDeliveryGroupCell(order) {
   }
 
 function renderProductLines(order) {
-  const c = order.product_completeness || getProductCompleteness(order);
-  const manualLines = (order.order_lines || []).filter(line => normalize(line.line_type) === "manual");
+  const c =
+    order.product_completeness ||
+    getProductCompleteness(order);
+
+  const sourceLines = Array.isArray(order.order_lines)
+    ? order.order_lines
+    : [];
+
+  const manualLines = sourceLines.filter(
+    line => normalize(line.line_type) === "manual"
+  );
 
   const stockHtml = !c.lines.length
-    ? `<div class="detail-line"><span class="detail-label">Products</span><span class="detail-value">No stock product lines found.</span></div>`
-    : c.lines.map(line => `
+    ? `
       <div class="detail-line">
-        <span class="detail-label">${escapeHtml(line.sku)}</span>
-       <span class="detail-value">
-  <span style="
-    display:inline-block;
-    width:10px;
-    height:10px;
-    border-radius:50%;
-    margin-right:7px;
-    background:${line.complete ? "#16a34a" : "#ef4444"};
-  "></span>
-  ${escapeHtml(shortText(line.description, 54))}
-<span class="subline">
-  Quantity ${formatNumber(line.orderedProducts, 0)}
-  · Packages ${formatNumber(line.required, 0)}
-  ${
-    line.missing > 0
-      ? `· Unallocated ${formatNumber(line.missing, 0)}`
-      : `· Allocated ${formatNumber(line.matched, 0)}`
-  }
-  ${canSeeFinance() ? `· ${formatMoney(line.revenue)}` : ""}
-</span>
+        <span class="detail-label">Products</span>
+        <span class="detail-value">
+          No stock product lines found.
         </span>
       </div>
-    `).join("");
+    `
+    : c.lines.map(line => {
+        const sourceLine = sourceLines.find(
+          row => String(row.id) === String(line.id)
+        );
+
+        const priorityLevel =
+          getLineStockPriorityLevel(sourceLine);
+
+        const priorityLabel =
+          getLineStockPriorityLabel(sourceLine);
+
+        const priorityClass =
+          getLineStockPriorityClass(sourceLine);
+
+        const priorityStatus =
+          normalize(
+            getLineStockPriority(sourceLine)?.priority_status
+          );
+
+        return `
+          <div
+            class="detail-line stock-priority-product-line ${
+              priorityLevel > 0 ? `has-${priorityClass}` : ""
+            }"
+          >
+            <span class="detail-label">
+              ${escapeHtml(line.sku)}
+            </span>
+
+            <span class="detail-value">
+              <span class="stock-product-title">
+                <span
+                  class="stock-product-dot ${
+                    line.complete ? "complete" : "missing"
+                  }"
+                ></span>
+
+                <span>
+                  ${escapeHtml(
+                    shortText(line.description, 54)
+                  )}
+                </span>
+
+                ${
+                  priorityLevel > 0
+                    ? `
+                      <span
+                        class="stock-priority-badge ${priorityClass}"
+                      >
+                        ${escapeHtml(priorityLabel)}
+                      </span>
+                    `
+                    : ""
+                }
+              </span>
+
+              <span class="subline">
+                Quantity ${formatNumber(line.orderedProducts, 0)}
+                · Packages ${formatNumber(line.required, 0)}
+
+                ${
+                  line.missing > 0
+                    ? `· Unallocated ${formatNumber(line.missing, 0)}`
+                    : `· Allocated ${formatNumber(line.matched, 0)}`
+                }
+
+                ${
+                  canSeeFinance()
+                    ? `· ${formatMoney(line.revenue)}`
+                    : ""
+                }
+              </span>
+
+              ${
+                priorityStatus === "fulfilled"
+                  ? `
+                    <span class="subline stock-priority-fulfilled">
+                      Priority stock allocated
+                    </span>
+                  `
+                  : priorityLevel > 0 && line.missing > 0
+                    ? `
+                      <span class="subline stock-priority-waiting">
+                        Waiting for priority stock
+                      </span>
+                    `
+                    : ""
+              }
+
+              ${
+                isTenantRole() && sourceLine?.id
+                  ? `
+                    <button
+                      class="stock-priority-manage-btn"
+                      type="button"
+                      data-manage-stock-priority-line="${escapeHtml(
+                        sourceLine.id
+                      )}"
+                      data-order-id="${escapeHtml(order.id)}"
+                    >
+                      Manage
+                    </button>
+                  `
+                  : ""
+              }
+            </span>
+          </div>
+        `;
+      }).join("");
 
   const manualHtml = manualLines.map(line => `
     <div class="detail-line">
       <span class="detail-label">MANUAL</span>
+
       <span class="detail-value">
-        ${escapeHtml(shortText(line.manual_description || line.description || "Manual product", 54))}
+        ${escapeHtml(
+          shortText(
+            line.manual_description ||
+            line.description ||
+            "Manual product",
+            54
+          )
+        )}
+
         <span class="subline">
-          ${canSeeFinance() ? `${formatMoney(line.total_customer_charge || line.manual_amount_gbp || 0)}` : "Manual line"}
+          ${
+            canSeeFinance()
+              ? formatMoney(
+                  line.total_customer_charge ||
+                  line.manual_amount_gbp ||
+                  0
+                )
+              : "Manual line"
+          }
         </span>
       </span>
     </div>
@@ -1974,7 +2269,6 @@ function renderProductLines(order) {
 
   return stockHtml + manualHtml;
 }
-
 function portalDocType(type) {
   const map = {
     acknowledgement: "ack",
@@ -2982,7 +3276,10 @@ byId("deliveryGroupsWrap").style.display = "none";
 </td>
 
 <td>
-  ${renderOrderTypeBadge(order)}
+  <div class="order-type-badges">
+    ${renderOrderTypeBadge(order)}
+    ${renderOrderPriorityBadge(order)}
+  </div>
 </td>
 
 <td>
@@ -3173,6 +3470,37 @@ tbody.querySelectorAll("[data-order-actions]").forEach(button => {
     openOrderActionMenu(orderId, button);
   });
 });
+
+tbody
+  .querySelectorAll("[data-manage-stock-priority-line]")
+  .forEach(button => {
+    button.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const orderLineId = button.getAttribute(
+        "data-manage-stock-priority-line"
+      );
+
+      const orderId = button.getAttribute(
+        "data-order-id"
+      );
+
+      if (window.StockPriorityTool?.open) {
+        window.StockPriorityTool.open({
+          orderId,
+          orderLineId
+        });
+
+        return;
+      }
+
+      showToast(
+        "Stock Priority Tool is not loaded yet.",
+        "err"
+      );
+    });
+  });
 
     tbody.querySelectorAll("[data-manual-ops-order-id]").forEach(button => {
       button.addEventListener("click", event => {
@@ -3626,15 +3954,122 @@ style.textContent = `
   }
 
   .ack-dot{
-    display:inline-flex;
-    width:10px;
-    height:10px;
-    border-radius:999px;
-    background:#16a34a;
-    box-shadow:0 0 0 3px rgba(22,163,74,.16);
-    margin-left:6px;
-    vertical-align:middle;
-  }
+  display:inline-flex;
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  background:#16a34a;
+  box-shadow:0 0 0 3px rgba(22,163,74,.16);
+  margin-left:6px;
+  vertical-align:middle;
+}
+
+/* ===== STOCK PRIORITY ===== */
+
+.order-type-badges{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:5px;
+}
+
+.stock-priority-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:20px;
+  padding:2px 7px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font-size:9px;
+  line-height:1;
+  font-weight:950;
+  letter-spacing:.03em;
+  text-transform:uppercase;
+  white-space:nowrap;
+}
+
+.stock-priority-badge.priority{
+  background:#fff7ed;
+  border-color:#fdba74;
+  color:#9a3412;
+}
+
+.stock-priority-badge.critical{
+  background:#fef2f2;
+  border-color:#fca5a5;
+  color:#991b1b;
+}
+
+.stock-priority-product-line{
+  position:relative;
+}
+
+.stock-priority-product-line.has-priority{
+  padding:8px;
+  border:1px solid #fed7aa;
+  border-radius:10px;
+  background:#fffbeb;
+}
+
+.stock-priority-product-line.has-critical{
+  padding:8px;
+  border:1px solid #fecaca;
+  border-radius:10px;
+  background:#fff7f7;
+}
+
+.stock-product-title{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px;
+}
+
+.stock-product-dot{
+  display:inline-block;
+  width:10px;
+  height:10px;
+  flex:0 0 10px;
+  border-radius:999px;
+}
+
+.stock-product-dot.complete{
+  background:#16a34a;
+}
+
+.stock-product-dot.missing{
+  background:#ef4444;
+}
+
+.stock-priority-waiting{
+  color:#c2410c;
+  font-weight:850;
+}
+
+.stock-priority-fulfilled{
+  color:#15803d;
+  font-weight:850;
+}
+
+.stock-priority-manage-btn{
+  margin-top:6px;
+  min-height:28px;
+  padding:4px 9px;
+  border:1px solid #cbd5e1;
+  border-radius:8px;
+  background:#fff;
+  color:#334155;
+  font-size:10px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+.stock-priority-manage-btn:hover{
+  border-color:#2563eb;
+  color:#1d4ed8;
+  background:#eff6ff;
+}
 `;
 
 document.head.appendChild(style);
@@ -5397,13 +5832,13 @@ function getOrderMapByNumber(orders) {
   const map = new Map();
 
   (orders || []).forEach(order => {
-    const number = String(
-      order.order_number || ""
-    ).trim().toUpperCase();
+    const orderNumber = cleanText(
+      order?.order_number || ""
+    ).toUpperCase();
 
-    if (number) {
-      map.set(number, order);
-    }
+    if (!orderNumber) return;
+
+    map.set(orderNumber, order);
   });
 
   return map;
@@ -5411,13 +5846,14 @@ function getOrderMapByNumber(orders) {
 
 function getExistingCollectionData(order) {
   const collectionDate =
-    order.fds_collection_date ||
-    order.expected_delivery_date ||
-    order.planned_route_date ||
+    order?.fds_collection_date ||
+    order?.planned_route_date ||
     null;
 
   const collectionWeek =
-    Math.round(toNumber(order.fds_collection_week, 0)) ||
+    Math.round(
+      toNumber(order?.fds_collection_week, 0)
+    ) ||
     getIsoWeekNumber(collectionDate) ||
     null;
 
@@ -5562,11 +5998,11 @@ const preparedRows = rows.map(row => {
       continue;
     }
 
-    if (row.status === "allocated") {
-      summary.allocatedRows++;
-    } else {
-      summary.unallocatedRows++;
-    }
+if (row.status === "allocated") {
+  summary.allocatedRows++;
+} else {
+  summary.unallocatedRows++;
+}
 
 const plannedStart =
   row.status === "allocated"
@@ -5577,7 +6013,12 @@ const plannedEnd =
   row.status === "allocated"
     ? parseFdsDateTime(row.plannedEnd)
     : null;
-if (row.status === "allocated" && !plannedStart?.date) {
+
+if (
+  row.status === "allocated" &&
+  !plannedStart?.date
+) {
+
   summary.invalidEtaRows.push({
     row: row.rowNumber,
     orderRef: row.orderRef,

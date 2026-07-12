@@ -286,6 +286,73 @@ function parsePackageInfo(value) {
     }
   }
 
+async function autoAllocateInboundProduct(product) {
+  if (!product?.id) {
+    return {
+      allocations_created: 0,
+      skipped: true
+    };
+  }
+
+  if (
+    !window.AllocationEngine ||
+    typeof window.AllocationEngine.runForProduct !== "function"
+  ) {
+    console.warn(
+      "Allocation Engine is not available on the Scan page."
+    );
+
+    return {
+      allocations_created: 0,
+      skipped: true
+    };
+  }
+
+  try {
+    const result =
+await window.AllocationEngine.runForProduct(
+  product.id,
+  {
+    dryRun: false,
+    priorityOnly: true
+  }
+);
+
+    const allocated =
+      Number(
+        result?.allocations_created || 0
+      );
+
+    if (allocated > 0) {
+      showToast(
+`${allocated} stock allocation${
+  allocated === 1 ? "" : "s"
+} created automatically for active PRIO order(s).`,
+        "ok"
+      );
+    }
+
+    return result;
+  } catch (error) {
+    console.error(
+      "Automatic allocation after scan failed:",
+      error
+    );
+
+    showToast(
+      `Stock was booked in, but automatic order allocation failed: ${
+        error.message || "Unknown error"
+      }`,
+      "err"
+    );
+
+    return {
+      allocations_created: 0,
+      error: error.message || "Unknown error"
+    };
+  }
+}
+
   async function loadWarehouses() {
     const cid = await getCompanyId();
 
@@ -592,7 +659,7 @@ function parsePackageInfo(value) {
   }
 
   async function refreshStockSetStatus(physicalProductId) {
-    if (!physicalProductId) return;
+    if (!physicalProductId) return false;
 
     const db = ensureClient();
     const cid = await getCompanyId();
@@ -624,7 +691,7 @@ function parsePackageInfo(value) {
     if (error) throw error;
 
     const rows = data || [];
-    if (!rows.length) return;
+    if (!rows.length) return false;
 
     const activeRows = rows.filter(rowIsActiveStock);
     const product = rows[0]?.products || {};
@@ -650,7 +717,7 @@ function parsePackageInfo(value) {
       if (statusError) throw statusError;
     }
 
-    if (!complete) return;
+    if (!complete) return false;
 
     const activeItemIds = activeRows.map(r => r.id).filter(Boolean);
     const packageCount = activeRows.length;
@@ -747,7 +814,9 @@ const volumeM3 = activeRows.reduce(
       })
       .in("id", activeItemIds);
 
-    if (linkError) throw linkError;
+    if (linkError) throw linkError; 
+
+return true;
   }
 
   function buildItemRow({
@@ -923,6 +992,20 @@ switch (packageNo) {
     if (i % 3 === 0) await nextFrame();
   }
 
+showProgress(
+  "Matching open orders...",
+  physicalIds.length,
+  physicalIds.length,
+  `Checking PRIO and normal open orders for ${product.sku_base}`
+);
+
+await nextFrame();
+
+const allocationResult =
+  await autoAllocateInboundProduct(
+    product
+  );
+
   inserted.forEach(item => pushInboundHistory(product, item, reference));
 
   linesToday += 1;
@@ -938,7 +1021,17 @@ switch (packageNo) {
     `${inserted.length} package(s) booked in for ${product.sku_base}`
   );
 
-  showToast(`${count} complete product(s) / ${inserted.length} package(s) booked in for ${product.sku_base}.`, "ok");
+const allocationCount =
+  Number(
+    allocationResult?.allocations_created || 0
+  );
+
+showToast(
+  allocationCount > 0
+    ? `${count} complete product(s) / ${inserted.length} package(s) booked in for ${product.sku_base}. ${allocationCount} allocation${allocationCount === 1 ? "" : "s"} created automatically.`
+    : `${count} complete product(s) / ${inserted.length} package(s) booked in for ${product.sku_base}. No active PRIO order required this stock; the stock remains available for Order Matching.`,
+  "ok"
+);
 
   for (const item of inserted) {
     await logWarehouseEvent({
@@ -1023,12 +1116,33 @@ switch (packageNo) {
   const inserted = data || [];
   const uniquePhysicalIds = [...new Set(physicalIds)];
 
- for (const physicalId of uniquePhysicalIds) {
+let completedSetCount = 0;
+
+for (const physicalId of uniquePhysicalIds) {
   try {
-    await refreshStockSetStatus(physicalId);
+    const becameComplete =
+      await refreshStockSetStatus(
+        physicalId
+      );
+
+    if (becameComplete) {
+      completedSetCount++;
+    }
   } catch (error) {
-    console.warn("Stock set refresh skipped:", error.message);
+    console.warn(
+      "Stock set refresh skipped:",
+      error.message
+    );
   }
+}
+
+let allocationResult = null;
+
+if (completedSetCount > 0) {
+  allocationResult =
+    await autoAllocateInboundProduct(
+      product
+    );
 }
 
   inserted.forEach(item => pushInboundHistory(product, item, reference));
@@ -1038,7 +1152,19 @@ switch (packageNo) {
 
   renderInboundHistory();
   updateKpis("Scan In", `${product.sku_base} ${packageInfo.package_label} booked in`);
-  showToast(`${inserted.length} package(s) ${packageInfo.package_label} booked in for ${product.sku_base}.`, "ok");
+const allocationCount =
+  Number(
+    allocationResult?.allocations_created || 0
+  );
+
+showToast(
+  completedSetCount > 0
+    ? allocationCount > 0
+      ? `${inserted.length} package(s) ${packageInfo.package_label} booked in for ${product.sku_base}. ${completedSetCount} physical set(s) became complete and ${allocationCount} allocation${allocationCount === 1 ? "" : "s"} were created automatically.`
+: `${inserted.length} package(s) ${packageInfo.package_label} booked in for ${product.sku_base}. ${completedSetCount} physical set(s) became complete, but no active PRIO order required this stock. The stock remains available for Order Matching.`
+    : `${inserted.length} package(s) ${packageInfo.package_label} booked in for ${product.sku_base}. The physical set is still incomplete.`,
+  "ok"
+);
 
   for (const item of inserted) {
     await logWarehouseEvent({

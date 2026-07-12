@@ -295,12 +295,41 @@ const signedNoticeOrderIds = new Set();
   }
 
 function getOrderWeight(order) {
-  return toNumber(
-    order?.planning_weight_kg ??
-    order?.weight_kg ??
-    order?.total_weight_kg,
-    0
-  );
+  const storedWeight =
+    toNumber(order?.total_order_weight_kg, 0) ||
+    toNumber(order?.weight_kg, 0);
+
+  if (storedWeight > 0) {
+    return storedWeight;
+  }
+
+  const lines = Array.isArray(order?.order_lines)
+    ? order.order_lines
+    : [];
+
+  return lines.reduce((sum, line) => {
+    const quantity = Math.max(
+      0,
+      toNumber(line?.quantity_ordered, 0)
+    );
+
+    const lineWeight =
+      toNumber(line?.total_line_weight_kg, 0) ||
+      (
+        toNumber(line?.unit_weight_kg, 0) *
+        quantity
+      ) ||
+      (
+        toNumber(line?.products?.weight_kg, 0) *
+        quantity
+      ) ||
+      (
+        toNumber(line?.products?.net_weight_kg, 0) *
+        quantity
+      );
+
+    return sum + lineWeight;
+  }, 0);
 }
 
   function getRetailerName(order, stop = null) {
@@ -3297,20 +3326,30 @@ async function generateFdsNoticePdf(vehicleId) {
 
     const { data: fullOrders, error } = await db
       .from("orders")
-      .select(`
-        *,
-        order_lines (
-          id,
-          quantity_ordered,
-          unit_weight_kg,
-          total_line_weight_kg,
-          products (
-            id,
-            weight_kg,
-            net_weight_kg
-          )
-        )
-      `)
+.select(`
+  *,
+  order_lines (
+    id,
+    quantity_ordered,
+    line_type,
+    packages_per_unit,
+    total_packages,
+    requested_package_no,
+    requested_package_total,
+    unit_weight_kg,
+    total_line_weight_kg,
+    products (
+      id,
+      weight_kg,
+      net_weight_kg,
+      package_count,
+      packages_per_unit,
+      package_1_qty,
+      package_2_qty,
+      package_3_qty
+    )
+  )
+`)
       .eq("company_id", cid)
       .in("id", orderIds);
 

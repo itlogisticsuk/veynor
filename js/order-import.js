@@ -169,6 +169,33 @@ function splitContactFromAddressParts(parts = []) {
     return `${formatNumber(value, 2)} m³`;
   }
 
+function normalizeStockPriorityLevel(value) {
+  const level = Math.round(toNumber(value, 0));
+
+  if (level === 200) return 200;
+  if (level === 100) return 100;
+
+  return 0;
+}
+
+function getStockPriorityLabel(value) {
+  const level = normalizeStockPriorityLevel(value);
+
+  if (level === 200) return "Critical";
+  if (level === 100) return "Priority";
+
+  return "Normal";
+}
+
+function getStockPriorityClass(value) {
+  const level = normalizeStockPriorityLevel(value);
+
+  if (level === 200) return "has-critical";
+  if (level === 100) return "has-priority";
+
+  return "";
+}
+
   function showToast(message, type = "ok") {
     const el = byId("toast");
     if (!el) return;
@@ -1763,21 +1790,92 @@ async function reserveSalesOrderNumber() {
 
     const list = byId("detailLineList");
     if (list) {
-      list.innerHTML = order.lines.map(line => {
-        const isMissing = (order.missingProductSkus || []).some(sku => normalize(sku) === normalize(line.itemCode));
+list.innerHTML = order.lines.map((line, lineIndex) => {
+  const isMissing = (order.missingProductSkus || []).some(
+    sku => normalize(sku) === normalize(line.itemCode)
+  );
 
-        return `
-          <div class="line-card">
-            <div class="line-title">
-              SKU ${escapeHtml(line.itemCode || "Missing SKU")} · Qty ${formatNumber(line.quantity)}
-              ${isMissing ? `<span class="pill pill-warn" style="margin-left:6px;">Not in product master</span>` : ""}
-            </div>
-            <div class="line-sub">Description: ${escapeHtml(line.description || "No description")}</div>
-            <div class="line-sub">Raw item: ${escapeHtml(line.itemRaw || "—")}</div>
-            <div class="line-sub">Unit volume: ${formatNumber(line.unitVolume, 3)} m³ · Total volume: ${formatNumber(line.totalVolume, 3)} m³</div>
-          </div>
-        `;
-      }).join("");
+  const priorityLevel = normalizeStockPriorityLevel(
+    line.stockPriorityLevel
+  );
+
+  return `
+    <div class="line-card ${getStockPriorityClass(priorityLevel)}">
+      <div class="line-title">
+        SKU ${escapeHtml(line.itemCode || "Missing SKU")} · Qty ${formatNumber(line.quantity)}
+
+        ${
+          isMissing
+            ? `<span class="pill pill-warn" style="margin-left:6px;">Not in product master</span>`
+            : ""
+        }
+
+        ${
+          priorityLevel > 0
+            ? `
+              <span
+                class="pill ${priorityLevel === 200 ? "pill-err" : "pill-warn"}"
+                style="margin-left:6px;"
+              >
+                ${escapeHtml(getStockPriorityLabel(priorityLevel))}
+              </span>
+            `
+            : ""
+        }
+      </div>
+
+<div class="line-priority-top">
+  <div>
+    <div class="line-priority-label">Stock Priority</div>
+    <div class="line-priority-help">
+      Controls which order receives incoming stock first.
+    </div>
+  </div>
+
+  
+
+      <div class="line-sub">
+        Description: ${escapeHtml(line.description || "No description")}
+      </div>
+
+      <div class="line-sub">
+        Raw item: ${escapeHtml(line.itemRaw || "—")}
+      </div>
+
+      <div class="line-sub">
+        Unit volume: ${formatNumber(line.unitVolume, 3)} m³ ·
+        Total volume: ${formatNumber(line.totalVolume, 3)} m³
+      </div>
+
+
+        </div>
+
+       <select
+  class="select line-priority-select ${
+    priorityLevel === 200
+      ? "priority-critical"
+      : priorityLevel === 100
+        ? "priority-high"
+        : "priority-normal"
+  }"
+  data-stock-priority-line-index="${lineIndex}"
+>
+          <option value="0" ${priorityLevel === 0 ? "selected" : ""}>
+            Normal
+          </option>
+
+          <option value="100" ${priorityLevel === 100 ? "selected" : ""}>
+            Priority
+          </option>
+
+          <option value="200" ${priorityLevel === 200 ? "selected" : ""}>
+            Critical
+          </option>
+        </select>
+      </div>
+    </div>
+  `;
+}).join("");
     }
   }
 
@@ -2158,19 +2256,66 @@ delivery_region: null,
       throw new Error(`No order lines to insert for ${order.orderNumber}.`);
     }
 
-    const { data: insertedLines, error: lineError } = await client
-      .from("order_lines")
-      .insert(linePayloads)
-      .select("id");
+const { data: insertedLines, error: lineError } = await client
+  .from("order_lines")
+  .insert(linePayloads)
+  .select("id, line_number");
 
     if (lineError) throw lineError;
 
-    return {
-      orderId: insertedOrder.id,
-      customerId: productOwnerId,
-      lineCount: insertedLines?.length || 0,
-      missingSkus
-    };
+    let priorityCount = 0;
+
+    const insertedLineMap = new Map(
+      (insertedLines || []).map(insertedLine => [
+        Number(insertedLine.line_number),
+        insertedLine
+      ])
+    );
+
+    for (let index = 0; index < enrichedLines.length; index++) {
+      const sourceLine = enrichedLines[index];
+
+      const priorityLevel =
+        normalizeStockPriorityLevel(
+          sourceLine.stockPriorityLevel
+        );
+
+      if (priorityLevel <= 0) continue;
+
+      const insertedLine =
+        insertedLineMap.get(index + 1);
+
+      if (!insertedLine?.id) {
+        throw new Error(
+          `Could not connect stock priority to line ${index + 1}.`
+        );
+      }
+
+      const { error: priorityError } =
+        await client.rpc(
+          "set_order_line_stock_priority",
+          {
+            p_order_line_id: insertedLine.id,
+            p_priority_level: priorityLevel,
+            p_reason:
+              `Priority selected during order import for ${
+                sourceLine.itemCode || "product"
+              }.`
+          }
+        );
+
+      if (priorityError) throw priorityError;
+
+      priorityCount++;
+    }
+
+return {
+  orderId: insertedOrder.id,
+  customerId: productOwnerId,
+  lineCount: insertedLines?.length || 0,
+  priorityCount,
+  missingSkus
+};
   }
 
   async function uploadSupplierPackingSlip(orderId, orderNumber, customerId = null) {
@@ -2319,12 +2464,24 @@ await createOrderImportedNotification(order, result, cid);
         order.imported = true;
         order.failed = false;
 
-        if (result.missingSkus?.length) {
-          result.missingSkus.forEach(sku => missingProductsAfterImport.add(sku));
-          order.importMessage = `${result.lineCount} order line(s) written. Missing product(s): ${result.missingSkus.join(", ")}.`;
-        } else {
-          order.importMessage = `${result.lineCount} order line(s) written.`;
-        }
+if (result.missingSkus?.length) {
+  result.missingSkus.forEach(
+    sku => missingProductsAfterImport.add(sku)
+  );
+
+  order.importMessage =
+    `${result.lineCount} order line(s) written. ` +
+    `Missing product(s): ${result.missingSkus.join(", ")}.`;
+} else {
+  order.importMessage =
+    `${result.lineCount} order line(s) written.`;
+}
+
+if (result.priorityCount > 0) {
+  order.importMessage +=
+    ` Stock priority set on ${result.priorityCount} ` +
+    `product line${result.priorityCount === 1 ? "" : "s"}.`;
+}
 
         if (order.sourceKind === "pdf") {
           order.importMessage += supplierPackingSlipsLinked
@@ -2964,6 +3121,38 @@ async function saveManualOrder() {
 }
 
 function bindEvents() {
+
+  byId("detailLineList")?.addEventListener("change", event => {
+    const select = event.target.closest(
+      "[data-stock-priority-line-index]"
+    );
+
+    if (!select) return;
+
+    const order = groupedOrders.find(
+      row =>
+        String(row.orderNumber) ===
+        String(selectedOrderNo)
+    );
+
+    if (!order) return;
+
+    const lineIndex = Number(
+      select.dataset.stockPriorityLineIndex
+    );
+
+    if (
+      !Number.isInteger(lineIndex) ||
+      !order.lines?.[lineIndex]
+    ) {
+      return;
+    }
+
+    order.lines[lineIndex].stockPriorityLevel =
+      normalizeStockPriorityLevel(select.value);
+
+    renderDetail();
+  });
   const excelInput = byId("ordersImportFile");
 
   if (excelInput) {

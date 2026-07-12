@@ -387,13 +387,13 @@ function getCalculatedOrderColli(order) {
 function buildLabels(order, items) {
   const labels = [];
 
-  const calculatedTotalColli = getCalculatedOrderColli(order);
+const calculatedTotalPackages = getCalculatedOrderColli(order);
 
-  const totalColli =
-    calculatedTotalColli ||
-    Math.round(toNum(order.total_order_colli, 0)) ||
-    Math.round(toNum(order.planning_colli, 0)) ||
-    0;
+const totalPackages =
+  calculatedTotalPackages ||
+  Math.round(toNum(order.total_order_colli, 0)) ||
+  Math.round(toNum(order.planning_colli, 0)) ||
+  0;
 
   const itemMap = new Map();
 
@@ -426,7 +426,7 @@ function buildLabels(order, items) {
           packageNo,
           packageTotal,
           packageLabel: `${packageNo}/${packageTotal}`,
-          totalColli,
+totalPackages,
           barcodeValue:
             item?.sku_unique ||
             line.products?.barcode_value ||
@@ -576,17 +576,147 @@ valueText(doc, ack, 78, 40, 8.8, { align: "center" });
 labelText(doc, "PURCHASE ORDER", 78, 49, 5.2, { align: "center" });
 valueText(doc, po, 78, 54, 8.2, { align: "center" });
 
-labelText(doc, "TOTAL COLLI", 78, 62.5, 5.2, { align: "center" });
+labelText(doc, "TOTAL PACKAGES", 78, 62.5, 5.2, { align: "center" });
 labelText(doc, "IN THIS ORDER", 78, 66.5, 5.2, { align: "center" });
-valueText(doc, `${label.totalColli || label.packageTotal} COLLI`, 78, 72, 9.5, { align: "center" });
+const orderPackageCount =
+  label.totalPackages ||
+  label.packageTotal ||
+  0;
 
-    titleBar(doc, "SCAN FOR DETAILS", 103, 31, 42, 5.8, 6.2);
-    drawBarcode(doc, 106, 38, 36, 11, label.barcodeValue);
-    valueText(doc, label.sku || "—", 124, 53, 6.2, { align: "center" });
+valueText(
+  doc,
+  `${orderPackageCount} ${
+    orderPackageCount === 1
+      ? "PACKAGE"
+      : "PACKAGES"
+  }`,
+  78,
+  72,
+  9.5,
+  { align: "center" }
+);
 
-    doc.setLineDashPattern([1, 1], 0);
-    line(doc, 102, 56, 146, 56);
-    doc.setLineDashPattern([], 0);
+titleBar(
+  doc,
+  "SCAN FOR DETAILS",
+  103,
+  31,
+  42,
+  5.8,
+  6.2
+);
+
+/*
+ * Barcode iets hoger en iets minder hoog,
+ * zodat er duidelijke witruimte onder blijft.
+ */
+drawBarcode(
+  doc,
+  106,
+  37.5,
+  36,
+  9.5,
+  label.barcodeValue
+);
+
+/*
+ * Productomschrijving onder de barcode.
+ * De tekst wordt automatisch verdeeld over maximaal twee regels.
+ * Als hij niet past, wordt de lettergrootte stap voor stap kleiner.
+ */
+const productDescription =
+  clean(
+    label.description ||
+    label.line?.products?.description ||
+    label.line?.products?.name ||
+    ""
+  ) ||
+  clean(label.sku || "—");
+
+const descriptionCenterX = 124;
+const descriptionStartY = 50.5;
+const descriptionMaxWidth = 40;
+const descriptionMaxLines = 2;
+
+let descriptionFontSize = 8.5;
+const minimumDescriptionFontSize = 4.8;
+let descriptionLines = [];
+
+doc.setFont("helvetica", "bold");
+
+while (
+  descriptionFontSize >= minimumDescriptionFontSize
+) {
+  doc.setFontSize(descriptionFontSize);
+
+  const candidateLines = doc.splitTextToSize(
+    productDescription,
+    descriptionMaxWidth
+  );
+
+  const widestLine = candidateLines.reduce(
+    (maxWidth, textLine) => {
+      return Math.max(
+        maxWidth,
+        doc.getTextWidth(String(textLine || ""))
+      );
+    },
+    0
+  );
+
+  if (
+    candidateLines.length <= descriptionMaxLines &&
+    widestLine <= descriptionMaxWidth
+  ) {
+    descriptionLines = candidateLines;
+    break;
+  }
+
+  descriptionFontSize -= 0.35;
+}
+
+/*
+ * Extra beveiliging bij uitzonderlijk lange omschrijvingen.
+ */
+if (!descriptionLines.length) {
+  doc.setFontSize(minimumDescriptionFontSize);
+
+  descriptionLines = doc
+    .splitTextToSize(
+      productDescription,
+      descriptionMaxWidth
+    )
+    .slice(0, descriptionMaxLines);
+}
+
+/*
+ * Bij twee regels begint de tekst iets hoger,
+ * zodat beide regels boven de stippellijn blijven.
+ */
+const descriptionY =
+  descriptionLines.length > 1
+    ? descriptionStartY - 1.2
+    : descriptionStartY;
+
+doc.setTextColor(0, 0, 0);
+
+doc.text(
+  descriptionLines,
+  descriptionCenterX,
+  descriptionY,
+  {
+    align: "center",
+    lineHeightFactor: 1.12
+  }
+);
+
+/*
+ * Scheidingslijn tussen omschrijving en SKU.
+ */
+doc.setLineDashPattern([1, 1], 0);
+line(doc, 102, 56, 146, 56);
+doc.setLineDashPattern([], 0);
+
 
     labelText(doc, "SKU", 104, 63, 6);
     valueText(doc, label.sku || "—", 104, 71, 12);
