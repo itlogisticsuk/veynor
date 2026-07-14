@@ -1958,23 +1958,39 @@ function renderDeliveryCell(order) {
     const fdsStatus = normalize(order.fds_status || "");
     const isAllocated = fdsStatus === "allocated";
 
-    const deliveryDate = isAllocated
-      ? order.expected_delivery_date
-      : null;
+    /*
+     * FDS-importdatum heeft voorrang.
+     * Als FDS nog unallocated is, tonen we de
+     * handmatig ingevoerde confirmed delivery date.
+     */
+    const deliveryDate =
+      order.expected_delivery_date ||
+      order.confirmed_delivery_date ||
+      null;
 
-    const etaFrom = isAllocated
-      ? formatTime(order.delivery_eta_from)
-      : "";
+    const etaFrom = formatTime(
+      order.delivery_eta_from || ""
+    );
 
-    const etaTo = isAllocated
-      ? formatTime(order.delivery_eta_to)
-      : "";
+    const etaTo = formatTime(
+      order.delivery_eta_to || ""
+    );
 
     const etaText = etaFrom
-      ? etaTo
+      ? etaTo && etaTo !== etaFrom
         ? `${etaFrom} - ${etaTo}`
         : etaFrom
-      : "Time not confirmed yet";
+      : "";
+
+    let statusText = "Actual date pending";
+
+    if (isAllocated) {
+      statusText = etaText || "Time not confirmed yet";
+    } else if (deliveryDate && etaText) {
+      statusText = `Manual date · ${etaText}`;
+    } else if (deliveryDate) {
+      statusText = "Manual delivery date";
+    }
 
     return `
       <div class="delivery-cell">
@@ -1991,11 +2007,7 @@ function renderDeliveryCell(order) {
         ${pill("planned", getFdsWeekLabel(order))}
 
         <span class="subline">
-          ${
-            isAllocated
-              ? escapeHtml(etaText)
-              : "Actual date pending"
-          }
+          ${escapeHtml(statusText)}
         </span>
       </div>
     `;
@@ -2021,6 +2033,8 @@ function renderDeliveryCell(order) {
     </div>
   `;
 }
+
+
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
 }
@@ -3225,6 +3239,146 @@ async function approveDeliveryGroupFromModal() {
   await loadOrders();
 }
 
+function setupOrdersTopScrollbar() {
+  const tableWrap = byId("ordersTableWrap");
+
+  if (!tableWrap) return;
+
+  /*
+   * Zoek de echte tabel in de bestaande
+   * horizontaal scrollbare container.
+   */
+  const table =
+    tableWrap.querySelector("table");
+
+  if (!table) return;
+
+  /*
+   * Maak de bovenste scrollbar slechts één keer.
+   */
+  let topScrollbar =
+    byId("ordersTopScrollbar");
+
+  if (!topScrollbar) {
+    topScrollbar =
+      document.createElement("div");
+
+    topScrollbar.id =
+      "ordersTopScrollbar";
+
+    topScrollbar.className =
+      "orders-top-scrollbar";
+
+    topScrollbar.innerHTML = `
+      <div class="orders-top-scrollbar-content"></div>
+    `;
+
+    tableWrap.parentNode.insertBefore(
+      topScrollbar,
+      tableWrap
+    );
+  }
+
+  const topContent =
+    topScrollbar.querySelector(
+      ".orders-top-scrollbar-content"
+    );
+
+  if (!topContent) return;
+
+  /*
+   * De binnenste lege balk krijgt exact dezelfde
+   * breedte als de ordertabel.
+   */
+  const updateWidth = () => {
+    const tableWidth = Math.max(
+      table.scrollWidth,
+      table.offsetWidth,
+      tableWrap.scrollWidth
+    );
+
+    topContent.style.width =
+      `${tableWidth}px`;
+
+    /*
+     * Verberg de bovenste scrollbar wanneer
+     * horizontaal scrollen niet nodig is.
+     */
+    const hasHorizontalOverflow =
+      tableWidth > tableWrap.clientWidth + 1;
+
+    topScrollbar.style.display =
+      hasHorizontalOverflow
+        ? "block"
+        : "none";
+
+    /*
+     * Scrollpositie opnieuw gelijkzetten.
+     */
+    topScrollbar.scrollLeft =
+      tableWrap.scrollLeft;
+  };
+
+  /*
+   * Voorkom dubbele listeners na opnieuw renderen.
+   */
+  if (
+    topScrollbar.dataset.scrollBound !== "1"
+  ) {
+    let syncingFromTop = false;
+    let syncingFromBottom = false;
+
+    topScrollbar.addEventListener(
+      "scroll",
+      () => {
+        if (syncingFromBottom) return;
+
+        syncingFromTop = true;
+
+        tableWrap.scrollLeft =
+          topScrollbar.scrollLeft;
+
+        requestAnimationFrame(() => {
+          syncingFromTop = false;
+        });
+      }
+    );
+
+    tableWrap.addEventListener(
+      "scroll",
+      () => {
+        if (syncingFromTop) return;
+
+        syncingFromBottom = true;
+
+        topScrollbar.scrollLeft =
+          tableWrap.scrollLeft;
+
+        requestAnimationFrame(() => {
+          syncingFromBottom = false;
+        });
+      }
+    );
+
+    window.addEventListener(
+      "resize",
+      updateWidth
+    );
+
+    topScrollbar.dataset.scrollBound = "1";
+  }
+
+  /*
+   * Eerst direct uitvoeren en daarna nogmaals
+   * nadat de browser de tabel heeft opgebouwd.
+   */
+  updateWidth();
+
+  requestAnimationFrame(updateWidth);
+
+  setTimeout(updateWidth, 100);
+}
+
 function renderTable() {
   const tbody = byId("ordersBody");
   if (!tbody) return;
@@ -3238,11 +3392,20 @@ byId("ordersTableWrap").style.display = "";
 byId("deliveryGroupsWrap").style.display = "none";
 
   updateSortIndicators();
-    if (!filteredOrders.length) {
-      tbody.innerHTML = `<tr><td colspan="13">No orders found.</td></tr>`;
-      updateSelectionUi();
-      return;
-    }
+if (!filteredOrders.length) {
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="13">
+        No orders found.
+      </td>
+    </tr>
+  `;
+
+  updateSelectionUi();
+  setupOrdersTopScrollbar();
+
+  return;
+}
 
     const rows = [];
 
@@ -3282,8 +3445,8 @@ byId("deliveryGroupsWrap").style.display = "none";
   </div>
 </td>
 
-<td>
-<strong class="ack-ref ${isAckDownloaded(order) ? "ack-ref-downloaded" : ""}">
+<td class="reference-cell">
+  <strong class="ack-ref ${isAckDownloaded(order) ? "ack-ref-downloaded" : ""}">
   ${escapeHtml(order.external_reference || "—")}
 </strong>
 <span class="subline">
@@ -3343,10 +3506,11 @@ ${canSeeFinance() ? `<td class="finance-column">${renderDeliveryGroupCell(order)
       if (expanded) rows.push(renderExpandedRow(order));
     });
 
-    tbody.innerHTML = rows.join("");
-    bindTableEvents();
-    updateSelectionUi();
-  }
+tbody.innerHTML = rows.join("");
+
+bindTableEvents();
+updateSelectionUi();
+setupOrdersTopScrollbar();  }
 
 function closeOrderActionMenu() {
   const menu = byId("occRowActionMenu");
@@ -3596,16 +3760,67 @@ tbody.querySelectorAll("[data-upload-legacy-ack]").forEach(button => {
     style.id = "occGeneratedStyles";
 
 style.textContent = `
-  .occ-memo-modal-backdrop{
-    position:fixed;
-    inset:0;
-    z-index:9999;
-    background:rgba(15,23,42,.45);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:24px;
-  }
+
+.orders-top-scrollbar{
+  width:100%;
+  height:18px;
+  margin:0 0 8px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  border:1px solid #dce5f2;
+  border-radius:8px;
+  background:#f8fafc;
+  scrollbar-gutter:stable;
+}
+
+.orders-top-scrollbar-content{
+  height:1px;
+  min-width:100%;
+}
+
+.orders-top-scrollbar::-webkit-scrollbar{
+  height:12px;
+}
+
+.orders-top-scrollbar::-webkit-scrollbar-track{
+  background:#eef2f7;
+  border-radius:999px;
+}
+
+.orders-top-scrollbar::-webkit-scrollbar-thumb{
+  background:#c4cedb;
+  border:2px solid #eef2f7;
+  border-radius:999px;
+}
+
+.orders-top-scrollbar::-webkit-scrollbar-thumb:hover{
+  background:#94a3b8;
+}
+
+.reference-cell{
+  min-width:120px;
+  width:120px;
+}
+
+.reference-cell .ack-ref{
+  white-space:nowrap;
+  word-break:normal;
+  overflow-wrap:normal;
+  display:inline-flex;
+}
+
+/* bestaande CSS gaat hieronder verder */
+
+.occ-memo-modal-backdrop{
+  position:fixed;
+  inset:0;
+  z-index:9999;
+  background:rgba(15,23,42,.45);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
 .ack-ref-check{
   display:inline-flex;
   align-items:center;
@@ -4409,110 +4624,310 @@ function openPhotoModal(orderId) {
     refreshTariffModalSummary();
   }
 
-  function tariffModalTotalsFromRow(row) {
-    const storage = toNumber(row.querySelector("[data-tariff-field='tariff_storage']")?.value, 0);
-    const admin = toNumber(row.querySelector("[data-tariff-field='tariff_admin']")?.value, 0);
-    const handling = toNumber(row.querySelector("[data-tariff-field='tariff_handling']")?.value, 0);
-    const transport = toNumber(row.querySelector("[data-tariff-field='tariff_transport']")?.value, 0);
-    const chargeInput = toNumber(row.querySelector("[data-tariff-field='total_customer_charge']")?.value, 0);
-    const calculated = storage + admin + handling + transport;
+function tariffModalTotalsFromRow(row) {
+  const storage = round2(
+    toNumber(
+      row.querySelector(
+        "[data-tariff-field='tariff_storage']"
+      )?.value,
+      0
+    )
+  );
 
-    return {
-      storage,
-      admin,
-      handling,
-      transport,
-      customerCharge: chargeInput > 0 ? chargeInput : calculated
-    };
-  }
+  const admin = round2(
+    toNumber(
+      row.querySelector(
+        "[data-tariff-field='tariff_admin']"
+      )?.value,
+      0
+    )
+  );
 
-  function refreshTariffModalSummary() {
-    const rows = Array.from(document.querySelectorAll("#tariffModalBody tr[data-line-id]"));
-    let total = 0;
+  const handling = round2(
+    toNumber(
+      row.querySelector(
+        "[data-tariff-field='tariff_handling']"
+      )?.value,
+      0
+    )
+  );
 
-    rows.forEach(row => {
-      const t = tariffModalTotalsFromRow(row);
-      total += t.customerCharge;
+  const transport = round2(
+    toNumber(
+      row.querySelector(
+        "[data-tariff-field='tariff_transport']"
+      )?.value,
+      0
+    )
+  );
 
-      const totalCell = row.querySelector("[data-line-total]");
-      if (totalCell) totalCell.textContent = formatMoney(t.customerCharge);
-    });
+  /*
+   * Sofa2U fees bestaan uit:
+   * storage + admin + handling.
+   */
+  const s2uFees = round2(
+    storage +
+    admin +
+    handling
+  );
 
-    setText("tariffModalSummary", `Customer charge total: ${formatMoney(total)}`);
-  }
+  /*
+   * Totale klantkosten bestaan uit:
+   * Sofa2U fees + transport.
+   */
+  const customerCharge = round2(
+    s2uFees +
+    transport
+  );
 
-  async function saveTariffModal(orderId) {
-    const order = allOrders.find(row => String(row.id) === String(orderId));
-    if (!order) throw new Error("Order not found.");
+  return {
+    storage,
+    admin,
+    handling,
+    transport,
+    s2uFees,
+    customerCharge
+  };
+}
+function refreshTariffModalSummary() {
+  const rows = Array.from(
+    document.querySelectorAll(
+      "#tariffModalBody tr[data-line-id]"
+    )
+  );
 
-    const rows = Array.from(document.querySelectorAll("#tariffModalBody tr[data-line-id]"));
-    if (!rows.length) throw new Error("No tariff lines found.");
+  let totalS2uFees = 0;
+  let totalCustomerCharge = 0;
 
-    let totalStorage = 0;
-    let totalAdmin = 0;
-    let totalHandling = 0;
-    let totalTransport = 0;
-    let totalCustomerCharge = 0;
+  rows.forEach(row => {
+    const totals =
+      tariffModalTotalsFromRow(row);
 
-    for (const row of rows) {
-      const lineId = row.dataset.lineId;
-      const t = tariffModalTotalsFromRow(row);
+    totalS2uFees += totals.s2uFees;
+    totalCustomerCharge +=
+      totals.customerCharge;
 
-      const payload = {
-        tariff_storage: round2(t.storage),
-        tariff_admin: round2(t.admin),
-        tariff_handling: round2(t.handling),
-        tariff_transport: round2(t.transport),
-        total_customer_charge: round2(t.customerCharge)
-      };
+    const customerChargeInput =
+      row.querySelector(
+        "[data-tariff-field='total_customer_charge']"
+      );
 
-      const { error } = await client
-        .from("order_lines")
-        .update(payload)
-        .eq("id", lineId)
-        .eq("order_id", order.id);
+    if (customerChargeInput) {
+      customerChargeInput.value =
+        totals.customerCharge.toFixed(2);
 
-      if (error) throw error;
-
-      totalStorage += payload.tariff_storage;
-      totalAdmin += payload.tariff_admin;
-      totalHandling += payload.tariff_handling;
-      totalTransport += payload.tariff_transport;
-      totalCustomerCharge += payload.total_customer_charge;
+      customerChargeInput.readOnly = true;
     }
 
-    const orderPayload = {
-      total_storage_tariff: round2(totalStorage),
-      total_admin_tariff: round2(totalAdmin),
-      total_handling_tariff: round2(totalHandling),
-      total_transport_tariff: round2(totalTransport),
-      total_customer_charge: round2(totalCustomerCharge),
-      customer_charge_gbp: round2(totalCustomerCharge),
-      estimated_revenue_gbp: round2(totalCustomerCharge),
-      finance_status: "not_invoiced",
-      last_activity_at: new Date().toISOString()
-    };
+    const totalCell =
+      row.querySelector("[data-line-total]");
 
-    try {
-      await safeUpdateOrder(order.id, orderPayload);
-    } catch (error) {
-      const fallback = { ...orderPayload };
-      delete fallback.customer_charge_gbp;
-      delete fallback.estimated_revenue_gbp;
-      await safeUpdateOrder(order.id, fallback);
+    if (totalCell) {
+      totalCell.textContent =
+        formatMoney(
+          totals.customerCharge
+        );
     }
+  });
 
-    await insertOrderActivity(
-      order.id,
-      `Manual tariffs updated. Customer charge ${formatMoney(totalCustomerCharge)}.`,
-      "manual_tariff_update"
+  setText(
+    "tariffModalSummary",
+    `S2U fees: ${formatMoney(totalS2uFees)} · ` +
+    `Customer charge total: ${formatMoney(totalCustomerCharge)}`
+  );
+}
+async function saveTariffModal(orderId) {
+  const order = allOrders.find(
+    row =>
+      String(row.id) ===
+      String(orderId)
+  );
+
+  if (!order) {
+    throw new Error(
+      "Order not found."
     );
-
-    document.querySelector("#tariffModal")?.remove();
-    await loadOrders();
-
-    showToast(`Tariffs saved: ${formatMoney(totalCustomerCharge)}.`, "ok");
   }
+
+  const rows = Array.from(
+    document.querySelectorAll(
+      "#tariffModalBody tr[data-line-id]"
+    )
+  );
+
+  if (!rows.length) {
+    throw new Error(
+      "No tariff lines found."
+    );
+  }
+
+  let totalStorage = 0;
+  let totalAdmin = 0;
+  let totalHandling = 0;
+  let totalTransport = 0;
+  let totalS2uFees = 0;
+  let totalCustomerCharge = 0;
+
+  for (const row of rows) {
+    const lineId =
+      row.dataset.lineId;
+
+    const totals =
+      tariffModalTotalsFromRow(row);
+
+    const linePayload = {
+      tariff_storage:
+        round2(totals.storage),
+
+      tariff_admin:
+        round2(totals.admin),
+
+      tariff_handling:
+        round2(totals.handling),
+
+      tariff_transport:
+        round2(totals.transport),
+
+      total_s2u_fees:
+        round2(totals.s2uFees),
+
+      total_customer_charge:
+        round2(
+          totals.customerCharge
+        )
+    };
+
+    const { error } = await client
+      .from("order_lines")
+      .update(linePayload)
+      .eq("id", lineId)
+      .eq("order_id", order.id);
+
+    if (error) {
+      throw error;
+    }
+
+    totalStorage +=
+      linePayload.tariff_storage;
+
+    totalAdmin +=
+      linePayload.tariff_admin;
+
+    totalHandling +=
+      linePayload.tariff_handling;
+
+    totalTransport +=
+      linePayload.tariff_transport;
+
+    totalS2uFees +=
+      linePayload.total_s2u_fees;
+
+    totalCustomerCharge +=
+      linePayload.total_customer_charge;
+  }
+
+  const orderPayload = {
+    total_storage_tariff:
+      round2(totalStorage),
+
+    total_admin_tariff:
+      round2(totalAdmin),
+
+    total_handling_tariff:
+      round2(totalHandling),
+
+    total_transport_tariff:
+      round2(totalTransport),
+
+    total_s2u_fees:
+      round2(totalS2uFees),
+
+    total_customer_charge:
+      round2(totalCustomerCharge),
+
+    customer_charge_gbp:
+      round2(totalCustomerCharge),
+
+    estimated_revenue_gbp:
+      round2(totalCustomerCharge),
+
+    finance_status:
+      "not_invoiced",
+
+    last_activity_at:
+      new Date().toISOString()
+  };
+
+  try {
+    await safeUpdateOrder(
+      order.id,
+      orderPayload
+    );
+  } catch (error) {
+    /*
+     * Fallback wanneer oudere databases
+     * customer_charge_gbp of
+     * estimated_revenue_gbp niet hebben.
+     */
+    const fallback = {
+      ...orderPayload
+    };
+
+    delete fallback.customer_charge_gbp;
+    delete fallback.estimated_revenue_gbp;
+
+    await safeUpdateOrder(
+      order.id,
+      fallback
+    );
+  }
+
+  /*
+   * Een bestaande ACK is nu verouderd.
+   * Verwijder de documentregistratie zodat
+   * hij opnieuw gegenereerd kan worden.
+   */
+  const { error: ackDeleteError } =
+    await client
+      .from("order_documents")
+      .delete()
+      .eq("order_id", order.id)
+      .in("document_type", [
+        "acknowledgement"
+      ]);
+
+  if (ackDeleteError) {
+    console.warn(
+      "Old ACK could not be invalidated:",
+      ackDeleteError.message
+    );
+  }
+
+  await insertOrderActivity(
+    order.id,
+    `Tariffs updated. ` +
+    `Storage ${formatMoney(totalStorage)}, ` +
+    `admin ${formatMoney(totalAdmin)}, ` +
+    `handling ${formatMoney(totalHandling)}, ` +
+    `transport ${formatMoney(totalTransport)}, ` +
+    `S2U fees ${formatMoney(totalS2uFees)}, ` +
+    `customer charge ${formatMoney(totalCustomerCharge)}. ` +
+    `Existing ACK invalidated.`,
+    "manual_tariff_update"
+  );
+
+  document
+    .querySelector("#tariffModal")
+    ?.remove();
+
+  await loadOrders();
+
+  showToast(
+    `Tariffs saved: ${formatMoney(totalCustomerCharge)}. ` +
+    `Please generate a new ACK.`,
+    "ok"
+  );
+}
 
   async function insertOrderActivity(orderId, description, type = "manual_update") {
     try {
@@ -4542,44 +4957,87 @@ function openPhotoModal(orderId) {
     if (error) throw error;
   }
 
-  async function saveManualDeliveryDate() {
-    const order = getManualOpsOrder();
+async function saveManualDeliveryDate() {
+  const order = getManualOpsOrder();
 
-    const confirmedDate = byId("manualConfirmedDate")?.value || "";
-    const etaFrom = byId("manualEtaFrom")?.value || "";
-    const etaTo = byId("manualEtaTo")?.value || "";
+  const confirmedDate =
+    byId("manualConfirmedDate")?.value || "";
 
-    if (!confirmedDate) {
-      throw new Error("Choose a confirmed delivery date first.");
-    }
+  const etaFrom =
+    byId("manualEtaFrom")?.value || "";
 
-    const payload = {
-      confirmed_delivery_date: confirmedDate,
-      status: "planned",
-      transport_status: "planned",
-      overall_status: "planned",
-      last_activity_at: new Date().toISOString()
-    };
+  const etaTo =
+    byId("manualEtaTo")?.value || "";
 
-    try {
-      if (etaFrom) payload.delivery_eta_from = etaFrom;
-      if (etaTo) payload.delivery_eta_to = etaTo;
-      await safeUpdateOrder(order.id, payload);
-    } catch (error) {
-      delete payload.delivery_eta_from;
-      delete payload.delivery_eta_to;
-      await safeUpdateOrder(order.id, payload);
-    }
-
-    await insertOrderActivity(
-      order.id,
-      `Confirmed delivery date set manually to ${confirmedDate}${etaFrom ? `, ETA ${etaFrom}${etaTo ? ` - ${etaTo}` : ""}` : ""}.`,
-      "manual_delivery_date"
+  if (!confirmedDate) {
+    throw new Error(
+      "Choose a confirmed delivery date first."
     );
-
-    await loadOrders();
-    showToast("Confirmed delivery date saved. Lifecycle moved to Planned / Transport.", "ok");
   }
+
+  const isCharterOrder =
+    normalize(order.transport_type) === "charter" ||
+    normalize(order.transport_type) === "fds" ||
+    normalize(order.status) === "export_for_charter" ||
+    !!order.carrier_vehicle_id ||
+    !!order.fds_collection_week ||
+    !!order.fds_collection_date ||
+    !!order.fds_job_ref;
+
+  const payload = {
+    confirmed_delivery_date: confirmedDate,
+    expected_delivery_date: confirmedDate,
+    transport_status: "planned",
+    overall_status: "planned",
+    last_activity_at: new Date().toISOString()
+  };
+
+  if (isCharterOrder) {
+    payload.transport_type = "charter";
+    payload.status = "export_for_charter";
+  } else {
+    payload.status = "planned";
+  }
+
+  if (etaFrom) {
+    payload.delivery_eta_from = etaFrom;
+  }
+
+  if (etaTo) {
+    payload.delivery_eta_to = etaTo;
+  }
+
+  if (etaFrom || etaTo) {
+    payload.delivery_eta_status = "confirmed";
+  }
+
+  try {
+    await safeUpdateOrder(order.id, payload);
+  } catch (error) {
+    delete payload.delivery_eta_from;
+    delete payload.delivery_eta_to;
+    delete payload.delivery_eta_status;
+
+    await safeUpdateOrder(order.id, payload);
+  }
+
+  await insertOrderActivity(
+    order.id,
+    `Confirmed delivery date set manually to ${confirmedDate}` +
+      `${etaFrom ? `, ETA ${etaFrom}${etaTo ? ` - ${etaTo}` : ""}` : ""}` +
+      `${isCharterOrder ? ". FDS / charter assignment retained" : ""}.`,
+    "manual_delivery_date"
+  );
+
+  await loadOrders();
+
+  showToast(
+    isCharterOrder
+      ? "Confirmed delivery date saved. FDS assignment retained."
+      : "Confirmed delivery date saved. Lifecycle moved to Planned / Transport.",
+    "ok"
+  );
+}
 
   function safeFileName(name) {
     return String(name || "file")

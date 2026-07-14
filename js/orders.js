@@ -1605,45 +1605,46 @@ async function openPlanningConfirmModal() {
     }
   }
 
-  async function exportSelectedForCharter() {
-    try {
-      const selectedIds = [...selectedOrderIds];
+async function exportSelectedForCharter() {
+  try {
+    const selectedIds = [...selectedOrderIds];
 
-      if (!selectedIds.length) {
-        showToast("Select at least one order first.", "err");
-        return;
-      }
-
-      const cid = await getCompanyId();
-
-      const { error } = await client
-        .from("orders")
-        .update({
-          transport_type: "charter",
-          status: "export_for_charter",
-          route_id: null,
-          last_activity_at: new Date().toISOString()
-        })
-        .eq("company_id", cid)
-        .in("id", selectedIds);
-
-      if (error) throw error;
-
-      selectedOrderIds.clear();
-      await refreshAll();
-
-      showToast("Selected orders marked for charter.", "ok");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not export for charter.", "err");
+    if (!selectedIds.length) {
+      showToast("Select at least one order first.", "err");
+      return;
     }
-  }
 
-function isSelectedVehicleCarrier() {
-  const vehicle = activeVehicles.find(v => String(v.id) === String(selectedVehicleId));
-  return normalize(vehicle?.vehicle_type || vehicle?.type) === "carrier";
+    if (!selectedVehicleId) {
+      showToast("Select FDS / carrier first.", "err");
+      return;
+    }
+
+    await assignSelectedToCarrierNoRoute(
+      getManualRouteDeliveryDate()
+    );
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Could not export selected orders for charter.",
+      "err"
+    );
+  }
 }
 
+function isSelectedVehicleCarrier() {
+  const vehicle = activeVehicles.find(
+    row =>
+      String(row.id) ===
+      String(selectedVehicleId)
+  );
+
+  return normalize(
+    vehicle?.vehicle_type ||
+    vehicle?.type
+  ) === "carrier";
+}
 async function assignSelectedToCarrierNoRoute(carrierDate = null) {
   try {
     const selectedIds = [...selectedOrderIds];
@@ -1678,8 +1679,11 @@ async function assignSelectedToCarrierNoRoute(carrierDate = null) {
         route_id: null,
         carrier_vehicle_id: selectedVehicleId,
         transport_status: "export_for_charter",
-        planned_route_date: date || null,
-        expected_delivery_date: date || null,
+planned_route_date: date || null,
+fds_collection_date: date || null,
+
+expected_delivery_date: null,
+confirmed_delivery_date: null,
         driver_user_id: null,
         driver_profile_id: null,
         driver_name: null,

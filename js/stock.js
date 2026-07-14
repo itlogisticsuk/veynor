@@ -619,9 +619,10 @@ sales_units_per_package: toNumber(row.products?.sales_units_per_package, 1) || 1
   });
 
   allStockItems = allStockItems.map(item => {
-   const alloc =
+const alloc =
   allocationByItem.get(String(item.id)) ||
-  allocationByStockSet.get(String(item.stock_set_id || ""));
+  allocationByStockSet.get(String(item.stock_set_id || "")) ||
+  allocationByPhysicalProduct.get(String(item.physical_product_id || ""));
 
     if (!alloc) return item;
 

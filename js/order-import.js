@@ -1173,86 +1173,238 @@ if (/All deliveries must/i.test(line)) break;
 function parsePdfProductLines(lines) {
   const raw = extractItemLines(lines);
   const rows = [];
-  let current = "";
 
-  raw.forEach(line => {
-    const clean = cleanText(line);
+  let currentRow = null;
 
-    if (/^[A-Z0-9]{3,}\b/.test(clean)) {
-      if (current) rows.push(current);
-      current = clean;
-    } else if (current) {
-      current += " " + clean;
+  const skuRegex = /^([A-Z0-9]{3,})\b\s*(.*)$/;
+  const valuesOnlyRegex =
+    /^(-?\d+)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)$/;
+
+  const completeRowRegex =
+    /^([A-Z0-9]{3,})\b\s+(.*?)\s+(-?\d+)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)$/;
+
+  raw.forEach((rawLine, rawIndex) => {
+    const line = cleanText(rawLine);
+
+    if (!line) return;
+
+    /*
+     * Situatie 1:
+     * SKU, omschrijving, quantity, volume en gewicht
+     * staan allemaal op dezelfde regel.
+     */
+    const completeMatch = line.match(completeRowRegex);
+
+    if (completeMatch) {
+      if (currentRow) {
+        rows.push(currentRow);
+        currentRow = null;
+      }
+
+      rows.push({
+        itemRaw: line,
+        itemBrand: "",
+        itemCode: completeMatch[1].trim(),
+        description: cleanText(completeMatch[2]),
+        quantity: Math.round(toNumber(completeMatch[3], 0)),
+        totalVolume: toNumber(completeMatch[4], 0),
+        totalWeight: toNumber(completeMatch[5], 0),
+        sourceRow: rawIndex + 1,
+        parseError: ""
+      });
+
+      return;
+    }
+
+    /*
+     * Situatie 2:
+     * Nieuwe productregel begint met een SKU,
+     * maar de cijfers staan mogelijk later.
+     */
+    const skuMatch = line.match(skuRegex);
+
+    if (skuMatch) {
+      if (currentRow) {
+        rows.push(currentRow);
+      }
+
+      currentRow = {
+        itemRaw: line,
+        itemBrand: "",
+        itemCode: skuMatch[1].trim(),
+        descriptionParts: [
+          cleanText(skuMatch[2])
+        ].filter(Boolean),
+        quantity: null,
+        totalVolume: null,
+        totalWeight: null,
+        sourceRow: rawIndex + 1,
+        parseError: ""
+      };
+
+      return;
+    }
+
+    /*
+     * Situatie 3:
+     * Regels zoals:
+     * 1 0.74 85.9
+     */
+    const valuesMatch = line.match(valuesOnlyRegex);
+
+    if (valuesMatch && currentRow) {
+      currentRow.quantity =
+        Math.round(toNumber(valuesMatch[1], 0));
+
+      currentRow.totalVolume =
+        toNumber(valuesMatch[2], 0);
+
+      currentRow.totalWeight =
+        toNumber(valuesMatch[3], 0);
+
+      currentRow.itemRaw += ` ${line}`;
+
+      rows.push(currentRow);
+      currentRow = null;
+
+      return;
+    }
+
+    /*
+     * Situatie 4:
+     * Een extra regel van de omschrijving,
+     * bijvoorbeeld "Dew Haze".
+     */
+    if (currentRow) {
+      currentRow.descriptionParts.push(line);
+      currentRow.itemRaw += ` ${line}`;
     }
   });
 
-  if (current) rows.push(current);
+  if (currentRow) {
+    rows.push(currentRow);
+  }
 
-  const skipZeroQty = getCheckbox("optSkipZeroQtyPdfLines", true);
+  const skipZeroQty =
+    getCheckbox("optSkipZeroQtyPdfLines", true);
 
-  return rows.map((row, index) => {
-    const skuMatch = row.match(/^([A-Z0-9]{3,})\b\s*(.*)$/);
+  return rows
+    .map((row, index) => {
+      /*
+       * Regels die al compleet waren.
+       */
+      if (
+        !Array.isArray(row.descriptionParts)
+      ) {
+        const qty =
+          Math.round(toNumber(row.quantity, 0));
 
-    if (!skuMatch) {
+        const totalVolume =
+          toNumber(row.totalVolume, 0);
+
+        const totalWeight =
+          toNumber(row.totalWeight, 0);
+
+        const description =
+          cleanText(row.description || "");
+
+        return {
+          itemRaw: row.itemRaw,
+          itemBrand:
+            description.split(" ")[0] || "",
+          itemCode: row.itemCode,
+          description,
+          quantity: qty,
+          unitVolume:
+            qty > 0
+              ? totalVolume / qty
+              : 0,
+          unitWeight:
+            qty > 0
+              ? totalWeight / qty
+              : 0,
+          totalVolume,
+          totalWeight,
+          sourceRow:
+            row.sourceRow || index + 1,
+          parseError: ""
+        };
+      }
+
+      const description =
+        cleanText(
+          row.descriptionParts.join(" ")
+        );
+
+      const qty =
+        Math.round(
+          toNumber(row.quantity, 0)
+        );
+
+      const totalVolume =
+        toNumber(row.totalVolume, 0);
+
+      const totalWeight =
+        toNumber(row.totalWeight, 0);
+
+      const hasAllValues =
+        row.quantity !== null &&
+        row.totalVolume !== null &&
+        row.totalWeight !== null;
+
+      if (!hasAllValues) {
+        return {
+          itemRaw: row.itemRaw,
+          itemBrand:
+            description.split(" ")[0] || "",
+          itemCode: row.itemCode,
+          description,
+          quantity: 0,
+          unitVolume: 0,
+          unitWeight: 0,
+          totalVolume: 0,
+          totalWeight: 0,
+          sourceRow:
+            row.sourceRow || index + 1,
+          parseError:
+            "Could not find shipped quantity, volume and weight"
+        };
+      }
+
       return {
-        itemRaw: row,
-        itemBrand: "",
-        itemCode: "",
-        description: row,
-        quantity: 0,
-        unitVolume: 0,
-        unitWeight: 0,
-        totalVolume: 0,
-        totalWeight: 0,
-        sourceRow: index + 1,
-        parseError: "Could not parse PDF product line"
+        itemRaw: row.itemRaw,
+        itemBrand:
+          description.split(" ")[0] || "",
+        itemCode: row.itemCode,
+        description,
+        quantity: qty,
+        unitVolume:
+          qty > 0
+            ? totalVolume / qty
+            : 0,
+        unitWeight:
+          qty > 0
+            ? totalWeight / qty
+            : 0,
+        totalVolume,
+        totalWeight,
+        sourceRow:
+          row.sourceRow || index + 1,
+        parseError: ""
       };
-    }
+    })
+    .filter(line => {
+      if (line.parseError) return true;
 
-    const sku = skuMatch[1].trim();
-    const rest = cleanText(skuMatch[2]);
+      if (
+        skipZeroQty &&
+        toNumber(line.quantity, 0) <= 0
+      ) {
+        return false;
+      }
 
-    const fullMatch = rest.match(/^(.*?)\s+(-?\d+)\s+(\d+(?:[.,]\d+)?)\s+(\d+(?:[.,]\d+)?)$/);
-
-    if (!fullMatch) {
-      return {
-        itemRaw: row,
-        itemBrand: "",
-        itemCode: sku,
-        description: rest,
-        quantity: 0,
-        unitVolume: 0,
-        unitWeight: 0,
-        totalVolume: 0,
-        totalWeight: 0,
-        sourceRow: index + 1,
-        parseError: "Could not find shipped quantity, volume and weight"
-      };
-    }
-
-    const description = cleanText(fullMatch[1]);
-    const qty = Math.round(toNumber(fullMatch[2], 0));
-    const totalVolume = toNumber(fullMatch[3], 0);
-    const totalWeight = toNumber(fullMatch[4], 0);
-
-    return {
-      itemRaw: row,
-      itemBrand: description.split(" ")[0] || "",
-      itemCode: sku,
-      description,
-      quantity: qty,
-      unitVolume: qty > 0 ? totalVolume / qty : 0,
-      unitWeight: qty > 0 ? totalWeight / qty : 0,
-      totalVolume,
-      totalWeight,
-      sourceRow: index + 1,
-      parseError: ""
-    };
-  }).filter(line => {
-    if (line.parseError) return true;
-    if (skipZeroQty && toNumber(line.quantity, 0) <= 0) return false;
-    return true;
-  });
+      return true;
+    });
 }
   function extractTotalVolume(text) {
     const match = String(text || "").match(/Total\s+Volume\s+(\d+(?:[.,]\d+)?)/i);

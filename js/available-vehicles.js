@@ -1729,9 +1729,8 @@ async function loadSignedFdsNoticeStatus() {
 
 function getCarrierOrderDate(order) {
   return (
+    order.fds_collection_date ||
     order.planned_route_date ||
-    order.expected_delivery_date ||
-    order.confirmed_delivery_date ||
     ""
   );
 }
