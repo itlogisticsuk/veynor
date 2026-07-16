@@ -1753,6 +1753,43 @@ function getCarrierOrders(vehicle) {
   });
 }
 
+function isWarehousePickupVehicle(vehicle) {
+  return (
+    normalize(getVehicleType(vehicle)) === "warehouse_pickup" ||
+    normalize(vehicle?.vehicle_type) === "warehouse_pickup" ||
+    normalize(vehicle?.vehicle_code) === "pick_up" ||
+    normalize(getVehicleName(vehicle)).includes("pick up warehouse") ||
+    normalize(getVehicleName(vehicle)).includes("pickup warehouse")
+  );
+}
+
+function getWarehousePickupOrderDate(order) {
+  return (
+    order.expected_delivery_date ||
+    order.confirmed_delivery_date ||
+    order.planned_route_date ||
+    ""
+  );
+}
+
+function getWarehousePickupOrders(vehicle) {
+  return allOrders.filter(order => {
+    const pickupDate =
+      getWarehousePickupOrderDate(order);
+
+    return (
+      normalize(order.transport_type) === "warehouse_pickup" &&
+      !order.route_id &&
+      String(order.carrier_vehicle_id || "") === String(vehicle.id) &&
+      (
+        !selectedPlanningDate ||
+        !pickupDate ||
+        pickupDate === selectedPlanningDate
+      )
+    );
+  });
+}
+
 function renderCarrierOrders(vehicle) {
   const orders = getCarrierOrders(vehicle);
 
@@ -2009,100 +2046,461 @@ function renderCarrierOrders(vehicle) {
     </div>
   `;
 }
-  function renderVehicle(vehicle) {
-    const vehicleId = String(vehicle.id);
-const routes = getRoutesForVehicle(vehicle);
-const carrierOrders = getCarrierOrders(vehicle);
-const expanded = expandedVehicleIds.has(vehicleId);
-const capacity = getVehicleCapacity(vehicle);
-const primaryRoute = getPrimaryRouteForVehicle(vehicle);
-const hasRoute = routes.length > 0 || carrierOrders.length > 0;
-const highlightVehicle =
-  routes.length > 0 ||
-  (getVehicleType(vehicle) === "carrier" && carrierOrders.length > 0);
-    const dotClass = routeDotClass(vehicle);
-    const driverName = primaryRoute ? getRouteDriverName(primaryRoute) : "";
-    const routeLabel = primaryRoute ? getRouteLabel(primaryRoute) : "";
 
+function renderWarehousePickupOrders(vehicle) {
+  const orders =
+    getWarehousePickupOrders(vehicle);
+
+  if (!orders.length) {
     return `
-      <div
-  class="av-vehicle ${
-    getVehicleType(vehicle) === "carrier"
-      ? "av-carrier-vehicle"
-      : ""
-  } ${highlightVehicle ? "has-route" : ""}"
-  data-vehicle-id="${escapeHtml(vehicleId)}"
->
-        <div class="av-vehicle-head">
-          <div class="av-vehicle-title">
-            <span class="av-dot ${escapeHtml(dotClass)}"></span>
-
-            <div>
-<div class="av-name-row">
-  <span class="av-name">
-    ${getVehicleType(vehicle) === "carrier" ? "🏢 " : "🚚 "}
-    ${escapeHtml(getVehicleName(vehicle))}
-  </span>
-${
-  hasRoute
-    ? `<span class="av-route-inline">${
-        getVehicleType(vehicle) === "carrier"
-          ? `${carrierOrders.length} Charter Orders`
-          : escapeHtml(routeLabel)
-      }</span>`
-    : ""
-}
-  ${hasRoute && getVehicleType(vehicle) !== "carrier" ? `<span class="av-driver-inline">${escapeHtml(driverName)}</span>` : ""}
-</div>
-
-<div class="av-sub">
-  ${
-    getVehicleType(vehicle) === "carrier"
-      ? `External Carrier · ${formatNumber(routes.length)} route(s) · ${formatNumber(carrierOrders.length)} charter order(s)`
-      : `${escapeHtml(getVehicleType(vehicle))}
-        · ${escapeHtml(getVehicleRegistration(vehicle))}
-        · ${capacity ? `${formatNumber(capacity, 1)} m³` : "capacity unknown"}
-        · ${formatNumber(routes.length)} route(s)`
-  }
-</div>
-            </div>
-          </div>
-
-          <div class="av-actions">
-            <button class="av-btn primary" type="button" data-select-vehicle="${escapeHtml(vehicleId)}">Use</button>
-            <button class="av-btn" type="button" data-toggle-vehicle="${escapeHtml(vehicleId)}">${expanded ? "Hide" : "Open"}</button>
-          </div>
-        </div>
-
-        ${
-          expanded
-            ? `
-              <div
-  class="av-route-list ${
-    getVehicleType(vehicle) === "carrier"
-      ? "av-carrier-route-list"
-      : ""
-  }"
->
-                ${
-                  getVehicleType(vehicle) === "carrier"
-  ? `
-      ${renderCarrierOrders(vehicle)}
-      ${routes.length ? routes.map(route => renderRoute(route, vehicle)).join("") : ""}
-    `
-  : (
-      routes.length
-        ? routes.map(route => renderRoute(route, vehicle)).join("")
-        : `<div class="av-empty">No route assigned to this vehicle for this planning date.</div>`
-    )
-                }
-              </div>
-            `
-            : ""
-        }
+      <div class="av-empty">
+        No orders assigned to warehouse pickup for this planning date.
       </div>
     `;
   }
+
+  const volume = orders.reduce(
+    (sum, order) =>
+      sum + getOrderVolume(order),
+    0
+  );
+
+  const colli = orders.reduce(
+    (sum, order) =>
+      sum + getOrderColli(order),
+    0
+  );
+
+  const weight = orders.reduce(
+    (sum, order) =>
+      sum + getOrderWeight(order),
+    0
+  );
+
+  return `
+    <div class="av-route av-carrier-panel">
+
+      <div class="av-route-head">
+        <div class="av-carrier-summary">
+          <div class="av-carrier-summary-main">
+
+            <div class="av-carrier-title-row">
+              <span class="av-carrier-title">
+                Warehouse pickup orders
+              </span>
+
+              <span class="av-carrier-count">
+                ${formatNumber(orders.length)} orders
+              </span>
+            </div>
+
+            <div class="av-carrier-totals">
+              Total:
+              ${formatNumber(colli)} packages
+              · ${formatNumber(volume, 2)} m³
+              · ${formatNumber(weight, 0)} kg
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <div class="av-carrier-documents">
+        <div class="av-carrier-documents-head">
+          <div class="av-carrier-documents-icon">
+            ▤
+          </div>
+
+          <div>
+            <div class="av-carrier-documents-title">
+              Documents
+            </div>
+
+            <div class="av-carrier-documents-sub">
+              Create documents for warehouse collection.
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="av-carrier-documents-grid"
+          style="grid-template-columns:repeat(2,minmax(0,1fr));"
+        >
+          <button
+            class="av-btn av-carrier-document-btn primary-document"
+            type="button"
+            data-pickup-delivery-notes="${escapeHtml(vehicle.id)}"
+          >
+            Generate Delivery Notes
+          </button>
+
+          <button
+            class="av-btn av-carrier-document-btn"
+            type="button"
+            data-pickup-labels="${escapeHtml(vehicle.id)}"
+          >
+            Generate Labels
+          </button>
+        </div>
+      </div>
+
+      <div class="av-charter-section">
+        <div class="av-charter-section-head">
+          <div>
+            <div class="av-charter-section-title">
+              Orders ready for warehouse pickup
+
+              <span class="av-carrier-count">
+                ${formatNumber(orders.length)} orders
+              </span>
+            </div>
+
+            <div class="av-charter-section-sub">
+              Total:
+              ${formatNumber(colli)} packages
+              · ${formatNumber(volume, 2)} m³
+              · ${formatNumber(weight, 0)} kg
+            </div>
+          </div>
+        </div>
+
+        <div class="av-charter-list">
+          ${orders.map(order => {
+            const customerOrderLabel =
+              getCustomerOrderLabel(order);
+
+            const pickupDate =
+              getWarehousePickupOrderDate(order);
+
+            return `
+              <div class="av-charter-row">
+                <span class="av-charter-arrow">
+                  ›
+                </span>
+
+                <div class="av-charter-content">
+                  <div class="av-charter-title">
+                    ${escapeHtml(
+                      order.order_number || "—"
+                    )}
+                    ·
+                    ${escapeHtml(
+                      getRetailerName(order)
+                    )}
+                  </div>
+
+                  ${
+                    customerOrderLabel
+                      ? `
+                        <div class="av-charter-reference">
+                          ${escapeHtml(
+                            customerOrderLabel
+                          )}
+                        </div>
+                      `
+                      : ""
+                  }
+
+                  <div class="av-charter-details">
+                    <span>
+                      ${escapeHtml(
+                        order.delivery_city || "—"
+                      )}
+                      ·
+                      ${escapeHtml(
+                        order.delivery_postcode || "—"
+                      )}
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(
+                        getOrderColli(order)
+                      )} packages
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(
+                        getOrderVolume(order),
+                        2
+                      )} m³
+                    </span>
+
+                    <span>·</span>
+
+                    <span>
+                      ${formatNumber(
+                        getOrderWeight(order),
+                        0
+                      )} kg
+                    </span>
+
+                    <span class="av-charter-status">
+                      ${
+                        pickupDate
+                          ? `Pickup ${escapeHtml(
+                              formatDate(pickupDate)
+                            )}`
+                          : "Pickup date pending"
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <div class="av-charter-actions">
+                  <span
+                    class="av-owner-badge"
+                    title="${escapeHtml(
+                      order.product_owner_name ||
+                      "Unknown product owner"
+                    )}"
+                  >
+                    ${escapeHtml(
+                      getProductOwnerDisplayCode(order)
+                    )}
+                  </span>
+
+                  <button
+                    class="av-btn small danger av-charter-remove"
+                    type="button"
+                    data-remove-pickup="${escapeHtml(order.id)}"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderVehicle(vehicle) {
+  const vehicleId = String(vehicle.id);
+
+  const routes =
+    getRoutesForVehicle(vehicle);
+
+  const carrierOrders =
+    getCarrierOrders(vehicle);
+
+  const pickupOrders =
+    getWarehousePickupOrders(vehicle);
+
+  const isCarrier =
+    getVehicleType(vehicle) === "carrier";
+
+  const isPickup =
+    isWarehousePickupVehicle(vehicle);
+
+  const isVirtualResource =
+    isCarrier || isPickup;
+
+  const expanded =
+    expandedVehicleIds.has(vehicleId);
+
+  const capacity =
+    getVehicleCapacity(vehicle);
+
+  const primaryRoute =
+    getPrimaryRouteForVehicle(vehicle);
+
+  const hasRoute =
+    routes.length > 0 ||
+    carrierOrders.length > 0 ||
+    pickupOrders.length > 0;
+
+  const highlightVehicle =
+    routes.length > 0 ||
+    (isCarrier && carrierOrders.length > 0) ||
+    (isPickup && pickupOrders.length > 0);
+
+  const dotClass =
+    routeDotClass(vehicle);
+
+  const driverName =
+    primaryRoute
+      ? getRouteDriverName(primaryRoute)
+      : "";
+
+  const routeLabel =
+    primaryRoute
+      ? getRouteLabel(primaryRoute)
+      : "";
+
+  let resourceBadge = "";
+
+  if (isCarrier && carrierOrders.length) {
+    resourceBadge =
+      `${carrierOrders.length} Charter Orders`;
+  } else if (isPickup && pickupOrders.length) {
+    resourceBadge =
+      `${pickupOrders.length} Pickup Orders`;
+  } else if (routeLabel) {
+    resourceBadge =
+      escapeHtml(routeLabel);
+  }
+
+  let subText = "";
+
+  if (isCarrier) {
+    subText =
+      `External Carrier · ` +
+      `${formatNumber(routes.length)} route(s) · ` +
+      `${formatNumber(carrierOrders.length)} charter order(s)`;
+  } else if (isPickup) {
+    subText =
+      `Warehouse Collection · ` +
+      `${formatNumber(pickupOrders.length)} pickup order(s)`;
+  } else {
+    subText =
+      `${escapeHtml(getVehicleType(vehicle))}` +
+      ` · ${escapeHtml(getVehicleRegistration(vehicle))}` +
+      ` · ${
+        capacity
+          ? `${formatNumber(capacity, 1)} m³`
+          : "capacity unknown"
+      }` +
+      ` · ${formatNumber(routes.length)} route(s)`;
+  }
+
+  return `
+    <div
+      class="av-vehicle ${
+        isVirtualResource
+          ? "av-carrier-vehicle"
+          : ""
+      } ${highlightVehicle ? "has-route" : ""}"
+      data-vehicle-id="${escapeHtml(vehicleId)}"
+    >
+      <div class="av-vehicle-head">
+        <div class="av-vehicle-title">
+          <span
+            class="av-dot ${escapeHtml(dotClass)}"
+          ></span>
+
+          <div>
+            <div class="av-name-row">
+              <span class="av-name">
+                ${
+                  isCarrier
+                    ? "🏢 "
+                    : isPickup
+                      ? "📦 "
+                      : "🚚 "
+                }
+
+                ${escapeHtml(
+                  getVehicleName(vehicle)
+                )}
+              </span>
+
+              ${
+                hasRoute && resourceBadge
+                  ? `
+                    <span class="av-route-inline">
+                      ${resourceBadge}
+                    </span>
+                  `
+                  : ""
+              }
+
+              ${
+                hasRoute &&
+                !isVirtualResource
+                  ? `
+                    <span class="av-driver-inline">
+                      ${escapeHtml(driverName)}
+                    </span>
+                  `
+                  : ""
+              }
+            </div>
+
+            <div class="av-sub">
+              ${subText}
+            </div>
+          </div>
+        </div>
+
+        <div class="av-actions">
+          <button
+            class="av-btn primary"
+            type="button"
+            data-select-vehicle="${escapeHtml(vehicleId)}"
+          >
+            Use
+          </button>
+
+          <button
+            class="av-btn"
+            type="button"
+            data-toggle-vehicle="${escapeHtml(vehicleId)}"
+          >
+            ${expanded ? "Hide" : "Open"}
+          </button>
+        </div>
+      </div>
+
+      ${
+        expanded
+          ? `
+            <div
+              class="av-route-list ${
+                isVirtualResource
+                  ? "av-carrier-route-list"
+                  : ""
+              }"
+            >
+              ${
+                isCarrier
+                  ? `
+                    ${renderCarrierOrders(vehicle)}
+
+                    ${
+                      routes.length
+                        ? routes
+                            .map(route =>
+                              renderRoute(
+                                route,
+                                vehicle
+                              )
+                            )
+                            .join("")
+                        : ""
+                    }
+                  `
+                  : isPickup
+                    ? renderWarehousePickupOrders(
+                        vehicle
+                      )
+                    : routes.length
+                      ? routes
+                          .map(route =>
+                            renderRoute(
+                              route,
+                              vehicle
+                            )
+                          )
+                          .join("")
+                      : `
+                        <div class="av-empty">
+                          No route assigned to this vehicle for this planning date.
+                        </div>
+                      `
+              }
+            </div>
+          `
+          : ""
+      }
+    </div>
+  `;
+}
 
   function renderRoute(route, vehicle) {
   const summary = getRouteSummary(route);
@@ -2764,6 +3162,51 @@ mount.querySelectorAll("[data-fds-labels]").forEach(button => {
   });
 });
 
+mount
+  .querySelectorAll(
+    "[data-pickup-delivery-notes]"
+  )
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await generatePickupDeliveryNotes(
+          button.dataset.pickupDeliveryNotes
+        );
+      }
+    );
+  });
+
+mount
+  .querySelectorAll(
+    "[data-pickup-labels]"
+  )
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await generatePickupDeliveryLabels(
+          button.dataset.pickupLabels
+        );
+      }
+    );
+  });
+
+mount
+  .querySelectorAll(
+    "[data-remove-pickup]"
+  )
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await removeWarehousePickupOrder(
+          button.dataset.removePickup
+        );
+      }
+    );
+  });
+
 
 }
 
@@ -3306,6 +3749,80 @@ async function removeCharterOrder(orderId) {
   }
 }
 
+async function removeWarehousePickupOrder(
+  orderId
+) {
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    if (!cid) {
+      throw new Error(
+        "Company id missing."
+      );
+    }
+
+    if (!orderId) {
+      throw new Error(
+        "Order id missing."
+      );
+    }
+
+    const ok = window.confirm(
+      "Return this pickup order to planning?"
+    );
+
+    if (!ok) return;
+
+    const { error } = await db
+      .from("orders")
+      .update({
+        transport_type: "own_transport",
+        status: "ready_for_planning",
+        transport_status: null,
+        overall_status: "stock_complete",
+
+        carrier_vehicle_id: null,
+        route_id: null,
+
+        planned_route_date: null,
+        expected_delivery_date: null,
+        confirmed_delivery_date: null,
+
+        driver_user_id: null,
+        driver_profile_id: null,
+        driver_name: null,
+        driver_email: null,
+
+        delivery_eta_from: null,
+        delivery_eta_to: null,
+        delivery_eta_status: "pending",
+
+        last_activity_at:
+          new Date().toISOString()
+      })
+      .eq("company_id", cid)
+      .eq("id", orderId);
+
+    if (error) throw error;
+
+    showToast(
+      "Pickup order returned to planning.",
+      "ok"
+    );
+
+    notifyRoutesChanged();
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Could not remove warehouse pickup order.",
+      "err"
+    );
+  }
+}
+
 async function generateFdsNoticePdf(vehicleId) {
   try {
     const db = ensureClient();
@@ -3613,6 +4130,191 @@ async function generateFdsDeliveryNotes(vehicleId) {
   }
 }
 
+async function generatePickupDeliveryNotes(
+  vehicleId
+) {
+  const button = document.querySelector(
+    `[data-pickup-delivery-notes="${CSS.escape(
+      String(vehicleId)
+    )}"]`
+  );
+
+  const oldText =
+    button?.textContent ||
+    "Generate Delivery Notes";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent =
+        "Generating... ⏳";
+    }
+
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    const vehicle =
+      activeVehicles.find(
+        row =>
+          String(row.id) ===
+          String(vehicleId)
+      );
+
+    if (!vehicle) {
+      throw new Error(
+        "Warehouse pickup resource not found."
+      );
+    }
+
+    const orders =
+      getWarehousePickupOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error(
+        "No warehouse pickup orders found."
+      );
+    }
+
+    if (
+      !window.DeliveryNoteGenerator
+        ?.generate
+    ) {
+      throw new Error(
+        "Delivery Note Generator is not loaded."
+      );
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    showToast(
+      "Generating warehouse pickup delivery notes...",
+      "ok"
+    );
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded =
+          await window
+            .DeliveryNoteGenerator
+            .generate(
+              order,
+              db,
+              cid
+            );
+
+        if (uploaded?.fileUrl) {
+          pdfUrls.push(
+            uploaded.fileUrl
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `Delivery note skipped for ${order.order_number}:`,
+          error.message
+        );
+      }
+    }
+
+    if (!pdfUrls.length) {
+      throw new Error(
+        "No delivery note PDFs were generated."
+      );
+    }
+
+    const mergedPdf =
+      await window.PDFLib
+        .PDFDocument
+        .create();
+
+    for (const url of pdfUrls) {
+      const response =
+        await fetch(url);
+
+      if (!response.ok) continue;
+
+      const bytes =
+        await response.arrayBuffer();
+
+      const pdf =
+        await window.PDFLib
+          .PDFDocument
+          .load(bytes);
+
+      const pages =
+        await mergedPdf.copyPages(
+          pdf,
+          pdf.getPageIndices()
+        );
+
+      pages.forEach(page =>
+        mergedPdf.addPage(page)
+      );
+    }
+
+    const mergedBytes =
+      await mergedPdf.save();
+
+    const blob = new Blob(
+      [mergedBytes],
+      {
+        type: "application/pdf"
+      }
+    );
+
+    const blobUrl =
+      URL.createObjectURL(blob);
+
+    const today =
+      new Date()
+        .toISOString()
+        .slice(0, 10);
+
+    const link =
+      document.createElement("a");
+
+    link.href = blobUrl;
+
+    link.download =
+      `Warehouse Pickup Delivery Notes ${today}.pdf`;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(
+          blobUrl
+        ),
+      30000
+    );
+
+    showToast(
+      "Warehouse pickup delivery notes downloaded.",
+      "ok"
+    );
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Could not generate warehouse pickup delivery notes.",
+      "err"
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
 async function generateFdsDeliveryLabels(vehicleId) {
   const button = document.querySelector(
     `[data-fds-labels="${CSS.escape(String(vehicleId))}"]`
@@ -3692,6 +4394,185 @@ async function generateFdsDeliveryLabels(vehicleId) {
     }
   }
 }
+
+async function generatePickupDeliveryLabels(
+  vehicleId
+) {
+  const button = document.querySelector(
+    `[data-pickup-labels="${CSS.escape(
+      String(vehicleId)
+    )}"]`
+  );
+
+  const oldText =
+    button?.textContent ||
+    "Generate Labels";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent =
+        "Generating... ⏳";
+    }
+
+    const vehicle =
+      activeVehicles.find(
+        row =>
+          String(row.id) ===
+          String(vehicleId)
+      );
+
+    if (!vehicle) {
+      throw new Error(
+        "Warehouse pickup resource not found."
+      );
+    }
+
+    const orders =
+      getWarehousePickupOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error(
+        "No warehouse pickup orders found."
+      );
+    }
+
+    if (
+      !window.DeliveryLabelGenerator
+        ?.generate
+    ) {
+      throw new Error(
+        "Delivery Label Generator is not loaded."
+      );
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    showToast(
+      "Generating warehouse pickup labels...",
+      "ok"
+    );
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded =
+          await window
+            .DeliveryLabelGenerator
+            .generate(order.id);
+
+        if (uploaded?.fileUrl) {
+          pdfUrls.push(
+            uploaded.fileUrl
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `Labels skipped for ${order.order_number}:`,
+          error.message
+        );
+      }
+    }
+
+    if (!pdfUrls.length) {
+      throw new Error(
+        "No label PDFs were generated."
+      );
+    }
+
+    const mergedPdf =
+      await window.PDFLib
+        .PDFDocument
+        .create();
+
+    for (const url of pdfUrls) {
+      const response =
+        await fetch(url);
+
+      if (!response.ok) continue;
+
+      const bytes =
+        await response.arrayBuffer();
+
+      const pdf =
+        await window.PDFLib
+          .PDFDocument
+          .load(bytes);
+
+      const pages =
+        await mergedPdf.copyPages(
+          pdf,
+          pdf.getPageIndices()
+        );
+
+      pages.forEach(page =>
+        mergedPdf.addPage(page)
+      );
+    }
+
+    const mergedBytes =
+      await mergedPdf.save();
+
+    const blob = new Blob(
+      [mergedBytes],
+      {
+        type: "application/pdf"
+      }
+    );
+
+    const blobUrl =
+      URL.createObjectURL(blob);
+
+    const today =
+      new Date()
+        .toISOString()
+        .slice(0, 10);
+
+    const link =
+      document.createElement("a");
+
+    link.href = blobUrl;
+
+    link.download =
+      `Warehouse Pickup Delivery Labels ${today}.pdf`;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(
+          blobUrl
+        ),
+      30000
+    );
+
+    showToast(
+      "Warehouse pickup labels downloaded.",
+      "ok"
+    );
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Could not generate warehouse pickup labels.",
+      "err"
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
 
   function notifyRoutesChanged() {
     window.dispatchEvent(new CustomEvent("veynor:routes-changed"));

@@ -875,13 +875,6 @@ function getLineMatchedQty(line) {
       )
     );
 
-    /*
-     * Wanneer total_packages bekend is, is dat
-     * betrouwbaarder dan packages_per_unit.
-     *
-     * Voorbeeld:
-     * 1 × IWCRO807 = 2 packages
-     */
     if (
       explicitTotalPackages > 0 &&
       orderedProducts > 0
@@ -915,6 +908,8 @@ function getLineMatchedQty(line) {
     )
   );
 
+  let allocatedPackages = 0;
+
   if (
     toNumber(
       line.requested_package_no,
@@ -925,22 +920,79 @@ function getLineMatchedQty(line) {
       0
     ) > 0
   ) {
-    return active.length;
+    allocatedPackages = active.length;
+  } else {
+    allocatedPackages = active.reduce(
+      (sum, allocation) => {
+        return sum + Math.max(
+          1,
+          Math.round(
+            toNumber(
+              allocation.items?.package_total,
+              1
+            )
+          )
+        );
+      },
+      0
+    );
   }
 
-  return active.reduce(
-    (sum, allocation) => {
-      return sum + Math.max(
-        1,
-        Math.round(
-          toNumber(
-            allocation.items?.package_total,
-            1
-          )
-        )
-      );
-    },
-    0
+  /*
+   * Echte allocations blijven altijd leidend.
+   */
+  if (allocatedPackages > 0) {
+    return allocatedPackages;
+  }
+
+  /*
+   * Fallback voor handmatig compleet gemaakte
+   * orderregels zonder fysiek voorraaditem.
+   *
+   * Voor SO-03542:
+   * matched_quantity = 1
+   * quantity_allocated = 1
+   * dus de OCC toont 1/1.
+   */
+  const matchedProducts = Math.max(
+    0,
+    Math.round(
+      toNumber(
+        line.matched_quantity ||
+        line.quantity_allocated,
+        0
+      )
+    )
+  );
+
+  if (matchedProducts <= 0) {
+    return 0;
+  }
+
+  const requiredProducts = Math.max(
+    1,
+    Math.round(
+      toNumber(
+        line.quantity_ordered,
+        1
+      )
+    )
+  );
+
+  const requiredPackages =
+    getLineRequiredPackages(line);
+
+  const packagesPerProduct = Math.max(
+    1,
+    Math.round(
+      requiredPackages /
+      requiredProducts
+    )
+  );
+
+  return (
+    matchedProducts *
+    packagesPerProduct
   );
 }
 
@@ -1066,6 +1118,13 @@ function deriveLifecycleStatus(order) {
     ["out_for_delivery", "sent_to_driver", "loaded", "dispatched", "on_transport"].includes(transportStatus)
   ) {
     return "on_transport";
+  }
+
+  if (
+    isWarehousePickupOrder(order) &&
+    normalize(order.status) !== "picked_up"
+  ) {
+    return "planned";
   }
 
   if (
@@ -1767,7 +1826,9 @@ function renderCompactLifecycle(order) {
     : step === 4
       ? "Delivered"
       : step === 3
-        ? "Planned / Transport"
+        ? isWarehousePickupOrder(order)
+          ? "Awaiting Pickup"
+          : "Planned / Transport"
         : step === 2
           ? "Stock Complete"
           : "Order Received";
@@ -1915,8 +1976,16 @@ function isFdsCarrierOrder(order) {
   );
 }
 
-function getFdsWeekLabel(order) {
-  const storedWeek = Math.round(
+function isWarehousePickupOrder(order) {
+  return (
+    normalize(order.transport_type) === "warehouse_pickup" ||
+    normalize(order.status) === "awaiting_pickup" ||
+    normalize(order.status) === "pickup_confirmed" ||
+    normalize(order.status) === "picked_up"
+  );
+}
+
+function getFdsWeekLabel(order) {  const storedWeek = Math.round(
     toNumber(order.fds_collection_week, 0)
   );
 
@@ -1950,6 +2019,42 @@ function renderDeliveryCell(order) {
         <strong>${escapeHtml(formatDate(deliveredDate))}</strong>
         ${pill("delivered", "Delivered")}
         <span class="subline">Legacy delivered order</span>
+      </div>
+    `;
+  }
+
+  if (isWarehousePickupOrder(order)) {
+    const pickupDate =
+      order.expected_delivery_date ||
+      order.confirmed_delivery_date ||
+      null;
+
+    const pickupStatus =
+      normalize(order.status) === "picked_up"
+        ? "Picked up"
+        : pickupDate
+          ? "Pickup date confirmed"
+          : "Pickup date pending";
+
+    return `
+      <div class="delivery-cell">
+        ${
+          pickupDate
+            ? `
+              <strong>
+                ${escapeHtml(formatDate(pickupDate))}
+              </strong>
+            `
+            : ""
+        }
+
+        <span class="status-pill pickup">
+          PICK UP
+        </span>
+
+        <span class="subline">
+          ${escapeHtml(pickupStatus)}
+        </span>
       </div>
     `;
   }
@@ -2077,16 +2182,39 @@ function renderDeliveryGroupCell(order) {
     return `<div class="subline">—</div>`;
   }
 
+  const stored = getStoredDeliveryGroup(group);
+
   const readyVolume = toNumber(group.readyVolume, 0);
   const minimumVolume = toNumber(group.minimumVolume, 1.25);
-  const shortfall = round2(Math.max(0, minimumVolume - readyVolume));
-  const surcharge = round2(shortfall * toNumber(group.tariffPerM3, 55.20));
+  const shortfall = round2(
+    Math.max(0, minimumVolume - readyVolume)
+  );
+
+  const calculatedSurcharge = round2(
+    shortfall *
+    toNumber(group.tariffPerM3, 55.20)
+  );
+
+  const isApproved =
+    normalize(stored?.status) === "approved";
+
+  const appliedSurcharge = isApproved
+    ? round2(
+        stored?.applied_surcharge ??
+        calculatedSurcharge
+      )
+    : calculatedSurcharge;
 
   if (readyVolume <= 0) {
     return `
       <div class="delivery-group wait">
-        <strong>0.00 / ${formatNumber(minimumVolume, 2)} m³</strong>
-        <span class="subline">Waiting goods</span>
+        <strong>
+          0.00 / ${formatNumber(minimumVolume, 2)} m³
+        </strong>
+
+        <span class="subline">
+          Waiting goods
+        </span>
       </div>
     `;
   }
@@ -2094,21 +2222,39 @@ function renderDeliveryGroupCell(order) {
   if (shortfall <= 0) {
     return `
       <div class="delivery-group good">
-        <strong>✓ ${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
-        <span class="subline">Ready</span>
+        <strong>
+          ✓ ${formatNumber(readyVolume, 2)} /
+          ${formatNumber(minimumVolume, 2)} m³
+        </strong>
+
+        <span class="subline">
+          Ready
+        </span>
       </div>
     `;
   }
 
   return `
     <div class="delivery-group warn">
-      <strong>${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
+      <strong>
+        ${formatNumber(readyVolume, 2)} /
+        ${formatNumber(minimumVolume, 2)} m³
+      </strong>
+
       <span class="subline">
-        Shortfall ${formatNumber(shortfall, 2)} m³ · +${formatMoney(surcharge)}
+        Shortfall ${formatNumber(shortfall, 2)} m³
+        ${
+          appliedSurcharge > 0
+            ? `· +${formatMoney(appliedSurcharge)}`
+            : isApproved
+              ? `· No surcharge applied`
+              : `· +${formatMoney(calculatedSurcharge)}`
+        }
       </span>
     </div>
   `;
 }
+
   function renderMemoLink(order, maxLength = 70) {
     const memo = getMemo(order);
     if (!memo) return `<span class="subline">Memo: —</span>`;
@@ -2913,7 +3059,19 @@ function renderDeliveryGroupCard(group) {
           ? `
             <div class="delivery-group-warning">
               <strong>Shortfall ${formatNumber(shortfall, 2)} m³</strong>
-              <span>Additional transport charge: ${formatMoney(surcharge)}</span>
+              <span>
+  ${
+    isApproved
+      ? toNumber(stored?.applied_surcharge, 0) > 0
+        ? `Additional transport charge: ${formatMoney(
+            stored.applied_surcharge
+          )}`
+        : "No additional transport charge applied"
+      : `Additional transport charge: ${formatMoney(
+          surcharge
+        )}`
+  }
+</span>
               ${
                 waitingCouldHelp
                   ? `<span>Waiting orders could bring this delivery above the minimum.</span>`
@@ -2946,7 +3104,9 @@ function renderDeliveryGroupCard(group) {
                   ${stored?.approved_at ? ` · ${escapeHtml(formatDateTime(stored.approved_at))}` : ""}
                 </span>
                 <span class="subline">
-                  Applied surcharge: ${formatMoney(stored?.applied_surcharge || surcharge)}
+                  Applied surcharge: ${formatMoney(
+  stored?.applied_surcharge ?? surcharge
+)}
                 </span>
               </div>
             `
@@ -3760,6 +3920,13 @@ tbody.querySelectorAll("[data-upload-legacy-ack]").forEach(button => {
     style.id = "occGeneratedStyles";
 
 style.textContent = `
+
+.status-pill.pickup{
+  background:#fef9c3;
+  border:1px solid #eab308;
+  color:#854d0e;
+  font-weight:950;
+}
 
 .orders-top-scrollbar{
   width:100%;
@@ -4975,15 +5142,19 @@ async function saveManualDeliveryDate() {
     );
   }
 
-  const isCharterOrder =
-    normalize(order.transport_type) === "charter" ||
-    normalize(order.transport_type) === "fds" ||
-    normalize(order.status) === "export_for_charter" ||
-    !!order.carrier_vehicle_id ||
-    !!order.fds_collection_week ||
-    !!order.fds_collection_date ||
-    !!order.fds_job_ref;
+  const isPickupOrder =
+    isWarehousePickupOrder(order);
 
+  const isCharterOrder =
+    !isPickupOrder &&
+    (
+      normalize(order.transport_type) === "charter" ||
+      normalize(order.transport_type) === "fds" ||
+      normalize(order.status) === "export_for_charter" ||
+      !!order.fds_collection_week ||
+      !!order.fds_collection_date ||
+      !!order.fds_job_ref
+    );
   const payload = {
     confirmed_delivery_date: confirmedDate,
     expected_delivery_date: confirmedDate,
@@ -4992,7 +5163,12 @@ async function saveManualDeliveryDate() {
     last_activity_at: new Date().toISOString()
   };
 
-  if (isCharterOrder) {
+  if (isPickupOrder) {
+    payload.transport_type = "warehouse_pickup";
+    payload.status = "pickup_confirmed";
+    payload.transport_status = "pickup_confirmed";
+    payload.overall_status = "pickup_confirmed";
+  } else if (isCharterOrder) {
     payload.transport_type = "charter";
     payload.status = "export_for_charter";
   } else {
@@ -5025,19 +5201,26 @@ async function saveManualDeliveryDate() {
     order.id,
     `Confirmed delivery date set manually to ${confirmedDate}` +
       `${etaFrom ? `, ETA ${etaFrom}${etaTo ? ` - ${etaTo}` : ""}` : ""}` +
-      `${isCharterOrder ? ". FDS / charter assignment retained" : ""}.`,
+            `${
+        isPickupOrder
+          ? ". Warehouse pickup assignment retained"
+          : isCharterOrder
+            ? ". FDS / charter assignment retained"
+            : ""
+      }.`,
     "manual_delivery_date"
   );
 
   await loadOrders();
 
   showToast(
-    isCharterOrder
-      ? "Confirmed delivery date saved. FDS assignment retained."
-      : "Confirmed delivery date saved. Lifecycle moved to Planned / Transport.",
+    isPickupOrder
+      ? "Pickup date saved. Warehouse pickup assignment retained."
+      : isCharterOrder
+        ? "Confirmed delivery date saved. FDS assignment retained."
+        : "Confirmed delivery date saved. Lifecycle moved to Planned / Transport.",
     "ok"
-  );
-}
+  );}
 
   function safeFileName(name) {
     return String(name || "file")

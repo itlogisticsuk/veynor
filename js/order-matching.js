@@ -491,12 +491,56 @@ function productWeight(product) {
     const lineSummaries = lines.map(line => {
       const product = line.products || {};
       const qty = toNumber(line.quantity_ordered, 0);
-      const allocs = getLineAllocations(line);
+const allocs = getLineAllocations(line);
 const setAllocs = getUniqueStockSetAllocations(line);
-const allocCount = setAllocs.length;
-const matchedColli = setAllocs.reduce((sum, alloc) => sum + allocationColli(alloc), 0);
-const missing = Math.max(0, qty - allocCount);
 
+const isHardStock =
+  normalize(line.line_type) === "hard_stock";
+
+const hardMatchedQuantity = Math.max(
+  0,
+  Math.round(
+    toNumber(
+      line.matched_quantity ||
+      line.quantity_allocated,
+      0
+    )
+  )
+);
+
+const allocCount = isHardStock
+  ? Math.min(qty, hardMatchedQuantity)
+  : setAllocs.length;
+
+const matchedColli = isHardStock
+  ? Math.max(
+      0,
+      Math.round(
+        toNumber(
+          line.total_packages,
+          allocCount *
+            Math.max(
+              1,
+              Math.round(
+                toNumber(
+                  line.packages_per_unit,
+                  1
+                )
+              )
+            )
+        )
+      )
+    )
+  : setAllocs.reduce(
+      (sum, alloc) =>
+        sum + allocationColli(alloc),
+      0
+    );
+
+const missing = Math.max(
+  0,
+  qty - allocCount
+);
       const sku = getLineSku(line);
       const hasLinkedProduct = Boolean(line.product_id || product.id || sku);
 
@@ -658,15 +702,18 @@ matched = matched;
           description,
           quantity_ordered,
           quantity_allocated,
-          quantity_shipped,
-          unit_volume_m3,
-          unit_weight_kg,
-          total_volume_m3,
-          total_line_volume_m3,
-          total_line_weight_kg,
-          matched_quantity,
-          matched_volume_m3,
-          matched_weight_kg,
+        quantity_shipped,
+unit_volume_m3,
+unit_weight_kg,
+total_volume_m3,
+total_line_volume_m3,
+total_line_weight_kg,
+line_type,
+packages_per_unit,
+total_packages,
+matched_quantity,
+matched_volume_m3,
+matched_weight_kg,
           tariff_storage,
           tariff_admin,
           tariff_handling,

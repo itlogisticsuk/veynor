@@ -1246,12 +1246,24 @@ showToast(
 
     const pkg = parsePackageInfo(value);
 
-    if (pkg) {
-      await bookInboundLoosePackage(product, pkg, byId("manualQty")?.value || 1);
-      return;
-    }
+/*
+ * 1/1 is already a complete product.
+ * Only multi-package products should use
+ * the loose-package booking routine.
+ */
+if (pkg && pkg.package_total > 1) {
+  await bookInboundLoosePackage(
+    product,
+    pkg,
+    byId("manualQty")?.value || 1
+  );
+  return;
+}
 
-    await bookInboundCompleteProducts(product, byId("manualQty")?.value || 1);
+await bookInboundCompleteProducts(
+  product,
+  byId("manualQty")?.value || 1
+);
   }
 
   function renderInboundHistory() {

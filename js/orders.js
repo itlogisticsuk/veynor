@@ -435,27 +435,72 @@ function statusPillStyle(value, order = {}) {
   const status = normalize(value);
   const transport = normalize(order.transport_type);
 
-  if (status === "export_for_charter" || transport === "charter") {
+  if (
+    transport === "warehouse_pickup" ||
+    status === "awaiting_pickup" ||
+    status === "pickup_confirmed"
+  ) {
+    return 'style="background:#fef9c3;color:#854d0e;border-color:#fde047;"';
+  }
+
+  if (
+    status === "export_for_charter" ||
+    transport === "charter"
+  ) {
     return 'style="background:#fff7ed;color:#c2410c;border-color:#fed7aa;"';
   }
 
-  if (transport === "own_transport" || status === "planned") {
+  if (
+    transport === "own_transport" ||
+    status === "planned"
+  ) {
     return 'style="background:#dcfce7;color:#15803d;border-color:#bbf7d0;"';
   }
 
-  if (status === "ready_for_planning" || status === "ready_for_picking") {
+  if (
+    status === "ready_for_planning" ||
+    status === "ready_for_picking"
+  ) {
     return 'style="background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe;"';
   }
 
   return "";
 }
+function transportPillClass(value) {
+  const v = normalize(value || "unassigned");
 
-  function transportPillClass(value) {
-    const v = normalize(value || "unassigned");
-    if (v === "own_transport") return "transport-own";
-    if (v === "charter") return "transport-charter";
-    return "transport-unassigned";
+  if (v === "own_transport") {
+    return "transport-own";
   }
+
+  if (v === "charter") {
+    return "transport-charter";
+  }
+
+  if (v === "warehouse_pickup") {
+    return "transport-pickup";
+  }
+
+  return "transport-unassigned";
+}
+
+function transportTypeLabel(value) {
+  const type = normalize(value);
+
+  if (type === "warehouse_pickup") {
+    return "PICK UP";
+  }
+
+  if (type === "own_transport") {
+    return "Own Transport";
+  }
+
+  if (type === "charter") {
+    return "FDS / Carrier";
+  }
+
+  return titleCase(value || "unassigned");
+}
 
   function getManualRouteDeliveryDate() {
     return byId("manualRouteDeliveryDate")?.value || selectedPlanningDate || todayIso();
@@ -666,21 +711,23 @@ async function loadOrders() {
       )
     `)
     .eq("company_id", cid)
-    .in("status", [
-      "ready_for_planning",
-      "ready_for_picking",
-      "planned",
-      "sent_to_driver",
-      "out_for_delivery",
-      "loaded",
-      "delivered",
-      "delivery_issue",
-      "partial_delivery",
-      "failed_delivery",
-      "not_delivered",
-      "returned",
-      "export_for_charter"
-    ])
+.in("status", [
+  "ready_for_planning",
+  "ready_for_picking",
+  "planned",
+  "sent_to_driver",
+  "out_for_delivery",
+  "loaded",
+  "delivered",
+  "delivery_issue",
+  "partial_delivery",
+  "failed_delivery",
+  "not_delivered",
+  "returned",
+  "export_for_charter",
+  "awaiting_pickup",
+  "pickup_confirmed"
+])
     .order("requested_delivery_date", {
       ascending: true,
       nullsFirst: false
@@ -1151,7 +1198,9 @@ const qty =
 
           <td>
             <span class="transport-pill ${transportPillClass(order.transport_type)}">
-              ${escapeHtml(titleCase(order.transport_type || "unassigned"))}
+              ${escapeHtml(
+  transportTypeLabel(order.transport_type)
+)}
             </span>
           </td>
 
@@ -1232,10 +1281,20 @@ window.visibleRoutesMapRows = selectedDateRoutes;
     window.activeVehiclesMapRows = activeVehicles;
     window.selectedOrderIdsForMap = [...selectedOrderIds];
     window.selectedRouteIdForMap = null;
-    window.orderMapFilters = {
-      ownTransportOnly: normalize(byId("filterTransport")?.value || "") === "own_transport",
-      charterOnly: normalize(byId("filterTransport")?.value || "") === "charter"
-    };
+    const selectedTransportFilter = normalize(
+  byId("filterTransport")?.value || ""
+);
+
+window.orderMapFilters = {
+  ownTransportOnly:
+    selectedTransportFilter === "own_transport",
+
+  charterOnly:
+    selectedTransportFilter === "charter",
+
+  warehousePickupOnly:
+    selectedTransportFilter === "warehouse_pickup"
+};
 
     if (window.OrdersMap?.reload) window.OrdersMap.reload();
     else if (typeof window.reloadOrdersMap === "function") window.reloadOrdersMap();
@@ -1248,7 +1307,14 @@ window.visibleRoutesMapRows = selectedDateRoutes;
     window.selectedOrderIdsForMap = [...selectedOrderIds];
 
 const planningOrders = allOrders.filter(order => {
-  if (normalize(order.transport_type) !== "charter") {
+  const transportType = normalize(
+    order.transport_type
+  );
+
+  if (
+    transportType !== "charter" &&
+    transportType !== "warehouse_pickup"
+  ) {
     return true;
   }
 
@@ -1263,22 +1329,29 @@ const planningOrders = allOrders.filter(order => {
   );
 });
 
-const filteredPlanningOrders = filteredOrders.filter(order => {
-  if (normalize(order.transport_type) !== "charter") {
-    return true;
-  }
+const filteredPlanningOrders =
+  filteredOrders.filter(order => {
+    const transportType = normalize(
+      order.transport_type
+    );
 
-  const planningDate =
-    order.planned_route_date ||
-    order.expected_delivery_date ||
-    "";
+    if (
+      transportType !== "charter" &&
+      transportType !== "warehouse_pickup"
+    ) {
+      return true;
+    }
 
-  return (
-    !planningDate ||
-    planningDate === selectedPlanningDate
-  );
-});
+    const planningDate =
+      order.planned_route_date ||
+      order.expected_delivery_date ||
+      "";
 
+    return (
+      !planningDate ||
+      planningDate === selectedPlanningDate
+    );
+  });
 window.VeynorPlannerData = {
   companyId,
   allOrders: planningOrders,
@@ -1433,6 +1506,256 @@ function openCarrierConfirmModal() {
     await assignSelectedToCarrierNoRoute(date);
   });
 }
+
+function openWarehousePickupConfirmModal() {
+  const selectedIds = [...selectedOrderIds];
+
+  if (!selectedIds.length) {
+    showToast(
+      "Select at least one order first.",
+      "err"
+    );
+    return;
+  }
+
+  const vehicle = getSelectedVehicle();
+
+  if (!vehicle || !isWarehousePickupVehicle(vehicle)) {
+    showToast(
+      "Select PICK UP WAREHOUSE first.",
+      "err"
+    );
+    return;
+  }
+
+  const selectedOrders = selectedIds
+    .map(id => getOrderById(id))
+    .filter(Boolean);
+
+  const volume = selectedOrders.reduce(
+    (sum, order) => sum + getOrderVolume(order),
+    0
+  );
+
+  const colli = selectedOrders.reduce(
+    (sum, order) => sum + getOrderColli(order),
+    0
+  );
+
+  const revenue = selectedOrders.reduce(
+    (sum, order) => sum + getOrderRevenue(order),
+    0
+  );
+
+  closePlanningModal();
+
+  const modal = document.createElement("div");
+  modal.id = "planningConfirmModal";
+
+  modal.innerHTML = `
+    <div
+      style="
+        position:fixed;
+        inset:0;
+        background:rgba(15,23,42,.55);
+        z-index:99999;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:20px;
+      "
+    >
+      <div
+        style="
+          width:min(560px,100%);
+          background:#fff;
+          border-radius:18px;
+          box-shadow:0 24px 70px rgba(15,23,42,.32);
+          overflow:hidden;
+        "
+      >
+        <div
+          style="
+            padding:18px 20px;
+            border-bottom:1px solid var(--border);
+            background:#fefce8;
+          "
+        >
+          <h2
+            style="
+              margin:0;
+              font-size:18px;
+              font-weight:950;
+              color:#713f12;
+            "
+          >
+            Confirm Warehouse Pickup
+          </h2>
+
+          <p
+            style="
+              margin:6px 0 0;
+              color:#854d0e;
+              font-size:12.5px;
+            "
+          >
+            Assign selected orders to PICK UP WAREHOUSE
+            without creating a transport route.
+          </p>
+        </div>
+
+        <div
+          style="
+            padding:18px 20px;
+            display:grid;
+            gap:14px;
+          "
+        >
+          <div class="field">
+            <label>Expected pickup date</label>
+
+            <input
+              id="modalPickupDate"
+              class="input"
+              type="date"
+              value="${escapeHtml(
+                getManualRouteDeliveryDate()
+              )}"
+            >
+          </div>
+
+          <div
+            style="
+              border:1px solid #fde047;
+              border-radius:14px;
+              padding:14px;
+              background:#fef9c3;
+              display:grid;
+              gap:8px;
+              color:#713f12;
+            "
+          >
+            <strong>
+              ${escapeHtml(
+                vehicle.name ||
+                vehicle.vehicle_name ||
+                "PICK UP WAREHOUSE"
+              )}
+            </strong>
+
+            <div>
+              Action:
+              <strong>Assign for customer collection</strong>
+            </div>
+
+            <div>
+              Route creation:
+              <strong>No route will be created</strong>
+            </div>
+
+            <div>
+              Driver:
+              <strong>No driver required</strong>
+            </div>
+
+            <div>
+              Status:
+              <strong>Awaiting Pickup</strong>
+            </div>
+          </div>
+
+          <div
+            style="
+              display:grid;
+              grid-template-columns:repeat(3,1fr);
+              gap:10px;
+            "
+          >
+            <div class="mini-card">
+              <div class="mini-label">Orders</div>
+              <div class="mini-value">
+                ${formatNumber(selectedOrders.length)}
+              </div>
+            </div>
+
+            <div class="mini-card">
+              <div class="mini-label">Packages</div>
+              <div class="mini-value">
+                ${formatNumber(colli)}
+              </div>
+            </div>
+
+            <div class="mini-card">
+              <div class="mini-label">Volume</div>
+              <div class="mini-value">
+                ${formatNumber(volume, 2)} m³
+              </div>
+            </div>
+          </div>
+
+          <div class="mini-card">
+            <div class="mini-label">Revenue</div>
+            <div class="mini-value">
+              ${formatMoney(revenue)}
+            </div>
+          </div>
+        </div>
+
+        <div
+          style="
+            padding:14px 20px;
+            border-top:1px solid var(--border);
+            display:flex;
+            justify-content:flex-end;
+            gap:10px;
+            background:#fff;
+          "
+        >
+          <button
+            id="modalCancelPlanning"
+            class="planner-btn"
+            type="button"
+          >
+            Cancel
+          </button>
+
+          <button
+            id="modalConfirmPickup"
+            class="planner-btn primary"
+            type="button"
+          >
+            Assign to Pickup
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  byId("modalCancelPlanning")
+    ?.addEventListener(
+      "click",
+      closePlanningModal
+    );
+
+  byId("modalConfirmPickup")
+    ?.addEventListener(
+      "click",
+      async () => {
+        const date =
+          byId("modalPickupDate")?.value ||
+          getManualRouteDeliveryDate();
+
+        closePlanningModal();
+
+        await assignSelectedToWarehousePickup(
+          date
+        );
+      }
+    );
+}
+
 
 async function openPlanningConfirmModal() {
   const selectedIds = [...selectedOrderIds];
@@ -1633,18 +1956,214 @@ async function exportSelectedForCharter() {
   }
 }
 
-function isSelectedVehicleCarrier() {
-  const vehicle = activeVehicles.find(
+async function assignSelectedToWarehousePickup(
+  pickupDate = null
+) {
+  try {
+    const selectedIds = [...selectedOrderIds];
+
+    if (!selectedIds.length) {
+      showToast(
+        "Select at least one order first.",
+        "err"
+      );
+      return;
+    }
+
+    if (!selectedVehicleId) {
+      showToast(
+        "Select PICK UP WAREHOUSE first.",
+        "err"
+      );
+      return;
+    }
+
+    const vehicle = getSelectedVehicle();
+
+    if (
+      !vehicle ||
+      !isWarehousePickupVehicle(vehicle)
+    ) {
+      showToast(
+        "Selected resource is not PICK UP WAREHOUSE.",
+        "err"
+      );
+      return;
+    }
+
+    const cid = await getCompanyId();
+    const now = new Date().toISOString();
+
+    /*
+     * A date is optional. No date means pickup date pending.
+     */
+    const date = pickupDate || null;
+
+    const updatePayload = {
+      transport_type: "warehouse_pickup",
+
+      status: "awaiting_pickup",
+      transport_status: "awaiting_pickup",
+      overall_status: "awaiting_pickup",
+
+      /*
+       * Stock remains complete while awaiting collection.
+       */
+      warehouse_status: "stock_complete",
+
+      route_id: null,
+      carrier_vehicle_id: selectedVehicleId,
+
+      planned_route_date: null,
+
+      /*
+       * Reuse expected_delivery_date for now so existing
+       * date displays can still show the expected pickup date.
+       */
+      expected_delivery_date: date,
+      confirmed_delivery_date: null,
+
+      driver_user_id: null,
+      driver_profile_id: null,
+      driver_name: null,
+      driver_email: null,
+
+      delivery_eta_from: null,
+      delivery_eta_to: null,
+      delivery_eta_status: date
+        ? "pickup_expected"
+        : "pickup_pending",
+
+      /*
+       * Clear FDS-specific values in case an order was
+       * previously assigned to FDS.
+       */
+      fds_collection_date: null,
+      fds_collection_week: null,
+      fds_job_ref: null,
+      fds_eta_label: null,
+      fds_status: null,
+
+      last_activity_at: now
+    };
+
+    const { error } = await client
+      .from("orders")
+      .update(updatePayload)
+      .eq("company_id", cid)
+      .in("id", selectedIds);
+
+    if (error) throw error;
+
+    /*
+     * Write an activity entry for every selected order.
+     */
+    const activityRows = selectedIds.map(orderId => ({
+      company_id: cid,
+      order_id: orderId,
+      activity_type: "warehouse_pickup_assigned",
+      old_status: null,
+      new_status: "awaiting_pickup",
+      description: date
+        ? `Order assigned to warehouse pickup. Expected pickup date: ${date}.`
+        : "Order assigned to warehouse pickup. Pickup date pending.",
+      created_at: now
+    }));
+
+    const { error: activityError } = await client
+      .from("order_activity_log")
+      .insert(activityRows);
+
+    if (activityError) {
+      console.warn(
+        "[orders.js] Pickup activity log skipped:",
+        activityError.message
+      );
+    }
+
+    selectedOrderIds.clear();
+    selectedOrderId = null;
+
+    await refreshAll();
+
+    showToast(
+      `${selectedIds.length} order(s) assigned to PICK UP WAREHOUSE.`,
+      "ok"
+    );
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Could not assign orders to warehouse pickup.",
+      "err"
+    );
+  }
+}
+
+
+function getSelectedVehicle() {
+  return activeVehicles.find(
     row =>
       String(row.id) ===
       String(selectedVehicleId)
+  ) || null;
+}
+
+function isWarehousePickupVehicle(vehicle) {
+  if (!vehicle) return false;
+
+  const technicalType = normalize(
+    vehicle.transport_mode ||
+    vehicle.vehicle_type ||
+    vehicle.type ||
+    ""
   );
 
+  const vehicleText = [
+    vehicle.name,
+    vehicle.vehicle_name,
+    vehicle.vehicle_code,
+    vehicle.registration
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    technicalType === "warehouse_pickup" ||
+    technicalType === "pickup_warehouse" ||
+    technicalType === "pick_up_warehouse" ||
+    vehicleText.includes("pick up warehouse") ||
+    vehicleText.includes("pickup warehouse")
+  );
+}
+
+function isSelectedVehicleWarehousePickup() {
+  return isWarehousePickupVehicle(
+    getSelectedVehicle()
+  );
+}
+
+function isSelectedVehicleCarrier() {
+  const vehicle = getSelectedVehicle();
+
+  if (!vehicle) return false;
+
+  /*
+   * Warehouse pickup is a virtual resource,
+   * but must not be handled as FDS/carrier.
+   */
+  if (isWarehousePickupVehicle(vehicle)) {
+    return false;
+  }
+
   return normalize(
-    vehicle?.vehicle_type ||
-    vehicle?.type
+    vehicle.vehicle_type ||
+    vehicle.type
   ) === "carrier";
 }
+
 async function assignSelectedToCarrierNoRoute(carrierDate = null) {
   try {
     const selectedIds = [...selectedOrderIds];
@@ -2307,15 +2826,20 @@ byId("planningCalendarBtn")?.addEventListener("click", openPlanningCalendarModal
       }
     });
 
-byId("btnAutoPlanRoutes")?.addEventListener("click", () => {
-  if (isSelectedVehicleCarrier()) {
-    openCarrierConfirmModal();
-    return;
-  }
+byId("btnAutoPlanRoutes")
+  ?.addEventListener("click", () => {
+    if (isSelectedVehicleWarehousePickup()) {
+      openWarehousePickupConfirmModal();
+      return;
+    }
 
-  openPlanningConfirmModal();
-});
+    if (isSelectedVehicleCarrier()) {
+      openCarrierConfirmModal();
+      return;
+    }
 
+    openPlanningConfirmModal();
+  });
     byId("btnExportCharter")?.addEventListener("click", exportSelectedForCharter);
 
     byId("btnFitUkMap")?.addEventListener("click", () => {
@@ -2375,6 +2899,11 @@ window.addEventListener("veynor:map-send-to-planner", async event => {
   renderOrdersTable();
   notifySelectionChanged();
   notifyDataChanged();
+
+    if (isSelectedVehicleWarehousePickup()) {
+    openWarehousePickupConfirmModal();
+    return;
+  }
 
   if (isSelectedVehicleCarrier()) {
     openCarrierConfirmModal();

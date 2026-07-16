@@ -169,6 +169,141 @@
     );
   }
 
+function getOrderStorageRevenue(row) {
+  return toNumber(
+    row?.total_storage_tariff ??
+    row?.storage_revenue_gbp ??
+    row?.warehouse_revenue_gbp,
+    0
+  );
+}
+
+function getOrderHandlingRevenue(row) {
+  return toNumber(
+    row?.total_handling_tariff ??
+    row?.handling_revenue_gbp,
+    0
+  );
+}
+
+function getOrderAdminRevenue(row) {
+  return toNumber(
+    row?.total_admin_tariff ??
+    row?.admin_revenue_gbp,
+    0
+  );
+}
+
+function getOrderPickingRevenue(row) {
+  return toNumber(
+    row?.total_picking_tariff ??
+    row?.picking_revenue_gbp,
+    0
+  );
+}
+
+function getOrderWarehouseRevenue(row) {
+  return (
+    getOrderStorageRevenue(row) +
+    getOrderHandlingRevenue(row) +
+    getOrderAdminRevenue(row) +
+    getOrderPickingRevenue(row)
+  );
+}
+
+function getOrderTransportRevenue(row) {
+  return toNumber(
+    row?.total_transport_tariff ??
+    row?.transport_revenue_gbp ??
+    row?.transport_charge_gbp,
+    0
+  );
+}
+
+function getOrderCustomerTotal(row) {
+  return toNumber(
+    row?.total_customer_charge ??
+    row?.customer_charge_gbp ??
+    row?.estimated_revenue_gbp ??
+    row?.revenue_gbp,
+    getOrderWarehouseRevenue(row) +
+      getOrderTransportRevenue(row)
+  );
+}
+
+function getOrderProductCount(row) {
+  const lines = Array.isArray(row?.order_lines)
+    ? row.order_lines
+    : [];
+
+  if (lines.length) {
+    return lines.reduce((sum, line) => {
+      return sum + Math.max(
+        0,
+        Math.round(
+          toNumber(
+            line.quantity_ordered ??
+            line.quantity,
+            0
+          )
+        )
+      );
+    }, 0);
+  }
+
+  return Math.max(
+    0,
+    Math.round(
+      toNumber(
+        row?.total_products ??
+        row?.product_quantity ??
+        row?.total_quantity,
+        0
+      )
+    )
+  );
+}
+
+function getOrderWeight(row) {
+  return toNumber(
+    row?.total_order_weight_kg ??
+    row?.planning_weight_kg ??
+    row?.matched_weight_kg ??
+    row?.weight_kg,
+    0
+  );
+}
+
+function getOrderRequestedDate(row) {
+  const value =
+    row?.requested_delivery_date ||
+    row?.delivery_date ||
+    row?.due_date ||
+    null;
+
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleDateString("en-GB");
+}
+
+function getOrderStatusLabel(row) {
+  return String(
+    row?.derived_lifecycle_status ||
+    row?.overall_status ||
+    row?.warehouse_status ||
+    row?.status ||
+    "—"
+  )
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
   function getRetailerName(row) {
     return (
       row?.retailer_name ||
@@ -252,14 +387,15 @@ function getMarkerFillColor(row) {
     return "#dc2626"; // Red
   }
 
-  // Delivery Groups (shared with OCC)
-  const deliveryGroups = window.VeynorDeliveryGroups;
+  // Warehouse pickup
+  if (isWarehousePickupOrder(row)) {
+    return "#eab308"; // Yellow
+  }
 
-// Minimum delivery approval required
-if (row.belowMinimumVolume === true) {
-  return "#7c3aed"; // Purple
-}
-
+  // Minimum delivery approval required
+  if (row.belowMinimumVolume === true) {
+    return "#7c3aed"; // Purple
+  }
   // Planned on own transport
   if (hasRoute && transport === "own_transport") {
     return "#16a34a"; // Green
@@ -327,22 +463,502 @@ if (!hasRoute && transport === "charter") {
     });
   }
 
-  function buildOrderTooltip(row) {
-    const lez = isLowEmissionZone(row);
-    const under75 = isUnder75Tons(row);
+function getOrderGroupKey(row) {
+  const lat = getLatitude(row);
+  const lng = getLongitude(row);
 
-    return `
-      <div style="display:grid;gap:4px;min-width:210px;">
-        <strong>${escapeHtml(row.order_number || "Order")}</strong>
-        <div>${escapeHtml(getProductOwnerName(row))}</div>
-        <div>${escapeHtml(getRetailerName(row))}</div>
-        <div>${escapeHtml(row.delivery_city || "—")} · ${escapeHtml(row.delivery_postcode || "—")}</div>
-        <div>${formatNumber(getOrderColli(row))} colli · ${formatNumber(getOrderVolume(row), 2)} m³</div>
-        <div>${escapeHtml((row.transport_type || "unassigned").replaceAll("_", " "))}</div>
-        <div>LEZ: ${lez ? "Yes" : "No"} · 7.5t zone: ${under75 ? "Yes" : "No"}</div>
-      </div>
-    `;
+  return [
+    Number(lat).toFixed(5),
+    Number(lng).toFixed(5),
+    String(row.delivery_postcode || "")
+      .toUpperCase()
+      .replace(/\s+/g, "")
+  ].join("|");
+}
+
+function groupOrdersByLocation(orders) {
+  const groups = new Map();
+
+  (orders || []).forEach(order => {
+    const key = getOrderGroupKey(order);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        latitude: getLatitude(order),
+        longitude: getLongitude(order),
+        orders: []
+      });
+    }
+
+    groups.get(key).orders.push(order);
+  });
+
+  return [...groups.values()];
+}
+
+function getGroupOrders(group) {
+  return Array.isArray(group?.orders)
+    ? group.orders
+    : [];
+}
+
+function getGroupPackages(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderColli(order),
+    0
+  );
+}
+
+function getGroupVolume(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderVolume(order),
+    0
+  );
+}
+
+function getGroupWeight(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderWeight(order),
+    0
+  );
+}
+
+function getGroupWarehouseRevenue(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderWarehouseRevenue(order),
+    0
+  );
+}
+
+function getGroupTransportRevenue(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderTransportRevenue(order),
+    0
+  );
+}
+
+function getGroupCustomerTotal(group) {
+  return getGroupOrders(group).reduce(
+    (sum, order) => sum + getOrderCustomerTotal(order),
+    0
+  );
+}
+
+function isFdsOrder(order) {
+  return (
+    normalize(order.transport_type) === "charter" ||
+    normalize(order.status) === "export_for_charter" ||
+    !!order.fds_collection_week ||
+    !!order.fds_collection_date ||
+    !!order.fds_job_ref
+  );
+}
+
+function isWarehousePickupOrder(order) {
+  const transportType = normalize(
+    order?.transport_type ||
+    order?.transport_mode ||
+    ""
+  );
+
+  const vehicleText = [
+    order?.carrier_vehicle_name,
+    order?.vehicle_name,
+    order?.assigned_vehicle_name,
+    order?.vehicles?.name,
+    order?.carrier_vehicles?.name,
+    order?.carrier_vehicle?.name,
+    order?.vehicle_code,
+    order?.carrier_vehicle_code
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    transportType === "warehouse_pickup" ||
+    transportType === "pickup_warehouse" ||
+    transportType === "pick_up_warehouse" ||
+    vehicleText.includes("pick up warehouse") ||
+    vehicleText.includes("pickup warehouse")
+  );
+}
+
+function getGroupPickupOrders(group) {
+  return getGroupOrders(group).filter(
+    isWarehousePickupOrder
+  );
+}
+
+function getGroupFdsOrders(group) {
+  return getGroupOrders(group).filter(isFdsOrder);
+}
+
+function getGroupDeliveryDate(group) {
+  const dates = getGroupOrders(group)
+    .map(order =>
+      order.expected_delivery_date ||
+      order.confirmed_delivery_date ||
+      order.planned_route_date ||
+      null
+    )
+    .filter(Boolean)
+    .map(value => new Date(value))
+    .filter(date => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a - b);
+
+  return dates[0] || null;
+}
+
+function formatMapDate(value) {
+  if (!value) return "Date pending";
+
+  const date = value instanceof Date
+    ? value
+    : new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Date pending";
   }
+
+  return date.toLocaleDateString("en-GB");
+}
+
+function getGroupFdsWeek(group) {
+  const weeks = getGroupFdsOrders(group)
+    .map(order => Math.round(toNumber(order.fds_collection_week, 0)))
+    .filter(week => week > 0);
+
+  return weeks.length ? weeks[0] : null;
+}
+
+  function buildOrderTooltip(row) {
+  const warehouseRevenue =
+    getOrderWarehouseRevenue(row);
+
+  const transportRevenue =
+    getOrderTransportRevenue(row);
+
+  const customerTotal =
+    getOrderCustomerTotal(row);
+
+  const products =
+    getOrderProductCount(row);
+
+  const packages =
+    getOrderColli(row);
+
+  const volume =
+    getOrderVolume(row);
+
+  const weight =
+    getOrderWeight(row);
+
+  const transportType = String(
+    row.transport_type || "unassigned"
+  ).replaceAll("_", " ");
+
+  return `
+    <div class="order-map-hover-card">
+
+      <div class="order-map-hover-head">
+        <div>
+          <strong class="order-map-hover-order">
+            ${escapeHtml(row.order_number || "Order")}
+          </strong>
+
+          <span class="order-map-hover-reference">
+            ACK: ${escapeHtml(
+              row.external_reference ||
+              row.ack_number ||
+              "—"
+            )}
+          </span>
+        </div>
+
+        <span class="order-map-hover-status">
+          ${escapeHtml(getOrderStatusLabel(row))}
+        </span>
+      </div>
+
+      <div class="order-map-hover-section">
+        <strong>
+          ${escapeHtml(getRetailerName(row))}
+        </strong>
+
+        <span>
+          ${escapeHtml(getProductOwnerName(row))}
+        </span>
+
+        <span>
+          ${escapeHtml(row.delivery_city || "—")}
+          ·
+          ${escapeHtml(row.delivery_postcode || "—")}
+        </span>
+      </div>
+
+      <div class="order-map-hover-grid">
+        <div>
+          <span>Products</span>
+          <strong>${formatNumber(products)}</strong>
+        </div>
+
+        <div>
+          <span>Packages</span>
+          <strong>${formatNumber(packages)}</strong>
+        </div>
+
+        <div>
+          <span>Volume</span>
+          <strong>${formatNumber(volume, 2)} m³</strong>
+        </div>
+
+        <div>
+          <span>Weight</span>
+          <strong>${formatNumber(weight, 1)} kg</strong>
+        </div>
+      </div>
+
+      <div class="order-map-hover-finance">
+        <div>
+          <span>Warehouse revenue</span>
+          <strong>${formatMoney(warehouseRevenue)}</strong>
+        </div>
+
+        <div>
+          <span>Transport revenue</span>
+          <strong>${formatMoney(transportRevenue)}</strong>
+        </div>
+
+        <div class="order-map-hover-total">
+          <span>Customer total</span>
+          <strong>${formatMoney(customerTotal)}</strong>
+        </div>
+      </div>
+
+      <div class="order-map-hover-footer">
+        <span>
+          Requested:
+          <strong>${escapeHtml(getOrderRequestedDate(row))}</strong>
+        </span>
+
+        <span>
+          Transport:
+          <strong>${escapeHtml(transportType)}</strong>
+        </span>
+
+        ${
+          row.routes?.route_code || row.route_code
+            ? `
+              <span>
+                Route:
+                <strong>
+                  ${escapeHtml(
+                    row.routes?.route_code ||
+                    row.route_code
+                  )}
+                </strong>
+              </span>
+            `
+            : ""
+        }
+
+        ${
+          row.routes?.driver_name || row.driver_name
+            ? `
+              <span>
+                Driver:
+                <strong>
+                  ${escapeHtml(
+                    row.routes?.driver_name ||
+                    row.driver_name
+                  )}
+                </strong>
+              </span>
+            `
+            : ""
+        }
+      </div>
+
+    </div>
+  `;
+}
+
+function buildOrderGroupTooltip(group) {
+   const orders = getGroupOrders(group);
+  const firstOrder = orders[0] || {};
+  const fdsOrders = getGroupFdsOrders(group);
+  const pickupOrders = getGroupPickupOrders(group);
+
+  const deliveryDate =
+    getGroupDeliveryDate(group);
+
+  const fdsWeek =
+    getGroupFdsWeek(group);
+
+  const orderLines = orders.map(order => `
+    <div class="order-map-group-order">
+      <span>
+        <strong>${escapeHtml(order.order_number || "Order")}</strong>
+        <small>
+          ACK: ${escapeHtml(order.external_reference || "—")}
+        </small>
+      </span>
+
+      <span>
+        ${formatNumber(getOrderColli(order))} pkg ·
+        ${formatNumber(getOrderVolume(order), 2)} m³
+      </span>
+    </div>
+  `).join("");
+
+  return `
+    <div class="order-map-hover-card order-map-group-card">
+
+      <div class="order-map-hover-head">
+        <div>
+          <strong class="order-map-hover-order">
+            ${formatNumber(orders.length)} orders
+          </strong>
+
+          <span class="order-map-hover-reference">
+            ${escapeHtml(getRetailerName(firstOrder))}
+          </span>
+        </div>
+
+                ${
+          pickupOrders.length
+            ? `
+              <span class="order-map-hover-status pickup">
+                PICK UP
+              </span>
+            `
+            : fdsOrders.length
+              ? `
+                <span class="order-map-hover-status fds">
+                  FDS Delivery
+                </span>
+              `
+              : `
+                <span class="order-map-hover-status">
+                  Own Transport
+                </span>
+              `
+        }
+      </div>
+
+      <div class="order-map-hover-section">
+        <strong>
+          ${escapeHtml(getRetailerName(firstOrder))}
+        </strong>
+
+        <span>
+          ${escapeHtml(getProductOwnerName(firstOrder))}
+        </span>
+
+        <span>
+          ${escapeHtml(firstOrder.delivery_city || "—")}
+          ·
+          ${escapeHtml(firstOrder.delivery_postcode || "—")}
+        </span>
+      </div>
+
+            ${
+        pickupOrders.length
+          ? `
+            <div class="order-map-pickup-delivery">
+              <strong>PICK UP WAREHOUSE</strong>
+
+              <span>
+                Pickup date:
+                <strong>
+                  ${
+                    deliveryDate
+                      ? escapeHtml(formatMapDate(deliveryDate))
+                      : "Pending"
+                  }
+                </strong>
+              </span>
+            </div>
+          `
+          : fdsOrders.length
+            ? `
+              <div class="order-map-fds-delivery">
+                <strong>
+                  ${fdsWeek ? `FDS Week ${fdsWeek}` : "FDS Delivery"}
+                </strong>
+
+                <span>
+                  Delivery date:
+                  <strong>${escapeHtml(formatMapDate(deliveryDate))}</strong>
+                </span>
+              </div>
+            `
+            : deliveryDate
+              ? `
+                <div class="order-map-fds-delivery">
+                  <span>
+                    Delivery date:
+                    <strong>${escapeHtml(formatMapDate(deliveryDate))}</strong>
+                  </span>
+                </div>
+              `
+              : ""
+      }
+
+      <div class="order-map-group-orders">
+        ${orderLines}
+      </div>
+
+      <div class="order-map-hover-grid">
+        <div>
+          <span>Orders</span>
+          <strong>${formatNumber(orders.length)}</strong>
+        </div>
+
+        <div>
+          <span>Packages</span>
+          <strong>${formatNumber(getGroupPackages(group))}</strong>
+        </div>
+
+        <div>
+          <span>Volume</span>
+          <strong>${formatNumber(getGroupVolume(group), 2)} m³</strong>
+        </div>
+
+        <div>
+          <span>Weight</span>
+          <strong>${formatNumber(getGroupWeight(group), 1)} kg</strong>
+        </div>
+      </div>
+
+      <div class="order-map-hover-finance">
+        <div>
+          <span>Warehouse revenue</span>
+          <strong>
+            ${formatMoney(getGroupWarehouseRevenue(group))}
+          </strong>
+        </div>
+
+        <div>
+          <span>Transport revenue</span>
+          <strong>
+            ${formatMoney(getGroupTransportRevenue(group))}
+          </strong>
+        </div>
+
+        <div class="order-map-hover-total">
+          <span>Customer total</span>
+          <strong>
+            ${formatMoney(getGroupCustomerTotal(group))}
+          </strong>
+        </div>
+      </div>
+
+    </div>
+  `;
+}
 
   function buildDepotTooltip(row) {
     return `
@@ -381,6 +997,233 @@ if (!hasRoute && transport === "charter") {
         min-width:260px;
         max-width:360px;
       }
+
+.order-map-hover-status.fds{
+  background:#fff7ed;
+  border-color:#fdba74;
+  color:#c2410c;
+}
+
+.order-map-hover-status.pickup{
+  background:#fef9c3;
+  border-color:#eab308;
+  color:#854d0e;
+}
+
+.order-map-pickup-delivery{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:9px 10px;
+  border:1px solid #eab308;
+  border-radius:10px;
+  background:#fef9c3;
+  color:#854d0e;
+}
+
+.order-map-pickup-delivery span{
+  color:#854d0e;
+}
+
+.order-map-fds-delivery{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:9px 10px;
+  border:1px solid #fdba74;
+  border-radius:10px;
+  background:#fff7ed;
+  color:#9a3412;
+}
+
+.order-map-fds-delivery span{
+  color:#9a3412;
+}
+
+.order-map-group-orders{
+  display:grid;
+  gap:5px;
+  max-height:145px;
+  overflow-y:auto;
+}
+
+.order-map-group-order{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  padding:7px 8px;
+  border:1px solid #e2e8f0;
+  border-radius:8px;
+  background:#fff;
+}
+
+.order-map-group-order > span:first-child{
+  display:grid;
+  gap:2px;
+}
+
+.order-map-group-order small{
+  color:#64748b;
+  font-size:9px;
+}
+
+.order-map-group-order > span:last-child{
+  color:#475569;
+  font-size:10px;
+  white-space:nowrap;
+}
+
+.order-map-hover-tooltip{
+  padding:0 !important;
+  border:0 !important;
+  border-radius:14px !important;
+  background:#fff !important;
+  box-shadow:
+    0 18px 45px rgba(15,23,42,.20) !important;
+}
+
+.order-map-hover-tooltip::before{
+  border-top-color:#fff !important;
+}
+
+.order-map-hover-card{
+  width:310px;
+  padding:14px;
+  display:grid;
+  gap:12px;
+  color:#0f172a;
+  font-size:11px;
+  line-height:1.35;
+}
+
+.order-map-hover-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  padding-bottom:10px;
+  border-bottom:1px solid #e2e8f0;
+}
+
+.order-map-hover-head > div{
+  display:grid;
+  gap:3px;
+}
+
+.order-map-hover-order{
+  font-size:15px;
+  font-weight:950;
+  color:#07152f;
+}
+
+.order-map-hover-reference{
+  color:#64748b;
+  font-size:10px;
+  font-weight:750;
+}
+
+.order-map-hover-status{
+  max-width:120px;
+  padding:4px 7px;
+  border-radius:999px;
+  background:#eff6ff;
+  border:1px solid #bfdbfe;
+  color:#1d4ed8;
+  font-size:9px;
+  font-weight:900;
+  text-align:center;
+}
+
+.order-map-hover-section{
+  display:grid;
+  gap:3px;
+}
+
+.order-map-hover-section > strong{
+  color:#07152f;
+  font-size:12px;
+}
+
+.order-map-hover-section > span{
+  color:#64748b;
+}
+
+.order-map-hover-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:7px;
+}
+
+.order-map-hover-grid > div{
+  display:grid;
+  gap:3px;
+  padding:8px;
+  border:1px solid #e2e8f0;
+  border-radius:9px;
+  background:#f8fafc;
+}
+
+.order-map-hover-grid span{
+  color:#64748b;
+  font-size:9px;
+  font-weight:850;
+  text-transform:uppercase;
+}
+
+.order-map-hover-grid strong{
+  color:#0f172a;
+  font-size:12px;
+}
+
+.order-map-hover-finance{
+  display:grid;
+  gap:6px;
+  padding:10px;
+  border:1px solid #dbeafe;
+  border-radius:10px;
+  background:#f8fbff;
+}
+
+.order-map-hover-finance > div{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.order-map-hover-finance span{
+  color:#475569;
+}
+
+.order-map-hover-finance strong{
+  color:#0f172a;
+}
+
+.order-map-hover-total{
+  margin-top:3px;
+  padding-top:7px;
+  border-top:1px solid #cbd5e1;
+  font-size:12px;
+}
+
+.order-map-hover-total strong{
+  color:#15803d;
+  font-weight:950;
+}
+
+.order-map-hover-footer{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:5px 12px;
+  padding-top:2px;
+  color:#64748b;
+}
+
+.order-map-hover-footer strong{
+  color:#334155;
+}
 
       .orders-map-control.compact{
         min-width:auto;
@@ -566,6 +1409,11 @@ if (!hasRoute && transport === "charter") {
     background:#f97316;
 }
 
+.legend-pickup{
+    border-radius:999px;
+    background:#eab308;
+}
+
 .legend-minimum{
     border-radius:999px;
     background:#7c3aed;
@@ -732,33 +1580,86 @@ if (!hasRoute && transport === "charter") {
     depotLayer.addLayer(marker);
   }
 
-  function renderOrders() {
-    if (!orderLayer || !getShowMarkers()) return;
+function renderOrders() {
+  if (!orderLayer || !getShowMarkers()) return;
 
-    getVisibleOrders().forEach(row => {
-      const lat = getLatitude(row);
-      const lng = getLongitude(row);
+  const groups = groupOrdersByLocation(
+    getVisibleOrders()
+  );
 
-      if (lat === null || lng === null) return;
+groups.forEach(group => {
+  const orders = getGroupOrders(group);
+  const firstOrder = orders[0];
 
-      const marker = L.marker([lat, lng], {
-        icon: buildOrderShapeIcon(row),
-        title: row.order_number || "Order"
-      });
+  if (!firstOrder) return;
 
-      marker.bindPopup(buildOrderTooltip(row));
+  /*
+   * Wanneer één van de orders op deze locatie
+   * geselecteerd is, gebruiken we die order voor
+   * de markerweergave. Hierdoor wordt de gezamenlijke
+   * marker zwart, ook als de geselecteerde order niet
+   * de eerste order in de groep is.
+   */
+  const selectedOrderInGroup = orders.find(order =>
+    selectedOrderIds.has(String(order.id))
+  );
 
-      marker.on("click", event => {
-        if (selectionMode) return;
-        L.DomEvent.stopPropagation(event);
-        applySelectionToIds([String(row.id)]);
-        reload();
-      });
+  const markerOrder =
+    selectedOrderInGroup ||
+    firstOrder;
 
-      orderLayer.addLayer(marker);
+  const lat = group.latitude;
+  const lng = group.longitude;
+    if (lat === null || lng === null) return;
+
+    const marker = L.marker(
+      [lat, lng],
+      {
+        icon: buildOrderShapeIcon(markerOrder),
+       title:
+  orders.length > 1
+    ? selectedOrderInGroup
+      ? `${selectedOrderInGroup.order_number} · ${orders.length} orders at this location`
+      : `${orders.length} orders`
+    : firstOrder.order_number || "Order"
+      }
+    );
+
+    marker.bindTooltip(
+      orders.length > 1
+        ? buildOrderGroupTooltip(group)
+        : buildOrderTooltip(firstOrder),
+      {
+        direction: lat > 55.2
+          ? "bottom"
+          : "top",
+
+        offset: lat > 55.2
+          ? [0, 14]
+          : [0, -12],
+
+        opacity: 1,
+        sticky: true,
+        interactive: false,
+        className: "order-map-hover-tooltip"
+      }
+    );
+
+    marker.on("click", event => {
+      if (selectionMode) return;
+
+      L.DomEvent.stopPropagation(event);
+
+      applySelectionToIds(
+        orders.map(order => String(order.id))
+      );
+
+      reload();
     });
-  }
 
+    orderLayer.addLayer(marker);
+  });
+}
   function buildRoutePolylinePoints(orderedStops, depot) {
     const points = [];
 
@@ -925,41 +1826,55 @@ allLatLngs.push(...points);
 function installLegendControl() {
   if (!map || legendControl) return;
 
-  legendControl = L.control({ position: "bottomright" });
+  legendControl = L.control({
+    position: "bottomright"
+  });
 
   legendControl.onAdd = function () {
-    const wrapper = L.DomUtil.create("div", "orders-map-legend");
+    const wrapper = L.DomUtil.create(
+      "div",
+      "orders-map-legend"
+    );
 
-   wrapper.innerHTML = `
-  <div class="orders-map-legend-title">Map legend</div>
+    wrapper.innerHTML = `
+      <div class="orders-map-legend-title">
+        Map legend
+      </div>
 
-  <div class="orders-map-legend-item">
-    <span class="legend-shape legend-circle"></span>
-    <span>Open order</span>
-  </div>
+      <div class="orders-map-legend-item">
+        <span class="legend-shape legend-circle"></span>
+        <span>Open order</span>
+      </div>
 
-  <div class="orders-map-legend-item">
-    <span class="legend-shape legend-own"></span>
-    <span>Own transport</span>
-  </div>
+      <div class="orders-map-legend-item">
+        <span class="legend-shape legend-own"></span>
+        <span>Own transport</span>
+      </div>
 
-  <div class="orders-map-legend-item">
-    <span class="legend-shape legend-charter"></span>
-    <span>FDS / Carrier</span>
-  </div>
+      <div class="orders-map-legend-item">
+        <span class="legend-shape legend-charter"></span>
+        <span>FDS / Carrier</span>
+      </div>
 
-  <div class="orders-map-legend-item">
-    <span class="legend-shape legend-minimum"></span>
-    <span>Approval required (&lt; 1.25 m³)</span>
-  </div>
-`;
+      <div class="orders-map-legend-item">
+        <span class="legend-shape legend-pickup"></span>
+        <span>Pick Up Warehouse</span>
+      </div>
+
+      <div class="orders-map-legend-item">
+        <span class="legend-shape legend-minimum"></span>
+        <span>Approval required (&lt; 1.25 m³)</span>
+      </div>
+    `;
 
     L.DomEvent.disableClickPropagation(wrapper);
+
     return wrapper;
   };
 
   legendControl.addTo(map);
 }
+
 function reload() {
   if (!map) return;
 

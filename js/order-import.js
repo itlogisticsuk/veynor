@@ -930,27 +930,59 @@ function findLine(lines, regex) {
   }
 
 function extractOrderNumber(lines, text) {
-
   const fullText = String(text || "");
 
-  // ACK1234
-  let match = fullText.match(/\b(ACK\d+)\b/i);
-  if (match) {
-    return match[1].toUpperCase();
-  }
-
-  // DIS1442
-  match = fullText.match(/\b(DIS\d+)\b/i);
-  if (match) {
-    return match[1].toUpperCase();
-  }
-
-  // ORDER # gevolgd door code
-  match = fullText.match(
-    /ORDER\s*#\s*[\r\n\s]*([A-Z]{2,}\d+)/i
+  /*
+   * Herken bekende Bellstone-referenties direct,
+   * ongeacht waar ze op de PDF staan.
+   *
+   * Voorbeelden:
+   * ACK1447
+   * REP1429
+   * DIS1442
+   */
+  let match = fullText.match(
+    /\b((?:ACK|REP|DIS)\s*-?\s*\d+)\b/i
   );
+
   if (match) {
-    return match[1].toUpperCase();
+    return match[1]
+      .replace(/\s+/g, "")
+      .replace("-", "")
+      .toUpperCase();
+  }
+
+  /*
+   * Alternatief: zoek op een regel met een datum
+   * gevolgd door het ordernummer.
+   *
+   * Voorbeeld:
+   * 01/07/2026 REP1429
+   */
+  match = fullText.match(
+    /\b\d{1,2}\/\d{1,2}\/\d{4}\s+([A-Z]{2,}\s*-?\s*\d+)\b/i
+  );
+
+  if (match) {
+    return match[1]
+      .replace(/\s+/g, "")
+      .replace("-", "")
+      .toUpperCase();
+  }
+
+  /*
+   * Algemene fallback voor ORDER #.
+   * Er mag eventueel eerst een datum staan.
+   */
+  match = fullText.match(
+    /ORDER\s*#(?:\s+\d{1,2}\/\d{1,2}\/\d{4})?\s+([A-Z]{2,}\s*-?\s*\d+)/i
+  );
+
+  if (match) {
+    return match[1]
+      .replace(/\s+/g, "")
+      .replace("-", "")
+      .toUpperCase();
   }
 
   return "";
