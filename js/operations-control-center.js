@@ -19,6 +19,7 @@ let showDeliveryGroups = false;
 let orderViewMode = "active";
 let editRemovedLineIds = new Set();
 let ackDownloadedOrderIds = new Set();
+let podDownloadedOrderIds = new Set();
 
   const selectedOrderIds = new Set();
   const expandedOrderIds = new Set();
@@ -500,6 +501,10 @@ function isAckDownloaded(order) {
   return ackDownloadedOrderIds.has(String(order.id));
 }
 
+function isPodDownloaded(order) {
+  return podDownloadedOrderIds.has(String(order.id));
+}
+
 async function loadAckDownloadStatus() {
   const cid = await getCompanyId();
 
@@ -542,6 +547,56 @@ async function loadAckDownloadStatus() {
       .map(String)
   );
 }
+
+async function loadPodDownloadStatus() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("portal_events")
+    .select(`
+      user_profile_id,
+      event_type,
+      metadata,
+      created_at
+    `)
+    .eq("company_id", cid)
+    .eq("event_type", "pod_downloaded");
+
+  if (error) {
+    console.warn(
+      "POD download status skipped:",
+      error.message
+    );
+
+    podDownloadedOrderIds = new Set();
+    return;
+  }
+
+  podDownloadedOrderIds = new Set(
+    (data || [])
+      .filter(row => {
+        const documentType = normalize(
+          row.metadata?.document_type ||
+          row.metadata?.doc_type ||
+          ""
+        );
+
+        const action = normalize(
+          row.metadata?.action ||
+          ""
+        );
+
+        return (
+          documentType === "pod" &&
+          action === "downloaded"
+        );
+      })
+      .map(row => row.metadata?.order_id)
+      .filter(Boolean)
+      .map(String)
+  );
+}
+
   function docStatus(order, type) {
     return getDoc(order, type)?.document_status || "not_generated";
   }
@@ -1406,6 +1461,7 @@ async function loadOrders() {
 await loadOwnerProfilesForMinimumRules();
 await loadStoredDeliveryGroups();
 await loadAckDownloadStatus();
+await loadPodDownloadStatus();
 
     let query = client
       .from("orders")
@@ -1939,15 +1995,49 @@ const docs = [
 function renderCompactDocuments(order) {
   const docs = getVisibleDocumentTypes(order);
   const total = docs.length;
-  const generated = docs.filter(([type]) => documentIsGenerated(order, type)).length;
 
-  const cls = generated === total ? "good" : generated > 0 ? "warn" : "bad";
+  const generated = docs.filter(([type]) =>
+    documentIsGenerated(order, type)
+  ).length;
+
+  const cls =
+    generated === total
+      ? "good"
+      : generated > 0
+        ? "warn"
+        : "bad";
 
   return `
     <div class="doc-compact">
-      <span class="doc-icon">📄</span>
-      <span class="doc-count ${cls}">${generated}/${total}</span>
-      ${isAckDownloaded(order) ? `<span class="ack-dot" title="ACK downloaded by customer"></span>` : ""}
+      <span class="doc-icon">
+        📄
+      </span>
+
+      <span class="doc-count ${cls}">
+        ${generated}/${total}
+      </span>
+
+      ${
+        isAckDownloaded(order)
+          ? `
+            <span
+              class="ack-dot"
+              title="ACK downloaded"
+            ></span>
+          `
+          : ""
+      }
+
+      ${
+        isPodDownloaded(order)
+          ? `
+            <span
+              class="pod-download-dot"
+              title="POD downloaded"
+            ></span>
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -2184,19 +2274,38 @@ function renderDeliveryGroupCell(order) {
 
   const stored = getStoredDeliveryGroup(group);
 
-  const readyVolume = toNumber(group.readyVolume, 0);
-  const minimumVolume = toNumber(group.minimumVolume, 1.25);
+  const orderVolume = round2(
+    getOrderVolumeM3(order)
+  );
+
+  const readyVolume = toNumber(
+    group.readyVolume,
+    0
+  );
+
+  const minimumVolume = toNumber(
+    group.minimumVolume,
+    1.25
+  );
+
   const shortfall = round2(
-    Math.max(0, minimumVolume - readyVolume)
+    Math.max(
+      0,
+      minimumVolume - readyVolume
+    )
   );
 
   const calculatedSurcharge = round2(
     shortfall *
-    toNumber(group.tariffPerM3, 55.20)
+    toNumber(
+      group.tariffPerM3,
+      55.20
+    )
   );
 
   const isApproved =
-    normalize(stored?.status) === "approved";
+    normalize(stored?.status) ===
+    "approved";
 
   const appliedSurcharge = isApproved
     ? round2(
@@ -2208,8 +2317,13 @@ function renderDeliveryGroupCell(order) {
   if (readyVolume <= 0) {
     return `
       <div class="delivery-group wait">
+        <span class="subline">
+          Order: ${formatNumber(orderVolume, 2)} m³
+        </span>
+
         <strong>
-          0.00 / ${formatNumber(minimumVolume, 2)} m³
+          0.00 /
+          ${formatNumber(minimumVolume, 2)} m³
         </strong>
 
         <span class="subline">
@@ -2222,6 +2336,10 @@ function renderDeliveryGroupCell(order) {
   if (shortfall <= 0) {
     return `
       <div class="delivery-group good">
+        <span class="subline">
+          Order: ${formatNumber(orderVolume, 2)} m³
+        </span>
+
         <strong>
           ✓ ${formatNumber(readyVolume, 2)} /
           ${formatNumber(minimumVolume, 2)} m³
@@ -2236,6 +2354,10 @@ function renderDeliveryGroupCell(order) {
 
   return `
     <div class="delivery-group warn">
+      <span class="subline">
+        Order: ${formatNumber(orderVolume, 2)} m³
+      </span>
+
       <strong>
         ${formatNumber(readyVolume, 2)} /
         ${formatNumber(minimumVolume, 2)} m³
@@ -2247,7 +2369,7 @@ function renderDeliveryGroupCell(order) {
           appliedSurcharge > 0
             ? `· +${formatMoney(appliedSurcharge)}`
             : isApproved
-              ? `· No surcharge applied`
+              ? "· No surcharge applied"
               : `· +${formatMoney(calculatedSurcharge)}`
         }
       </span>
@@ -2453,72 +2575,179 @@ function renderPortalDocAttrs(order, type, action = "downloaded", url = "") {
 }
 
 function renderDocumentAction(order, type, label) {
-  const doc = getDoc(order, type);
-  const status = doc?.document_status || "not_generated";
-  const url = type === "pod" ? getPodDocumentUrl(order) : doc?.file_url || "";
+  const normalizedType = normalize(type);
 
-if (url) {
+  const doc = getDoc(order, type);
+
+  const status =
+    doc?.document_status ||
+    "not_generated";
+
+  const url =
+    normalizedType === "pod"
+      ? getPodDocumentUrl(order)
+      : doc?.file_url || "";
+
   const ackDownloaded =
-    ["acknowledgement", "legacy_acknowledgement"].includes(normalize(type)) &&
+    [
+      "acknowledgement",
+      "legacy_acknowledgement"
+    ].includes(normalizedType) &&
     isAckDownloaded(order);
 
-console.log(
-    order.order_number,
-    type,
-    ackDownloaded
-);
+  const podDownloaded =
+    normalizedType === "pod" &&
+    isPodDownloaded(order);
 
-  return `
-<a
-  class="quick-action ${ackDownloaded ? "ack-downloaded" : ""}"
-  href="${escapeHtml(url)}"
-  ${["delivery_note", "delivery_labels", "supplier_packing_slip"].includes(normalize(type))
-    ? `target="_blank" rel="noopener" download="${escapeHtml(`${label}-${order.order_number || "order"}.pdf`)}"`
-    : `target="_blank" rel="noopener"`}
-  ${renderPortalDocAttrs(order, type, "downloaded", url)}
->
-      <span>${escapeHtml(label)}</span>
-      <span>${ackDownloaded ? "Downloaded" : "Download"}</span>
-    </a>
-  `;
-}
+  if (url) {
+    /*
+     * De POD-knop opent de volledige POD-pagina.
+     *
+     * Belangrijk:
+     * deze knop registreert zelf GEEN download.
+     * Alleen de echte Download-knop in pod.js
+     * mag het event pod_downloaded opslaan.
+     */
+    if (normalizedType === "pod") {
+      return `
+        <a
+          class="
+            quick-action
+            ${podDownloaded ? "pod-downloaded" : ""}
+          "
+          href="./pod.html?order_id=${escapeHtml(order.id)}"
+          target="_blank"
+          rel="noopener"
+        >
+          <span>
+            ${escapeHtml(label)}
+          </span>
 
-  if (type === "legacy_acknowledgement" && canGenerateDocuments()) {
+          <span>
+            ${
+              podDownloaded
+                ? "⬇ Downloaded"
+                : "Open POD"
+            }
+          </span>
+        </a>
+      `;
+    }
+
+    /*
+     * Alle andere bestaande documenten.
+     */
+    return `
+      <a
+        class="
+          quick-action
+          ${ackDownloaded ? "ack-downloaded" : ""}
+        "
+        href="${escapeHtml(url)}"
+
+        ${
+          [
+            "delivery_note",
+            "delivery_labels",
+            "supplier_packing_slip"
+          ].includes(normalizedType)
+            ? `
+              target="_blank"
+              rel="noopener"
+              download="${escapeHtml(
+                `${label}-${order.order_number || "order"}.pdf`
+              )}"
+            `
+            : `
+              target="_blank"
+              rel="noopener"
+            `
+        }
+
+        ${renderPortalDocAttrs(
+          order,
+          type,
+          "downloaded",
+          url
+        )}
+      >
+        <span>
+          ${escapeHtml(label)}
+        </span>
+
+        <span>
+          ${
+            ackDownloaded
+              ? "Downloaded"
+              : "Download"
+          }
+        </span>
+      </a>
+    `;
+  }
+
+  if (
+    normalizedType === "legacy_acknowledgement" &&
+    canGenerateDocuments()
+  ) {
     return `
       <button
         class="quick-action"
         type="button"
         data-upload-legacy-ack="${escapeHtml(order.id)}"
       >
-        <span>${escapeHtml(label)}</span>
-        <span>Upload PDF</span>
+        <span>
+          ${escapeHtml(label)}
+        </span>
+
+        <span>
+          Upload PDF
+        </span>
       </button>
     `;
   }
 
-  if (canGenerateDocuments() && type !== "supplier_packing_slip" && type !== "pod") {
+  if (
+    canGenerateDocuments() &&
+    normalizedType !== "supplier_packing_slip" &&
+    normalizedType !== "pod"
+  ) {
     return `
       <button
         class="quick-action"
         type="button"
         data-doc-action="${escapeHtml(type)}"
         data-order-id="${escapeHtml(order.id)}"
-        data-order-number="${escapeHtml(order.order_number || "")}"
+        data-order-number="${escapeHtml(
+          order.order_number || ""
+        )}"
       >
-        <span>${escapeHtml(label)}</span>
-        <span>Generate</span>
+        <span>
+          ${escapeHtml(label)}
+        </span>
+
+        <span>
+          Generate
+        </span>
       </button>
     `;
   }
 
   return `
-    <div class="quick-action" style="opacity:.7;">
-      <span>${escapeHtml(label)}</span>
-      <span>${escapeHtml(statusLabel(status))}</span>
+    <div
+      class="quick-action"
+      style="opacity:.7;"
+    >
+      <span>
+        ${escapeHtml(label)}
+      </span>
+
+      <span>
+        ${escapeHtml(statusLabel(status))}
+      </span>
     </div>
   `;
 }
-
 function renderDocumentsPanel(order) {
   const docs = getVisibleDocumentTypes(order);
   const photos = getPodPhotos(order);
@@ -3592,9 +3821,15 @@ if (!filteredOrders.length) {
             </button>
           </td>
 
-       <td>
-  <span class="order-ref">${escapeHtml(order.order_number || "—")}</span>
-  <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
+      <td>
+  <span class="order-ref">
+    ${escapeHtml(order.order_number || "—")}
+  </span>
+
+  <span class="subline">
+    PO: ${escapeHtml(order.purchase_order || "—")}
+  </span>
+
   ${isRetailerRole() ? "" : renderMemoLink(order, 55)}
 </td>
 
@@ -3843,17 +4078,6 @@ tbody.querySelectorAll("[data-doc-action]").forEach(button => {
   button.addEventListener("click", async event => {
     event.preventDefault();
     event.stopPropagation();
-
-tbody.querySelectorAll("[data-portal-doc-type='ack']").forEach(link => {
-  link.addEventListener("click", () => {
-    const orderId = link.getAttribute("data-order-id");
-
-    if (orderId) {
-      ackDownloadedOrderIds.add(String(orderId));
-      renderTable();
-    }
-  });
-});
 
     const orderId = button.getAttribute("data-order-id");
     const docType = button.getAttribute("data-doc-action");
@@ -4335,6 +4559,23 @@ style.textContent = `
     font-weight:950;
   }
 
+.quick-action.pod-downloaded{
+  background:#dcfce7 !important;
+  border:1px solid #86efac !important;
+  color:#166534 !important;
+  font-weight:700;
+}
+
+.quick-action.pod-downloaded span{
+  color:#166534 !important;
+  font-weight:700;
+}
+
+.quick-action.pod-downloaded span:last-child{
+  color:#047857 !important;
+  font-weight:950;
+}
+
   .ack-dot{
   display:inline-flex;
   width:10px;
@@ -4344,6 +4585,17 @@ style.textContent = `
   box-shadow:0 0 0 3px rgba(22,163,74,.16);
   margin-left:6px;
   vertical-align:middle;
+}
+
+.pod-download-dot{
+  display:inline-flex;
+  width:10px;
+  height:10px;
+  margin-left:6px;
+  vertical-align:middle;
+  border-radius:999px;
+  background:#2563eb;
+  box-shadow:0 0 0 3px rgba(37,99,235,.16);
 }
 
 /* ===== STOCK PRIORITY ===== */

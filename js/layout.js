@@ -30,7 +30,13 @@
     { href: "./operations-control-center.html", label: "Operations Control", icon: "control", group: "Orders", roles: ALL_ROLES },
 
     { href: "./orders.html", label: "Orders & Route Planner", icon: "truckRoute", group: "Planning", roles: TENANT_ROLES },
-
+{
+  href: "./service-jobs.html",
+  label: "Service Jobs",
+  icon: "serviceJob",
+  group: "Planning",
+  roles: TENANT_ROLES
+},
     { href: "./products.html", label: "Products", icon: "box", group: "Warehouse", roles: TENANT_ROLES },
     { href: "./scan.html", label: "Scan In / Out", icon: "scanner", group: "Warehouse", roles: TENANT_ROLES },
     { href: "./stock.html", label: "Current Stock", icon: "stock", group: "Warehouse", roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] },
@@ -55,6 +61,16 @@
     control: `<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg>`,
     truckRoute: `<svg viewBox="0 0 24 24"><path d="M3 8h11v8H3z"/><path d="M14 11h4l3 3v2h-7z"/><circle cx="7" cy="17" r="2"/><circle cx="18" cy="17" r="2"/></svg>`,
     box: `<svg viewBox="0 0 24 24"><path d="M12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>`,
+serviceJob: `
+<svg viewBox="0 0 24 24">
+  <path d="M5 6h10v8H5z"/>
+  <path d="M15 9h3l2 2v3h-5z"/>
+  <circle cx="8" cy="17" r="2"/>
+  <circle cx="18" cy="17" r="2"/>
+  <path d="M9 4v4"/>
+  <path d="M7 6h4"/>
+</svg>
+`,
     scanner: `<svg viewBox="0 0 24 24"><path d="M7 4h10a3 3 0 0 1 3 3v2H4V7a3 3 0 0 1 3-3z"/><path d="M8 9v8a4 4 0 0 0 8 0V9"/><path d="M10 13h4"/></svg>`,
     stock: `<svg viewBox="0 0 24 24"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><path d="M8 6v12"/></svg>`,
     paperPlane: `<svg viewBox="0 0 24 24"><path d="M21 4 3 11l7 3 3 7z"/><path d="M10 14 21 4"/></svg>`,

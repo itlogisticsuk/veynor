@@ -1,0 +1,2296 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+
+  <title>Service Jobs · Veynor</title>
+
+  <link
+    rel="stylesheet"
+    href="/css/theme.css"
+  />
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+
+  <style>
+    .service-jobs-page{
+      display:grid;
+      gap:18px;
+      min-width:0;
+      padding-bottom:40px;
+    }
+
+    .service-topbar{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:18px;
+      flex-wrap:wrap;
+      padding:18px 20px;
+      border:1px solid var(--border);
+      border-radius:18px;
+      background:#fff;
+      box-shadow:var(--shadow);
+    }
+
+    .service-topbar-copy{
+      min-width:0;
+    }
+
+    .service-eyebrow{
+      display:block;
+      margin-bottom:5px;
+      color:#1267ff;
+      font-size:10px;
+      font-weight:950;
+      letter-spacing:.1em;
+      text-transform:uppercase;
+    }
+
+    .service-topbar h1{
+      margin:0;
+      color:#07152f;
+      font-size:26px;
+      font-weight:950;
+      letter-spacing:-.04em;
+    }
+
+    .service-topbar p{
+      max-width:760px;
+      margin:6px 0 0;
+      color:var(--muted);
+      font-size:12.5px;
+      line-height:1.55;
+    }
+
+    .service-topbar-actions{
+      display:flex;
+      gap:9px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .service-btn{
+      min-height:40px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:7px;
+      padding:0 14px;
+      border:1px solid var(--border);
+      border-radius:11px;
+      background:#fff;
+      color:#07152f;
+      font-size:12px;
+      font-weight:900;
+      cursor:pointer;
+      transition:
+        transform .15s ease,
+        border-color .15s ease,
+        box-shadow .15s ease,
+        background .15s ease;
+    }
+
+    .service-btn:hover{
+      transform:translateY(-1px);
+      border-color:#93c5fd;
+      box-shadow:0 8px 18px rgba(15,23,42,.07);
+    }
+
+    .service-btn.primary{
+      border-color:#1267ff;
+      background:#1267ff;
+      color:#fff;
+    }
+
+    .service-btn.primary:hover{
+      border-color:#074bd1;
+      background:#074bd1;
+    }
+
+    .service-btn.success{
+      border-color:#16a34a;
+      background:#16a34a;
+      color:#fff;
+    }
+
+    .service-btn.danger{
+      border-color:#fecaca;
+      background:#fff1f2;
+      color:#b91c1c;
+    }
+
+    .service-btn:disabled{
+      opacity:.5;
+      cursor:not-allowed;
+      transform:none;
+      box-shadow:none;
+    }
+
+    .service-grid{
+      display:grid;
+      grid-template-columns:
+        minmax(320px, .72fr)
+        minmax(0, 1.55fr);
+      gap:18px;
+      align-items:start;
+    }
+
+    .service-sidebar{
+      display:grid;
+      gap:14px;
+      min-width:0;
+      position:sticky;
+      top:18px;
+    }
+
+    .service-main{
+      display:grid;
+      gap:18px;
+      min-width:0;
+    }
+
+    .service-card{
+      min-width:0;
+      padding:18px;
+      border:1px solid var(--border);
+      border-radius:18px;
+      background:#fff;
+      box-shadow:var(--shadow);
+    }
+
+    .service-card-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:14px;
+      margin-bottom:15px;
+    }
+
+    .service-card-head h2,
+    .service-card-head h3{
+      margin:0;
+      color:#07152f;
+      font-weight:950;
+      letter-spacing:-.025em;
+    }
+
+    .service-card-head h2{
+      font-size:18px;
+    }
+
+    .service-card-head h3{
+      font-size:16px;
+    }
+
+    .service-card-head p{
+      margin:5px 0 0;
+      color:var(--muted);
+      font-size:11.5px;
+      line-height:1.5;
+    }
+
+    .service-card-badge{
+      min-width:34px;
+      min-height:28px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:0 9px;
+      border:1px solid #bfdbfe;
+      border-radius:999px;
+      background:#eff6ff;
+      color:#1d4ed8;
+      font-size:10px;
+      font-weight:950;
+      white-space:nowrap;
+    }
+
+    .service-filter-grid{
+      display:grid;
+      gap:10px;
+    }
+
+    .service-field{
+      display:grid;
+      gap:6px;
+      min-width:0;
+    }
+
+    .service-field label{
+      color:#475569;
+      font-size:10px;
+      font-weight:950;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+
+    .service-input,
+    .service-select,
+    .service-textarea{
+      width:100%;
+      min-width:0;
+      border:1px solid var(--border);
+      border-radius:11px;
+      background:#fff;
+      color:#07152f;
+      font:inherit;
+      font-size:12.5px;
+      outline:none;
+      transition:
+        border-color .15s ease,
+        box-shadow .15s ease;
+    }
+
+    .service-input,
+    .service-select{
+      min-height:40px;
+      padding:0 11px;
+    }
+
+    .service-textarea{
+      min-height:92px;
+      padding:10px 11px;
+      resize:vertical;
+      line-height:1.5;
+    }
+
+    .service-input:focus,
+    .service-select:focus,
+    .service-textarea:focus{
+      border-color:#60a5fa;
+      box-shadow:0 0 0 3px rgba(59,130,246,.12);
+    }
+
+    .service-job-list{
+      display:grid;
+      gap:8px;
+      max-height:620px;
+      overflow:auto;
+      padding-right:3px;
+    }
+
+    .service-job-list-empty{
+      padding:18px;
+      border:1px dashed #cbd5e1;
+      border-radius:13px;
+      background:#f8fafc;
+      color:#64748b;
+      font-size:12px;
+      line-height:1.5;
+      text-align:center;
+    }
+
+    .service-job-item{
+      width:100%;
+      display:grid;
+      gap:8px;
+      padding:12px;
+      border:1px solid #e2e8f0;
+      border-radius:13px;
+      background:#fff;
+      color:#07152f;
+      text-align:left;
+      cursor:pointer;
+      transition:
+        transform .15s ease,
+        border-color .15s ease,
+        box-shadow .15s ease,
+        background .15s ease;
+    }
+
+    .service-job-item:hover{
+      transform:translateY(-1px);
+      border-color:#93c5fd;
+      box-shadow:0 8px 20px rgba(15,23,42,.07);
+    }
+
+    .service-job-item.active{
+      border-color:#1267ff;
+      background:#f8fbff;
+      box-shadow:0 0 0 3px rgba(18,103,255,.10);
+    }
+
+    .service-job-item-head{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:flex-start;
+    }
+
+    .service-job-number{
+      color:#07152f;
+      font-size:13px;
+      font-weight:950;
+    }
+
+    .service-job-owner{
+      margin-top:2px;
+      color:#64748b;
+      font-size:10.5px;
+      font-weight:750;
+    }
+
+    .service-status{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:24px;
+      padding:0 8px;
+      border:1px solid #cbd5e1;
+      border-radius:999px;
+      background:#f8fafc;
+      color:#475569;
+      font-size:9px;
+      font-weight:950;
+      white-space:nowrap;
+      text-transform:uppercase;
+    }
+
+    .service-status.draft{
+      border-color:#cbd5e1;
+      background:#f8fafc;
+      color:#475569;
+    }
+
+    .service-status.quoted{
+      border-color:#bfdbfe;
+      background:#eff6ff;
+      color:#1d4ed8;
+    }
+
+    .service-status.approved{
+      border-color:#bbf7d0;
+      background:#ecfdf5;
+      color:#047857;
+    }
+
+    .service-status.planned{
+      border-color:#ddd6fe;
+      background:#f5f3ff;
+      color:#6d28d9;
+    }
+
+    .service-status.cancelled{
+      border-color:#fecaca;
+      background:#fff1f2;
+      color:#b91c1c;
+    }
+
+    .service-job-item-meta{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:6px;
+    }
+
+    .service-job-item-meta div{
+      padding:7px 8px;
+      border:1px solid #edf2f7;
+      border-radius:9px;
+      background:#fbfdff;
+    }
+
+    .service-job-item-meta span,
+    .service-job-item-meta strong{
+      display:block;
+    }
+
+    .service-job-item-meta span{
+      color:#94a3b8;
+      font-size:8.5px;
+      font-weight:900;
+      text-transform:uppercase;
+    }
+
+    .service-job-item-meta strong{
+      margin-top:3px;
+      color:#334155;
+      font-size:10.5px;
+    }
+
+    .service-form-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:12px;
+    }
+
+    .service-form-grid.three{
+      grid-template-columns:repeat(3,minmax(0,1fr));
+    }
+
+    .service-form-grid.four{
+      grid-template-columns:repeat(4,minmax(0,1fr));
+    }
+
+    .service-field.full{
+      grid-column:1 / -1;
+    }
+
+    .service-section-divider{
+      height:1px;
+      background:#e8edf4;
+      margin:4px 0;
+    }
+
+    .service-reference-strip{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+      margin-bottom:15px;
+    }
+
+    .service-reference-item{
+      min-width:0;
+      padding:11px;
+      border:1px solid #e2e8f0;
+      border-radius:12px;
+      background:#fbfdff;
+    }
+
+    .service-reference-item span,
+    .service-reference-item strong{
+      display:block;
+    }
+
+    .service-reference-item span{
+      color:#64748b;
+      font-size:9px;
+      font-weight:950;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+
+    .service-reference-item strong{
+      margin-top:4px;
+      overflow:hidden;
+      color:#07152f;
+      font-size:12px;
+      font-weight:950;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .service-stop-list{
+      display:grid;
+      gap:10px;
+    }
+
+    .service-stop-empty{
+      padding:22px;
+      border:1px dashed #cbd5e1;
+      border-radius:14px;
+      background:#f8fafc;
+      color:#64748b;
+      font-size:12px;
+      line-height:1.55;
+      text-align:center;
+    }
+
+    .service-stop-row{
+      display:grid;
+      grid-template-columns:
+        42px
+        110px
+        minmax(0,1fr)
+        95px
+        auto;
+      gap:11px;
+      align-items:center;
+      padding:11px;
+      border:1px solid #e2e8f0;
+      border-radius:14px;
+      background:#fff;
+    }
+
+    .service-stop-sequence{
+      width:36px;
+      height:36px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:999px;
+      background:#07152f;
+      color:#fff;
+      font-size:12px;
+      font-weight:950;
+    }
+
+    .service-stop-type{
+      min-height:28px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:0 8px;
+      border:1px solid #bfdbfe;
+      border-radius:999px;
+      background:#eff6ff;
+      color:#1d4ed8;
+      font-size:9px;
+      font-weight:950;
+      text-transform:uppercase;
+    }
+
+    .service-stop-type.collect{
+      border-color:#fde68a;
+      background:#fffbeb;
+      color:#92400e;
+    }
+
+    .service-stop-type.load{
+      border-color:#ddd6fe;
+      background:#f5f3ff;
+      color:#6d28d9;
+    }
+
+    .service-stop-type.deliver{
+      border-color:#bbf7d0;
+      background:#ecfdf5;
+      color:#047857;
+    }
+
+    .service-stop-copy{
+      min-width:0;
+    }
+
+    .service-stop-copy strong{
+      display:block;
+      overflow:hidden;
+      color:#07152f;
+      font-size:12px;
+      font-weight:950;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .service-stop-copy span{
+      display:block;
+      margin-top:3px;
+      overflow:hidden;
+      color:#64748b;
+      font-size:10.5px;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .service-stop-duration{
+      color:#475569;
+      font-size:10.5px;
+      font-weight:850;
+      text-align:right;
+    }
+
+    .service-stop-actions{
+      display:flex;
+      gap:5px;
+      justify-content:flex-end;
+    }
+
+    .service-icon-btn{
+      width:32px;
+      height:32px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid var(--border);
+      border-radius:9px;
+      background:#fff;
+      color:#334155;
+      font-size:12px;
+      font-weight:900;
+      cursor:pointer;
+    }
+
+    .service-icon-btn:hover{
+      border-color:#93c5fd;
+      background:#f8fbff;
+    }
+
+    .service-icon-btn.danger{
+      border-color:#fecaca;
+      background:#fff1f2;
+      color:#b91c1c;
+    }
+
+    .service-map-card{
+      overflow:hidden;
+      padding:0;
+    }
+
+    .service-map-card .service-card-head{
+      margin:0;
+      padding:18px 18px 14px;
+    }
+
+    .service-map-toolbar{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .service-map-box{
+      height:480px;
+      min-height:480px;
+      border-top:1px solid var(--border);
+      background:#e5e7eb;
+    }
+
+    #ordersMap{
+      width:100%;
+      height:100%;
+      min-height:480px;
+    }
+
+    .service-planning-grid{
+      display:grid;
+      grid-template-columns:
+        minmax(0,1fr)
+        minmax(280px,.75fr);
+      gap:18px;
+      align-items:start;
+    }
+
+    .service-planning-fields{
+      display:grid;
+      gap:12px;
+    }
+
+    .service-toggle-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:14px;
+      padding:11px 12px;
+      border:1px solid #e2e8f0;
+      border-radius:12px;
+      background:#fbfdff;
+    }
+
+    .service-toggle-row strong,
+    .service-toggle-row span{
+      display:block;
+    }
+
+    .service-toggle-row strong{
+      color:#07152f;
+      font-size:11.5px;
+    }
+
+    .service-toggle-row span{
+      margin-top:3px;
+      color:#64748b;
+      font-size:10px;
+    }
+
+    .service-toggle-row input{
+      width:18px;
+      height:18px;
+      accent-color:#1267ff;
+    }
+
+    .service-rate-panel{
+      display:grid;
+      gap:10px;
+      padding:13px;
+      border:1px solid #dbeafe;
+      border-radius:14px;
+      background:#f8fbff;
+    }
+
+    .service-rate-panel-head{
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:center;
+    }
+
+    .service-rate-panel-head strong{
+      color:#07152f;
+      font-size:12px;
+      font-weight:950;
+    }
+
+    .service-rate-panel-head span{
+      color:#1d4ed8;
+      font-size:9.5px;
+      font-weight:900;
+      text-transform:uppercase;
+    }
+
+    .service-rate-grid{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:8px;
+    }
+
+    .service-rate-item{
+      padding:9px;
+      border:1px solid #dbeafe;
+      border-radius:10px;
+      background:#fff;
+    }
+
+    .service-rate-item span,
+    .service-rate-item strong{
+      display:block;
+    }
+
+    .service-rate-item span{
+      color:#64748b;
+      font-size:8.5px;
+      font-weight:900;
+      text-transform:uppercase;
+    }
+
+    .service-rate-item strong{
+      margin-top:3px;
+      color:#07152f;
+      font-size:11.5px;
+    }
+
+    .service-calculation-panel{
+      display:grid;
+      gap:12px;
+    }
+
+    .service-summary-grid{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+    }
+
+    .service-summary-card{
+      min-width:0;
+      padding:12px;
+      border:1px solid #e2e8f0;
+      border-radius:13px;
+      background:#fbfdff;
+    }
+
+    .service-summary-card span,
+    .service-summary-card strong{
+      display:block;
+    }
+
+    .service-summary-card span{
+      color:#64748b;
+      font-size:9px;
+      font-weight:950;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+
+    .service-summary-card strong{
+      margin-top:5px;
+      color:#07152f;
+      font-size:16px;
+      font-weight:950;
+      letter-spacing:-.02em;
+    }
+
+    .service-cost-columns{
+      display:grid;
+      grid-template-columns:repeat(2,minmax(0,1fr));
+      gap:12px;
+    }
+
+    .service-cost-box{
+      padding:14px;
+      border:1px solid #e2e8f0;
+      border-radius:14px;
+      background:#fff;
+    }
+
+    .service-cost-box.customer{
+      border-color:#bfdbfe;
+      background:#f8fbff;
+    }
+
+    .service-cost-box.internal{
+      border-color:#e2e8f0;
+      background:#fbfdff;
+    }
+
+    .service-cost-box h4{
+      margin:0 0 11px;
+      color:#07152f;
+      font-size:13px;
+      font-weight:950;
+    }
+
+    .service-cost-lines{
+      display:grid;
+      gap:8px;
+    }
+
+    .service-cost-line{
+      display:flex;
+      justify-content:space-between;
+      gap:14px;
+      align-items:flex-start;
+      color:#475569;
+      font-size:11px;
+    }
+
+    .service-cost-line strong{
+      color:#07152f;
+      font-weight:900;
+      white-space:nowrap;
+    }
+
+    .service-cost-line.total{
+      margin-top:4px;
+      padding-top:10px;
+      border-top:1px solid #dce5f2;
+      color:#07152f;
+      font-size:13px;
+      font-weight:950;
+    }
+
+    .service-cost-line.total strong{
+      color:#1267ff;
+      font-size:15px;
+    }
+
+    .service-margin-card{
+      display:grid;
+      grid-template-columns:repeat(3,minmax(0,1fr));
+      gap:10px;
+      padding:13px;
+      border:1px solid #bbf7d0;
+      border-radius:14px;
+      background:#ecfdf5;
+    }
+
+    .service-margin-card > div{
+      min-width:0;
+    }
+
+    .service-margin-card span,
+    .service-margin-card strong{
+      display:block;
+    }
+
+    .service-margin-card span{
+      color:#047857;
+      font-size:9px;
+      font-weight:950;
+      text-transform:uppercase;
+    }
+
+    .service-margin-card strong{
+      margin-top:4px;
+      color:#065f46;
+      font-size:15px;
+      font-weight:950;
+    }
+
+    .service-charge-list{
+      display:grid;
+      gap:8px;
+    }
+
+    .service-charge-row{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) 130px auto;
+      gap:9px;
+      align-items:center;
+    }
+
+    .service-actions-bar{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+      flex-wrap:wrap;
+      padding:16px 18px;
+      border:1px solid var(--border);
+      border-radius:17px;
+      background:#fff;
+      box-shadow:var(--shadow);
+    }
+
+    .service-actions-copy strong,
+    .service-actions-copy span{
+      display:block;
+    }
+
+    .service-actions-copy strong{
+      color:#07152f;
+      font-size:12px;
+      font-weight:950;
+    }
+
+    .service-actions-copy span{
+      margin-top:3px;
+      color:#64748b;
+      font-size:10.5px;
+    }
+
+    .service-actions-buttons{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    .service-notice{
+      display:none;
+      padding:11px 13px;
+      border:1px solid #bbf7d0;
+      border-radius:12px;
+      background:#ecfdf5;
+      color:#047857;
+      font-size:11.5px;
+      font-weight:850;
+      line-height:1.45;
+    }
+
+    .service-notice.show{
+      display:block;
+    }
+
+    .service-notice.err{
+      border-color:#fecaca;
+      background:#fff1f2;
+      color:#b91c1c;
+    }
+
+    .service-modal{
+      position:fixed;
+      inset:0;
+      z-index:99999;
+      display:none;
+      align-items:center;
+      justify-content:center;
+      padding:20px;
+      background:rgba(15,23,42,.58);
+      backdrop-filter:blur(4px);
+    }
+
+    .service-modal.open{
+      display:flex;
+    }
+
+    .service-modal-card{
+      width:min(760px,100%);
+      max-height:calc(100vh - 40px);
+      overflow:auto;
+      border-radius:18px;
+      background:#fff;
+      box-shadow:0 28px 85px rgba(15,23,42,.35);
+    }
+
+    .service-modal-head{
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:14px;
+      padding:18px 20px;
+      border-bottom:1px solid var(--border);
+      background:#f8fafc;
+    }
+
+    .service-modal-head h2{
+      margin:0;
+      color:#07152f;
+      font-size:18px;
+      font-weight:950;
+    }
+
+    .service-modal-head p{
+      margin:5px 0 0;
+      color:#64748b;
+      font-size:11.5px;
+      line-height:1.45;
+    }
+
+    .service-modal-body{
+      display:grid;
+      gap:14px;
+      padding:18px 20px;
+    }
+
+    .service-modal-foot{
+      display:flex;
+      justify-content:flex-end;
+      gap:9px;
+      padding:14px 20px;
+      border-top:1px solid var(--border);
+      background:#fff;
+    }
+
+    @media(max-width:1250px){
+      .service-grid{
+        grid-template-columns:1fr;
+      }
+
+      .service-sidebar{
+        position:static;
+        grid-template-columns:
+          minmax(280px,.72fr)
+          minmax(0,1.28fr);
+      }
+
+      .service-job-list{
+        max-height:420px;
+      }
+
+      .service-planning-grid{
+        grid-template-columns:1fr;
+      }
+    }
+
+    @media(max-width:950px){
+      .service-sidebar{
+        grid-template-columns:1fr;
+      }
+
+      .service-reference-strip{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+
+      .service-form-grid.three,
+      .service-form-grid.four{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+
+      .service-summary-grid{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+
+      .service-map-box,
+      #ordersMap{
+        height:420px;
+        min-height:420px;
+      }
+    }
+
+    @media(max-width:720px){
+      .service-form-grid,
+      .service-form-grid.three,
+      .service-form-grid.four,
+      .service-reference-strip,
+      .service-cost-columns,
+      .service-margin-card{
+        grid-template-columns:1fr;
+      }
+
+      .service-stop-row{
+        grid-template-columns:38px minmax(0,1fr) auto;
+      }
+
+      .service-stop-type{
+        grid-column:2;
+        justify-self:start;
+      }
+
+      .service-stop-copy{
+        grid-column:2;
+      }
+
+      .service-stop-duration{
+        grid-column:2;
+        text-align:left;
+      }
+
+      .service-stop-actions{
+        grid-column:3;
+        grid-row:1 / span 3;
+        flex-direction:column;
+      }
+
+      .service-charge-row{
+        grid-template-columns:1fr;
+      }
+
+      .service-summary-grid{
+        grid-template-columns:1fr 1fr;
+      }
+
+      .service-topbar-actions,
+      .service-actions-buttons{
+        width:100%;
+      }
+
+      .service-topbar-actions .service-btn,
+      .service-actions-buttons .service-btn{
+        flex:1;
+      }
+
+      .service-map-box,
+      #ordersMap{
+        height:360px;
+        min-height:360px;
+      }
+    }
+  </style>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
+  ></script>
+
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+
+  <!-- Existing route calculation engine -->
+  <script
+    src="/js/planning-engine.js?v=8"
+    defer
+  ></script>
+
+  <!-- Existing map, later used in service-job preview mode -->
+  <script
+    src="/js/orders-map.js?v=10"
+    defer
+  ></script>
+
+  <!-- New module -->
+  <script
+    src="/js/service-jobs.js?v=1"
+    defer
+  ></script>
+</head>
+
+<body>
+  <div class="app-shell">
+
+    <aside
+      id="sidebarMount"
+      class="sidebar"
+    ></aside>
+
+    <main class="page service-jobs-page">
+
+      <header class="service-topbar">
+        <div class="service-topbar-copy">
+          <span class="service-eyebrow">
+            Bespoke transport and services
+          </span>
+
+          <h1>
+            Service Jobs
+          </h1>
+
+          <p>
+            Create multi-stop collection, delivery, exchange and installation
+            jobs. Calculate the route, prepare a quotation and publish approved
+            jobs to Operations.
+          </p>
+        </div>
+
+        <div class="service-topbar-actions">
+          <button
+            id="btnRefreshServiceJobs"
+            class="service-btn"
+            type="button"
+          >
+            Refresh
+          </button>
+
+          <button
+            id="btnNewServiceJob"
+            class="service-btn primary"
+            type="button"
+          >
+            + New Service Job
+          </button>
+        </div>
+      </header>
+
+      <div
+        id="serviceNotice"
+        class="service-notice"
+      ></div>
+
+      <section class="service-grid">
+
+        <aside class="service-sidebar">
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <h3>Search & Filters</h3>
+
+                <p>
+                  Find draft, quoted, approved and planned service jobs.
+                </p>
+              </div>
+            </div>
+
+            <div class="service-filter-grid">
+              <div class="service-field">
+                <label for="serviceJobSearch">
+                  Search
+                </label>
+
+                <input
+                  id="serviceJobSearch"
+                  class="service-input"
+                  type="search"
+                  placeholder="Job number, owner, postcode..."
+                  autocomplete="off"
+                />
+              </div>
+
+              <div class="service-form-grid">
+                <div class="service-field">
+                  <label for="filterServiceOwner">
+                    Product Owner
+                  </label>
+
+                  <select
+                    id="filterServiceOwner"
+                    class="service-select"
+                  >
+                    <option value="">All owners</option>
+                  </select>
+                </div>
+
+                <div class="service-field">
+                  <label for="filterServiceStatus">
+                    Status
+                  </label>
+
+                  <select
+                    id="filterServiceStatus"
+                    class="service-select"
+                  >
+                    <option value="">All statuses</option>
+                    <option value="draft">Draft</option>
+                    <option value="quoted">Quoted</option>
+                    <option value="approved">Approved</option>
+                    <option value="published">Published</option>
+                    <option value="planned">Planned</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <h3>Service Jobs</h3>
+
+                <p id="serviceJobsMeta">
+                  0 jobs shown
+                </p>
+              </div>
+
+              <span
+                id="serviceJobsCount"
+                class="service-card-badge"
+              >
+                0
+              </span>
+            </div>
+
+            <div
+              id="serviceJobList"
+              class="service-job-list"
+            >
+              <div class="service-job-list-empty">
+                No service jobs loaded yet.
+              </div>
+            </div>
+          </section>
+
+        </aside>
+
+        <div class="service-main">
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Job details
+                </span>
+
+                <h2 id="serviceJobHeading">
+                  New Service Job
+                </h2>
+
+                <p>
+                  Save the job as a draft before creating a quotation.
+                </p>
+              </div>
+
+              <span
+                id="serviceJobStatusBadge"
+                class="service-status draft"
+              >
+                Draft
+              </span>
+            </div>
+
+            <div class="service-reference-strip">
+              <div class="service-reference-item">
+                <span>Service Job</span>
+                <strong id="serviceJobNumberDisplay">New</strong>
+              </div>
+
+              <div class="service-reference-item">
+                <span>Quote Number</span>
+                <strong id="serviceQuoteNumberDisplay">Not generated</strong>
+              </div>
+
+              <div class="service-reference-item">
+                <span>Operations Order</span>
+                <strong id="serviceOperationsOrderDisplay">Not published</strong>
+              </div>
+
+              <div class="service-reference-item">
+                <span>Last Updated</span>
+                <strong id="serviceUpdatedDisplay">—</strong>
+              </div>
+            </div>
+
+            <input
+              id="serviceJobId"
+              type="hidden"
+              value=""
+            />
+
+            <div class="service-form-grid three">
+              <div class="service-field">
+                <label for="serviceProductOwner">
+                  Product Owner
+                </label>
+
+                <select
+                  id="serviceProductOwner"
+                  class="service-select"
+                >
+                  <option value="">Select Product Owner</option>
+                </select>
+              </div>
+
+              <div class="service-field">
+                <label for="serviceJobType">
+                  Service Type
+                </label>
+
+                <select
+                  id="serviceJobType"
+                  class="service-select"
+                >
+                  <option value="multi_stop_transport">
+                    Multi-stop Transport
+                  </option>
+
+                  <option value="collection">
+                    Collection
+                  </option>
+
+                  <option value="delivery">
+                    Delivery
+                  </option>
+
+                  <option value="exchange">
+                    Exchange
+                  </option>
+
+                  <option value="installation">
+                    Installation
+                  </option>
+
+                  <option value="store_transfer">
+                    Store Transfer
+                  </option>
+
+                  <option value="inspection">
+                    Inspection
+                  </option>
+
+                  <option value="return">
+                    Return
+                  </option>
+
+                  <option value="custom">
+                    Custom
+                  </option>
+                </select>
+              </div>
+
+              <div class="service-field">
+                <label for="serviceRequestedDate">
+                  Requested Date
+                </label>
+
+                <input
+                  id="serviceRequestedDate"
+                  class="service-input"
+                  type="date"
+                />
+              </div>
+
+              <div class="service-field">
+                <label for="serviceCustomerReference">
+                  Customer Reference
+                </label>
+
+                <input
+                  id="serviceCustomerReference"
+                  class="service-input"
+                  type="text"
+                  placeholder="Reference, PO or request number"
+                />
+              </div>
+
+              <div class="service-field">
+                <label for="serviceContactName">
+                  Contact Name
+                </label>
+
+                <input
+                  id="serviceContactName"
+                  class="service-input"
+                  type="text"
+                  placeholder="Main contact"
+                />
+              </div>
+
+              <div class="service-field">
+                <label for="serviceContactPhone">
+                  Contact Phone
+                </label>
+
+                <input
+                  id="serviceContactPhone"
+                  class="service-input"
+                  type="text"
+                  placeholder="Telephone number"
+                />
+              </div>
+
+              <div class="service-field full">
+                <label for="serviceJobDescription">
+                  Job Description
+                </label>
+
+                <textarea
+                  id="serviceJobDescription"
+                  class="service-textarea"
+                  placeholder="Describe the complete collection, delivery or service assignment..."
+                ></textarea>
+              </div>
+
+              <div class="service-field full">
+                <label for="serviceInternalNotes">
+                  Internal Notes
+                </label>
+
+                <textarea
+                  id="serviceInternalNotes"
+                  class="service-textarea"
+                  placeholder="Notes for Operations. These do not need to appear on the quotation."
+                ></textarea>
+              </div>
+            </div>
+          </section>
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Route builder
+                </span>
+
+                <h2>Stops</h2>
+
+                <p>
+                  Add all loading, delivery, collection and service locations.
+                  The order can be optimised later by the Planning Engine.
+                </p>
+              </div>
+
+              <div class="service-topbar-actions">
+                <span
+                  id="serviceStopCount"
+                  class="service-card-badge"
+                >
+                  0 stops
+                </span>
+
+                <button
+                  id="btnAddServiceStop"
+                  class="service-btn primary"
+                  type="button"
+                >
+                  + Add Stop
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="serviceStopList"
+              class="service-stop-list"
+            >
+              <div class="service-stop-empty">
+                No stops added yet. Add the warehouse, collection and delivery
+                locations required for this service job.
+              </div>
+            </div>
+          </section>
+
+          <section class="service-card service-map-card map-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Route preview
+                </span>
+
+                <h2>Map</h2>
+
+                <p>
+                  Preview the depot, all service-job stops and the estimated route.
+                </p>
+              </div>
+
+              <div class="service-map-toolbar">
+                <button
+                  id="btnFitServiceMap"
+                  class="service-btn"
+                  type="button"
+                >
+                  Fit Route
+                </button>
+
+                <button
+                  id="btnOptimiseServiceStops"
+                  class="service-btn"
+                  type="button"
+                >
+                  Optimise Stops
+                </button>
+              </div>
+            </div>
+
+            <div class="service-map-box map-box">
+              <div id="ordersMap"></div>
+            </div>
+          </section>
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Quote preview
+                </span>
+
+                <h2>Planning & Pricing</h2>
+
+                <p>
+                  Calculate a standalone route and quotation without creating
+                  an operational route.
+                </p>
+              </div>
+
+              <button
+                id="btnCalculateServiceQuote"
+                class="service-btn primary"
+                type="button"
+              >
+                Calculate Route & Quote
+              </button>
+            </div>
+
+            <div class="service-planning-grid">
+
+              <div class="service-planning-fields">
+
+                <div class="service-form-grid three">
+                  <div class="service-field">
+                    <label for="servicePlanningDate">
+                      Preview Date
+                    </label>
+
+                    <input
+                      id="servicePlanningDate"
+                      class="service-input"
+                      type="date"
+                    />
+                  </div>
+
+                  <div class="service-field">
+                    <label for="serviceStartTime">
+                      Start Time
+                    </label>
+
+                    <input
+                      id="serviceStartTime"
+                      class="service-input"
+                      type="time"
+                      value="08:00"
+                    />
+                  </div>
+
+                  <div class="service-field">
+                    <label for="serviceCrewSize">
+                      Crew Size
+                    </label>
+
+                    <select
+                      id="serviceCrewSize"
+                      class="service-select"
+                    >
+                      <option value="1">1 person</option>
+                      <option value="2">2 people</option>
+                      <option value="3">3 people</option>
+                    </select>
+                  </div>
+
+                  <div class="service-field">
+                    <label for="serviceVehicle">
+                      Vehicle
+                    </label>
+
+                    <select
+                      id="serviceVehicle"
+                      class="service-select"
+                    >
+                      <option value="">
+                        Best available vehicle
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="service-field">
+                    <label for="serviceDriver">
+                      Driver
+                    </label>
+
+                    <select
+                      id="serviceDriver"
+                      class="service-select"
+                    >
+                      <option value="">
+                        No fixed driver
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="service-field">
+                    <label for="serviceQuoteValidity">
+                      Quote Validity
+                    </label>
+
+                    <select
+                      id="serviceQuoteValidity"
+                      class="service-select"
+                    >
+                      <option value="7">7 days</option>
+                      <option value="14" selected>14 days</option>
+                      <option value="30">30 days</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="service-toggle-row">
+                  <div>
+                    <strong>Return to depot</strong>
+
+                    <span>
+                      Include the return journey in mileage and labour.
+                    </span>
+                  </div>
+
+                  <input
+                    id="serviceIncludeReturnDepot"
+                    type="checkbox"
+                    checked
+                  />
+                </div>
+
+                <div class="service-toggle-row">
+                  <div>
+                    <strong>Use optimised stop order</strong>
+
+                    <span>
+                      Let the Planning Engine choose the shortest practical order.
+                    </span>
+                  </div>
+
+                  <input
+                    id="serviceOptimiseStopOrder"
+                    type="checkbox"
+                    checked
+                  />
+                </div>
+
+              </div>
+
+              <aside class="service-rate-panel">
+                <div class="service-rate-panel-head">
+                  <strong>
+                    Product Owner Service Rates
+                  </strong>
+
+                  <span id="serviceRateSource">
+                    Not loaded
+                  </span>
+                </div>
+
+                <div class="service-rate-grid">
+                  <div class="service-rate-item">
+                    <span>Labour / hour</span>
+                    <strong id="rateLabourDisplay">£0.00</strong>
+                  </div>
+
+                  <div class="service-rate-item">
+                    <span>Mileage / mile</span>
+                    <strong id="rateMileageDisplay">£0.00</strong>
+                  </div>
+
+                  <div class="service-rate-item">
+                    <span>Second person / hour</span>
+                    <strong id="rateSecondPersonDisplay">£0.00</strong>
+                  </div>
+
+                  <div class="service-rate-item">
+                    <span>Waiting / hour</span>
+                    <strong id="rateWaitingDisplay">£0.00</strong>
+                  </div>
+
+                  <div class="service-rate-item">
+                    <span>Minimum charge</span>
+                    <strong id="rateMinimumDisplay">£0.00</strong>
+                  </div>
+
+                  <div class="service-rate-item">
+                    <span>VAT</span>
+                    <strong id="rateVatDisplay">20%</strong>
+                  </div>
+                </div>
+              </aside>
+
+            </div>
+          </section>
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Calculation
+                </span>
+
+                <h2>Route & Quote Summary</h2>
+
+                <p>
+                  Internal operating cost and customer quotation are kept separate.
+                </p>
+              </div>
+
+              <span
+                id="serviceCalculationStatus"
+                class="service-card-badge"
+              >
+                Not calculated
+              </span>
+            </div>
+
+            <div class="service-calculation-panel">
+
+              <div class="service-summary-grid">
+                <div class="service-summary-card">
+                  <span>Distance</span>
+                  <strong id="summaryDistance">0.0 mi</strong>
+                </div>
+
+                <div class="service-summary-card">
+                  <span>Driving Time</span>
+                  <strong id="summaryDriveHours">0.00 h</strong>
+                </div>
+
+                <div class="service-summary-card">
+                  <span>Service Time</span>
+                  <strong id="summaryServiceHours">0.00 h</strong>
+                </div>
+
+                <div class="service-summary-card">
+                  <span>Total Time</span>
+                  <strong id="summaryTotalHours">0.00 h</strong>
+                </div>
+              </div>
+
+              <div class="service-cost-columns">
+
+                <article class="service-cost-box customer">
+                  <h4>Customer Quotation</h4>
+
+                  <div class="service-cost-lines">
+                    <div class="service-cost-line">
+                      <span>Billable labour</span>
+                      <strong id="quoteLabourAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Mileage charge</span>
+                      <strong id="quoteMileageAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Second person</span>
+                      <strong id="quoteSecondPersonAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Waiting time</span>
+                      <strong id="quoteWaitingAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Additional charges</span>
+                      <strong id="quoteAdditionalAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line total">
+                      <span>Quote total excl. VAT</span>
+                      <strong id="quoteTotalAmount">£0.00</strong>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="service-cost-box internal">
+                  <h4>Estimated Internal Cost</h4>
+
+                  <div class="service-cost-lines">
+                    <div class="service-cost-line">
+                      <span>Driver labour</span>
+                      <strong id="costLabourAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Vehicle cost</span>
+                      <strong id="costVehicleAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Fuel cost</span>
+                      <strong id="costFuelAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line">
+                      <span>Additional internal cost</span>
+                      <strong id="costAdditionalAmount">£0.00</strong>
+                    </div>
+
+                    <div class="service-cost-line total">
+                      <span>Estimated total cost</span>
+                      <strong id="costTotalAmount">£0.00</strong>
+                    </div>
+                  </div>
+                </article>
+
+              </div>
+
+              <div class="service-margin-card">
+                <div>
+                  <span>Quote Revenue</span>
+                  <strong id="marginRevenueAmount">£0.00</strong>
+                </div>
+
+                <div>
+                  <span>Estimated Margin</span>
+                  <strong id="marginAmount">£0.00</strong>
+                </div>
+
+                <div>
+                  <span>Margin Percentage</span>
+                  <strong id="marginPercentage">0.0%</strong>
+                </div>
+              </div>
+
+            </div>
+          </section>
+
+          <section class="service-card">
+            <div class="service-card-head">
+              <div>
+                <span class="service-eyebrow">
+                  Adjustments
+                </span>
+
+                <h2>Additional Charges</h2>
+
+                <p>
+                  Add parking, tolls, installation, specialist handling or other charges.
+                </p>
+              </div>
+
+              <button
+                id="btnAddServiceCharge"
+                class="service-btn"
+                type="button"
+              >
+                + Add Charge
+              </button>
+            </div>
+
+            <div
+              id="serviceChargeList"
+              class="service-charge-list"
+            >
+              <div class="service-charge-row">
+                <input
+                  class="service-input"
+                  type="text"
+                  value="Additional charge"
+                  data-charge-description
+                />
+
+                <input
+                  class="service-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value="0.00"
+                  data-charge-amount
+                />
+
+                <button
+                  class="service-icon-btn danger"
+                  type="button"
+                  data-remove-charge
+                  title="Remove charge"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section class="service-actions-bar">
+            <div class="service-actions-copy">
+              <strong id="serviceWorkflowTitle">
+                Draft Service Job
+              </strong>
+
+              <span id="serviceWorkflowText">
+                Save the job and calculate the route before generating a quotation.
+              </span>
+            </div>
+
+            <div class="service-actions-buttons">
+              <button
+                id="btnCancelServiceJob"
+                class="service-btn danger"
+                type="button"
+              >
+                Cancel Job
+              </button>
+
+              <button
+                id="btnSaveServiceDraft"
+                class="service-btn"
+                type="button"
+              >
+                Save Draft
+              </button>
+
+              <button
+                id="btnGenerateServiceQuote"
+                class="service-btn"
+                type="button"
+                disabled
+              >
+                Generate Quote
+              </button>
+
+              <button
+                id="btnApproveServiceQuote"
+                class="service-btn success"
+                type="button"
+                disabled
+              >
+                Approve Quote
+              </button>
+
+              <button
+                id="btnPublishServiceJob"
+                class="service-btn primary"
+                type="button"
+                disabled
+              >
+                Publish to Operations
+              </button>
+            </div>
+          </section>
+
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Add / Edit Stop Modal -->
+  <div
+    id="serviceStopModal"
+    class="service-modal"
+    aria-hidden="true"
+  >
+    <div class="service-modal-card">
+
+      <header class="service-modal-head">
+        <div>
+          <h2 id="serviceStopModalTitle">
+            Add Service Stop
+          </h2>
+
+          <p>
+            Enter the location, stop type, instructions and estimated service time.
+          </p>
+        </div>
+
+        <button
+          id="btnCloseServiceStopModal"
+          class="service-icon-btn"
+          type="button"
+          aria-label="Close"
+        >
+          ×
+        </button>
+      </header>
+
+      <div class="service-modal-body">
+
+        <input
+          id="serviceStopEditId"
+          type="hidden"
+          value=""
+        />
+
+        <div class="service-form-grid three">
+          <div class="service-field">
+            <label for="serviceStopType">
+              Stop Type
+            </label>
+
+            <select
+              id="serviceStopType"
+              class="service-select"
+            >
+              <option value="load">Load</option>
+              <option value="deliver">Deliver</option>
+              <option value="collect">Collect</option>
+              <option value="service">Service / Installation</option>
+              <option value="inspection">Inspection</option>
+              <option value="return">Return</option>
+            </select>
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopMinutes">
+              Service Minutes
+            </label>
+
+            <input
+              id="serviceStopMinutes"
+              class="service-input"
+              type="number"
+              min="0"
+              step="5"
+              value="15"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopSequence">
+              Sequence
+            </label>
+
+            <input
+              id="serviceStopSequence"
+              class="service-input"
+              type="number"
+              min="1"
+              step="1"
+              value="1"
+            />
+          </div>
+        </div>
+
+        <div class="service-form-grid">
+          <div class="service-field">
+            <label for="serviceStopName">
+              Stop Name
+            </label>
+
+            <input
+              id="serviceStopName"
+              class="service-input"
+              type="text"
+              placeholder="Customer, retailer or warehouse"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopContact">
+              Contact
+            </label>
+
+            <input
+              id="serviceStopContact"
+              class="service-input"
+              type="text"
+              placeholder="Contact person"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopAddress1">
+              Address Line 1
+            </label>
+
+            <input
+              id="serviceStopAddress1"
+              class="service-input"
+              type="text"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopAddress2">
+              Address Line 2
+            </label>
+
+            <input
+              id="serviceStopAddress2"
+              class="service-input"
+              type="text"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopCity">
+              City
+            </label>
+
+            <input
+              id="serviceStopCity"
+              class="service-input"
+              type="text"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopPostcode">
+              Postcode
+            </label>
+
+            <input
+              id="serviceStopPostcode"
+              class="service-input"
+              type="text"
+              placeholder="UK postcode"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopLatitude">
+              Latitude
+            </label>
+
+            <input
+              id="serviceStopLatitude"
+              class="service-input"
+              type="number"
+              step="0.000001"
+            />
+          </div>
+
+          <div class="service-field">
+            <label for="serviceStopLongitude">
+              Longitude
+            </label>
+
+            <input
+              id="serviceStopLongitude"
+              class="service-input"
+              type="number"
+              step="0.000001"
+            />
+          </div>
+
+          <div class="service-field full">
+            <label for="serviceStopItems">
+              Items / Work Required
+            </label>
+
+            <textarea
+              id="serviceStopItems"
+              class="service-textarea"
+              placeholder="Describe the goods to load, deliver or collect..."
+            ></textarea>
+          </div>
+
+          <div class="service-field full">
+            <label for="serviceStopInstructions">
+              Driver Instructions
+            </label>
+
+            <textarea
+              id="serviceStopInstructions"
+              class="service-textarea"
+              placeholder="Access details, handling instructions, contact requirements..."
+            ></textarea>
+          </div>
+        </div>
+
+        <div class="service-toggle-row">
+          <div>
+            <strong>Include in route calculation</strong>
+
+            <span>
+              Disable only for an informational stop that should not affect mileage.
+            </span>
+          </div>
+
+          <input
+            id="serviceStopIncludeInRoute"
+            type="checkbox"
+            checked
+          />
+        </div>
+
+      </div>
+
+      <footer class="service-modal-foot">
+        <button
+          id="btnCancelServiceStop"
+          class="service-btn"
+          type="button"
+        >
+          Cancel
+        </button>
+
+        <button
+          id="btnSaveServiceStop"
+          class="service-btn primary"
+          type="button"
+        >
+          Save Stop
+        </button>
+      </footer>
+
+    </div>
+  </div>
+</body>
+</html>

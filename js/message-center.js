@@ -571,6 +571,84 @@ async function markNotificationRead(notificationId) {
   updateTabBadges();
 }
 
+function notificationMetadata(noti) {
+  if (!noti?.metadata) return {};
+
+  if (typeof noti.metadata === "object") {
+    return noti.metadata;
+  }
+
+  try {
+    return JSON.parse(noti.metadata);
+  } catch {
+    return {};
+  }
+}
+
+function renderNotificationBody(noti) {
+
+  if (String(noti.notification_type) !== "pod_available") {
+    return `
+      <div class="row-sub">
+        ${escapeHtml(noti.message || "")}
+      </div>
+    `;
+  }
+
+  const meta = notificationMetadata(noti);
+
+  return `
+    <div class="pod-card">
+
+      <div class="pod-order">
+        ${escapeHtml(meta.order_number || "")}
+      </div>
+
+      <div class="pod-retailer">
+        ${escapeHtml(meta.retailer_name || "")}
+      </div>
+
+      <div class="pod-assets">
+
+        ${
+          meta.has_signed_pdf
+            ? `
+              <div class="pod-pill green">
+                ✓ Signed Delivery Note
+              </div>
+            `
+            : ""
+        }
+
+        ${
+          Number(meta.photo_count || 0) > 0
+            ? `
+              <div class="pod-pill blue">
+                📷 ${meta.photo_count}
+                ${meta.photo_count == 1 ? "Delivery Photo" : "Delivery Photos"}
+              </div>
+            `
+            : ""
+        }
+
+      </div>
+
+      <div class="pod-footer">
+
+        <span>
+          ${formatDate(meta.last_uploaded_at)}
+        </span>
+
+        <span class="pod-link">
+          Open POD →
+        </span>
+
+      </div>
+
+    </div>
+  `;
+}
+
   function notificationHtml(noti) {
   const ico = iconFor(noti.notification_type, noti.severity);
   const tag = noti.action_url ? "a" : "div";
@@ -596,9 +674,7 @@ async function markNotificationRead(notificationId) {
             ${unreadBadge}
           </div>
 
-          <div class="row-sub">
-            ${escapeHtml(noti.message || "")}
-          </div>
+${renderNotificationBody(noti)}
         </div>
       </div>
 

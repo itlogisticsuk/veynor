@@ -2,35 +2,181 @@
 <html lang="en" class="auth-loading">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  />
+
   <title>Proof of Delivery · Veynor</title>
 
-  <link rel="stylesheet" href="/css/theme.css"/>
+  <link
+    rel="stylesheet"
+    href="/css/theme.css"
+  />
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
+  ></script>
+
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
-  <script src="/js/pod.js?v=2" defer></script>
+
+  <!-- Nodig om echte POD-downloads in portal_events vast te leggen -->
+  <script src="/js/portal-events.js" defer></script>
+
+  <!-- Cache-versie verhogen wanneer pod.js is aangepast -->
+  <script src="/js/pod.js?v=3" defer></script>
+
+  <style>
+    .pod-page-shell{
+      display:grid;
+      gap:14px;
+      align-content:start;
+      padding-bottom:34px;
+    }
+
+    .pod-topbar{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:18px;
+      flex-wrap:wrap;
+      padding:16px 18px;
+      border:1px solid var(--border);
+      border-radius:18px;
+      background:#fff;
+      box-shadow:var(--shadow);
+    }
+
+    .pod-topbar-copy{
+      min-width:0;
+    }
+
+    .pod-topbar-eyebrow{
+      display:block;
+      margin-bottom:4px;
+      color:#1267ff;
+      font-size:10px;
+      font-weight:950;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+
+    .pod-topbar h1{
+      margin:0;
+      color:#07152f;
+      font-size:24px;
+      font-weight:950;
+      letter-spacing:-.035em;
+    }
+
+    .pod-topbar p{
+      margin:5px 0 0;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.5;
+    }
+
+    .pod-topbar-actions{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .pod-back-btn{
+      min-height:40px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:7px;
+      padding:0 14px;
+      border:1px solid var(--border);
+      border-radius:12px;
+      background:#fff;
+      color:#07152f;
+      font-size:12px;
+      font-weight:900;
+      cursor:pointer;
+      transition:
+        transform .15s ease,
+        border-color .15s ease,
+        box-shadow .15s ease;
+    }
+
+    .pod-back-btn:hover{
+      transform:translateY(-1px);
+      border-color:#93c5fd;
+      box-shadow:0 8px 18px rgba(15,23,42,.07);
+    }
+
+    .pod-root{
+      min-width:0;
+    }
+
+    @media(max-width:700px){
+      .pod-topbar{
+        align-items:flex-start;
+        padding:14px;
+      }
+
+      .pod-topbar h1{
+        font-size:21px;
+      }
+
+      .pod-topbar-actions{
+        width:100%;
+      }
+
+      .pod-back-btn{
+        width:100%;
+      }
+    }
+  </style>
 </head>
 
 <body>
   <div class="app-shell">
-    <aside id="sidebarMount" class="sidebar"></aside>
+    <aside
+      id="sidebarMount"
+      class="sidebar"
+    ></aside>
 
-    <main class="page">
-      <header class="page-topbar">
-        <div class="page-title">
-          <h1>Proof of Delivery</h1>
-          <p>Signed delivery note, customer signature and delivery photos.</p>
+    <main class="page pod-page-shell">
+
+      <header class="pod-topbar">
+        <div class="pod-topbar-copy">
+          <span class="pod-topbar-eyebrow">
+            Delivery evidence
+          </span>
+
+          <h1>
+            Proof of Delivery
+          </h1>
+
+          <p>
+            Signed delivery note, customer confirmation and delivery photos.
+          </p>
         </div>
 
-        <div class="topbar-actions">
-          <button class="btn" type="button" onclick="history.back()">Back</button>
+        <div class="pod-topbar-actions">
+          <button
+            class="pod-back-btn"
+            type="button"
+            onclick="history.back()"
+          >
+            <span>←</span>
+            <span>Back</span>
+          </button>
         </div>
       </header>
 
-      <div id="podRoot"></div>
+      <div
+        id="podRoot"
+        class="pod-root"
+      ></div>
+
     </main>
   </div>
 </body>
