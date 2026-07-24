@@ -1236,12 +1236,11 @@ function drawMinimumDeliverySurchargeRows(
         )
       );
 
-    const surcharge =
-      toNumber(
-        group.applied_surcharge ||
-        group.calculated_surcharge,
-        0
-      );
+const surcharge =
+  toNumber(
+    group.applied_surcharge,
+    0
+  );
 
     setDark(doc);
 
