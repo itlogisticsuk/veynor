@@ -1108,15 +1108,16 @@ function getUniqueInvoices(orders = filteredOrders) {
     );
   }
 
-  function getDeliveredDate(order) {
+function getDeliveredDate(order) {
     return (
-      order.actual_delivery_date ||
-      order.delivered_at ||
-      order.delivery_completed_at ||
-      order.pod_completed_at ||
-      ""
+        order.actual_delivery_date ||
+        order.fds_delivery_date ||
+        order.delivered_at ||
+        order.delivery_completed_at ||
+        order.pod_completed_at ||
+        ""
     );
-  }
+}
 
 function getCompleteDate(order) {
   return order.stock_completed_at || "";

@@ -714,7 +714,7 @@ document.addEventListener("visibilitychange", () => {
   window.__systemMonitorScriptLoaded = true;
 
   const script = document.createElement("script");
-  script.src = "/js/system-monitor.js";
+  script.src = "/js/system-monitor.js?v=20260724-1";
   script.defer = true;
   document.head.appendChild(script);
 })();

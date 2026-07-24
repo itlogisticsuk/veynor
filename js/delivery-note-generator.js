@@ -157,6 +157,41 @@
     return toNumber(line.quantity_ordered || line.quantity || line.delivered_quantity || 0, 0);
   }
 
+function isServiceLine(line) {
+  return (
+    toNumber(line?.requested_package_no, 0) > 0 &&
+    toNumber(line?.requested_package_total, 0) > 0
+  );
+}
+
+function isServiceOrder(order) {
+  return getOrderLines(order).some(isServiceLine);
+}
+
+function getServiceWarning(line) {
+  if (!isServiceLine(line)) {
+    return "";
+  }
+
+  const packageNo = Math.round(
+    toNumber(line.requested_package_no, 0)
+  );
+
+  const packageTotal = Math.round(
+    toNumber(line.requested_package_total, 0)
+  );
+
+  const packageLabel =
+    cleanText(line.requested_package_label) ||
+    `${packageNo}/${packageTotal}`;
+
+  return (
+    `SERVICE / PARTIAL DELIVERY: ` +
+    `Only package ${packageLabel} must be delivered. ` +
+    `Remaining packages are not part of this delivery.`
+  );
+}
+
   function getProductPackageCount(product) {
   const packageCount = toNumber(product?.package_count, 0);
   if (packageCount > 0) return Math.max(1, Math.round(packageCount));
@@ -303,50 +338,110 @@ function getLineWeight(line) {
     return getOrderLines(order).reduce((sum, line) => sum + getLinePackageCount(line), 0);
   }
 
-  function getTotalVolume(order) {
-    const explicit =
-      toNumber(order.total_order_volume_m3, 0) ||
-      toNumber(order.planning_volume_m3, 0) ||
-      toNumber(order.volume_m3, 0);
+ function getTotalVolume(order) {
 
-    if (explicit > 0) return explicit;
+  const lines = getOrderLines(order);
 
-    return getOrderLines(order).reduce((sum, line) => sum + getLineVolume(line), 0);
+  // Service / partial order
+  if (lines.some(isServiceLine)) {
+    return round2(
+      lines.reduce(
+        (sum, line) => sum + getLineVolume(line),
+        0
+      )
+    );
   }
 
-  function getTotalWeight(order) {
-    const explicit =
-      toNumber(order.total_order_weight_kg, 0) ||
-      toNumber(order.planning_weight_kg, 0) ||
-      toNumber(order.weight_kg, 0);
+  const explicit =
+    toNumber(order.total_order_volume_m3, 0) ||
+    toNumber(order.planning_volume_m3, 0) ||
+    toNumber(order.volume_m3, 0);
 
-    if (explicit > 0) return explicit;
-
-    return getOrderLines(order).reduce((sum, line) => sum + getLineWeight(line), 0);
+  if (explicit > 0) {
+    return explicit;
   }
 
-  function blobToDataUrl(blob) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+  return round2(
+    lines.reduce(
+      (sum, line) => sum + getLineVolume(line),
+      0
+    )
+  );
+}
+
+
+function getTotalWeight(order) {
+
+  const lines = getOrderLines(order);
+
+  // Service / partial order
+  if (lines.some(isServiceLine)) {
+    return round2(
+      lines.reduce(
+        (sum, line) => sum + getLineWeight(line),
+        0
+      )
+    );
+  }
+
+  const explicit =
+    toNumber(order.total_order_weight_kg, 0) ||
+    toNumber(order.planning_weight_kg, 0) ||
+    toNumber(order.weight_kg, 0);
+
+  if (explicit > 0) {
+    return explicit;
+  }
+
+  return round2(
+    lines.reduce(
+      (sum, line) => sum + getLineWeight(line),
+      0
+    )
+  );
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      resolve(String(reader.result || ""));
+    };
+
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function urlToDataUrl(url) {
+  if (!url) {
+    return "";
+  }
+
+  try {
+    const response = await fetch(url, {
+      mode: "cors"
     });
-  }
 
-  async function urlToDataUrl(url) {
-    if (!url) return "";
-
-    try {
-      const res = await fetch(url, { mode: "cors" });
-      if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
-      const blob = await res.blob();
-      return await blobToDataUrl(blob);
-    } catch (error) {
-      console.warn("Image could not be loaded for delivery note:", error.message);
-      return "";
+    if (!response.ok) {
+      throw new Error(
+        `Image fetch failed: ${response.status}`
+      );
     }
+
+    const blob = await response.blob();
+
+    return await blobToDataUrl(blob);
+  } catch (error) {
+    console.warn(
+      "Image could not be loaded for delivery note:",
+      error.message
+    );
+
+    return "";
   }
+}
 
   function getImageFormat(dataUrl) {
     const lower = String(dataUrl || "").toLowerCase();
@@ -633,6 +728,50 @@ function drawTableHeader(doc, y) {
   return y + 8.5;
 }
 
+function drawServiceWarningBox(doc, y, warning) {
+  if (!warning) {
+    return y;
+  }
+
+  const warningLines = splitText(
+    doc,
+    warning,
+    172
+  );
+
+  const boxHeight = Math.max(
+    11,
+    warningLines.length * 3.5 + 6
+  );
+
+  doc.setFillColor(255, 247, 237);
+  doc.setDrawColor(253, 186, 116);
+
+  doc.roundedRect(
+    14,
+    y - 4,
+    182,
+    boxHeight,
+    2,
+    2,
+    "FD"
+  );
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7);
+  doc.setTextColor(194, 65, 12);
+
+  doc.text(
+    warningLines,
+    17,
+    y + 1
+  );
+
+  setDark(doc);
+
+  return y + boxHeight + 3;
+}
+
   function maybeAddPage(doc, y, order, ctx, tenantLogoDataUrl) {
     if (y <= 262) return y;
 
@@ -698,6 +837,25 @@ doc.text(descLines, 46, y);
       doc.text(formatNumber(weight, 1), 194, y, { align: "right" });
 
       y += rowHeight;
+
+const serviceWarning =
+  getServiceWarning(line);
+
+if (serviceWarning) {
+  y = maybeAddPage(
+    doc,
+    y + 2,
+    order,
+    ctx,
+    tenantLogoDataUrl
+  );
+
+  y = drawServiceWarningBox(
+    doc,
+    y,
+    serviceWarning
+  );
+}
     });
 
     return y + 5;

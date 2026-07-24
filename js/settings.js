@@ -1725,156 +1725,1516 @@ registration: getFieldValue("newVehicleRegistration"),
   function closeVehicle(id) {
     byId(`vehicleBody_${id}`)?.classList.remove("open");
   }
+/* =========================================================
+   RETAILERS / DELIVERY SHOPS
+   ========================================================= */
 
-  function makeRetailerCode(postcode, retailerName) {
-    const pc = String(postcode || "").toUpperCase().replace(/\s+/g, "").replace(/[^A-Z0-9]/g, "");
-    const name = String(retailerName || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
-    return `${pc || "NOPC"}-${name || "RET"}`;
+function normalizeRetailerPostcode(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeRetailerName(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+}
+
+function makeRetailerCode(postcode, retailerName) {
+  const postcodePart =
+    normalizeRetailerPostcode(postcode) ||
+    "NOPC";
+
+  const namePart =
+    normalizeRetailerName(retailerName)
+      .slice(0, 3) ||
+    "RET";
+
+  return `${postcodePart}-${namePart}`;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "—";
   }
 
-  function formatDateTime(value) {
-    if (!value) return "—";
+  const date = new Date(value);
 
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return String(value);
-
-    return d.toLocaleString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
   }
+
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
 
 function extractEmailFromText(value) {
-  const match = String(value || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match ? match[0] : "";
+  const match = String(value || "").match(
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+  );
+
+  return match
+    ? match[0]
+    : "";
 }
 
 function extractPhoneFromText(value) {
-  const match = String(value || "").match(/(?:\+?\d[\d\s().-]{7,}\d)/);
-  if (!match) return "";
+  const match = String(value || "").match(
+    /(?:\+?\d[\d\s().-]{7,}\d)/
+  );
 
-  const digits = match[0].replace(/\D/g, "");
-  return digits.length >= 9 ? match[0].trim() : "";
+  if (!match) {
+    return "";
+  }
+
+  const digits = match[0]
+    .replace(/\D/g, "");
+
+  return digits.length >= 9
+    ? match[0].trim()
+    : "";
 }
 
-  async function loadShops() {
-    const tbody = byId("shopsBody");
-    if (!tbody) return;
+function retailerIsVerified(row) {
+  return (
+    row?.details_verified === true ||
+    String(
+      row?.details_verified ?? ""
+    ).toLowerCase() === "true"
+  );
+}
 
-    tbody.innerHTML = `<tr><td colspan="8">Loading retailers...</td></tr>`;
+function makeRetailerMapKey(
+  customerId,
+  retailerCode
+) {
+  return [
+    String(customerId || ""),
+    String(retailerCode || "")
+      .trim()
+      .toUpperCase()
+  ].join("|");
+}
 
-    try {
-      const db = ensureClient();
-      const cid = await getCompanyId();
+function retailerStatusHtml(row) {
+  if (retailerIsVerified(row)) {
+    return `
+      <span class="pill pill-green">
+        ✓ Verified
+      </span>
 
-      const { data, error } = await db
-        .from("orders")
-        .select(`
-          id,
-          company_id,
-          customer_id,
-          order_number,
-          retail_name,
-         delivery_city,
-delivery_postcode,
-notes,
-memo,
-last_activity_at,
-          created_at,
-          customers (
-            id,
-            name,
-            customer_code
+      <span class="subline">
+        ${escapeHtml(
+          formatDateTime(
+            row.verified_at
           )
-        `)
-        .eq("company_id", cid)
-        .order("created_at", { ascending: false })
-        .limit(2000);
+        )}
+      </span>
+    `;
+  }
 
-      if (error) throw error;
+  return `
+    <span class="pill pill-gray">
+      Not verified
+    </span>
+  `;
+}
 
-      const map = new Map();
+async function loadRetailerOrderSuggestions() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-      (data || []).forEach(order => {
-        const retailerName = String(order.retail_name || "").trim();
-        const city = String(order.delivery_city || "").trim();
-        const postcode = String(order.delivery_postcode || "").trim();
-        const ownerName = order.customers?.name || "—";
-        const ownerCode = order.customers?.customer_code || "";
-        const lastActivity = order.last_activity_at || order.created_at || "";
+  const { data, error } = await db
+    .from("orders")
+    .select(`
+      id,
+      company_id,
+      customer_id,
+      order_number,
+      retail_name,
+      delivery_city,
+      delivery_postcode,
+      notes,
+      memo,
+      last_activity_at,
+      created_at,
+      customers (
+        id,
+        name,
+        customer_code
+      )
+    `)
+    .eq("company_id", cid)
+    .order("created_at", {
+      ascending: false
+    })
+    .limit(3000);
 
-        if (!retailerName && !postcode && !city) return;
+  if (error) {
+    throw error;
+  }
 
-        const key = [
-          retailerName.toLowerCase(),
-          postcode.toLowerCase(),
-          city.toLowerCase(),
-          String(order.customer_id || "")
-        ].join("|");
+  const map = new Map();
 
-        if (!map.has(key)) {
-          map.set(key, {
-            retailerName,
-            city,
-            postcode,
-            ownerName,
-            ownerCode,
-           email: extractEmailFromText(`${order.notes || ""} ${order.memo || ""}`),
-phone: extractPhoneFromText(`${order.notes || ""} ${order.memo || ""}`),
-orders: 0,
-lastActivity
-          });
-        }
+  (data || []).forEach(order => {
+    const retailerName = String(
+      order.retail_name || ""
+    ).trim();
 
-        const row = map.get(key);
-        row.orders += 1;
+    const postcode = String(
+      order.delivery_postcode || ""
+    ).trim();
 
-        const currentTime = new Date(row.lastActivity || 0).getTime();
-        const nextTime = new Date(lastActivity || 0).getTime();
+    const customerId =
+      order.customer_id || null;
 
-        if (nextTime > currentTime) row.lastActivity = lastActivity;
-      });
+    if (
+      !retailerName ||
+      !postcode ||
+      !customerId
+    ) {
+      return;
+    }
 
-      const rows = [...map.values()].sort((a, b) =>
-        String(a.retailerName || "").localeCompare(String(b.retailerName || ""), "en", {
-          numeric: true,
-          sensitivity: "base"
-        })
+    const retailerCode =
+      makeRetailerCode(
+        postcode,
+        retailerName
       );
 
-      if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="8">No retailers found yet. Retailers will appear here after orders have been imported.</td></tr>`;
+    const key =
+      makeRetailerMapKey(
+        customerId,
+        retailerCode
+      );
+
+    const combinedText = [
+      order.notes,
+      order.memo
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const email =
+      extractEmailFromText(
+        combinedText
+      );
+
+    const phone =
+      extractPhoneFromText(
+        combinedText
+      );
+
+    const lastActivity =
+      order.last_activity_at ||
+      order.created_at ||
+      "";
+
+    if (!map.has(key)) {
+      map.set(key, {
+        id: null,
+
+        company_id: cid,
+        customer_id: customerId,
+
+        retailer_code:
+          retailerCode,
+
+        retailer_name:
+          retailerName,
+
+        address_1: "",
+        address_2: "",
+        address_3: "",
+        address_4: "",
+
+        city:
+          order.delivery_city || "",
+
+        postcode,
+
+        country:
+          "United Kingdom",
+
+        delivery_email:
+          email,
+
+        delivery_phone:
+          phone,
+
+        contact_name: "",
+
+        delivery_instructions: "",
+
+        booking_required: false,
+        booking_lead_days: 0,
+
+        details_verified: false,
+        is_locked: false,
+        verified_at: null,
+
+        owner_name:
+          order.customers?.name ||
+          "—",
+
+        owner_code:
+          order.customers
+            ?.customer_code ||
+          "",
+
+        orders: 0,
+
+        last_activity_at:
+          lastActivity,
+
+        source:
+          "order"
+      });
+    }
+
+    const row = map.get(key);
+
+    row.orders += 1;
+
+    const currentTime =
+      new Date(
+        row.last_activity_at || 0
+      ).getTime();
+
+    const nextTime =
+      new Date(
+        lastActivity || 0
+      ).getTime();
+
+    if (nextTime > currentTime) {
+      row.last_activity_at =
+        lastActivity;
+    }
+
+    if (!row.city) {
+      row.city =
+        order.delivery_city || "";
+    }
+
+    if (!row.delivery_email) {
+      row.delivery_email =
+        email;
+    }
+
+    if (!row.delivery_phone) {
+      row.delivery_phone =
+        phone;
+    }
+  });
+
+  return [...map.values()];
+}
+
+async function loadRetailerMasterRows() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const { data, error } = await db
+    .from("retailer_locations")
+    .select(`
+      id,
+      company_id,
+      customer_id,
+
+      retailer_code,
+      retailer_name,
+
+      address_1,
+      address_2,
+      address_3,
+      address_4,
+      city,
+      postcode,
+      country,
+
+      delivery_email,
+      delivery_phone,
+      contact_name,
+
+      delivery_instructions,
+      booking_required,
+      booking_lead_days,
+
+      details_verified,
+      verified_at,
+      verified_by,
+      is_locked,
+
+      created_at,
+      updated_at,
+
+      customers (
+        id,
+        name,
+        customer_code
+      )
+    `)
+    .eq("company_id", cid)
+    .order("retailer_name", {
+      ascending: true
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map(row => ({
+    ...row,
+
+    owner_name:
+      row.customers?.name ||
+      "—",
+
+    owner_code:
+      row.customers
+        ?.customer_code ||
+      "",
+
+    orders:
+      0,
+
+    last_activity_at:
+      row.updated_at ||
+      row.created_at ||
+      "",
+
+    source:
+      "master"
+  }));
+}
+
+function mergeRetailerRows(
+  masterRows,
+  suggestionRows
+) {
+  const map = new Map();
+
+  /*
+   * Eerst de opgeslagen masterdata.
+   * Deze is altijd leidend.
+   */
+  (masterRows || []).forEach(row => {
+    const retailerCode =
+      String(
+        row.retailer_code ||
+        makeRetailerCode(
+          row.postcode,
+          row.retailer_name
+        )
+      )
+        .trim()
+        .toUpperCase();
+
+    const key =
+      makeRetailerMapKey(
+        row.customer_id,
+        retailerCode
+      );
+
+    const existing =
+      map.get(key);
+
+    /*
+     * Mocht er ondanks de databasebeveiliging
+     * toch een dubbele masterregel bestaan,
+     * dan wint de geverifieerde regel.
+     */
+    if (
+      existing &&
+      retailerIsVerified(existing) &&
+      !retailerIsVerified(row)
+    ) {
+      return;
+    }
+
+    map.set(key, {
+      ...row,
+      retailer_code:
+        retailerCode
+    });
+  });
+
+  /*
+   * Daarna ordergegevens toevoegen.
+   */
+  (suggestionRows || []).forEach(
+    suggestion => {
+      const key =
+        makeRetailerMapKey(
+          suggestion.customer_id,
+          suggestion.retailer_code
+        );
+
+      const existing =
+        map.get(key);
+
+      if (!existing) {
+        map.set(key, {
+          ...suggestion
+        });
+
         return;
       }
 
-      tbody.innerHTML = rows.map((row, index) => `
-        <tr>
-          <td>${formatNumber(index + 1)}</td>
-          <td>${escapeHtml(makeRetailerCode(row.postcode, row.retailerName))}</td>
-          <td>
-            <strong>${escapeHtml(row.retailerName || "Unknown retailer")}</strong>
-            <span class="subline">Delivery location / shop</span>
-          </td>
-          <td>
-            <strong>${escapeHtml(row.ownerName || "—")}</strong>
-            <span class="subline">${escapeHtml(row.ownerCode || "")}</span>
-          </td>
-          <td>${escapeHtml(row.city || "—")}</td>
-<td>${escapeHtml(row.postcode || "—")}</td>
-<td>${escapeHtml(row.email || "—")}</td>
-<td>${escapeHtml(row.phone || "—")}</td>
-<td>${formatNumber(row.orders || 0)}</td>
-<td>${escapeHtml(formatDateTime(row.lastActivity))}</td>
-        </tr>
-      `).join("");
-    } catch (error) {
-      console.error(error);
-      tbody.innerHTML = `<tr><td colspan="10">Could not load retailers: ${escapeHtml(error.message || "Unknown error")}</td></tr>`;
+      /*
+       * Aantallen en laatste activiteit
+       * mogen altijd bijgewerkt worden.
+       */
+      existing.orders =
+        Number(
+          existing.orders || 0
+        ) +
+        Number(
+          suggestion.orders || 0
+        );
+
+      const existingTime =
+        new Date(
+          existing.last_activity_at || 0
+        ).getTime();
+
+      const suggestionTime =
+        new Date(
+          suggestion.last_activity_at || 0
+        ).getTime();
+
+      if (
+        suggestionTime >
+        existingTime
+      ) {
+        existing.last_activity_at =
+          suggestion.last_activity_at;
+      }
+
+      /*
+       * Een geverifieerde retailer mag nooit
+       * worden overschreven door orderdata.
+       */
+      if (
+        retailerIsVerified(existing)
+      ) {
+        return;
+      }
+
+      /*
+       * Niet-geverifieerde masterdata alleen
+       * aanvullen wanneer een veld leeg is.
+       */
+      [
+        "retailer_name",
+        "address_1",
+        "address_2",
+        "address_3",
+        "address_4",
+        "city",
+        "postcode",
+        "country",
+        "delivery_email",
+        "delivery_phone",
+        "contact_name",
+        "owner_name",
+        "owner_code"
+      ].forEach(field => {
+        if (!existing[field]) {
+          existing[field] =
+            suggestion[field] ||
+            "";
+        }
+      });
+    }
+  );
+
+  return [...map.values()]
+    .sort((a, b) => {
+      return String(
+        a.retailer_name || ""
+      ).localeCompare(
+        String(
+          b.retailer_name || ""
+        ),
+        "en",
+        {
+          numeric: true,
+          sensitivity: "base"
+        }
+      );
+    });
+}
+
+function retailerInputHtml({
+  key,
+  field,
+  value,
+  type = "text",
+  placeholder = "",
+  verified = false
+}) {
+  return `
+    <input
+      class="input retailer-field"
+      type="${escapeHtml(type)}"
+      data-retailer-key="${escapeHtml(key)}"
+      data-retailer-field="${escapeHtml(field)}"
+      value="${escapeHtml(value ?? "")}"
+      placeholder="${escapeHtml(placeholder)}"
+      ${verified ? "disabled" : ""}
+      style="
+        min-width:130px;
+        padding:7px 9px;
+        min-height:32px;
+      "
+    >
+  `;
+}
+
+function getRetailerFieldValue(
+  retailerKey,
+  field
+) {
+  const input =
+    document.querySelector(
+      `[data-retailer-key="${CSS.escape(
+        retailerKey
+      )}"][data-retailer-field="${CSS.escape(
+        field
+      )}"]`
+    );
+
+  if (!input) {
+    return "";
+  }
+
+  if (input.type === "checkbox") {
+    return input.checked;
+  }
+
+  return String(
+    input.value || ""
+  ).trim();
+}
+
+function updateRetailerCodePreview(
+  retailerKey
+) {
+  const retailerName =
+    getRetailerFieldValue(
+      retailerKey,
+      "retailer_name"
+    );
+
+  const postcode =
+    getRetailerFieldValue(
+      retailerKey,
+      "postcode"
+    );
+
+  const code =
+    makeRetailerCode(
+      postcode,
+      retailerName
+    );
+
+  const codeElement =
+    document.querySelector(
+      `[data-retailer-code-preview="${CSS.escape(
+        retailerKey
+      )}"]`
+    );
+
+  if (codeElement) {
+    codeElement.textContent =
+      code;
+  }
+}
+
+async function saveRetailerRow(
+  retailerKey,
+  verify = false
+) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const rowElement =
+    document.querySelector(
+      `[data-retailer-row="${CSS.escape(
+        retailerKey
+      )}"]`
+    );
+
+  if (!rowElement) {
+    throw new Error(
+      "Retailer row could not be found."
+    );
+  }
+
+  const customerId =
+    rowElement.dataset.customerId ||
+    "";
+
+  const existingId =
+    rowElement.dataset.retailerId ||
+    "";
+
+  const retailerName =
+    getRetailerFieldValue(
+      retailerKey,
+      "retailer_name"
+    );
+
+  const postcode =
+    getRetailerFieldValue(
+      retailerKey,
+      "postcode"
+    );
+
+  if (!customerId) {
+    throw new Error(
+      "Product owner is missing."
+    );
+  }
+
+  if (!retailerName) {
+    throw new Error(
+      "Retailer name is required."
+    );
+  }
+
+  if (!postcode) {
+    throw new Error(
+      "Postcode is required."
+    );
+  }
+
+  const retailerCode =
+    makeRetailerCode(
+      postcode,
+      retailerName
+    );
+
+  /*
+   * Controleren of er al een geverifieerde
+   * retailer met deze code bestaat.
+   */
+  const {
+    data: verifiedExisting,
+    error: verifiedCheckError
+  } = await db
+    .from("retailer_locations")
+    .select(`
+      id,
+      retailer_name,
+      details_verified
+    `)
+    .eq("company_id", cid)
+    .eq(
+      "customer_id",
+      customerId
+    )
+    .eq(
+      "retailer_code",
+      retailerCode
+    )
+    .eq(
+      "details_verified",
+      true
+    )
+    .maybeSingle();
+
+  if (verifiedCheckError) {
+    throw verifiedCheckError;
+  }
+
+  if (
+    verifiedExisting?.id &&
+    String(
+      verifiedExisting.id
+    ) !== String(
+      existingId || ""
+    )
+  ) {
+    throw new Error(
+      `Retailer ${retailerCode} has already been verified and cannot be added again.`
+    );
+  }
+
+  let verifiedBy = null;
+
+  if (verify) {
+    const {
+      data: authData
+    } = await db.auth.getUser();
+
+    verifiedBy =
+      authData?.user?.id ||
+      null;
+  }
+
+  const payload = {
+    company_id:
+      cid,
+
+    customer_id:
+      customerId,
+
+    retailer_code:
+      retailerCode,
+
+    retailer_name:
+      retailerName,
+
+    address_1:
+      getRetailerFieldValue(
+        retailerKey,
+        "address_1"
+      ),
+
+    address_2:
+      getRetailerFieldValue(
+        retailerKey,
+        "address_2"
+      ),
+
+    address_3:
+      getRetailerFieldValue(
+        retailerKey,
+        "address_3"
+      ),
+
+    address_4:
+      getRetailerFieldValue(
+        retailerKey,
+        "address_4"
+      ),
+
+    city:
+      getRetailerFieldValue(
+        retailerKey,
+        "city"
+      ),
+
+    postcode,
+
+    country:
+      getRetailerFieldValue(
+        retailerKey,
+        "country"
+      ) ||
+      "United Kingdom",
+
+    delivery_email:
+      getRetailerFieldValue(
+        retailerKey,
+        "delivery_email"
+      ) ||
+      null,
+
+    delivery_phone:
+      getRetailerFieldValue(
+        retailerKey,
+        "delivery_phone"
+      ) ||
+      null,
+
+    contact_name:
+      getRetailerFieldValue(
+        retailerKey,
+        "contact_name"
+      ) ||
+      null,
+
+    delivery_instructions:
+      getRetailerFieldValue(
+        retailerKey,
+        "delivery_instructions"
+      ) ||
+      null,
+
+    booking_required:
+      getRetailerFieldValue(
+        retailerKey,
+        "booking_required"
+      ) === true,
+
+    booking_lead_days:
+      Math.max(
+        0,
+        Math.round(
+          toNumber(
+            getRetailerFieldValue(
+              retailerKey,
+              "booking_lead_days"
+            ),
+            0
+          )
+        )
+      ),
+
+    details_verified:
+      verify,
+
+    is_locked:
+      verify,
+
+    verified_at:
+      verify
+        ? new Date()
+            .toISOString()
+        : null,
+
+    verified_by:
+      verify
+        ? verifiedBy
+        : null,
+
+    updated_at:
+      new Date()
+        .toISOString()
+  };
+
+  let savedRow = null;
+
+  if (existingId) {
+    const {
+      data,
+      error
+    } = await db
+      .from("retailer_locations")
+      .update(payload)
+      .eq("id", existingId)
+      .eq("company_id", cid)
+      .select(`
+        id,
+        retailer_code
+      `)
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    savedRow = data;
+  } else {
+    const {
+      data,
+      error
+    } = await db
+      .from("retailer_locations")
+      .upsert(
+        {
+          ...payload,
+          created_at:
+            new Date()
+              .toISOString()
+        },
+        {
+          onConflict:
+            "company_id,customer_id,retailer_code"
+        }
+      )
+      .select(`
+        id,
+        retailer_code
+      `)
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    savedRow = data;
+  }
+
+  /*
+   * Bij verificatie alle eventuele dubbele
+   * niet-geverifieerde masterrecords verwijderen.
+   */
+  if (
+    verify &&
+    savedRow?.id
+  ) {
+    const {
+      error: deleteError
+    } = await db
+      .from("retailer_locations")
+      .delete()
+      .eq("company_id", cid)
+      .eq(
+        "customer_id",
+        customerId
+      )
+      .eq(
+        "retailer_code",
+        retailerCode
+      )
+      .neq(
+        "id",
+        savedRow.id
+      )
+      .eq(
+        "details_verified",
+        false
+      );
+
+    if (deleteError) {
+      throw deleteError;
     }
   }
+
+  showToast(
+    verify
+      ? `Retailer ${retailerCode} verified and locked.`
+      : `Retailer ${retailerCode} saved.`,
+    "ok"
+  );
+
+  await loadShops();
+}
+
+function renderRetailerRows(rows) {
+  const tbody = byId("shopsBody");
+
+  if (!tbody) {
+    return;
+  }
+
+  if (!rows.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="12">
+          No retailers found yet.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = rows.map((row, index) => {
+    const verified = retailerIsVerified(row);
+
+    const retailerCode = String(
+      row.retailer_code ||
+      makeRetailerCode(
+        row.postcode,
+        row.retailer_name
+      )
+    )
+      .trim()
+      .toUpperCase();
+
+    const retailerKey = makeRetailerMapKey(
+      row.customer_id,
+      retailerCode
+    );
+
+    return `
+      <tr
+        data-retailer-row="${escapeHtml(retailerKey)}"
+        data-retailer-id="${escapeHtml(row.id || "")}"
+        data-customer-id="${escapeHtml(row.customer_id || "")}"
+        data-editing="false"
+      >
+        <td>
+          ${formatNumber(index + 1)}
+        </td>
+
+        <td>
+          <strong data-retailer-code-preview="${escapeHtml(retailerKey)}">
+            ${escapeHtml(retailerCode)}
+          </strong>
+
+          <span class="subline">
+            Postcode + first 3 letters
+          </span>
+        </td>
+
+        <td>
+          <span data-retailer-display="retailer_name">
+            ${escapeHtml(row.retailer_name || "Unknown retailer")}
+          </span>
+
+          <input
+            class="input retailer-edit-field"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="retailer_name"
+            value="${escapeHtml(row.retailer_name || "")}"
+            style="display:none; min-width:180px;"
+          >
+        </td>
+
+        <td>
+          <strong>
+            ${escapeHtml(row.owner_name || "—")}
+          </strong>
+
+          <span class="subline">
+            ${escapeHtml(row.owner_code || "")}
+          </span>
+        </td>
+
+        <td>
+          <span data-retailer-display="city">
+            ${escapeHtml(row.city || "—")}
+          </span>
+
+          <input
+            class="input retailer-edit-field"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="city"
+            value="${escapeHtml(row.city || "")}"
+            style="display:none; min-width:150px;"
+          >
+        </td>
+
+        <td>
+          <span data-retailer-display="postcode">
+            ${escapeHtml(row.postcode || "—")}
+          </span>
+
+          <input
+            class="input retailer-edit-field"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="postcode"
+            value="${escapeHtml(row.postcode || "")}"
+            style="display:none; min-width:110px;"
+          >
+        </td>
+
+        <td>
+          <span data-retailer-display="delivery_email">
+            ${escapeHtml(row.delivery_email || "—")}
+          </span>
+
+          <input
+            class="input retailer-edit-field"
+            type="email"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="delivery_email"
+            value="${escapeHtml(row.delivery_email || "")}"
+            style="display:none; min-width:190px;"
+          >
+        </td>
+
+        <td>
+          <span data-retailer-display="delivery_phone">
+            ${escapeHtml(row.delivery_phone || "—")}
+          </span>
+
+          <input
+            class="input retailer-edit-field"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="delivery_phone"
+            value="${escapeHtml(row.delivery_phone || "")}"
+            style="display:none; min-width:135px;"
+          >
+        </td>
+
+        <td>
+          ${formatNumber(row.orders || 0)}
+        </td>
+
+        <td>
+          ${escapeHtml(
+            formatDateTime(row.last_activity_at)
+          )}
+        </td>
+
+        <td>
+          ${retailerStatusHtml(row)}
+        </td>
+
+        <td>
+          ${
+            verified
+              ? `
+                <span class="pill pill-green">
+                  🔒 Locked
+                </span>
+              `
+              : `
+                <div
+                  data-retailer-view-actions
+                  style="
+                    display:flex;
+                    gap:6px;
+                    flex-wrap:nowrap;
+                  "
+                >
+                  <button
+                    class="mini-btn"
+                    type="button"
+                    data-retailer-action="edit"
+                    data-retailer-key="${escapeHtml(retailerKey)}"
+                  >
+                    Edit
+                  </button>
+
+                  <button
+                    class="mini-btn primary"
+                    type="button"
+                    data-retailer-action="verify"
+                    data-retailer-key="${escapeHtml(retailerKey)}"
+                  >
+                    ✓ Verify
+                  </button>
+                </div>
+
+                <div
+                  data-retailer-edit-actions
+                  style="
+                    display:none;
+                    gap:6px;
+                    flex-wrap:nowrap;
+                  "
+                >
+                  <button
+                    class="mini-btn primary"
+                    type="button"
+                    data-retailer-action="save"
+                    data-retailer-key="${escapeHtml(retailerKey)}"
+                  >
+                    Save
+                  </button>
+
+                  <button
+                    class="mini-btn"
+                    type="button"
+                    data-retailer-action="cancel"
+                    data-retailer-key="${escapeHtml(retailerKey)}"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              `
+          }
+        </td>
+
+        <td style="display:none;">
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="address_1"
+            value="${escapeHtml(row.address_1 || "")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="address_2"
+            value="${escapeHtml(row.address_2 || "")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="address_3"
+            value="${escapeHtml(row.address_3 || "")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="address_4"
+            value="${escapeHtml(row.address_4 || "")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="country"
+            value="${escapeHtml(row.country || "United Kingdom")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="contact_name"
+            value="${escapeHtml(row.contact_name || "")}"
+          >
+
+          <input
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="delivery_instructions"
+            value="${escapeHtml(row.delivery_instructions || "")}"
+          >
+
+          <input
+            type="number"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="booking_lead_days"
+            value="${escapeHtml(row.booking_lead_days || 0)}"
+          >
+
+          <input
+            type="checkbox"
+            data-retailer-key="${escapeHtml(retailerKey)}"
+            data-retailer-field="booking_required"
+            ${row.booking_required ? "checked" : ""}
+          >
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function bindRetailerTableEvents() {
+  const tbody = byId("shopsBody");
+
+  if (
+    !tbody ||
+    tbody.dataset.retailerEventsBound === "1"
+  ) {
+    return;
+  }
+
+  tbody.dataset.retailerEventsBound = "1";
+
+  function setRetailerEditMode(
+    retailerKey,
+    editing
+  ) {
+    const row = document.querySelector(
+      `[data-retailer-row="${CSS.escape(retailerKey)}"]`
+    );
+
+    if (!row) {
+      return;
+    }
+
+    row.dataset.editing =
+      editing ? "true" : "false";
+
+    row
+      .querySelectorAll(
+        "[data-retailer-display]"
+      )
+      .forEach(element => {
+        element.style.display =
+          editing ? "none" : "";
+      });
+
+    row
+      .querySelectorAll(
+        ".retailer-edit-field"
+      )
+      .forEach(input => {
+        input.style.display =
+          editing ? "" : "none";
+      });
+
+    const viewActions =
+      row.querySelector(
+        "[data-retailer-view-actions]"
+      );
+
+    const editActions =
+      row.querySelector(
+        "[data-retailer-edit-actions]"
+      );
+
+    if (viewActions) {
+      viewActions.style.display =
+        editing ? "none" : "flex";
+    }
+
+    if (editActions) {
+      editActions.style.display =
+        editing ? "flex" : "none";
+    }
+
+    if (editing) {
+      row
+        .querySelector(
+          '[data-retailer-field="retailer_name"]'
+        )
+        ?.focus();
+    }
+  }
+
+  tbody.addEventListener(
+    "input",
+    event => {
+      const input = event.target.closest(
+        "[data-retailer-field]"
+      );
+
+      if (!input) {
+        return;
+      }
+
+      if (
+        ![
+          "retailer_name",
+          "postcode"
+        ].includes(
+          input.dataset.retailerField
+        )
+      ) {
+        return;
+      }
+
+      updateRetailerCodePreview(
+        input.dataset.retailerKey
+      );
+    }
+  );
+
+  tbody.addEventListener(
+    "click",
+    async event => {
+      const button = event.target.closest(
+        "[data-retailer-action]"
+      );
+
+      if (!button) {
+        return;
+      }
+
+      const action =
+        button.dataset.retailerAction;
+
+      const retailerKey =
+        button.dataset.retailerKey;
+
+      if (action === "edit") {
+        setRetailerEditMode(
+          retailerKey,
+          true
+        );
+        return;
+      }
+
+      if (action === "cancel") {
+        await loadShops();
+        return;
+      }
+
+      button.disabled = true;
+
+      try {
+        if (action === "save") {
+          await saveRetailerRow(
+            retailerKey,
+            false
+          );
+        }
+
+        if (action === "verify") {
+          const confirmed =
+            window.confirm(
+              "Verify and permanently lock this retailer information?\n\n" +
+              "Any duplicate retailer with the same retailer code will disappear."
+            );
+
+          if (!confirmed) {
+            return;
+          }
+
+          await saveRetailerRow(
+            retailerKey,
+            true
+          );
+        }
+      } catch (error) {
+        console.error(error);
+
+        showToast(
+          error.message ||
+          "Retailer action failed.",
+          "err"
+        );
+      } finally {
+        button.disabled = false;
+      }
+    }
+  );
+}
+
+function prepareRetailerTableHeader() {
+  const table =
+    byId("shopsBody")
+      ?.closest("table");
+
+  const headerRow =
+    table?.querySelector(
+      "thead tr"
+    );
+
+  if (!headerRow) {
+    return;
+  }
+
+  headerRow.innerHTML = `
+    <th></th>
+    <th>Retailer Code</th>
+    <th>Retailer / Shop</th>
+    <th>Linked Product Owner</th>
+    <th>City</th>
+    <th>Postcode</th>
+    <th>Email</th>
+    <th>Phone</th>
+    <th>Orders</th>
+    <th>Last Activity</th>
+    <th>Status</th>
+    <th>Actions</th>
+  `;
+}
+
+async function loadShops() {
+  const tbody =
+    byId("shopsBody");
+
+  if (!tbody) {
+    return;
+  }
+
+  prepareRetailerTableHeader();
+  bindRetailerTableEvents();
+
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="12">
+        Loading retailers...
+      </td>
+    </tr>
+  `;
+
+  try {
+    const [
+      masterRows,
+      suggestionRows
+    ] = await Promise.all([
+      loadRetailerMasterRows(),
+      loadRetailerOrderSuggestions()
+    ]);
+
+    const rows =
+      mergeRetailerRows(
+        masterRows,
+        suggestionRows
+      );
+
+    renderRetailerRows(rows);
+  } catch (error) {
+    console.error(error);
+
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="12">
+          Could not load retailers:
+          ${escapeHtml(
+            error.message ||
+            "Unknown error"
+          )}
+        </td>
+      </tr>
+    `;
+  }
+}
 
   function bindTabs() {
     document.querySelectorAll("[data-tab]").forEach(btn => {

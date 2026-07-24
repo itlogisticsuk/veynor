@@ -170,68 +170,425 @@ function getOrderNumber(order) {
     return round2(toNumber(line.tariff_transport, 0));
   }
 
-  function getOrderWarehouseTotal(order) {
-    const fromLines = round2((order.order_lines || []).reduce((sum, line) => {
-      return sum + getLineWarehouseCost(line);
-    }, 0));
+/*
+ * Bepaalt of een order financieel belastbaar is.
+ *
+ * Alleen wanneer is_chargeable expliciet false is,
+ * behandelen we de order als volledig gratis.
+ *
+ * Bij oudere orders waarbij het veld null of niet
+ * aanwezig is, blijft de bestaande prijsberekening
+ * gewoon werken.
+ */
+function isChargeableOrder(order) {
+  return order?.is_chargeable !== false;
+}
 
-    return fromLines || round2(
-      toNumber(order.total_storage_tariff, 0) +
-      toNumber(order.total_admin_tariff, 0) +
-      toNumber(order.total_handling_tariff, 0)
+/*
+ * Warehousekosten van één order.
+ *
+ * Bij een gratis order wordt altijd £0.00
+ * teruggegeven, zelfs wanneer op oude orderregels
+ * nog tarieven aanwezig zouden zijn.
+ */
+function getOrderWarehouseTotal(order) {
+  if (!isChargeableOrder(order)) {
+    return 0;
+  }
+
+  const fromLines = round2(
+    (order.order_lines || []).reduce(
+      (sum, line) => {
+        return (
+          sum +
+          getLineWarehouseCost(line)
+        );
+      },
+      0
+    )
+  );
+
+  /*
+   * De orderregels zijn leidend wanneer daar
+   * een bedrag op staat.
+   */
+  if (fromLines !== 0) {
+    return fromLines;
+  }
+
+  /*
+   * Fallback voor oudere orders waarbij alleen
+   * de totalen op orders zijn opgeslagen.
+   */
+  return round2(
+    toNumber(
+      order.total_storage_tariff,
+      0
+    ) +
+    toNumber(
+      order.total_admin_tariff,
+      0
+    ) +
+    toNumber(
+      order.total_handling_tariff,
+      0
+    )
+  );
+}
+
+/*
+ * Transportkosten van één order.
+ *
+ * Bij is_chargeable = false wordt ook transport
+ * altijd volledig op nul gezet.
+ */
+function getOrderTransportTotal(order) {
+  if (!isChargeableOrder(order)) {
+    return 0;
+  }
+
+  const fromLines = round2(
+    (order.order_lines || []).reduce(
+      (sum, line) => {
+        return (
+          sum +
+          getLineTransportCost(line)
+        );
+      },
+      0
+    )
+  );
+
+  if (fromLines !== 0) {
+    return fromLines;
+  }
+
+  return round2(
+    toNumber(
+      order.total_transport_tariff,
+      0
+    )
+  );
+}
+
+/*
+ * Volledige orderwaarde.
+ *
+ * De expliciete total_customer_charge heeft
+ * normaal voorrang.
+ *
+ * Voor een gratis order wordt deze functie al
+ * vóór alle berekeningen beëindigd met £0.00.
+ */
+function getOrderTotal(order) {
+  if (!isChargeableOrder(order)) {
+    return 0;
+  }
+
+  const explicit = round2(
+    toNumber(
+      order.total_customer_charge,
+      0
+    )
+  );
+
+  if (explicit !== 0) {
+    return explicit;
+  }
+
+  return round2(
+    getOrderWarehouseTotal(order) +
+    getOrderTransportTotal(order)
+  );
+}
+
+/*
+ * Maakt een lijst met de ordernummers die op
+ * deze factuur chargeable zijn.
+ */
+function getChargeableOrderNumbers(orders) {
+  return new Set(
+    (orders || [])
+      .filter(order =>
+        isChargeableOrder(order)
+      )
+      .flatMap(order => {
+        return [
+          cleanText(
+            order.order_number ||
+            ""
+          ),
+          cleanText(
+            order.external_reference ||
+            ""
+          )
+        ];
+      })
+      .filter(Boolean)
+      .map(value =>
+        normalize(value)
+      )
+  );
+}
+
+/*
+ * Minimum Delivery Charges.
+ *
+ * Belangrijk:
+ *
+ * - wanneer alle geselecteerde orders gratis zijn,
+ *   wordt er geen Minimum Delivery Charge gerekend;
+ *
+ * - wanneer een surcharge aan een specifiek
+ *   ordernummer is gekoppeld, wordt gecontroleerd
+ *   of dat ordernummer chargeable is;
+ *
+ * - surcharges zonder ordernummer blijven alleen
+ *   meetellen wanneer de factuur minimaal één
+ *   chargeable order bevat.
+ */
+function getDeliverySurchargeTotal(
+  ctx,
+  orders = []
+) {
+  const chargeableOrders =
+    (orders || []).filter(order =>
+      isChargeableOrder(order)
     );
+
+  /*
+   * Een factuur met alleen gratis orders mag
+   * nooit alsnog een Minimum Delivery Charge
+   * krijgen.
+   */
+  if (!chargeableOrders.length) {
+    return 0;
   }
 
-  function getOrderTransportTotal(order) {
-    const fromLines = round2((order.order_lines || []).reduce((sum, line) => {
-      return sum + getLineTransportCost(line);
-    }, 0));
+  const chargeableOrderNumbers =
+    getChargeableOrderNumbers(
+      chargeableOrders
+    );
 
-    return fromLines || round2(toNumber(order.total_transport_tariff, 0));
-  }
+  return round2(
+    (
+      ctx.deliverySurcharges ||
+      []
+    ).reduce(
+      (sum, item) => {
+        const linkedOrderNumber =
+          normalize(
+            item.order_number ||
+            ""
+          );
 
-  function getOrderTotal(order) {
-    const explicit = round2(toNumber(order.total_customer_charge, 0));
-    return explicit || round2(getOrderWarehouseTotal(order) + getOrderTransportTotal(order));
-  }
+        /*
+         * Wanneer de delivery group een concreet
+         * ordernummer bevat, telt hij alleen mee
+         * wanneer dat ordernummer chargeable is.
+         */
+        if (
+          linkedOrderNumber &&
+          !chargeableOrderNumbers.has(
+            linkedOrderNumber
+          )
+        ) {
+          return sum;
+        }
 
-function getDeliverySurchargeTotal(ctx) {
-  return round2((ctx.deliverySurcharges || []).reduce((sum, item) => {
-    return sum + toNumber(item.applied_surcharge, 0);
-  }, 0));
+        return (
+          sum +
+          toNumber(
+            item.applied_surcharge,
+            0
+          )
+        );
+      },
+      0
+    )
+  );
 }
 
 function isCreditOrder(order) {
-  return normalize(order.order_type) === "credit" || order.is_credit === true;
+  return (
+    normalize(
+      order.order_type
+    ) === "credit" ||
+    order.is_credit === true
+  );
 }
 
+/*
+ * Creditbedragen.
+ *
+ * getOrderTotal() bevat al de free-of-charge
+ * beveiliging. Een niet-chargeable creditorder
+ * levert daarom eveneens £0.00 op.
+ */
 function getCreditTotal(orders) {
-  return round2(orders.reduce((sum, order) => {
-    if (!isCreditOrder(order)) return sum;
-    return sum + getOrderTotal(order);
-  }, 0));
+  return round2(
+    (orders || []).reduce(
+      (sum, order) => {
+        if (!isCreditOrder(order)) {
+          return sum;
+        }
+
+        return (
+          sum +
+          getOrderTotal(order)
+        );
+      },
+      0
+    )
+  );
 }
 
-function getTotals(orders, vatRate, fuelSurchargePercent = DEFAULT_FUEL_SURCHARGE_PERCENT, ctx = {}) {
-  const normalOrders = orders.filter(order => !isCreditOrder(order));
-  const creditOrders = orders.filter(order => isCreditOrder(order));
+/*
+ * Berekent de volledige factuurtotalen.
+ *
+ * Free-of-charge orders blijven wel zichtbaar
+ * op de specificatie, maar dragen financieel
+ * £0.00 bij aan:
+ *
+ * - warehouse;
+ * - transport;
+ * - fuel surcharge;
+ * - VAT;
+ * - invoice total.
+ */
+function getTotals(
+  orders,
+  vatRate,
+  fuelSurchargePercent =
+    DEFAULT_FUEL_SURCHARGE_PERCENT,
+  ctx = {}
+) {
+  const selectedOrders =
+    Array.isArray(orders)
+      ? orders
+      : [];
 
-  const warehouse = round2(normalOrders.reduce((sum, order) => sum + getOrderWarehouseTotal(order), 0));
-  const transport = round2(normalOrders.reduce((sum, order) => sum + getOrderTransportTotal(order), 0));
-  const credits = round2(creditOrders.reduce((sum, order) => sum + getOrderTotal(order), 0));
+  const normalOrders =
+    selectedOrders.filter(order =>
+      !isCreditOrder(order)
+    );
 
-  const minimumDeliverySurcharge = getDeliverySurchargeTotal(ctx);
+  const creditOrders =
+    selectedOrders.filter(order =>
+      isCreditOrder(order)
+    );
 
-  const serviceSubtotal = round2(warehouse + transport + credits);
-  const fuelSurchargeBase = round2(transport);
-
-  const fuelSurcharge = round2(
-    fuelSurchargeBase * (toNumber(fuelSurchargePercent, 0) / 100)
+  /*
+   * Deze functies controleren ieder afzonderlijk
+   * of een order chargeable is.
+   */
+  const warehouse = round2(
+    normalOrders.reduce(
+      (sum, order) => {
+        return (
+          sum +
+          getOrderWarehouseTotal(order)
+        );
+      },
+      0
+    )
   );
 
-  const subtotal = round2(serviceSubtotal + fuelSurcharge + minimumDeliverySurcharge);
-  const vat = round2(subtotal * vatRate);
-  const total = round2(subtotal + vat);
+  const transport = round2(
+    normalOrders.reduce(
+      (sum, order) => {
+        return (
+          sum +
+          getOrderTransportTotal(order)
+        );
+      },
+      0
+    )
+  );
+
+  const credits = round2(
+    creditOrders.reduce(
+      (sum, order) => {
+        return (
+          sum +
+          getOrderTotal(order)
+        );
+      },
+      0
+    )
+  );
+
+  /*
+   * Minimum Delivery Charges worden alleen
+   * gerekend voor chargeable orders.
+   */
+  const minimumDeliverySurcharge =
+    getDeliverySurchargeTotal(
+      ctx,
+      selectedOrders
+    );
+
+  /*
+   * Basisbedrag vóór fuel surcharge.
+   */
+  const serviceSubtotal = round2(
+    warehouse +
+    transport +
+    credits
+  );
+
+  /*
+   * De fuel surcharge wordt alleen berekend
+   * over transport.
+   *
+   * Wanneer alle orders gratis zijn, is transport
+   * automatisch £0.00 en dus ook fuel £0.00.
+   */
+  const fuelSurchargeBase =
+    round2(
+      transport
+    );
+
+  const usedFuelPercent =
+    toNumber(
+      fuelSurchargePercent,
+      0
+    );
+
+  const fuelSurcharge = round2(
+    fuelSurchargeBase *
+    (
+      usedFuelPercent /
+      100
+    )
+  );
+
+  /*
+   * Minimum Delivery Charge wordt na het
+   * serviceSubtotal toegevoegd.
+   */
+  const subtotal = round2(
+    serviceSubtotal +
+    fuelSurcharge +
+    minimumDeliverySurcharge
+  );
+
+  /*
+   * VAT wordt uitsluitend berekend over het
+   * daadwerkelijke factuurbedrag.
+   */
+  const vat = round2(
+    subtotal *
+    toNumber(
+      vatRate,
+      0
+    )
+  );
+
+  const total = round2(
+    subtotal +
+    vat
+  );
 
   return {
     warehouse,
@@ -239,10 +596,14 @@ function getTotals(orders, vatRate, fuelSurchargePercent = DEFAULT_FUEL_SURCHARG
     credits,
     minimumDeliverySurcharge,
     serviceSubtotal,
-    fuelSurchargePercent: toNumber(fuelSurchargePercent, 0),
+
+    fuelSurchargePercent:
+      usedFuelPercent,
+
     fuelSurcharge,
     subtotal,
-    vatBase: subtotal,
+    vatBase:
+      subtotal,
     vat,
     total
   };
@@ -766,41 +1127,163 @@ doc.text(
     return y + 10;
   }
 
-function drawMinimumDeliverySurchargeRows(doc, y, ctx) {
-  const surcharges = ctx.deliverySurcharges || [];
-  if (!surcharges.length) return y;
+function drawMinimumDeliverySurchargeRows(
+  doc,
+  y,
+  ctx,
+  orders = []
+) {
+  /*
+   * Alleen chargeable orders mogen een
+   * Minimum Delivery Charge op de
+   * specificatie tonen.
+   */
+  const chargeableOrders =
+    (orders || []).filter(order =>
+      isChargeableOrder(order)
+    );
+
+  /*
+   * Bestaat de factuur alleen uit gratis
+   * orders, dan tonen we helemaal geen
+   * Minimum Delivery Charge-regels.
+   */
+  if (!chargeableOrders.length) {
+    return y;
+  }
+
+  const chargeableOrderNumbers =
+    getChargeableOrderNumbers(
+      chargeableOrders
+    );
+
+  /*
+   * Filter dezelfde surcharges als bij de
+   * berekening van de factuurtotalen.
+   */
+  const surcharges =
+    (
+      ctx.deliverySurcharges ||
+      []
+    ).filter(group => {
+      const linkedOrderNumber =
+        normalize(
+          group.order_number ||
+          ""
+        );
+
+      /*
+       * Zonder ordernummer mag de surcharge
+       * blijven staan wanneer minimaal één
+       * chargeable order aanwezig is.
+       */
+      if (!linkedOrderNumber) {
+        return true;
+      }
+
+      return chargeableOrderNumbers.has(
+        linkedOrderNumber
+      );
+    });
+
+  if (!surcharges.length) {
+    return y;
+  }
 
   surcharges.forEach(group => {
     if (y > 258) {
       doc.addPage();
-      y = drawSpecificationHeader(doc, 88);
-      doc.setFont("helvetica", "normal");
+
+      y =
+        drawSpecificationHeader(
+          doc,
+          88
+        );
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
       doc.setFontSize(6.5);
     }
 
-    const retailer = cleanText(group.retailer_name || "Minimum Delivery Charge");
-    const postcode = cleanText(group.delivery_postcode || "");
-    const readyVolume = toNumber(group.ready_volume_m3, 0);
-    const minimumVolume = toNumber(group.minimum_volume_m3, 1.25);
-    const shortfall = toNumber(group.shortfall_m3, Math.max(0, minimumVolume - readyVolume));
-    const surcharge = toNumber(group.applied_surcharge || group.calculated_surcharge, 0);
+    const postcode =
+      cleanText(
+        group.delivery_postcode ||
+        ""
+      );
 
-     setDark(doc);
-    doc.setFont("helvetica", "bold");
+    const readyVolume =
+      toNumber(
+        group.ready_volume_m3,
+        0
+      );
+
+    const minimumVolume =
+      toNumber(
+        group.minimum_volume_m3,
+        1.25
+      );
+
+    const shortfall =
+      toNumber(
+        group.shortfall_m3,
+        Math.max(
+          0,
+          minimumVolume -
+          readyVolume
+        )
+      );
+
+    const surcharge =
+      toNumber(
+        group.applied_surcharge ||
+        group.calculated_surcharge,
+        0
+      );
+
+    setDark(doc);
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
     doc.setFontSize(6.5);
 
-doc.setFont("helvetica", "bold");
-doc.text(group.order_number || "Minimum", COL.order, y);
+    doc.text(
+      group.order_number ||
+      "Minimum",
+      COL.order,
+      y
+    );
 
-doc.setFont("helvetica", "normal");
-doc.text("Min. Delivery", COL.retailer, y);
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
 
-    doc.setFont("helvetica", "normal");
+    doc.text(
+      "Min. Delivery",
+      COL.retailer,
+      y
+    );
+
     doc.text(
       splitText(
         doc,
-        `Planned: ${formatNumber(readyVolume,2)} / ${formatNumber(minimumVolume,2)} m³
-Shortfall: ${formatNumber(shortfall,2)} m³
+        `Planned: ${formatNumber(
+          readyVolume,
+          2
+        )} / ${formatNumber(
+          minimumVolume,
+          2
+        )} m³
+Shortfall: ${formatNumber(
+          shortfall,
+          2
+        )} m³
 ${postcode}`,
         54
       ),
@@ -808,11 +1291,35 @@ ${postcode}`,
       y
     );
 
-    doc.text("—", COL.date, y);
-    doc.text("—", COL.amount, y);
-doc.text(formatMoney(0), COL.warehouse, y);
-doc.text(formatMoney(surcharge), COL.transport, y);
-doc.text(formatMoney(surcharge), COL.total, y);
+    doc.text(
+      "—",
+      COL.date,
+      y
+    );
+
+    doc.text(
+      "—",
+      COL.amount,
+      y
+    );
+
+    doc.text(
+      formatMoney(0),
+      COL.warehouse,
+      y
+    );
+
+    doc.text(
+      formatMoney(surcharge),
+      COL.transport,
+      y
+    );
+
+    doc.text(
+      formatMoney(surcharge),
+      COL.total,
+      y
+    );
 
     y += 15;
   });
@@ -888,7 +1395,12 @@ doc.text(formatMoney(total), COL.total, y);
       y += rowHeight;
        });
 
-    y = drawMinimumDeliverySurchargeRows(doc, y, ctx);
+    y = drawMinimumDeliverySurchargeRows(
+  doc,
+  y,
+  ctx,
+  orders
+);
 
     y += 7;
 

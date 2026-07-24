@@ -15,6 +15,7 @@
 let allProducts = [];
 let ownerProfiles = [];
 let deliveryGroupsMap = new Map();
+let closedDeliveryGroupOrderIds = new Set();
 let showDeliveryGroups = false;
 let orderViewMode = "active";
 let editRemovedLineIds = new Set();
@@ -825,14 +826,137 @@ function getLineRevenue(line) {
   return tariffTotal * qty;
 }
 
+function getOrderBaseRevenue(order) {
+  /*
+   * Een gratis serviceorder moet altijd
+   * £0.00 tonen, ook wanneer oude orderregels
+   * nog bedragen bevatten.
+   */
+  if (order.is_chargeable === false) {
+    return 0;
+  }
+
+  const direct =
+    toNumber(
+      order.total_customer_charge,
+      0
+    );
+
+  if (direct !== 0) {
+    return round2(direct);
+  }
+
+  return round2(
+    (order.order_lines || []).reduce(
+      (sum, line) => {
+        return (
+          sum +
+          getLineRevenue(line)
+        );
+      },
+      0
+    )
+  );
+}
+
+function getOrderTransportRevenue(order) {
+  if (order.is_chargeable === false) {
+    return 0;
+  }
+
+  const direct =
+    toNumber(
+      order.total_transport_tariff,
+      0
+    );
+
+  if (direct !== 0) {
+    return round2(direct);
+  }
+
+  return round2(
+    (order.order_lines || []).reduce(
+      (sum, line) => {
+        const qty =
+          getLineRequiredQty(line) ||
+          1;
+
+        return (
+          sum +
+          (
+            toNumber(
+              line.tariff_transport,
+              0
+            ) * qty
+          )
+        );
+      },
+      0
+    )
+  );
+}
+
+function getRegionalSurchargeRate(order) {
+  const region =
+    normalize(
+      order.delivery_region ||
+      ""
+    );
+
+  /*
+   * Bellstone-regels:
+   *
+   * Edinburgh / Glasgow:
+   * 20% over de transportkosten.
+   *
+   * Highlands & Islands:
+   * 40% over de transportkosten.
+   */
+  if (
+    region.includes("highland") ||
+    region.includes("island")
+  ) {
+    return 0.40;
+  }
+
+  if (
+    region.includes("edinburgh") ||
+    region.includes("glasgow")
+  ) {
+    return 0.20;
+  }
+
+  return 0;
+}
+
+function getOrderRegionalSurcharge(order) {
+  if (order.is_chargeable === false) {
+    return 0;
+  }
+
+  const transportRevenue =
+    getOrderTransportRevenue(order);
+
+  const regionalRate =
+    getRegionalSurchargeRate(order);
+
+  return round2(
+    transportRevenue *
+    regionalRate
+  );
+}
+
 function getOrderRevenue(order) {
-  const direct = toNumber(order.total_customer_charge, 0);
+  const baseRevenue =
+    getOrderBaseRevenue(order);
 
-  if (direct !== 0) return direct;
+  const regionalSurcharge =
+    getOrderRegionalSurcharge(order);
 
-  return (order.order_lines || []).reduce((sum, line) => {
-    return sum + getLineRevenue(line);
-  }, 0);
+  return round2(
+    baseRevenue +
+    regionalSurcharge
+  );
 }
 
 function getProductPackageCount(product) {
@@ -1244,6 +1368,56 @@ function getDeliveryGroupKey(order) {
   ].join("|");
 }
 
+function getStoredGroupsForBaseKey(baseKey) {
+  const prefix = `${baseKey}|C`;
+
+  return (
+    window.__storedDeliveryGroups ||
+    []
+  ).filter(group => {
+    const storedKey =
+      String(group.group_key || "");
+
+    return (
+      storedKey === baseKey ||
+      storedKey.startsWith(prefix)
+    );
+  });
+}
+
+function getNextDeliveryGroupCycle(baseKey) {
+  const storedGroups =
+    getStoredGroupsForBaseKey(baseKey);
+
+  const highestCycle =
+    storedGroups.reduce(
+      (highest, group) => {
+        return Math.max(
+          highest,
+          Math.max(
+            1,
+            Math.round(
+              toNumber(
+                group.cycle_number,
+                1
+              )
+            )
+          )
+        );
+      },
+      0
+    );
+
+  return highestCycle + 1;
+}
+
+function makeStoredDeliveryGroupKey(
+  baseKey,
+  cycleNumber
+) {
+  return `${baseKey}|C${cycleNumber}`;
+}
+
 function getOwnerProfileForOrder(order) {
   const ownerCode = normalize(order.customers?.customer_code || order.customer_code || "");
   const ownerName = normalize(getProductOwnerName(order));
@@ -1303,6 +1477,13 @@ function rebuildDeliveryGroups() {
   deliveryGroupsMap = new Map();
 
   allOrders.forEach(order => {
+    if (
+      closedDeliveryGroupOrderIds.has(
+        String(order.id)
+      )
+    ) {
+      return;
+    }
     if (isExcludedFromDeliveryGroup(order)) return;
     if (!isReadyForDeliveryGroup(order) && !isWaitingForDeliveryGroup(order)) return;
 
@@ -1381,13 +1562,9 @@ function exposeDeliveryGroupsToPlanner() {
       return getDeliveryGroup(order);
     },
 
-    getStoredGroup(group) {
-      if (!group?.key) return null;
-
-      return (window.__storedDeliveryGroups || []).find(row =>
-        row.group_key === group.key
-      ) || null;
-    }
+getStoredGroup(group) {
+  return getStoredDeliveryGroup(group);
+}
   };
 }
 
@@ -1445,16 +1622,85 @@ async function loadOwnerProfilesForMinimumRules() {
 async function loadStoredDeliveryGroups() {
   const cid = await getCompanyId();
 
-  const { data, error } = await client
+  const { data: groups, error: groupsError } = await client
     .from("delivery_groups")
     .select("*")
-    .eq("company_id", cid);
+    .eq("company_id", cid)
+    .order("cycle_number", {
+      ascending: false
+    });
 
-  if (error) throw error;
+  if (groupsError) {
+    throw groupsError;
+  }
 
-  window.__storedDeliveryGroups = data || [];
+  window.__storedDeliveryGroups =
+    groups || [];
+
+  /*
+   * Orders die al in een goedgekeurde of
+   * gesloten delivery group staan, mogen niet
+   * opnieuw in een nieuwe delivery group
+   * terechtkomen.
+   */
+  const closedGroupIds = (groups || [])
+    .filter(group =>
+      normalize(group.status) === "approved" ||
+      group.is_open === false
+    )
+    .map(group => group.id)
+    .filter(Boolean);
+
+  closedDeliveryGroupOrderIds =
+    new Set();
+
+  if (!closedGroupIds.length) {
+    return;
+  }
+
+  const {
+    data: linkedOrders,
+    error: linkedOrdersError
+  } = await client
+    .from("delivery_group_orders")
+.select(`
+  order_id,
+  delivery_group_id,
+  order_number,
+  order_status,
+  volume_m3,
+  group_role
+`)    .in(
+      "delivery_group_id",
+      closedGroupIds
+    );
+
+  if (linkedOrdersError) {
+    throw linkedOrdersError;
+  }
+
+window.__storedDeliveryGroupOrders =
+  linkedOrders || [];
+
+closedDeliveryGroupOrderIds =
+  new Set(
+    (linkedOrders || [])
+      /*
+       * Alleen de orders die daadwerkelijk
+       * zijn goedgekeurd voor levering worden
+       * uit volgende delivery groups gehaald.
+       *
+       * Waiting orders blijven beschikbaar
+       * voor de volgende cyclus.
+       */
+      .filter(row =>
+        normalize(row.group_role) === "ready"
+      )
+      .map(row => row.order_id)
+      .filter(Boolean)
+      .map(String)
+  );
 }
-
 async function loadOrders() {
   const cid = await getCompanyId();
 
@@ -2257,10 +2503,42 @@ function renderOrderTypeBadge(order) {
 }
 
 function renderFinanceCell(order) {
+  const totalRevenue =
+    getOrderRevenue(order);
+
+  const regionalSurcharge =
+    getOrderRegionalSurcharge(order);
+
   return `
     <div class="finance-metric">
-      ${pill(order.derived_finance_status)}
-      ${canSeeInternalPlanningData() ? `<strong>${formatMoney(getOrderRevenue(order))}</strong>` : ""}
+      ${pill(
+        order.derived_finance_status
+      )}
+
+      ${
+        canSeeInternalPlanningData()
+          ? `
+            <strong>
+              ${formatMoney(
+                totalRevenue
+              )}
+            </strong>
+
+            ${
+              regionalSurcharge > 0
+                ? `
+                  <span class="subline">
+                    Includes regional surcharge:
+                    ${formatMoney(
+                      regionalSurcharge
+                    )}
+                  </span>
+                `
+                : ""
+            }
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -3191,11 +3469,44 @@ function renderExpandedRow(order) {
 }
 
 function getStoredDeliveryGroup(group) {
-  if (!group?.key) return null;
-  return (window.__storedDeliveryGroups || []).find(row => row.group_key === group.key) || null;
+  if (!group?.key) {
+    return null;
+  }
+
+  /*
+   * Alleen een open delivery group mag nog
+   * worden gebruikt voor nieuwe orders.
+   *
+   * Approved en gesloten groepen worden
+   * afzonderlijk vanuit de historie getoond.
+   */
+  return (
+    window.__storedDeliveryGroups ||
+    []
+  ).find(row => {
+    const storedKey =
+      String(row.group_key || "");
+
+    const belongsToBaseKey =
+      storedKey === group.key ||
+      storedKey.startsWith(
+        `${group.key}|C`
+      );
+
+    return (
+      belongsToBaseKey &&
+      row.is_open === true &&
+      normalize(row.status) !==
+        "approved"
+    );
+  }) || null;
 }
 
-function renderDeliveryGroupOrdersBlock(title, orders, emptyText) {
+function renderDeliveryGroupOrdersBlock(
+  title,
+  orders,
+  emptyText
+) {
   if (!orders?.length) {
     return `
       <div class="delivery-group-empty">
@@ -3206,14 +3517,34 @@ function renderDeliveryGroupOrdersBlock(title, orders, emptyText) {
 
   return `
     <div class="delivery-group-orders-block">
-      <strong>${escapeHtml(title)}</strong>
+      <strong>
+        ${escapeHtml(title)}
+      </strong>
+
       ${orders.map(item => `
         <div class="delivery-group-order-line">
           <span>
-            <strong>${escapeHtml(item.orderNumber)}</strong>
-            <span class="subline">${escapeHtml(statusLabel(item.status))}</span>
+            <strong>
+              ${escapeHtml(
+                item.orderNumber
+              )}
+            </strong>
+
+            <span class="subline">
+              ${escapeHtml(
+                statusLabel(
+                  item.status
+                )
+              )}
+            </span>
           </span>
-          <span>${formatNumber(item.volume, 2)} m³</span>
+
+          <span>
+            ${formatNumber(
+              item.volume,
+              2
+            )} m³
+          </span>
         </div>
       `).join("")}
     </div>
@@ -3221,65 +3552,520 @@ function renderDeliveryGroupOrdersBlock(title, orders, emptyText) {
 }
 
 function renderDeliveryGroupCard(group) {
-  const stored = getStoredDeliveryGroup(group);
-  const isApproved = normalize(stored?.status) === "approved";
+  const readyVolume =
+    toNumber(
+      group.readyVolume,
+      0
+    );
 
-  const readyVolume = toNumber(group.readyVolume, 0);
-  const waitingVolume = toNumber(group.waitingVolume, 0);
-  const minimumVolume = toNumber(group.minimumVolume, 1.25);
-  const potentialVolume = round2(readyVolume + waitingVolume);
+  const waitingVolume =
+    toNumber(
+      group.waitingVolume,
+      0
+    );
 
-  const shortfall = round2(Math.max(0, minimumVolume - readyVolume));
-  const surcharge = round2(shortfall * toNumber(group.tariffPerM3, 55.20));
+  const minimumVolume =
+    toNumber(
+      group.minimumVolume,
+      1.25
+    );
 
-  const readyEnough = readyVolume >= minimumVolume;
-  const hasReadyOrders = group.readyOrders.length > 0;
-  const hasWaitingOrders = group.waitingOrders.length > 0;
-  const waitingCouldHelp = potentialVolume >= minimumVolume && shortfall > 0;
+  const potentialVolume =
+    round2(
+      readyVolume +
+      waitingVolume
+    );
 
-  let statusHtml = "";
+  const shortfall =
+    round2(
+      Math.max(
+        0,
+        minimumVolume -
+        readyVolume
+      )
+    );
 
-  if (!hasReadyOrders) {
-    statusHtml = pill("pending", "Waiting goods");
-  } else if (isApproved) {
-    statusHtml = pill("confirmed", "Approved");
-  } else if (readyEnough) {
-    statusHtml = pill("stock_complete", "Ready");
-  } else {
-    statusHtml = pill("planned", `Below minimum · +${formatMoney(surcharge)}`);
-  }
+  const surcharge =
+    round2(
+      shortfall *
+      toNumber(
+        group.tariffPerM3,
+        55.20
+      )
+    );
+
+  const hasWaitingOrders =
+    group.waitingOrders.length > 0;
+
+  const waitingCouldHelp =
+    potentialVolume >=
+      minimumVolume &&
+    shortfall > 0;
 
   return `
     <div class="delivery-group-card">
       <div class="delivery-group-card-head">
         <div>
-          <h3>${escapeHtml(group.retailer || "Unknown retailer")}</h3>
+          <h3>
+            ${escapeHtml(
+              group.retailer ||
+              "Unknown retailer"
+            )}
+          </h3>
+
           <div class="subline">
-            ${escapeHtml(group.productOwner || "—")} · ${escapeHtml(group.postcode || "No postcode")}
+            ${escapeHtml(
+              group.productOwner ||
+              "—"
+            )}
+            ·
+            ${escapeHtml(
+              group.postcode ||
+              "No postcode"
+            )}
           </div>
         </div>
-        <div>${statusHtml}</div>
+
+        <div>
+          ${pill(
+            "planned",
+            `Below minimum · +${formatMoney(
+              surcharge
+            )}`
+          )}
+        </div>
       </div>
 
       <div class="delivery-group-metrics">
         <div class="delivery-group-metric">
           <span>Ready orders</span>
-          <strong>${formatNumber(group.readyOrders.length, 0)}</strong>
+
+          <strong>
+            ${formatNumber(
+              group.readyOrders.length,
+              0
+            )}
+          </strong>
         </div>
 
         <div class="delivery-group-metric">
           <span>Waiting orders</span>
-          <strong>${formatNumber(group.waitingOrders.length, 0)}</strong>
+
+          <strong>
+            ${formatNumber(
+              group.waitingOrders.length,
+              0
+            )}
+          </strong>
         </div>
 
         <div class="delivery-group-metric">
           <span>Ready volume</span>
-          <strong>${formatNumber(readyVolume, 2)} / ${formatNumber(minimumVolume, 2)} m³</strong>
+
+          <strong>
+            ${formatNumber(
+              readyVolume,
+              2
+            )}
+            /
+            ${formatNumber(
+              minimumVolume,
+              2
+            )}
+            m³
+          </strong>
         </div>
 
         <div class="delivery-group-metric">
           <span>Potential volume</span>
-          <strong>${formatNumber(potentialVolume, 2)} m³</strong>
+
+          <strong>
+            ${formatNumber(
+              potentialVolume,
+              2
+            )}
+            m³
+          </strong>
+        </div>
+      </div>
+
+      <div class="delivery-group-warning">
+        <strong>
+          Shortfall
+          ${formatNumber(
+            shortfall,
+            2
+          )}
+          m³
+        </strong>
+
+        <span>
+          Additional transport charge:
+          ${formatMoney(
+            surcharge
+          )}
+        </span>
+
+        ${
+          waitingCouldHelp
+            ? `
+              <span>
+                Waiting orders could bring this
+                delivery above the minimum.
+              </span>
+            `
+            : hasWaitingOrders
+              ? `
+                <span>
+                  Even with waiting orders, this
+                  stays below minimum.
+                </span>
+              `
+              : `
+                <span>
+                  No waiting orders available
+                  for this retailer.
+                </span>
+              `
+        }
+      </div>
+
+      <div class="delivery-group-card-grid">
+        ${renderDeliveryGroupOrdersBlock(
+          "Ready to deliver",
+          group.readyOrders,
+          "No ready orders."
+        )}
+
+        ${renderDeliveryGroupOrdersBlock(
+          "Waiting / potential",
+          group.waitingOrders,
+          "No waiting orders."
+        )}
+      </div>
+
+      <div class="delivery-group-decision">
+        <div>
+          <strong>
+            Decision required
+          </strong>
+
+          <span class="subline">
+            Deliver ready orders now,
+            or hold for waiting orders.
+          </span>
+        </div>
+
+        <button
+          class="btn btn-primary"
+          type="button"
+          data-open-delivery-group="${escapeHtml(
+            group.key
+          )}"
+        >
+          Review Delivery
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+/*
+ * Haalt alle databasekoppelingen op die bij
+ * één opgeslagen delivery group horen.
+ *
+ * Dubbele koppelingen voor dezelfde order
+ * worden hier automatisch verwijderd.
+ */
+function getStoredGroupLinkedRows(
+  storedGroup,
+  groupRole = ""
+) {
+  const seenOrderIds =
+    new Set();
+
+  return (
+    window.__storedDeliveryGroupOrders ||
+    []
+  )
+    .filter(row => {
+      return (
+        String(
+          row.delivery_group_id
+        ) ===
+        String(
+          storedGroup.id
+        )
+      );
+    })
+    .filter(row => {
+      if (!groupRole) {
+        return true;
+      }
+
+      return (
+        normalize(
+          row.group_role
+        ) ===
+        normalize(
+          groupRole
+        )
+      );
+    })
+    .filter(row => {
+      const orderId =
+        String(
+          row.order_id ||
+          ""
+        );
+
+      if (
+        !orderId ||
+        seenOrderIds.has(
+          orderId
+        )
+      ) {
+        return false;
+      }
+
+      seenOrderIds.add(
+        orderId
+      );
+
+      return true;
+    });
+}
+
+/*
+ * Koppelt een rij uit delivery_group_orders
+ * aan de actuele order uit allOrders.
+ */
+function getOrderForStoredGroupRow(
+  row
+) {
+  return allOrders.find(order => {
+    return (
+      String(order.id) ===
+      String(row.order_id)
+    );
+  }) || null;
+}
+
+/*
+ * Bepaalt of een approved delivery group nog
+ * aandacht nodig heeft.
+ *
+ * De groep verdwijnt zodra alle approved orders:
+ *
+ * - een leverdatum/pickupdatum hebben;
+ * - op transport staan;
+ * - delivered zijn;
+ * - cancelled/closed zijn;
+ * - of anderszins historisch zijn.
+ */
+function storedGroupStillNeedsAttention(
+  storedGroup
+) {
+  const readyRows =
+    getStoredGroupLinkedRows(
+      storedGroup,
+      "ready"
+    );
+
+  if (!readyRows.length) {
+    return false;
+  }
+
+  return readyRows.some(row => {
+    const order =
+      getOrderForStoredGroupRow(
+        row
+      );
+
+    if (!order) {
+      return false;
+    }
+
+    if (
+      !isActiveOrder(order)
+    ) {
+      return false;
+    }
+
+    if (
+      isExcludedFromDeliveryGroup(
+        order
+      )
+    ) {
+      return false;
+    }
+
+    /*
+     * Zodra een lever- of pickupdatum bekend is,
+     * hoeft de approval niet meer in dit
+     * aandachtsoverzicht te staan.
+     */
+    if (
+      getExpectedDeliveryDate(
+        order
+      )
+    ) {
+      return false;
+    }
+
+    if (
+      normalize(
+        order.status
+      ) === "picked_up"
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function renderApprovedDeliveryGroupCard(
+  stored
+) {
+  const readyRows =
+    getStoredGroupLinkedRows(
+      stored,
+      "ready"
+    );
+
+  const waitingRows =
+    getStoredGroupLinkedRows(
+      stored,
+      "waiting"
+    );
+
+  const readyOrders =
+    readyRows.map(row => ({
+      orderNumber:
+        row.order_number ||
+        "Order",
+
+      status:
+        row.order_status ||
+        "approved",
+
+      volume:
+        toNumber(
+          row.volume_m3,
+          0
+        )
+    }));
+
+  const waitingOrders =
+    waitingRows.map(row => ({
+      orderNumber:
+        row.order_number ||
+        "Order",
+
+      status:
+        row.order_status ||
+        "waiting",
+
+      volume:
+        toNumber(
+          row.volume_m3,
+          0
+        )
+    }));
+
+  const shortfall =
+    toNumber(
+      stored.shortfall_m3,
+      0
+    );
+
+  const appliedSurcharge =
+    toNumber(
+      stored.applied_surcharge,
+      0
+    );
+
+  return `
+    <div class="delivery-group-card">
+      <div class="delivery-group-card-head">
+        <div>
+          <h3>
+            ${escapeHtml(
+              stored.retailer_name ||
+              "Unknown retailer"
+            )}
+          </h3>
+
+          <div class="subline">
+            ${escapeHtml(
+              stored.product_owner_name ||
+              "—"
+            )}
+            ·
+            ${escapeHtml(
+              stored.delivery_postcode ||
+              "No postcode"
+            )}
+          </div>
+        </div>
+
+        <div>
+          ${pill(
+            "confirmed",
+            "Approved"
+          )}
+        </div>
+      </div>
+
+      <div class="delivery-group-metrics">
+        <div class="delivery-group-metric">
+          <span>Ready orders</span>
+
+          <strong>
+            ${formatNumber(
+              readyOrders.length,
+              0
+            )}
+          </strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Waiting orders</span>
+
+          <strong>
+            ${formatNumber(
+              waitingOrders.length,
+              0
+            )}
+          </strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Approved volume</span>
+
+          <strong>
+            ${formatNumber(
+              stored.ready_volume_m3,
+              2
+            )}
+            /
+            ${formatNumber(
+              stored.minimum_volume_m3,
+              2
+            )}
+            m³
+          </strong>
+        </div>
+
+        <div class="delivery-group-metric">
+          <span>Applied surcharge</span>
+
+          <strong>
+            ${formatMoney(
+              appliedSurcharge
+            )}
+          </strong>
         </div>
       </div>
 
@@ -3287,230 +4073,443 @@ function renderDeliveryGroupCard(group) {
         shortfall > 0
           ? `
             <div class="delivery-group-warning">
-              <strong>Shortfall ${formatNumber(shortfall, 2)} m³</strong>
+              <strong>
+                Shortfall
+                ${formatNumber(
+                  shortfall,
+                  2
+                )}
+                m³
+              </strong>
+
               <span>
-  ${
-    isApproved
-      ? toNumber(stored?.applied_surcharge, 0) > 0
-        ? `Additional transport charge: ${formatMoney(
-            stored.applied_surcharge
-          )}`
-        : "No additional transport charge applied"
-      : `Additional transport charge: ${formatMoney(
-          surcharge
-        )}`
-  }
-</span>
-              ${
-                waitingCouldHelp
-                  ? `<span>Waiting orders could bring this delivery above the minimum.</span>`
-                  : hasWaitingOrders
-                    ? `<span>Even with waiting orders, this stays below minimum.</span>`
-                    : `<span>No waiting orders available for this retailer.</span>`
-              }
+                Additional transport charge:
+                ${formatMoney(
+                  appliedSurcharge
+                )}
+              </span>
             </div>
           `
-          : `
-            <div class="delivery-group-ok">
-              Minimum volume is met for the ready orders.
-            </div>
-          `
+          : ""
       }
 
       <div class="delivery-group-card-grid">
-        ${renderDeliveryGroupOrdersBlock("Ready to deliver", group.readyOrders, "No ready orders.")}
-        ${renderDeliveryGroupOrdersBlock("Waiting / potential", group.waitingOrders, "No waiting orders.")}
+        ${renderDeliveryGroupOrdersBlock(
+          "Approved for delivery",
+          readyOrders,
+          "No approved orders found."
+        )}
+
+        ${renderDeliveryGroupOrdersBlock(
+          "Waiting at approval",
+          waitingOrders,
+          "No waiting orders."
+        )}
       </div>
 
       <div class="delivery-group-decision">
-        ${
-          isApproved
-            ? `
-              <div>
-                <strong>Approved</strong>
-                <span class="subline">
-                  ${escapeHtml(stored?.approved_by_name || "Unknown user")}
-                  ${stored?.approved_at ? ` · ${escapeHtml(formatDateTime(stored.approved_at))}` : ""}
-                </span>
-                <span class="subline">
-                  Applied surcharge: ${formatMoney(
-  stored?.applied_surcharge ?? surcharge
-)}
-                </span>
-              </div>
-            `
-            : !hasReadyOrders
-              ? `
-                <div>
-                  <strong>No ready orders yet</strong>
-                  <span class="subline">Wait until at least one order is stock complete or planned.</span>
-                </div>
-              `
-              : readyEnough
-                ? `
-                  <div>
-                    <strong>Ready to deliver</strong>
-                    <span class="subline">No minimum-volume approval required.</span>
-                  </div>
-                `
-                : `
-                  <div>
-                    <strong>Decision required</strong>
-                    <span class="subline">Deliver ready orders now, or hold for waiting orders.</span>
-                  </div>
+        <div>
+          <strong>
+            Approved
+          </strong>
 
-                  <button
-                    class="btn btn-primary"
-                    type="button"
-                    data-open-delivery-group="${escapeHtml(group.key)}"
-                  >
-                    Review Delivery
-                  </button>
+          <span class="subline">
+            ${escapeHtml(
+              stored.approved_by_name ||
+              "Unknown user"
+            )}
+
+            ${
+              stored.approved_at
+                ? `
+                  ·
+                  ${escapeHtml(
+                    formatDateTime(
+                      stored.approved_at
+                    )
+                  )}
                 `
-        }
+                : ""
+            }
+          </span>
+
+          <span class="subline">
+            Applied surcharge:
+            ${formatMoney(
+              appliedSurcharge
+            )}
+          </span>
+        </div>
       </div>
     </div>
   `;
 }
 
 function renderDeliveryGroupsView() {
-  const tableWrap = byId("ordersTableWrap");
-  const groupsWrap = byId("deliveryGroupsWrap");
-  const container = byId("deliveryGroupsContainer");
+  const tableWrap =
+    byId(
+      "ordersTableWrap"
+    );
 
-  if (!tableWrap || !groupsWrap || !container) return;
+  const groupsWrap =
+    byId(
+      "deliveryGroupsWrap"
+    );
 
-  tableWrap.style.display = "none";
-  groupsWrap.style.display = "";
+  const container =
+    byId(
+      "deliveryGroupsContainer"
+    );
 
-  const visibleGroups = new Map();
+  if (
+    !tableWrap ||
+    !groupsWrap ||
+    !container
+  ) {
+    return;
+  }
 
-  filteredOrders.forEach(order => {
-    const group = getDeliveryGroup(order);
-    if (!group) return;
-    visibleGroups.set(group.key, group);
-  });
+  tableWrap.style.display =
+    "none";
 
-  const groups = [...visibleGroups.values()]
-    .filter(group => group.readyOrders.length || group.waitingOrders.length)
+  groupsWrap.style.display =
+    "";
+
+  /*
+   * Gebruik deliveryGroupsMap direct.
+   *
+   * Hierdoor worden de groepen niet meer
+   * beïnvloed door:
+   *
+   * - Active/Historical;
+   * - zoekfilters;
+   * - lifecyclefilters;
+   * - documentfilters.
+   */
+  const approvalRequiredGroups = [
+    ...deliveryGroupsMap.values()
+  ]
+    .filter(group => {
+      return (
+        group.readyOrders.length > 0 &&
+        group.shortfall > 0
+      );
+    })
     .sort((a, b) => {
-      const aNeedsDecision = a.readyOrders.length && a.shortfall > 0 ? 1 : 0;
-      const bNeedsDecision = b.readyOrders.length && b.shortfall > 0 ? 1 : 0;
+      if (
+        b.readyVolume !==
+        a.readyVolume
+      ) {
+        return (
+          b.readyVolume -
+          a.readyVolume
+        );
+      }
 
-      if (bNeedsDecision !== aNeedsDecision) return bNeedsDecision - aNeedsDecision;
-      if (b.readyVolume !== a.readyVolume) return b.readyVolume - a.readyVolume;
-
-      return String(a.retailer || "").localeCompare(String(b.retailer || ""), "en");
+      return String(
+        a.retailer ||
+        ""
+      ).localeCompare(
+        String(
+          b.retailer ||
+          ""
+        ),
+        "en"
+      );
     });
 
-  if (!groups.length) {
+  /*
+   * Toon alleen approved groepen die nog
+   * aandacht nodig hebben.
+   *
+   * Een groep verdwijnt zodra de gekoppelde
+   * ready-orders een leverdatum/pickupdatum
+   * hebben of historisch zijn geworden.
+   */
+  const approvedGroups = (
+    window.__storedDeliveryGroups ||
+    []
+  )
+    .filter(storedGroup => {
+      const isApproved =
+        normalize(
+          storedGroup.status
+        ) ===
+        "approved";
+
+      const isClosed =
+        storedGroup.is_open ===
+        false;
+
+      const isNotInvoiced =
+        normalize(
+          storedGroup.invoice_status
+        ) !==
+        "invoiced";
+
+      return (
+        isApproved &&
+        isClosed &&
+        isNotInvoiced &&
+        storedGroupStillNeedsAttention(
+          storedGroup
+        )
+      );
+    })
+    .sort((a, b) => {
+      const aDate =
+        new Date(
+          a.approved_at ||
+          a.closed_at ||
+          0
+        ).getTime();
+
+      const bDate =
+        new Date(
+          b.approved_at ||
+          b.closed_at ||
+          0
+        ).getTime();
+
+      return bDate - aDate;
+    });
+
+  if (
+    !approvalRequiredGroups.length &&
+    !approvedGroups.length
+  ) {
     container.innerHTML = `
       <div class="delivery-group-empty">
-        No delivery groups found.
+        No delivery groups requiring attention.
       </div>
     `;
+
     return;
   }
 
   container.innerHTML = `
     <div class="delivery-groups-view">
-      ${groups.map(group => renderDeliveryGroupCard(group)).join("")}
+
+      ${approvalRequiredGroups
+        .map(group =>
+          renderDeliveryGroupCard(
+            group
+          )
+        )
+        .join("")}
+
+      ${approvedGroups
+        .map(storedGroup =>
+          renderApprovedDeliveryGroupCard(
+            storedGroup
+          )
+        )
+        .join("")}
+
     </div>
   `;
 
   bindDeliveryGroupTableEvents();
 }
 
-async function approveDeliveryGroup(groupKey, options = {}) {
-  const group = deliveryGroupsMap.get(groupKey);
-  if (!group) throw new Error("Delivery group not found.");
+async function approveDeliveryGroup(
+  groupKey,
+  options = {}
+) {
+  const group =
+    deliveryGroupsMap.get(groupKey);
 
-  const cid = await getCompanyId();
+  if (!group) {
+    throw new Error(
+      "Delivery group not found."
+    );
+  }
+
+  const cid =
+    await getCompanyId();
+
+  const cycleNumber =
+    getNextDeliveryGroupCycle(
+      group.key
+    );
+
+  const storedGroupKey =
+    makeStoredDeliveryGroupKey(
+      group.key,
+      cycleNumber
+    );
+
+  const approvedAt =
+    new Date().toISOString();
+
+  const appliedSurcharge =
+    round2(
+      options.appliedSurcharge ??
+      group.surcharge
+    );
 
   const payload = {
     company_id: cid,
+
     product_owner_id: null,
-    product_owner_name: group.productOwner || "",
-    retailer_name: group.retailer || "",
+
+    product_owner_name:
+      group.productOwner || "",
+
+    retailer_name:
+      group.retailer || "",
+
     retailer_code: "",
-    delivery_postcode: group.postcode || "",
-    group_key: group.key,
 
-    ready_volume_m3: round2(group.readyVolume),
-    waiting_volume_m3: round2(group.waitingVolume),
-    minimum_volume_m3: round2(group.minimumVolume),
-    shortfall_m3: round2(group.shortfall),
-    tariff_per_m3: round2(group.tariffPerM3),
+    delivery_postcode:
+      group.postcode || "",
 
-    calculated_surcharge: round2(group.surcharge),
-applied_surcharge: round2(options.appliedSurcharge ?? group.surcharge),
+    group_key: storedGroupKey,
+    cycle_number: cycleNumber,
+
+    ready_volume_m3:
+      round2(group.readyVolume),
+
+    waiting_volume_m3:
+      round2(group.waitingVolume),
+
+    minimum_volume_m3:
+      round2(group.minimumVolume),
+
+    shortfall_m3:
+      round2(group.shortfall),
+
+    tariff_per_m3:
+      round2(group.tariffPerM3),
+
+    calculated_surcharge:
+      round2(group.surcharge),
+
+    applied_surcharge:
+      appliedSurcharge,
 
     status: "approved",
-    approval_note: options.approvalNote || "Delivery approved from OCC.",
-    approved_by: currentUser?.id || null,
-    approved_by_name: currentProfile?.full_name || currentUser?.email || "Unknown user",
-    approved_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
+
+    is_open: false,
+    closed_at: approvedAt,
+
+    invoice_status:
+      "not_invoiced",
+
+    approval_note:
+      options.approvalNote ||
+      "Delivery approved from OCC.",
+
+    approved_by:
+      currentUser?.id || null,
+
+    approved_by_name:
+      currentProfile?.full_name ||
+      currentUser?.email ||
+      "Unknown user",
+
+    approved_at: approvedAt,
+    updated_at: approvedAt
   };
 
-  const { data, error } = await client
+  const {
+    data,
+    error
+  } = await client
     .from("delivery_groups")
-    .upsert(payload, {
-      onConflict: "company_id,group_key"
-    })
+    .insert(payload)
     .select("id")
     .single();
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
-  const deliveryGroupId = data.id;
-
-  await client
-    .from("delivery_group_orders")
-    .delete()
-    .eq("delivery_group_id", deliveryGroupId);
+  const deliveryGroupId =
+    data.id;
 
   const rows = [
     ...group.readyOrders.map(order => ({
       company_id: cid,
-      delivery_group_id: deliveryGroupId,
+      delivery_group_id:
+        deliveryGroupId,
       order_id: order.id,
-      order_number: order.orderNumber,
-      order_status: order.status,
-      volume_m3: round2(order.volume),
+      order_number:
+        order.orderNumber,
+      order_status:
+        order.status,
+      volume_m3:
+        round2(order.volume),
       group_role: "ready"
     })),
+
     ...group.waitingOrders.map(order => ({
       company_id: cid,
-      delivery_group_id: deliveryGroupId,
+      delivery_group_id:
+        deliveryGroupId,
       order_id: order.id,
-      order_number: order.orderNumber,
-      order_status: order.status,
-      volume_m3: round2(order.volume),
+      order_number:
+        order.orderNumber,
+      order_status:
+        order.status,
+      volume_m3:
+        round2(order.volume),
       group_role: "waiting"
     }))
   ];
 
   if (rows.length) {
-    const { error: orderError } = await client
+    const {
+      error: orderError
+    } = await client
       .from("delivery_group_orders")
       .insert(rows);
 
-    if (orderError) throw orderError;
+    if (orderError) {
+      throw orderError;
+    }
   }
 
-  await client
+  const {
+    error: activityError
+  } = await client
     .from("delivery_group_activity")
     .insert({
       company_id: cid,
-      delivery_group_id: deliveryGroupId,
+      delivery_group_id:
+        deliveryGroupId,
       activity_type: "approved",
-      description: `Delivery approved. Applied surcharge ${formatMoney(options.appliedSurcharge ?? group.surcharge)}.${options.approvalNote ? ` Note: ${options.approvalNote}` : ""}`,
-      created_by: currentUser?.id || null,
-      created_by_name: currentProfile?.full_name || currentUser?.email || "Unknown user"
+
+      description:
+        `Delivery group cycle ${cycleNumber} approved. ` +
+        `Applied surcharge ${formatMoney(appliedSurcharge)}.` +
+        `${
+          options.approvalNote
+            ? ` Note: ${options.approvalNote}`
+            : ""
+        }`,
+
+      created_by:
+        currentUser?.id || null,
+
+      created_by_name:
+        currentProfile?.full_name ||
+        currentUser?.email ||
+        "Unknown user"
     });
 
-  showToast(`Delivery group approved: ${formatMoney(group.surcharge)} surcharge.`, "ok");
+  if (activityError) {
+    console.warn(
+      "Delivery group activity could not be saved:",
+      activityError.message
+    );
+  }
+
+  showToast(
+    `Delivery group cycle ${cycleNumber} approved: ` +
+    `${formatMoney(appliedSurcharge)} surcharge.`,
+    "ok"
+  );
 }
 
 function bindDeliveryGroupTableEvents() {
@@ -5082,7 +6081,12 @@ function tariffModalTotalsFromRow(row) {
 
   /*
    * Sofa2U fees bestaan uit:
-   * storage + admin + handling.
+   *
+   * - storage
+   * - admin
+   * - handling
+   *
+   * Transport valt hier niet onder.
    */
   const s2uFees = round2(
     storage +
@@ -5091,8 +6095,14 @@ function tariffModalTotalsFromRow(row) {
   );
 
   /*
-   * Totale klantkosten bestaan uit:
-   * Sofa2U fees + transport.
+   * De totale klantkosten bestaan uit:
+   *
+   * - Sofa2U fees
+   * - transport
+   *
+   * Een regionale toeslag wordt hier niet
+   * opgeslagen. Die wordt later berekend door
+   * de pricing engine op basis van postcode.
    */
   const customerCharge = round2(
     s2uFees +
@@ -5108,6 +6118,7 @@ function tariffModalTotalsFromRow(row) {
     customerCharge
   };
 }
+
 function refreshTariffModalSummary() {
   const rows = Array.from(
     document.querySelectorAll(
@@ -5115,6 +6126,10 @@ function refreshTariffModalSummary() {
     )
   );
 
+  let totalStorage = 0;
+  let totalAdmin = 0;
+  let totalHandling = 0;
+  let totalTransport = 0;
   let totalS2uFees = 0;
   let totalCustomerCharge = 0;
 
@@ -5122,10 +6137,37 @@ function refreshTariffModalSummary() {
     const totals =
       tariffModalTotalsFromRow(row);
 
-    totalS2uFees += totals.s2uFees;
+    totalStorage +=
+      totals.storage;
+
+    totalAdmin +=
+      totals.admin;
+
+    totalHandling +=
+      totals.handling;
+
+    totalTransport +=
+      totals.transport;
+
+    totalS2uFees +=
+      totals.s2uFees;
+
     totalCustomerCharge +=
       totals.customerCharge;
 
+    /*
+     * Customer charge wordt automatisch
+     * berekend uit de andere vier velden.
+     *
+     * Daardoor kan er geen verschil ontstaan
+     * tussen:
+     *
+     * - Storage
+     * - Admin
+     * - Handling
+     * - Transport
+     * - Customer charge
+     */
     const customerChargeInput =
       row.querySelector(
         "[data-tariff-field='total_customer_charge']"
@@ -5135,11 +6177,14 @@ function refreshTariffModalSummary() {
       customerChargeInput.value =
         totals.customerCharge.toFixed(2);
 
-      customerChargeInput.readOnly = true;
+      customerChargeInput.readOnly =
+        true;
     }
 
     const totalCell =
-      row.querySelector("[data-line-total]");
+      row.querySelector(
+        "[data-line-total]"
+      );
 
     if (totalCell) {
       totalCell.textContent =
@@ -5149,12 +6194,46 @@ function refreshTariffModalSummary() {
     }
   });
 
+  totalStorage =
+    round2(totalStorage);
+
+  totalAdmin =
+    round2(totalAdmin);
+
+  totalHandling =
+    round2(totalHandling);
+
+  totalTransport =
+    round2(totalTransport);
+
+  totalS2uFees =
+    round2(totalS2uFees);
+
+  totalCustomerCharge =
+    round2(totalCustomerCharge);
+
+  const isFreeOfCharge =
+    totalCustomerCharge <= 0;
+
   setText(
     "tariffModalSummary",
-    `S2U fees: ${formatMoney(totalS2uFees)} · ` +
-    `Customer charge total: ${formatMoney(totalCustomerCharge)}`
+    isFreeOfCharge
+      ? (
+          `Storage: ${formatMoney(totalStorage)} · ` +
+          `Admin: ${formatMoney(totalAdmin)} · ` +
+          `Handling: ${formatMoney(totalHandling)} · ` +
+          `Transport: ${formatMoney(totalTransport)} · ` +
+          `Customer charge: ${formatMoney(totalCustomerCharge)} · ` +
+          `FREE OF CHARGE`
+        )
+      : (
+          `S2U fees: ${formatMoney(totalS2uFees)} · ` +
+          `Transport: ${formatMoney(totalTransport)} · ` +
+          `Customer charge total: ${formatMoney(totalCustomerCharge)}`
+        )
   );
 }
+
 async function saveTariffModal(orderId) {
   const order = allOrders.find(
     row =>
@@ -5180,6 +6259,12 @@ async function saveTariffModal(orderId) {
     );
   }
 
+  /*
+   * Ordertotalen.
+   *
+   * Deze worden opgebouwd vanuit alle
+   * orderregels die in de popup staan.
+   */
   let totalStorage = 0;
   let totalAdmin = 0;
   let totalHandling = 0;
@@ -5187,28 +6272,57 @@ async function saveTariffModal(orderId) {
   let totalS2uFees = 0;
   let totalCustomerCharge = 0;
 
+  /*
+   * Eerst iedere orderregel afzonderlijk
+   * bijwerken.
+   *
+   * Dit is belangrijk omdat:
+   *
+   * - de ACK-generator order_lines gebruikt;
+   * - de invoice-generator order_lines gebruikt;
+   * - de OCC order_lines als fallback gebruikt.
+   *
+   * Alleen het orders-record aanpassen is dus
+   * niet voldoende.
+   */
   for (const row of rows) {
     const lineId =
       row.dataset.lineId;
+
+    if (!lineId) {
+      throw new Error(
+        "An order line is missing its line ID."
+      );
+    }
 
     const totals =
       tariffModalTotalsFromRow(row);
 
     const linePayload = {
       tariff_storage:
-        round2(totals.storage),
+        round2(
+          totals.storage
+        ),
 
       tariff_admin:
-        round2(totals.admin),
+        round2(
+          totals.admin
+        ),
 
       tariff_handling:
-        round2(totals.handling),
+        round2(
+          totals.handling
+        ),
 
       tariff_transport:
-        round2(totals.transport),
+        round2(
+          totals.transport
+        ),
 
       total_s2u_fees:
-        round2(totals.s2uFees),
+        round2(
+          totals.s2uFees
+        ),
 
       total_customer_charge:
         round2(
@@ -5216,14 +6330,19 @@ async function saveTariffModal(orderId) {
         )
     };
 
-    const { error } = await client
+    const {
+      error: lineUpdateError
+    } = await client
       .from("order_lines")
       .update(linePayload)
       .eq("id", lineId)
       .eq("order_id", order.id);
 
-    if (error) {
-      throw error;
+    if (lineUpdateError) {
+      throw new Error(
+        `Could not update order line ${lineId}: ` +
+        lineUpdateError.message
+      );
     }
 
     totalStorage +=
@@ -5245,31 +6364,95 @@ async function saveTariffModal(orderId) {
       linePayload.total_customer_charge;
   }
 
+  /*
+   * Rond de ordertotalen pas af nadat alle
+   * orderregels bij elkaar zijn opgeteld.
+   */
+  totalStorage =
+    round2(totalStorage);
+
+  totalAdmin =
+    round2(totalAdmin);
+
+  totalHandling =
+    round2(totalHandling);
+
+  totalTransport =
+    round2(totalTransport);
+
+  totalS2uFees =
+    round2(totalS2uFees);
+
+  totalCustomerCharge =
+    round2(totalCustomerCharge);
+
+  /*
+   * Zodra de totale customer charge £0.00 is,
+   * wordt de order automatisch aangemerkt als
+   * free of charge.
+   *
+   * Bij een bedrag boven £0.00 blijft de order
+   * chargeable.
+   */
+  const isChargeable =
+    totalCustomerCharge > 0;
+
+  /*
+   * Dit zijn de echte kolommen die in jouw
+   * orders-tabel bestaan.
+   *
+   * customer_charge_gbp en
+   * estimated_revenue_gbp worden bewust niet
+   * meer gebruikt, omdat deze kolommen niet in
+   * jouw database bestaan.
+   */
   const orderPayload = {
     total_storage_tariff:
-      round2(totalStorage),
+      totalStorage,
 
     total_admin_tariff:
-      round2(totalAdmin),
+      totalAdmin,
 
     total_handling_tariff:
-      round2(totalHandling),
+      totalHandling,
 
     total_transport_tariff:
-      round2(totalTransport),
+      totalTransport,
 
     total_s2u_fees:
-      round2(totalS2uFees),
+      totalS2uFees,
 
     total_customer_charge:
-      round2(totalCustomerCharge),
+      totalCustomerCharge,
 
-    customer_charge_gbp:
-      round2(totalCustomerCharge),
+    /*
+     * Belangrijk voor ACK, invoice en OCC.
+     */
+    is_chargeable:
+      isChargeable,
 
-    estimated_revenue_gbp:
-      round2(totalCustomerCharge),
+    original_chargeable:
+      isChargeable,
 
+    copy_chargeable:
+      isChargeable,
+
+    /*
+     * Leg bij een gratis order duidelijk vast
+     * waarom er geen bedrag gefactureerd wordt.
+     */
+    internal_billing_note:
+      isChargeable
+        ? null
+        : (
+            "Free of charge order - " +
+            "tariffs manually set to £0.00."
+          ),
+
+    /*
+     * Na een tariefwijziging moet een eventuele
+     * factuur opnieuw worden beoordeeld.
+     */
     finance_status:
       "not_invoiced",
 
@@ -5277,43 +6460,36 @@ async function saveTariffModal(orderId) {
       new Date().toISOString()
   };
 
-  try {
-    await safeUpdateOrder(
-      order.id,
-      orderPayload
-    );
-  } catch (error) {
-    /*
-     * Fallback wanneer oudere databases
-     * customer_charge_gbp of
-     * estimated_revenue_gbp niet hebben.
-     */
-    const fallback = {
-      ...orderPayload
-    };
-
-    delete fallback.customer_charge_gbp;
-    delete fallback.estimated_revenue_gbp;
-
-    await safeUpdateOrder(
-      order.id,
-      fallback
-    );
-  }
+  /*
+   * Sla de ordertotalen en chargeable-status op.
+   */
+  await safeUpdateOrder(
+    order.id,
+    orderPayload
+  );
 
   /*
-   * Een bestaande ACK is nu verouderd.
-   * Verwijder de documentregistratie zodat
-   * hij opnieuw gegenereerd kan worden.
+   * Een bestaande ACK bevat mogelijk nog oude
+   * tarieven.
+   *
+   * Daarom wordt alleen de registratie van het
+   * gegenereerde acknowledgement verwijderd.
+   *
+   * Daarna verschijnt in OCC opnieuw de knop
+   * Generate.
    */
-  const { error: ackDeleteError } =
-    await client
-      .from("order_documents")
-      .delete()
-      .eq("order_id", order.id)
-      .in("document_type", [
+  const {
+    error: ackDeleteError
+  } = await client
+    .from("order_documents")
+    .delete()
+    .eq("order_id", order.id)
+    .in(
+      "document_type",
+      [
         "acknowledgement"
-      ]);
+      ]
+    );
 
   if (ackDeleteError) {
     console.warn(
@@ -5322,8 +6498,10 @@ async function saveTariffModal(orderId) {
     );
   }
 
-  await insertOrderActivity(
-    order.id,
+  /*
+   * Schrijf een duidelijke activiteit weg.
+   */
+  const activityDescription =
     `Tariffs updated. ` +
     `Storage ${formatMoney(totalStorage)}, ` +
     `admin ${formatMoney(totalAdmin)}, ` +
@@ -5331,18 +6509,54 @@ async function saveTariffModal(orderId) {
     `transport ${formatMoney(totalTransport)}, ` +
     `S2U fees ${formatMoney(totalS2uFees)}, ` +
     `customer charge ${formatMoney(totalCustomerCharge)}. ` +
-    `Existing ACK invalidated.`,
+    (
+      isChargeable
+        ? "Order remains chargeable. "
+        : "Order marked as free of charge. "
+    ) +
+    `Existing ACK invalidated.`;
+
+  await insertOrderActivity(
+    order.id,
+    activityDescription,
     "manual_tariff_update"
   );
 
+  /*
+   * Sluit de popup.
+   */
   document
-    .querySelector("#tariffModal")
+    .querySelector(
+      "#tariffModal"
+    )
     ?.remove();
 
+  /*
+   * Laad de order opnieuw uit Supabase.
+   *
+   * Hierdoor worden de nieuwe orderregels,
+   * ordertotalen en is_chargeable direct in
+   * OCC weergegeven.
+   */
   await loadOrders();
 
+  /*
+   * Toon een passende melding.
+   */
+  if (isChargeable) {
+    showToast(
+      `Tariffs saved: ` +
+      `${formatMoney(totalCustomerCharge)}. ` +
+      `Please generate a new ACK.`,
+      "ok"
+    );
+
+    return;
+  }
+
   showToast(
-    `Tariffs saved: ${formatMoney(totalCustomerCharge)}. ` +
+    `Tariffs saved at £0.00. ` +
+    `Order marked as free of charge. ` +
     `Please generate a new ACK.`,
     "ok"
   );

@@ -98,21 +98,43 @@
     };
   }
 
-  async function logEvent(eventType, eventGroup, extra = {}) {
-    try {
-      const db = getClient();
-      if (!db) return;
+async function logEvent(eventType, eventGroup, extra = {}) {
+  try {
+    const db = getClient();
 
-      const payload = {
-        ...basePayload(eventType, eventGroup),
-        ...extra
-      };
-
-      await db.from(CONFIG.table).insert(payload);
-    } catch (error) {
-      console.warn("System monitor log failed:", error);
+    if (!db) {
+      console.error("[system-monitor] Supabase client unavailable");
+      return false;
     }
+
+    const payload = {
+      ...basePayload(eventType, eventGroup),
+      ...extra
+    };
+
+    const { error } = await db
+      .from(CONFIG.table)
+      .insert(payload);
+
+    if (error) {
+      console.error("[system-monitor] Insert failed:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload
+      });
+
+      return false;
+    }
+
+    console.debug("[system-monitor] Event stored:", eventType);
+    return true;
+  } catch (error) {
+    console.error("[system-monitor] Unexpected logging failure:", error);
+    return false;
   }
+}
 
   function getElementLabel(el) {
     if (!el) return "";

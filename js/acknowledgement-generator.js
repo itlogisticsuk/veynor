@@ -268,42 +268,140 @@ function getServiceWarning(line, order) {
     return obj;
   }
 
-  function calculatePricing(order, settings) {
-    if (window.VeynorPricing?.calculateOrderPricing) {
-      return window.VeynorPricing.calculateOrderPricing(order, settings);
-    }
+/*
+ * Een order is alleen volledig gratis wanneer
+ * is_chargeable expliciet false is.
+ *
+ * Oudere orders waarbij dit veld niet bestaat
+ * blijven normaal berekend worden.
+ */
+function isChargeableOrder(order) {
+  return order?.is_chargeable !== false;
+}
 
-    const lines = getOrderLines(order);
-
-    const warehouse = round2(lines.reduce((sum, line) => {
-      return sum +
-        toNumber(line.tariff_storage, 0) +
-        toNumber(line.tariff_admin, 0) +
-        toNumber(line.tariff_handling, 0);
-    }, 0));
-
-    const transport = round2(lines.reduce((sum, line) => {
-      return sum + toNumber(line.tariff_transport, 0);
-    }, 0));
-
+function calculatePricing(order, settings) {
+  /*
+   * Een expliciet gratis order moet altijd
+   * volledig £0.00 blijven.
+   *
+   * Dit werkt ook wanneer pricing-engine.js
+   * onverwacht niet geladen zou zijn.
+   */
+  if (!isChargeableOrder(order)) {
     return {
-      warehouse,
-      baseTransport: transport,
+      warehouse: 0,
+      baseTransport: 0,
       regionalSurcharge: 0,
-      transport,
-      subtotalExFuel: round2(warehouse + transport),
-      totalExFuel: round2(warehouse + transport),
+      transport: 0,
+      subtotalExFuel: 0,
+      totalExFuel: 0,
       priceOnRequest: false,
+
       regional: {
-        code: "standard",
-        label: "Standard UK mainland",
+        code: "free_of_charge",
+        label: "Free of charge",
         percent: 0,
+        multiplier: 1,
         priceOnRequest: false,
         note: ""
       },
-      note: ""
+
+      note: "Free of charge order."
     };
   }
+
+  /*
+   * Gebruik bij voorkeur de centrale
+   * pricing engine.
+   */
+  if (
+    window.VeynorPricing
+      ?.calculateOrderPricing
+  ) {
+    return window.VeynorPricing
+      .calculateOrderPricing(
+        order,
+        settings
+      );
+  }
+
+  /*
+   * Fallback wanneer pricing-engine.js
+   * niet beschikbaar is.
+   */
+  const lines =
+    getOrderLines(order);
+
+  const warehouse =
+    round2(
+      lines.reduce(
+        (sum, line) => {
+          return (
+            sum +
+            toNumber(
+              line.tariff_storage,
+              0
+            ) +
+            toNumber(
+              line.tariff_admin,
+              0
+            ) +
+            toNumber(
+              line.tariff_handling,
+              0
+            )
+          );
+        },
+        0
+      )
+    );
+
+  const transport =
+    round2(
+      lines.reduce(
+        (sum, line) => {
+          return (
+            sum +
+            toNumber(
+              line.tariff_transport,
+              0
+            )
+          );
+        },
+        0
+      )
+    );
+
+  return {
+    warehouse,
+    baseTransport:
+      transport,
+    regionalSurcharge: 0,
+    transport,
+    subtotalExFuel:
+      round2(
+        warehouse +
+        transport
+      ),
+    totalExFuel:
+      round2(
+        warehouse +
+        transport
+      ),
+    priceOnRequest: false,
+
+    regional: {
+      code: "standard",
+      label: "Standard UK mainland",
+      percent: 0,
+      multiplier: 1,
+      priceOnRequest: false,
+      note: ""
+    },
+
+    note: ""
+  };
+}
 
   function getLineWarehouseCost(line) {
     if (window.VeynorPricing?.getLineWarehouseCost) {
@@ -793,17 +891,68 @@ function drawTableHeader(doc, y, order, ctx = {}) {
       const packageLabel = getPackageLabel(line);
       const warning = getServiceWarning(line, order);
 
-const zoy = isZoyOrder(order, ctx);
+const zoy =
+  isZoyOrder(
+    order,
+    ctx
+  );
 
-const warehouseCost = getLineWarehouseCost(line);
-const transportCost = getLineTransportCost(line, regional);
+const chargeable =
+  isChargeableOrder(
+    order
+  );
 
-const unitPrice = round2(toNumber(line.total_customer_charge, 0));
-const lineTotal = round2(unitPrice * qty);
+/*
+ * Bij een gratis order moeten ook de bedragen
+ * per productregel £0.00 tonen.
+ *
+ * Zonder deze controle zouden oude bedragen
+ * uit order_lines nog op de ACK kunnen staan.
+ */
+const warehouseCost =
+  chargeable
+    ? getLineWarehouseCost(
+        line
+      )
+    : 0;
 
-const total = zoy
-  ? lineTotal
-  : getLineTotal(line, regional);
+const transportCost =
+  chargeable
+    ? getLineTransportCost(
+        line,
+        regional
+      )
+    : 0;
+
+const unitPrice =
+  chargeable
+    ? round2(
+        toNumber(
+          line.total_customer_charge,
+          0
+        )
+      )
+    : 0;
+
+const lineTotal =
+  chargeable
+    ? round2(
+        unitPrice *
+        qty
+      )
+    : 0;
+
+const total =
+  chargeable
+    ? (
+        zoy
+          ? lineTotal
+          : getLineTotal(
+              line,
+              regional
+            )
+      )
+    : 0;
 
       const descLines = splitText(doc, description, 56).slice(0, 3);
       const packageWord = packageCount === 1 ? "package" : "packages";
@@ -966,13 +1115,31 @@ function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
   y += 7;
 
   if (zoy) {
-    const subtotal = round2(
-      getOrderLines(order).reduce((sum, line) => {
-        const qty = getLineQty(line);
-        const unitPrice = toNumber(line.total_customer_charge, 0);
-        return sum + qty * unitPrice;
-      }, 0)
-    );
+const subtotal =
+  isChargeableOrder(order)
+    ? round2(
+        getOrderLines(order)
+          .reduce(
+            (sum, line) => {
+              const qty =
+                getLineQty(line);
+
+              const unitPrice =
+                toNumber(
+                  line.total_customer_charge,
+                  0
+                );
+
+              return (
+                sum +
+                qty *
+                unitPrice
+              );
+            },
+            0
+          )
+      )
+    : 0;
 
     const regionalSurcharge = round2(toNumber(pricing.regionalSurcharge, 0));
     const total = round2(subtotal + regionalSurcharge);

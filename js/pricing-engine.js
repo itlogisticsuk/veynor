@@ -252,39 +252,112 @@ function getRegionalPricing(order, settings = {}) {
   }
 
   function calculateOrderPricing(order, settings = {}) {
-    const regional = getRegionalPricing(order, settings);
-    const lines = Array.isArray(order?.order_lines) ? order.order_lines : [];
-
-    const warehouse = round2(lines.reduce((sum, line) => {
-      return sum + getLineWarehouseCost(line);
-    }, 0));
-
-    const baseTransport = round2(lines.reduce((sum, line) => {
-      return sum + getLineBaseTransportCost(line);
-    }, 0));
-
-    const transport = regional.priceOnRequest
-      ? 0
-      : round2(baseTransport * regional.multiplier);
-
-    const regionalSurcharge = regional.priceOnRequest
-      ? 0
-      : round2(transport - baseTransport);
-
-    const subtotalExFuel = round2(warehouse + transport);
-
+  /*
+   * Een order die expliciet als niet-chargeable
+   * staat gemarkeerd, moet altijd volledig
+   * free of charge blijven.
+   *
+   * Dit voorkomt dat oude bedragen op
+   * order_lines of een regionale toeslag alsnog
+   * op een ACK of factuur verschijnen.
+   */
+  if (order?.is_chargeable === false) {
     return {
-      warehouse,
-      baseTransport,
-      regionalSurcharge,
-      transport,
-      subtotalExFuel,
-      totalExFuel: subtotalExFuel,
-      regional,
-      priceOnRequest: regional.priceOnRequest,
-      note: regional.note
+      warehouse: 0,
+      baseTransport: 0,
+      regionalSurcharge: 0,
+      transport: 0,
+      subtotalExFuel: 0,
+      totalExFuel: 0,
+
+      regional: {
+        code: "free_of_charge",
+        label: "Free of charge",
+        percent: 0,
+        multiplier: 1,
+        priceOnRequest: false,
+        note: ""
+      },
+
+      priceOnRequest: false,
+      note: "Free of charge order."
     };
   }
+
+  const regional =
+    getRegionalPricing(
+      order,
+      settings
+    );
+
+  const lines =
+    Array.isArray(order?.order_lines)
+      ? order.order_lines
+      : [];
+
+  const warehouse =
+    round2(
+      lines.reduce(
+        (sum, line) => {
+          return (
+            sum +
+            getLineWarehouseCost(line)
+          );
+        },
+        0
+      )
+    );
+
+  const baseTransport =
+    round2(
+      lines.reduce(
+        (sum, line) => {
+          return (
+            sum +
+            getLineBaseTransportCost(line)
+          );
+        },
+        0
+      )
+    );
+
+  const transport =
+    regional.priceOnRequest
+      ? 0
+      : round2(
+          baseTransport *
+          regional.multiplier
+        );
+
+  const regionalSurcharge =
+    regional.priceOnRequest
+      ? 0
+      : round2(
+          transport -
+          baseTransport
+        );
+
+  const subtotalExFuel =
+    round2(
+      warehouse +
+      transport
+    );
+
+  return {
+    warehouse,
+    baseTransport,
+    regionalSurcharge,
+    transport,
+    subtotalExFuel,
+    totalExFuel:
+      subtotalExFuel,
+    regional,
+    priceOnRequest:
+      regional.priceOnRequest,
+    note:
+      regional.note
+  };
+}
 
   function calculateInvoicePricing(orders, settings = {}) {
     const vatRate = toNumber(
