@@ -674,14 +674,15 @@ async function updateMessageCenterNavBadge() {
   }
 
 function injectFavicon() {
-    if (document.querySelector('link[rel="icon"]')) return;
+  if (document.querySelector('link[rel="icon"]')) return;
 
-    const link = document.createElement("link");
-    link.rel = "icon";
-    link.type = "image/svg+xml";
-    link.href = "./assets/Icons/veynor-logo.svg";
+  const link = document.createElement("link");
 
-    document.head.appendChild(link);
+  link.rel = "icon";
+  link.type = "image/x-icon";
+  link.href = "./assets/Icons/favicon.ico";
+
+  document.head.appendChild(link);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
