@@ -677,10 +677,9 @@ function injectFavicon() {
   if (document.querySelector('link[rel="icon"]')) return;
 
   const link = document.createElement("link");
-
   link.rel = "icon";
   link.type = "image/x-icon";
-  link.href = "./assets/Icons/favicon.ico";
+  link.href = "/assets/icons/favicon.ico?v=2";
 
   document.head.appendChild(link);
 }
