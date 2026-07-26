@@ -21,6 +21,20 @@ let orderViewMode = "active";
 let editRemovedLineIds = new Set();
 let ackDownloadedOrderIds = new Set();
 let podDownloadedOrderIds = new Set();
+/*
+ * Compacte OCC-kolommen.
+ *
+ * Type en Product Owner zijn standaard compact.
+ * Lifecycle is standaard volledig zichtbaar.
+ */
+let typeColumnExpanded =
+  localStorage.getItem("occTypeColumnExpanded") === "1";
+
+let productOwnerColumnExpanded =
+  localStorage.getItem("occProductOwnerColumnExpanded") === "1";
+
+let lifecycleCompactMode =
+  localStorage.getItem("occLifecycleCompactMode") === "1";
 
   const selectedOrderIds = new Set();
   const expandedOrderIds = new Set();
@@ -230,6 +244,66 @@ const STATUS_LABELS = {
   function canSeeFinance() {
     return isTenantRole() || isProductOwnerRole();
   }
+
+function isBellstoneProductOwnerLogin() {
+  if (!isProductOwnerRole()) {
+    return false;
+  }
+
+  const customerCode =
+    normalize(
+      currentProfile?.customers?.customer_code ||
+      currentProfile?.customer_code ||
+      ""
+    );
+
+  const customerName =
+    normalize(
+      currentProfile?.customers?.name ||
+      ""
+    );
+
+  return (
+    customerCode === "bellstone" ||
+    customerCode.startsWith("bell") ||
+    customerName.includes("bellstone")
+  );
+}
+
+
+function shouldShowOccFinanceColumns() {
+  /*
+   * Gebruikers zonder financiële toegang zien
+   * de Finance-kolommen nooit.
+   */
+  if (!canSeeFinance()) {
+    return false;
+  }
+
+  /*
+   * Interne Sofa2U/Veynor-gebruikers houden
+   * Finance altijd zichtbaar.
+   */
+  if (isTenantRole()) {
+    return true;
+  }
+
+  /*
+   * Voor Bellstone:
+   *
+   * Active Orders     = Finance verborgen
+   * Historical Orders = Finance zichtbaar
+   */
+  if (isBellstoneProductOwnerLogin()) {
+    return orderViewMode === "historical";
+  }
+
+  /*
+   * Andere Product Owners behouden voorlopig
+   * de huidige situatie.
+   */
+  return true;
+}
 
   function canSelectOrders() {
     return isTenantRole();
@@ -1932,66 +2006,670 @@ exposeDeliveryGroupsToPlanner();
     });
   }
 
-  function applyFilters() {
-    const q = normalize(byId("filterSearch")?.value || "");
-    const lifecycle = normalize(byId("filterLifecycle")?.value || "");
-    const productsFilter = normalize(byId("filterProducts")?.value || "");
-    const documentFilter = normalize(byId("filterDocument")?.value || "");
-    const finance = canSeeFinance() ? normalize(byId("filterFinance")?.value || "") : "";
-    const dateStatus = normalize(byId("filterDateStatus")?.value || "");
+function getKpiBaseOrders() {
+  /*
+   * De KPI-aantallen blijven gebaseerd op het actieve
+   * tabblad, maar worden niet beïnvloed door een
+   * aangeklikte KPI of door de gewone filters.
+   */
+  return allOrders.filter(order => {
+    if (orderViewMode === "active") {
+      return isActiveOrder(order);
+    }
 
- filteredOrders = allOrders.filter(order => {
-  if (orderViewMode === "active" && !isActiveOrder(order)) return false;
-  if (orderViewMode === "historical" && !isHistoricalOrder(order)) return false;
+    if (orderViewMode === "historical") {
+      return isHistoricalOrder(order);
+    }
+
+    return true;
+  });
+}
+
+
+function clearOccFilterFields() {
+  [
+    "filterSearch",
+    "filterLifecycle",
+    "filterProducts",
+    "filterDocument",
+    "filterFinance",
+    "filterDateStatus"
+  ].forEach(id => {
+    const element = byId(id);
+
+    if (element) {
+      element.value = "";
+    }
+  });
+}
+
+
+function setOrderViewForKpi(mode) {
+  orderViewMode = mode;
+
+  const historical =
+    mode === "historical";
+
+  byId("orderViewSwitch")
+    ?.classList.toggle(
+      "history",
+      historical
+    );
+
+  byId("btnHistoricalOrdersView")
+    ?.classList.toggle(
+      "active",
+      historical
+    );
+
+  byId("btnActiveOrdersView")
+    ?.classList.toggle(
+      "active",
+      !historical
+    );
+}
+
+
+function orderMatchesQuickKpi(
+  order,
+  filterName
+) {
+  const filter =
+    normalize(filterName);
+
+  /*
+   * Total Orders toont alle orders binnen het
+   * gekozen actieve/historische tabblad.
+   */
+  if (
+    !filter ||
+    filter === "total"
+  ) {
+    return true;
+  }
+
+  /*
+   * Lifecycle-KPI's gebruiken exact dezelfde
+   * vier stappen als de bestaande OCC-weergave.
+   */
+  if (filter === "awaiting_goods") {
+    return (
+      compactLifecycleStep(order) === 1
+    );
+  }
+
+  if (filter === "stock_complete") {
+    return (
+      compactLifecycleStep(order) === 2
+    );
+  }
+
+  if (filter === "planned_transport") {
+    return (
+      compactLifecycleStep(order) === 3
+    );
+  }
+
+  if (filter === "delivered") {
+    return (
+      compactLifecycleStep(order) === 4
+    );
+  }
+
+  /*
+   * Dit gebruikt dezelfde definitie als het
+   * bestaande Invoice Pending KPI-blok.
+   */
+  if (filter === "invoice_pending") {
+    return (
+      order.derived_finance_status ===
+        "not_invoiced" &&
+      [
+        "delivered",
+        "on_transport",
+        "stock_complete",
+        "planned"
+      ].includes(
+        normalize(
+          order.derived_lifecycle_status
+        )
+      )
+    );
+  }
+
+  /*
+   * Toon orders die onderdeel zijn van een
+   * delivery group met een tekort.
+   */
+  if (filter === "minimum_volume") {
+    const group =
+      getDeliveryGroup(order);
+
+    return (
+      group &&
+      toNumber(group.shortfall, 0) > 0
+    );
+  }
+
+  return true;
+}
+
+
+function updateKpiCardStyles() {
+  const activeFilter =
+    normalize(
+      window.__occKpiFilter || ""
+    );
+
+  const cards = [
+    {
+      valueId: "kpiTotal",
+      filter: "total"
+    },
+    {
+      valueId: "kpiAwaitingGoods",
+      filter: "awaiting_goods"
+    },
+    {
+      valueId: "kpiStockComplete",
+      filter: "stock_complete"
+    },
+    {
+      valueId: "kpiExpectedDelivery",
+      filter: "planned_transport"
+    },
+    {
+      valueId: "kpiDelivered",
+      filter: "delivered"
+    },
+    {
+      valueId: "kpiInvoicePending",
+      filter: "invoice_pending"
+    },
+    {
+      valueId: "kpiMinimumVolumeGroups",
+      filter: "minimum_volume"
+    }
+  ];
+
+  cards.forEach(config => {
+    const valueElement =
+      byId(config.valueId);
+
+    const card =
+      valueElement?.closest(".occ-kpi");
+
+    if (!card) {
+      return;
+    }
+
+    const isActive =
+      activeFilter === config.filter;
+
+    /*
+     * Maak de bestaande HTML-kaart klikbaar.
+     * Hiervoor hoef je dus geen data-attributen
+     * in de HTML te zetten.
+     */
+    card.style.cursor = "pointer";
+    card.style.transition =
+      "transform .15s ease, box-shadow .15s ease, border-color .15s ease";
+
+    card.style.borderColor =
+      isActive
+        ? "#1267ff"
+        : "";
+
+    card.style.boxShadow =
+      isActive
+        ? "0 0 0 3px rgba(18,103,255,.14)"
+        : "";
+
+    card.setAttribute(
+      "role",
+      "button"
+    );
+
+    card.setAttribute(
+      "tabindex",
+      "0"
+    );
+
+    card.setAttribute(
+      "aria-pressed",
+      isActive ? "true" : "false"
+    );
+
+    /*
+     * onclick wordt bewust gebruikt in plaats
+     * van addEventListener, zodat opnieuw renderen
+     * geen dubbele click-events maakt.
+     */
+    card.onclick = () => {
+      applyKpiQuickFilter(
+        config.filter
+      );
+    };
+
+    card.onkeydown = event => {
+      if (
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
+        event.preventDefault();
+
+        applyKpiQuickFilter(
+          config.filter
+        );
+      }
+    };
+
+    card.onmouseenter = () => {
+      if (
+        normalize(
+          window.__occKpiFilter || ""
+        ) !== config.filter
+      ) {
+        card.style.transform =
+          "translateY(-2px)";
+
+        card.style.boxShadow =
+          "0 10px 24px rgba(15,23,42,.10)";
+      }
+    };
+
+    card.onmouseleave = () => {
+      const currentlyActive =
+        normalize(
+          window.__occKpiFilter || ""
+        ) === config.filter;
+
+      card.style.transform = "";
+
+      card.style.boxShadow =
+        currentlyActive
+          ? "0 0 0 3px rgba(18,103,255,.14)"
+          : "";
+    };
+  });
+}
+
+
+function applyKpiQuickFilter(
+  filterName
+) {
+  const filter =
+    normalize(filterName);
+
+  /*
+   * Sluit de aparte delivery-groupsweergave.
+   */
+  showDeliveryGroups = false;
+
+  const deliveryGroupsToggle =
+    byId("toggleDeliveryGroups");
+
+  if (deliveryGroupsToggle) {
+    deliveryGroupsToggle.checked = false;
+  }
+
+  /*
+   * Voorkom dat een bestaand zoekveld of dropdown
+   * de resultaten van de KPI-click beperkt.
+   */
+  clearOccFilterFields();
+
+  /*
+   * Delivered staat bij Historical Orders.
+   * De overige KPI's openen Active Orders.
+   */
+  if (filter === "delivered") {
+    setOrderViewForKpi(
+      "historical"
+    );
+  } else {
+    setOrderViewForKpi(
+      "active"
+    );
+  }
+
+  /*
+   * Klikken op Total Orders verwijdert het
+   * actieve KPI-filter.
+   */
+  window.__occKpiFilter =
+    filter === "total"
+      ? ""
+      : filter;
+
+  applyFilters();
+  renderAll();
+
+  /*
+   * Scroll naar de resultaten.
+   */
+  byId("ordersTableWrap")
+    ?.scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+}
+
+
+function applyFilters() {
+  const q =
+    normalize(
+      byId("filterSearch")?.value || ""
+    );
+
+  const lifecycle =
+    normalize(
+      byId("filterLifecycle")?.value || ""
+    );
+
+  const productsFilter =
+    normalize(
+      byId("filterProducts")?.value || ""
+    );
+
+  const documentFilter =
+    normalize(
+      byId("filterDocument")?.value || ""
+    );
+
+  const finance =
+    canSeeFinance()
+      ? normalize(
+          byId("filterFinance")?.value || ""
+        )
+      : "";
+
+  const dateStatus =
+    normalize(
+      byId("filterDateStatus")?.value || ""
+    );
+
+  const quickKpiFilter =
+    normalize(
+      window.__occKpiFilter || ""
+    );
+
+  filteredOrders =
+    allOrders.filter(order => {
+      /*
+       * Active / Historical.
+       */
+      if (
+        orderViewMode === "active" &&
+        !isActiveOrder(order)
+      ) {
+        return false;
+      }
+
+      if (
+        orderViewMode === "historical" &&
+        !isHistoricalOrder(order)
+      ) {
+        return false;
+      }
+
+      /*
+       * Aangeklikte KPI.
+       */
+      if (
+        quickKpiFilter &&
+        !orderMatchesQuickKpi(
+          order,
+          quickKpiFilter
+        )
+      ) {
+        return false;
+      }
+
+      /*
+       * Normale lifecycle-filter.
+       */
       if (lifecycle) {
-        const compact = compactLifecycleStep(order);
+        const compact =
+          compactLifecycleStep(order);
+
         const lifecycleMatches =
-          order.derived_lifecycle_status === lifecycle ||
-          (lifecycle === "order_received" && compact === 1) ||
-          (lifecycle === "stock_complete" && compact === 2) ||
-          (lifecycle === "planned" && compact === 3) ||
-          (lifecycle === "on_transport" && compact === 3) ||
-          (lifecycle === "delivered" && compact === 4);
+          order.derived_lifecycle_status ===
+            lifecycle ||
 
-        if (!lifecycleMatches) return false;
+          (
+            lifecycle ===
+              "order_received" &&
+            compact === 1
+          ) ||
+
+          (
+            lifecycle ===
+              "stock_complete" &&
+            compact === 2
+          ) ||
+
+          (
+            lifecycle ===
+              "planned" &&
+            compact === 3
+          ) ||
+
+          (
+            lifecycle ===
+              "on_transport" &&
+            compact === 3
+          ) ||
+
+          (
+            lifecycle ===
+              "delivered" &&
+            compact === 4
+          );
+
+        if (!lifecycleMatches) {
+          return false;
+        }
       }
 
-      if (finance && order.derived_finance_status !== finance) return false;
-      if (productsFilter && order.product_completeness?.status !== productsFilter) return false;
+      /*
+       * Finance.
+       */
+      if (
+        finance &&
+        order.derived_finance_status !==
+          finance
+      ) {
+        return false;
+      }
 
-      if (dateStatus === "confirmed_missing" && getExpectedDeliveryDate(order)) return false;
-      if (dateStatus === "confirmed_set" && !getExpectedDeliveryDate(order)) return false;
-      if (dateStatus === "eta_confirmed" && getEtaStatus(order) !== "confirmed") return false;
-      if (dateStatus === "eta_pending" && getEtaStatus(order) === "confirmed") return false;
-      if (dateStatus === "overdue_delivery" && !isDeliveryOverdue(order)) return false;
+      /*
+       * Product completeness.
+       */
+      if (
+        productsFilter &&
+        order.product_completeness?.status !==
+          productsFilter
+      ) {
+        return false;
+      }
 
+      /*
+       * Delivery visibility.
+       */
+      if (
+        dateStatus ===
+          "confirmed_missing" &&
+        getExpectedDeliveryDate(order)
+      ) {
+        return false;
+      }
+
+      if (
+        dateStatus ===
+          "confirmed_set" &&
+        !getExpectedDeliveryDate(order)
+      ) {
+        return false;
+      }
+
+      if (
+        dateStatus ===
+          "eta_confirmed" &&
+        getEtaStatus(order) !==
+          "confirmed"
+      ) {
+        return false;
+      }
+
+      if (
+        dateStatus ===
+          "eta_pending" &&
+        getEtaStatus(order) ===
+          "confirmed"
+      ) {
+        return false;
+      }
+
+      if (
+        dateStatus ===
+          "overdue_delivery" &&
+        !isDeliveryOverdue(order)
+      ) {
+        return false;
+      }
+
+      /*
+       * Documentfilter.
+       */
       if (documentFilter) {
-        const ack = docStatus(order, "acknowledgement");
-        const packing = docStatus(order, "supplier_packing_slip");
-        const deliveryNote = docStatus(order, "delivery_note");
-        const pod = !!getPodDocumentUrl(order) || normalize(order.pod_status) === "signed";
-        const inv = docStatus(order, "invoice");
+        const ack =
+          docStatus(
+            order,
+            "acknowledgement"
+          );
 
-        if (documentFilter === "missing_ack" && ack !== "not_generated") return false;
-        if (documentFilter === "ack_sent" && ack !== "sent") return false;
-        if (documentFilter === "missing_packing_slip" && packing !== "not_generated") return false;
-        if (documentFilter === "packing_slip_generated" && packing !== "generated") return false;
-        if (documentFilter === "missing_delivery_note" && deliveryNote !== "not_generated") return false;
-        if (documentFilter === "delivery_note_generated" && deliveryNote !== "generated") return false;
-        if (documentFilter === "missing_pod" && pod) return false;
-        if (documentFilter === "pod_generated" && !pod) return false;
-        if (documentFilter === "invoice_missing" && inv !== "not_generated") return false;
-        if (documentFilter === "invoice_sent" && inv !== "sent") return false;
+        const packing =
+          docStatus(
+            order,
+            "supplier_packing_slip"
+          );
+
+        const deliveryNote =
+          docStatus(
+            order,
+            "delivery_note"
+          );
+
+        const pod =
+          !!getPodDocumentUrl(order) ||
+          normalize(order.pod_status) ===
+            "signed";
+
+        const invoice =
+          docStatus(
+            order,
+            "invoice"
+          );
+
+        if (
+          documentFilter ===
+            "missing_ack" &&
+          ack !== "not_generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "ack_sent" &&
+          ack !== "sent"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "missing_packing_slip" &&
+          packing !== "not_generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "packing_slip_generated" &&
+          packing !== "generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "missing_delivery_note" &&
+          deliveryNote !== "not_generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "delivery_note_generated" &&
+          deliveryNote !== "generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "missing_pod" &&
+          pod
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "pod_generated" &&
+          !pod
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "invoice_missing" &&
+          invoice !== "not_generated"
+        ) {
+          return false;
+        }
+
+        if (
+          documentFilter ===
+            "invoice_sent" &&
+          invoice !== "sent"
+        ) {
+          return false;
+        }
       }
 
+      /*
+       * Zoekveld.
+       */
       if (q) {
-        const lineText = (order.order_lines || []).map(line => [
-          line.sku_base,
-          line.products?.sku_base,
-          line.description,
-          line.products?.name,
-          line.products?.description
-        ].join(" ")).join(" ");
+        const lineText =
+          (
+            order.order_lines ||
+            []
+          )
+            .map(line => [
+              line.sku_base,
+              line.products?.sku_base,
+              line.description,
+              line.products?.name,
+              line.products?.description
+            ].join(" "))
+            .join(" ");
 
         const haystack = [
           order.order_number,
@@ -2009,97 +2687,674 @@ exposeDeliveryGroupsToPlanner();
           order.routes?.driver_name,
           order.routes?.vehicle_name,
           lineText
-        ].join(" ").toLowerCase();
+        ]
+          .join(" ")
+          .toLowerCase();
 
-        if (!haystack.includes(q)) return false;
+        if (
+          !haystack.includes(q)
+        ) {
+          return false;
+        }
       }
 
       return true;
     });
 
-    sortOrders();
-    cleanSelectionAfterFilter();
-  }
+  sortOrders();
+  cleanSelectionAfterFilter();
+}
 
-  function cleanSelectionAfterFilter() {
-    const existingIds = new Set(allOrders.map(order => String(order.id)));
-    selectedOrderIds.forEach(id => {
-      if (!existingIds.has(String(id))) selectedOrderIds.delete(id);
-    });
-  }
 
-  function getSelectedOrders() {
-    return allOrders.filter(order => selectedOrderIds.has(String(order.id)));
-  }
-
-  function getVisibleIds() {
-    return filteredOrders.map(order => String(order.id));
-  }
-
-  function updateSelectionUi() {
-    const selectedCount = selectedOrderIds.size;
-    const visibleIds = getVisibleIds();
-    const visibleSelectedCount = visibleIds.filter(id => selectedOrderIds.has(id)).length;
-
-    setText("selectedOrdersMeta", `${formatNumber(selectedCount)} selected`);
-
-    const btnInvoice = byId("btnGenerateCombinedInvoice");
-    if (btnInvoice) btnInvoice.disabled = selectedCount === 0 || !canSelectOrders();
-
-    const selectAll = byId("selectAllVisibleOrders");
-    if (selectAll) {
-      selectAll.checked = visibleIds.length > 0 && visibleSelectedCount === visibleIds.length;
-      selectAll.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleIds.length;
-    }
-
-    document.querySelectorAll(".order-select-checkbox").forEach(input => {
-      const id = String(input.dataset.orderId || "");
-      input.checked = selectedOrderIds.has(id);
-    });
-  }
-
-  function renderKpis() {
-    setText("kpiTotal", formatNumber(filteredOrders.length));
-    setText("kpiAwaitingGoods", formatNumber(filteredOrders.filter(o => compactLifecycleStep(o) === 1).length));
-    setText("kpiStockComplete", formatNumber(filteredOrders.filter(o => compactLifecycleStep(o) === 2).length));
-    setText("kpiExpectedDelivery", formatNumber(filteredOrders.filter(o => compactLifecycleStep(o) === 3).length));
-    setText("kpiDelivered", formatNumber(filteredOrders.filter(o => compactLifecycleStep(o) === 4).length));
-    setText("kpiProductsMissing", formatNumber(filteredOrders.filter(o => o.product_completeness?.status === "missing").length));
-    setText("kpiEtaConfirmed", formatNumber(filteredOrders.filter(o => getEtaStatus(o) === "confirmed").length));
-
-    setText(
-      "kpiInvoicePending",
-      formatNumber(filteredOrders.filter(order =>
-        order.derived_finance_status === "not_invoiced" &&
-        ["delivered", "on_transport", "stock_complete", "planned"].includes(order.derived_lifecycle_status)
-      ).length)
+function cleanSelectionAfterFilter() {
+  const existingIds =
+    new Set(
+      allOrders.map(order =>
+        String(order.id)
+      )
     );
 
-const visibleGroups = new Map();
+  selectedOrderIds.forEach(id => {
+    if (
+      !existingIds.has(
+        String(id)
+      )
+    ) {
+      selectedOrderIds.delete(id);
+    }
+  });
+}
 
-filteredOrders.forEach(order => {
-  const group = getDeliveryGroup(order);
-  if (group) visibleGroups.set(group.key, group);
-});
 
-const belowMinimumGroups = [...visibleGroups.values()].filter(group => group.shortfall > 0);
-const potentialSurcharge = belowMinimumGroups.reduce((sum, group) => sum + group.surcharge, 0);
+function getSelectedOrders() {
+  return allOrders.filter(order =>
+    selectedOrderIds.has(
+      String(order.id)
+    )
+  );
+}
 
-setText("kpiMinimumVolumeGroups", formatNumber(belowMinimumGroups.length));
-setText(
-  "kpiMinimumVolumeValue",
-  belowMinimumGroups.length
-    ? `${formatMoney(potentialSurcharge)} potential surcharge`
-    : "No retailers below minimum"
-);
 
-    setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
+function getVisibleIds() {
+  return filteredOrders.map(order =>
+    String(order.id)
+  );
+}
+
+
+function updateSelectionUi() {
+  const selectedCount =
+    selectedOrderIds.size;
+
+  const visibleIds =
+    getVisibleIds();
+
+  const visibleSelectedCount =
+    visibleIds.filter(id =>
+      selectedOrderIds.has(id)
+    ).length;
+
+  setText(
+    "selectedOrdersMeta",
+    `${formatNumber(selectedCount)} selected`
+  );
+
+  const btnInvoice =
+    byId("btnGenerateCombinedInvoice");
+
+  if (btnInvoice) {
+    btnInvoice.disabled =
+      selectedCount === 0 ||
+      !canSelectOrders();
   }
+
+  const selectAll =
+    byId("selectAllVisibleOrders");
+
+  if (selectAll) {
+    selectAll.checked =
+      visibleIds.length > 0 &&
+      visibleSelectedCount ===
+        visibleIds.length;
+
+    selectAll.indeterminate =
+      visibleSelectedCount > 0 &&
+      visibleSelectedCount <
+        visibleIds.length;
+  }
+
+  document
+    .querySelectorAll(
+      ".order-select-checkbox"
+    )
+    .forEach(input => {
+      const id =
+        String(
+          input.dataset.orderId || ""
+        );
+
+      input.checked =
+        selectedOrderIds.has(id);
+    });
+}
+
+
+function renderKpis() {
+  /*
+   * De aantallen worden gebaseerd op alle orders
+   * in het huidige Active/Historical-tabblad.
+   *
+   * Daardoor verandert Total Orders bijvoorbeeld
+   * niet van 21 naar 2 wanneer Awaiting Goods
+   * wordt aangeklikt.
+   */
+  const kpiOrders =
+    getKpiBaseOrders();
+
+  setText(
+    "kpiTotal",
+    formatNumber(
+      kpiOrders.length
+    )
+  );
+
+  setText(
+    "kpiAwaitingGoods",
+    formatNumber(
+      kpiOrders.filter(order =>
+        compactLifecycleStep(order) === 1
+      ).length
+    )
+  );
+
+  setText(
+    "kpiStockComplete",
+    formatNumber(
+      kpiOrders.filter(order =>
+        compactLifecycleStep(order) === 2
+      ).length
+    )
+  );
+
+  setText(
+    "kpiExpectedDelivery",
+    formatNumber(
+      kpiOrders.filter(order =>
+        compactLifecycleStep(order) === 3
+      ).length
+    )
+  );
+
+  setText(
+    "kpiDelivered",
+    formatNumber(
+      kpiOrders.filter(order =>
+        compactLifecycleStep(order) === 4
+      ).length
+    )
+  );
+
+  setText(
+    "kpiProductsMissing",
+    formatNumber(
+      kpiOrders.filter(order =>
+        order.product_completeness?.status ===
+          "missing"
+      ).length
+    )
+  );
+
+  setText(
+    "kpiEtaConfirmed",
+    formatNumber(
+      kpiOrders.filter(order =>
+        getEtaStatus(order) ===
+          "confirmed"
+      ).length
+    )
+  );
+
+  setText(
+    "kpiInvoicePending",
+    formatNumber(
+      kpiOrders.filter(order =>
+        order.derived_finance_status ===
+          "not_invoiced" &&
+        [
+          "delivered",
+          "on_transport",
+          "stock_complete",
+          "planned"
+        ].includes(
+          normalize(
+            order.derived_lifecycle_status
+          )
+        )
+      ).length
+    )
+  );
+
+  /*
+   * Minimum Volume KPI.
+   */
+  const visibleGroups =
+    new Map();
+
+  kpiOrders.forEach(order => {
+    const group =
+      getDeliveryGroup(order);
+
+    if (group) {
+      visibleGroups.set(
+        group.key,
+        group
+      );
+    }
+  });
+
+  const belowMinimumGroups =
+    [...visibleGroups.values()]
+      .filter(group =>
+        toNumber(
+          group.shortfall,
+          0
+        ) > 0
+      );
+
+  const potentialSurcharge =
+    belowMinimumGroups.reduce(
+      (sum, group) =>
+        sum +
+        toNumber(
+          group.surcharge,
+          0
+        ),
+      0
+    );
+
+  setText(
+    "kpiMinimumVolumeGroups",
+    formatNumber(
+      belowMinimumGroups.length
+    )
+  );
+
+  setText(
+    "kpiMinimumVolumeValue",
+    belowMinimumGroups.length
+      ? (
+          `${formatMoney(
+            potentialSurcharge
+          )} potential surcharge`
+        )
+      : "No retailers below minimum"
+  );
+
+  setText(
+    "resultsMeta",
+    `${formatNumber(
+      filteredOrders.length
+    )} orders shown`
+  );
+
+  /*
+   * Voeg de click-events en actieve styling
+   * aan de bestaande HTML-kaarten toe.
+   */
+  updateKpiCardStyles();
+}
+
+function getLifecycleStepClass(order, step) {
+  const lifecycle =
+    normalize(
+      order.derived_lifecycle_status || ""
+    );
+
+  if (lifecycle === "cancelled") {
+    return "wait";
+  }
+
+  if (lifecycle === "issue") {
+    return "wait";
+  }
+
+  if (step === 1) {
+    return "done";
+  }
+
+  if (step === 2) {
+    return "stock";
+  }
+
+  if (step === 3) {
+    return "transport";
+  }
+
+  if (step === 4) {
+    return "delivery";
+  }
+
+  return "";
+}
+
+
+function findOccTableHeader(labelText) {
+  const tableWrap =
+    byId("ordersTableWrap");
+
+  if (!tableWrap) {
+    return null;
+  }
+
+  const wanted =
+    normalize(labelText);
+
+  return (
+    [...tableWrap.querySelectorAll("thead th")]
+      .find(header => {
+        const headerText =
+          normalize(
+            header.textContent || ""
+          );
+
+        return headerText.includes(wanted);
+      }) ||
+    null
+  );
+}
+
+
+function createOccColumnToggle({
+  header,
+  key,
+  expanded,
+  expandedTitle,
+  compactTitle,
+  onToggle
+}) {
+  if (!header) {
+    return;
+  }
+
+  header.classList.add(
+    "occ-toggle-header"
+  );
+
+  let button =
+    header.querySelector(
+      `[data-occ-column-toggle="${key}"]`
+    );
+
+  if (!button) {
+    button =
+      document.createElement("button");
+
+    button.type = "button";
+
+    button.className =
+      "occ-column-toggle";
+
+    button.setAttribute(
+      "data-occ-column-toggle",
+      key
+    );
+
+    header.appendChild(button);
+
+    button.addEventListener(
+      "click",
+      event => {
+        /*
+         * Voorkomt dat de klik ook de
+         * sorteervolgorde van de tabel verandert.
+         */
+        event.preventDefault();
+        event.stopPropagation();
+
+        onToggle();
+      }
+    );
+  }
+
+  /*
+   * Plus betekent: meer informatie tonen.
+   * Min betekent: kolom compacter maken.
+   */
+  button.textContent =
+    expanded ? "−" : "+";
+
+  button.title =
+    expanded
+      ? compactTitle
+      : expandedTitle;
+
+  button.setAttribute(
+    "aria-label",
+    button.title
+  );
+
+  button.setAttribute(
+    "aria-expanded",
+    expanded ? "true" : "false"
+  );
+}
+
+function updateProductOwnerColumnVisibility() {
+  const tableWrap =
+    byId("ordersTableWrap");
+
+  if (!tableWrap) {
+    return;
+  }
+
+  const shouldHide =
+    isProductOwnerRole() ||
+    isRetailerRole();
+
+  const ownerHeader =
+    findOccTableHeader("product owner");
+
+  if (ownerHeader) {
+    ownerHeader.style.display =
+      shouldHide ? "none" : "";
+  }
+
+  tableWrap
+    .querySelectorAll(
+      "td.owner-cell.product-owner-only"
+    )
+    .forEach(cell => {
+      cell.style.display =
+        shouldHide ? "none" : "";
+    });
+}
+
+function updateFinanceHeaderVisibility() {
+
+    const financeHeader =
+        findOccTableHeader("finance");
+
+    if (financeHeader) {
+        financeHeader.style.display =
+            shouldShowOccFinanceColumns()
+                ? ""
+                : "none";
+    }
+
+}
+
+
+function updateOccColumnToggles() {
+  const tableWrap =
+    byId("ordersTableWrap");
+
+  if (!tableWrap) {
+    return;
+  }
+
+  /*
+   * TYPE
+   *
+   * Standaard compact.
+   */
+  createOccColumnToggle({
+    header: findOccTableHeader("type"),
+
+    key: "type",
+
+    expanded: typeColumnExpanded,
+
+    expandedTitle:
+      "Show full Type",
+
+    compactTitle:
+      "Show compact Type",
+
+    onToggle() {
+      typeColumnExpanded =
+        !typeColumnExpanded;
+
+      localStorage.setItem(
+        "occTypeColumnExpanded",
+        typeColumnExpanded
+          ? "1"
+          : "0"
+      );
+
+      renderTable();
+    }
+  });
+
+  /*
+   * PRODUCT OWNER
+   *
+   * Alleen tonen voor interne
+   * Sofa2U / Veynor-gebruikers.
+   */
+  if (
+    !isProductOwnerRole() &&
+    !isRetailerRole()
+  ) {
+    createOccColumnToggle({
+      header:
+        findOccTableHeader(
+          "product owner"
+        ),
+
+      key:
+        "product-owner",
+
+      expanded:
+        productOwnerColumnExpanded,
+
+      expandedTitle:
+        "Show full Product Owner",
+
+      compactTitle:
+        "Show compact Product Owner",
+
+      onToggle() {
+        productOwnerColumnExpanded =
+          !productOwnerColumnExpanded;
+
+        localStorage.setItem(
+          "occProductOwnerColumnExpanded",
+          productOwnerColumnExpanded
+            ? "1"
+            : "0"
+        );
+
+        renderTable();
+      }
+    });
+  }
+
+  /*
+   * LIFECYCLE
+   *
+   * lifecycleCompactMode false:
+   * volledige lifecycle zichtbaar.
+   *
+   * lifecycleCompactMode true:
+   * alleen huidige stap zichtbaar.
+   */
+  createOccColumnToggle({
+    header:
+      findOccTableHeader(
+        "lifecycle"
+      ),
+
+    key:
+      "lifecycle",
+
+    expanded:
+      !lifecycleCompactMode,
+
+    expandedTitle:
+      "Show full Lifecycle",
+
+    compactTitle:
+      "Show current Lifecycle step only",
+
+    onToggle() {
+      lifecycleCompactMode =
+        !lifecycleCompactMode;
+
+      localStorage.setItem(
+        "occLifecycleCompactMode",
+        lifecycleCompactMode
+          ? "1"
+          : "0"
+      );
+
+      renderTable();
+    }
+  });
+
+  /*
+   * CSS-status van de kolommen bijwerken.
+   */
+  tableWrap.classList.toggle(
+    "type-column-expanded",
+    typeColumnExpanded
+  );
+
+  tableWrap.classList.toggle(
+    "owner-column-expanded",
+    productOwnerColumnExpanded
+  );
+
+  tableWrap.classList.toggle(
+    "lifecycle-column-compact",
+    lifecycleCompactMode
+  );
+}
 
 function renderCompactLifecycle(order) {
   const lifecycle =
-    normalize(order.derived_lifecycle_status || "");
+    normalize(
+      order.derived_lifecycle_status || ""
+    );
 
+  /*
+   * Ingeklapte weergave:
+   *
+   * Alleen het bolletje van de huidige status.
+   * Geen lijnen, geen andere stappen en geen tekst.
+   */
+  if (lifecycleCompactMode) {
+    if (lifecycle === "cancelled") {
+      return `
+        <div
+          class="mini-lifecycle-current"
+          title="Cancelled"
+        >
+          <span class="mini-life-step wait">
+            ×
+          </span>
+        </div>
+      `;
+    }
+
+    const currentStep =
+      compactLifecycleStep(order);
+
+    const currentClass =
+      getLifecycleStepClass(
+        order,
+        currentStep
+      );
+
+    const currentLabel =
+      lifecycle === "issue"
+        ? "Issue"
+        : currentStep === 4
+          ? "Delivered"
+          : currentStep === 3
+            ? isWarehousePickupOrder(order)
+              ? "Awaiting Pickup"
+              : "Planned / Transport"
+            : currentStep === 2
+              ? "Stock Complete"
+              : "Order Received";
+
+    return `
+      <div
+        class="mini-lifecycle-current"
+        title="${escapeHtml(currentLabel)}"
+      >
+        <span
+          class="mini-life-step ${currentClass}"
+        >
+          ${currentStep}
+        </span>
+      </div>
+    `;
+  }
+
+  /*
+   * Bestaande volledige weergave.
+   */
   if (lifecycle === "cancelled") {
     return `
       <div class="mini-lifecycle">
@@ -2120,56 +3375,117 @@ function renderCompactLifecycle(order) {
     `;
   }
 
-  const step = compactLifecycleStep(order);
-  const isIssue = lifecycle === "issue";
+  const step =
+    compactLifecycleStep(order);
 
-  const statusText = isIssue
-    ? "Issue"
-    : step === 4
-      ? "Delivered"
-      : step === 3
-        ? isWarehousePickupOrder(order)
-          ? "Awaiting Pickup"
-          : "Planned / Transport"
-        : step === 2
-          ? "Stock Complete"
-          : "Order Received";
+  const isIssue =
+    lifecycle === "issue";
+
+  const statusText =
+    isIssue
+      ? "Issue"
+      : step === 4
+        ? "Delivered"
+        : step === 3
+          ? isWarehousePickupOrder(order)
+            ? "Awaiting Pickup"
+            : "Planned / Transport"
+          : step === 2
+            ? "Stock Complete"
+            : "Order Received";
 
   function stepClass(index) {
-    if (isIssue && index === 1) return "wait";
-    if (index > step) return "";
-    if (index === 1) return "done";
-    if (index === 2) return "stock";
-    if (index === 3) return "transport";
-    if (index === 4) return "delivery";
+    if (
+      isIssue &&
+      index === 1
+    ) {
+      return "wait";
+    }
+
+    if (index > step) {
+      return "";
+    }
+
+    if (index === 1) {
+      return "done";
+    }
+
+    if (index === 2) {
+      return "stock";
+    }
+
+    if (index === 3) {
+      return "transport";
+    }
+
+    if (index === 4) {
+      return "delivery";
+    }
+
     return "";
   }
 
   function connectorClass(index) {
-    if (index >= step) return "";
-    if (index === 1) return "done";
-    if (index === 2) return "stock";
-    if (index === 3) return "transport";
+    if (index >= step) {
+      return "";
+    }
+
+    if (index === 1) {
+      return "done";
+    }
+
+    if (index === 2) {
+      return "stock";
+    }
+
+    if (index === 3) {
+      return "transport";
+    }
+
     return "";
   }
 
   const labelClass =
-    isIssue ? "orange" :
-    step === 1 ? "blue" :
-    step === 2 ? "green" :
-    step === 3 ? "purple" :
-    "green";
+    isIssue
+      ? "orange"
+      : step === 1
+        ? "blue"
+        : step === 2
+          ? "green"
+          : step === 3
+            ? "purple"
+            : "green";
 
   return `
     <div class="mini-lifecycle">
       <div class="mini-lifecycle-line">
-        <span class="mini-life-step ${stepClass(1)}">1</span>
-        <span class="mini-life-connector ${connectorClass(1)}"></span>
-        <span class="mini-life-step ${stepClass(2)}">2</span>
-        <span class="mini-life-connector ${connectorClass(2)}"></span>
-        <span class="mini-life-step ${stepClass(3)}">3</span>
-        <span class="mini-life-connector ${connectorClass(3)}"></span>
-        <span class="mini-life-step ${stepClass(4)}">4</span>
+        <span class="mini-life-step ${stepClass(1)}">
+          1
+        </span>
+
+        <span
+          class="mini-life-connector ${connectorClass(1)}"
+        ></span>
+
+        <span class="mini-life-step ${stepClass(2)}">
+          2
+        </span>
+
+        <span
+          class="mini-life-connector ${connectorClass(2)}"
+        ></span>
+
+        <span class="mini-life-step ${stepClass(3)}">
+          3
+        </span>
+
+        <span
+          class="mini-life-connector ${connectorClass(3)}"
+        ></span>
+
+        <span class="mini-life-step ${stepClass(4)}">
+          4
+        </span>
       </div>
 
       <div class="mini-life-label ${labelClass}">
@@ -2178,6 +3494,7 @@ function renderCompactLifecycle(order) {
     </div>
   `;
 }
+
   function renderCompletenessDonut(order) {
     const c = order.product_completeness || getProductCompleteness(order);
     const pct = Math.max(0, Math.min(100, toNumber(c.pct, 0)));
@@ -2478,6 +3795,164 @@ function renderDeliveryCell(order) {
 
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
+}
+
+function getCompactOrderTypeConfig(order) {
+  const type =
+    getOrderType(order);
+
+  if (type === "legacy") {
+    return {
+      letter: "L",
+      label: "Legacy",
+      className: "purple"
+    };
+  }
+
+  if (type === "manual_charge") {
+    return {
+      letter: "M",
+      label: "Manual Charge",
+      className: "orange"
+    };
+  }
+
+  if (type === "credit") {
+    return {
+      letter: "C",
+      label: "Credit",
+      className: "red"
+    };
+  }
+
+  if (type === "copy") {
+    return {
+      letter: "C",
+      label: "Copy",
+      className: "green"
+    };
+  }
+
+  return {
+    letter: "S",
+    label: "Standard",
+    className: "blue"
+  };
+}
+
+
+function renderCompactOrderType(order) {
+  /*
+   * Uitgeklapt gebruikt Type gewoon de
+   * bestaande volledige badge.
+   */
+  if (typeColumnExpanded) {
+    return `
+      <div class="order-type-badges">
+        ${renderOrderTypeBadge(order)}
+        ${renderOrderPriorityBadge(order)}
+      </div>
+    `;
+  }
+
+  const config =
+    getCompactOrderTypeConfig(order);
+
+  return `
+    <div
+      class="compact-type-wrap"
+      title="${escapeHtml(config.label)}"
+    >
+      <span
+        class="compact-type-logo ${escapeHtml(config.className)}"
+      >
+        ${escapeHtml(config.letter)}
+      </span>
+
+      ${
+        renderOrderPriorityBadge(order)
+      }
+    </div>
+  `;
+}
+
+
+function getCompactProductOwnerCode(order) {
+  const suppliedCode =
+    cleanText(
+      order.customer_code_display ||
+      order.customer_code ||
+      order.customers?.customer_code ||
+      ""
+    );
+
+  const ownerName =
+    cleanText(
+      order.product_owner_name ||
+      getProductOwnerName(order) ||
+      ""
+    );
+
+  const source =
+    suppliedCode || ownerName || "PO";
+
+  const compactCode =
+    source
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 3);
+
+  return compactCode || "PO";
+}
+
+
+function renderProductOwnerCell(order) {
+  /*
+   * Uitgeklapte weergave:
+   * exact dezelfde informatie als nu.
+   */
+  if (productOwnerColumnExpanded) {
+    return `
+      <div class="product-owner-full">
+        <strong>
+          ${escapeHtml(
+            order.product_owner_name ||
+            "—"
+          )}
+        </strong>
+
+        <span class="subline">
+          ${escapeHtml(
+            order.customer_code_display ||
+            "—"
+          )}
+        </span>
+      </div>
+    `;
+  }
+
+  /*
+   * Compacte weergave:
+   * ronde badge zoals BEL in de planning.
+   */
+  const ownerCode =
+    getCompactProductOwnerCode(order);
+
+  const ownerName =
+    order.product_owner_name ||
+    getProductOwnerName(order) ||
+    "Product Owner";
+
+  return `
+    <div
+      class="compact-owner-wrap"
+      title="${escapeHtml(ownerName)}"
+    >
+      <span class="compact-owner-logo">
+        ${escapeHtml(ownerCode)}
+      </span>
+    </div>
+  `;
 }
 
 function renderOrderTypeBadge(order) {
@@ -3188,16 +4663,24 @@ function renderExpandedRow(order) {
             <section class="detail-box">
               <h3>Order Details</h3>
 
-              <div class="detail-line">
-                <span class="detail-label">Order</span>
+<div class="detail-line">
+  <span class="detail-label">Order</span>
 
-                <span class="detail-value">
-                  ${escapeHtml(order.order_number || "—")}
-                </span>
-              </div>
+  <span class="detail-value">
+    ${escapeHtml(order.order_number || "—")}
+  </span>
+</div>
 
-              <div class="detail-line">
-                <span class="detail-label">Supplier ref</span>
+<div class="detail-line">
+  <span class="detail-label">Import date</span>
+
+  <span class="detail-value">
+    ${escapeHtml(formatDateTime(order.created_at))}
+  </span>
+</div>
+
+<div class="detail-line">
+  <span class="detail-label">Supplier ref</span>
 
                 <span class="detail-value">
                   ${escapeHtml(order.external_reference || "—")}
@@ -4628,22 +6111,20 @@ async function approveDeliveryGroupFromModal() {
 }
 
 function setupOrdersTopScrollbar() {
-  const tableWrap = byId("ordersTableWrap");
+  const tableWrap =
+    byId("ordersTableWrap");
 
-  if (!tableWrap) return;
+  if (!tableWrap) {
+    return;
+  }
 
-  /*
-   * Zoek de echte tabel in de bestaande
-   * horizontaal scrollbare container.
-   */
   const table =
     tableWrap.querySelector("table");
 
-  if (!table) return;
+  if (!table) {
+    return;
+  }
 
-  /*
-   * Maak de bovenste scrollbar slechts één keer.
-   */
   let topScrollbar =
     byId("ordersTopScrollbar");
 
@@ -4658,7 +6139,9 @@ function setupOrdersTopScrollbar() {
       "orders-top-scrollbar";
 
     topScrollbar.innerHTML = `
-      <div class="orders-top-scrollbar-content"></div>
+      <div
+        class="orders-top-scrollbar-content"
+      ></div>
     `;
 
     tableWrap.parentNode.insertBefore(
@@ -4667,67 +6150,43 @@ function setupOrdersTopScrollbar() {
     );
   }
 
-  const topContent =
+  const scrollbarContent =
     topScrollbar.querySelector(
       ".orders-top-scrollbar-content"
     );
 
-  if (!topContent) return;
+  if (!scrollbarContent) {
+    return;
+  }
 
-  /*
-   * De binnenste lege balk krijgt exact dezelfde
-   * breedte als de ordertabel.
-   */
-  const updateWidth = () => {
-    const tableWidth = Math.max(
-      table.scrollWidth,
-      table.offsetWidth,
-      tableWrap.scrollWidth
-    );
+  scrollbarContent.style.width =
+    `${table.scrollWidth}px`;
 
-    topContent.style.width =
-      `${tableWidth}px`;
+  topScrollbar.style.display =
+    table.scrollWidth > tableWrap.clientWidth
+      ? ""
+      : "none";
 
-    /*
-     * Verberg de bovenste scrollbar wanneer
-     * horizontaal scrollen niet nodig is.
-     */
-    const hasHorizontalOverflow =
-      tableWidth > tableWrap.clientWidth + 1;
-
-    topScrollbar.style.display =
-      hasHorizontalOverflow
-        ? "block"
-        : "none";
-
-    /*
-     * Scrollpositie opnieuw gelijkzetten.
-     */
-    topScrollbar.scrollLeft =
-      tableWrap.scrollLeft;
-  };
-
-  /*
-   * Voorkom dubbele listeners na opnieuw renderen.
-   */
   if (
-    topScrollbar.dataset.scrollBound !== "1"
+    topScrollbar.dataset.syncBound !== "1"
   ) {
-    let syncingFromTop = false;
-    let syncingFromBottom = false;
+    let syncingTop = false;
+    let syncingTable = false;
 
     topScrollbar.addEventListener(
       "scroll",
       () => {
-        if (syncingFromBottom) return;
+        if (syncingTable) {
+          return;
+        }
 
-        syncingFromTop = true;
+        syncingTop = true;
 
         tableWrap.scrollLeft =
           topScrollbar.scrollLeft;
 
         requestAnimationFrame(() => {
-          syncingFromTop = false;
+          syncingTop = false;
         });
       }
     );
@@ -4735,37 +6194,245 @@ function setupOrdersTopScrollbar() {
     tableWrap.addEventListener(
       "scroll",
       () => {
-        if (syncingFromTop) return;
+        if (syncingTop) {
+          return;
+        }
 
-        syncingFromBottom = true;
+        syncingTable = true;
 
         topScrollbar.scrollLeft =
           tableWrap.scrollLeft;
 
         requestAnimationFrame(() => {
-          syncingFromBottom = false;
+          syncingTable = false;
         });
       }
     );
 
-    window.addEventListener(
-      "resize",
-      updateWidth
-    );
-
-    topScrollbar.dataset.scrollBound = "1";
+    topScrollbar.dataset.syncBound =
+      "1";
   }
 
-  /*
-   * Eerst direct uitvoeren en daarna nogmaals
-   * nadat de browser de tabel heeft opgebouwd.
-   */
-  updateWidth();
-
-  requestAnimationFrame(updateWidth);
-
-  setTimeout(updateWidth, 100);
+  topScrollbar.scrollLeft =
+    tableWrap.scrollLeft;
 }
+
+
+/*
+ * Bepaalt een korte, duidelijke tekst
+ * voor bekende activity-types.
+ */
+function getLastActivityLabel(
+  activityType,
+  order
+) {
+  const type =
+    normalize(activityType);
+
+  const labels = {
+    order_created:
+      "Order created",
+
+    ack_generated:
+      "Acknowledgement generated",
+
+    acknowledgement_generated:
+      "Acknowledgement generated",
+
+    stock_complete:
+      "Stock complete",
+
+    delivery_planned:
+      "Delivery planned",
+
+    manual_delivery_date:
+      "Delivery date confirmed",
+
+    fds_planning_allocated:
+      "FDS delivery planned",
+
+    pod_available:
+      "POD available",
+
+    pod_generated:
+      "POD available",
+
+    manual_signed_pod:
+      "POD available",
+
+    manual_mark_delivered:
+      "Order delivered",
+
+    order_delivered:
+      "Order delivered",
+
+    delivered:
+      "Order delivered",
+
+    order_cancelled:
+      "Order cancelled",
+
+    delivery_issue:
+      "Delivery issue reported"
+  };
+
+  return (
+    labels[type] ||
+    order.delivery_status_label ||
+    "Order updated"
+  );
+}
+
+
+/*
+ * Fallback wanneer er geen bruikbare
+ * activity-logregel bestaat.
+ */
+
+function getVisibleActivityDescription(order, description) {
+  const text = cleanText(description);
+
+  // Interne gebruikers zien de originele activiteit
+  if (isTenantRole()) {
+    return text;
+  }
+
+  return text
+    .replace(/ACK document generated and uploaded/gi, "Acknowledgement available")
+    .replace(/Delivery note generated and uploaded/gi, "Delivery note available")
+    .replace(/Delivery labels generated and uploaded/gi, "Delivery labels available")
+    .replace(/Invoice generated and uploaded/gi, "Invoice available")
+    .replace(/Signed POD PDF uploaded manually/gi, "Proof of Delivery available")
+    .replace(/POD uploaded/gi, "Proof of Delivery available");
+}
+
+function getOrderFallbackActivity(order) {
+  const lifecycle =
+    normalize(
+      order.derived_lifecycle_status
+    );
+
+  if (lifecycle === "delivered") {
+    return "Order delivered";
+  }
+
+  if (getPodDocumentUrl(order)) {
+    return "POD available";
+  }
+
+  if (getExpectedDeliveryDate(order)) {
+    return (
+      `Delivery planned for ` +
+      formatDate(
+        getExpectedDeliveryDate(order)
+      )
+    );
+  }
+
+  if (
+    getDoc(order, "acknowledgement")
+  ) {
+    return "Acknowledgement generated";
+  }
+
+  if (lifecycle === "stock_complete") {
+    return "Stock complete";
+  }
+
+  return "Order created";
+}
+
+
+/*
+ * Zoekt de nieuwste relevante activiteit
+ * en zorgt dat datum en omschrijving
+ * bij dezelfde activiteit horen.
+ */
+function getLatestRelevantActivity(order) {
+  const activities =
+    Array.isArray(order.order_activity_log)
+      ? order.order_activity_log
+      : [];
+
+  const sortedActivities =
+    activities
+      .slice()
+      .sort((a, b) => {
+        const aTime =
+          new Date(
+            a.created_at || 0
+          ).getTime();
+
+        const bTime =
+          new Date(
+            b.created_at || 0
+          ).getTime();
+
+        return bTime - aTime;
+      });
+
+  const relevantTypes =
+    new Set([
+      "order_created",
+      "ack_generated",
+      "acknowledgement_generated",
+      "stock_complete",
+      "delivery_planned",
+      "manual_delivery_date",
+      "fds_planning_allocated",
+      "pod_available",
+      "pod_generated",
+      "manual_signed_pod",
+      "manual_mark_delivered",
+      "order_delivered",
+      "delivered",
+      "order_cancelled",
+      "delivery_issue"
+    ]);
+
+  const relevantActivity =
+    sortedActivities.find(activity =>
+      relevantTypes.has(
+        normalize(
+          activity.activity_type
+        )
+      )
+    );
+
+  const latest =
+    relevantActivity ||
+    sortedActivities[0] ||
+    null;
+
+  if (latest) {
+    return {
+      date:
+        latest.created_at ||
+        order.last_activity_at ||
+        order.created_at,
+
+description:
+  getVisibleActivityDescription(
+    order,
+    latest.description ||
+    getLastActivityLabel(
+      latest.activity_type,
+      order
+    )
+  )
+    };
+  }
+
+  return {
+    date:
+      order.last_activity_at ||
+      order.created_at,
+
+    description:
+      getOrderFallbackActivity(order)
+  };
+}
+
 
 function renderTable() {
   const tbody = byId("ordersBody");
@@ -4779,7 +6446,10 @@ if (showDeliveryGroups) {
 byId("ordersTableWrap").style.display = "";
 byId("deliveryGroupsWrap").style.display = "none";
 
-  updateSortIndicators();
+updateSortIndicators();
+updateProductOwnerColumnVisibility();
+updateFinanceHeaderVisibility();
+updateOccColumnToggles();
 if (!filteredOrders.length) {
   tbody.innerHTML = `
     <tr>
@@ -4832,11 +6502,8 @@ if (!filteredOrders.length) {
   ${isRetailerRole() ? "" : renderMemoLink(order, 55)}
 </td>
 
-<td>
-  <div class="order-type-badges">
-    ${renderOrderTypeBadge(order)}
-    ${renderOrderPriorityBadge(order)}
-  </div>
+<td class="type-cell">
+  ${renderCompactOrderType(order)}
 </td>
 
 <td class="reference-cell">
@@ -4848,16 +6515,15 @@ if (!filteredOrders.length) {
 </span>
 </td>
 
-          ${
-            !isRetailerRole()
-              ? `
-                <td class="owner-cell product-owner-only">
-                  <strong>${escapeHtml(order.product_owner_name || "—")}</strong>
-                  <span class="subline">${escapeHtml(order.customer_code_display || "—")}</span>
-                </td>
-              `
-              : ""
-          }
+         ${
+  !isRetailerRole() && !isProductOwnerRole()
+    ? `
+       <td class="owner-cell product-owner-only">
+         ${renderProductOwnerCell(order)}
+       </td>
+      `
+    : ""
+}
 
           <td class="retailer-cell">
             <strong>${escapeHtml(order.retailer_name || "—")}</strong>
@@ -4865,18 +6531,56 @@ if (!filteredOrders.length) {
           </td>
 
           <td class="ship-to-cell">${escapeHtml(order.ship_to_address || "—")}</td>
-          <td>${renderCompactLifecycle(order)}</td>
+          <td class="lifecycle-cell">
+  ${renderCompactLifecycle(order)}
+</td>
           <td>${renderCompletenessDonut(order)}</td>
           <td>${renderCompactDocuments(order)}</td>
-          <td class="eta-cell">${renderDeliveryCell(order)}</td>
-          ${canSeeFinance() ? `<td class="finance-cell finance-column">${renderFinanceCell(order)}</td>` : ""}
+<td class="eta-cell">
+  ${renderDeliveryCell(order)}
+</td>
 
-${canSeeFinance() ? `<td class="finance-column">${renderDeliveryGroupCell(order)}</td>` : ""}
+${
+  shouldShowOccFinanceColumns()
+    ? `
+        <td class="finance-column">
+          ${renderFinanceCell(order)}
+        </td>
+      `
+    : ""
+}
 
-<td class="activity-cell">
-            ${escapeHtml(formatDateTime(order.last_activity_at || order.created_at))}
-            <span class="subline">${escapeHtml(order.order_activity_log?.[0]?.description || order.delivery_status_label || "—")}</span>
-          </td>
+<td class="delivery-group-cell">
+  ${renderDeliveryGroupCell(order)}
+</td>
+
+${
+  (() => {
+    const latestActivity =
+      getLatestRelevantActivity(order);
+
+    return `
+      <td class="activity-cell">
+        ${escapeHtml(
+          formatDateTime(
+            latestActivity.date
+          )
+        )}
+
+        <span
+          class="subline"
+          title="${escapeHtml(
+            latestActivity.description
+          )}"
+        >
+          ${escapeHtml(
+            latestActivity.description
+          )}
+        </span>
+      </td>
+    `;
+  })()
+}
           <td class="actions-cell">
   ${
     isTenantRole()
@@ -5153,13 +6857,17 @@ style.textContent = `
 
 .orders-top-scrollbar{
   width:100%;
-  height:18px;
-  margin:0 0 8px;
+  height:16px;
+  margin:0 0 10px;
+
   overflow-x:auto;
   overflow-y:hidden;
-  border:1px solid #dce5f2;
-  border-radius:8px;
-  background:#f8fafc;
+
+  background:#eef4fb;
+
+  border:1px solid #d7e3f2;
+  border-radius:999px;
+
   scrollbar-gutter:stable;
 }
 
@@ -5169,22 +6877,245 @@ style.textContent = `
 }
 
 .orders-top-scrollbar::-webkit-scrollbar{
-  height:12px;
+  height:10px;
 }
 
 .orders-top-scrollbar::-webkit-scrollbar-track{
-  background:#eef2f7;
+  background:transparent;
   border-radius:999px;
 }
 
 .orders-top-scrollbar::-webkit-scrollbar-thumb{
-  background:#c4cedb;
-  border:2px solid #eef2f7;
   border-radius:999px;
+  border:2px solid #eef4fb;
+
+background:linear-gradient(
+    90deg,
+    #2b84ff 0%,
+    #48b9ff 50%,
+    #7be2ff 100%
+);
+
+box-shadow:
+    0 0 6px rgba(79,195,255,.35);
 }
 
 .orders-top-scrollbar::-webkit-scrollbar-thumb:hover{
-  background:#94a3b8;
+  background:linear-gradient(
+    90deg,
+    #0b57e3,
+    #25aee8
+  );
+
+  box-shadow:
+    0 0 7px rgba(18,103,255,.38);
+}
+
+
+/* =========================================
+   OCC COMPACT COLUMN CONTROLS
+   ========================================= */
+
+.occ-toggle-header{
+  vertical-align:top;
+}
+
+.occ-column-toggle{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  width:20px;
+  height:20px;
+
+  margin:5px auto 0;
+  padding:0;
+
+  border:1px solid #cbd5e1;
+  border-radius:6px;
+
+  background:#ffffff;
+  color:#1267ff;
+
+  font-size:15px;
+  font-weight:950;
+  line-height:1;
+
+  cursor:pointer;
+}
+
+.occ-column-toggle:hover{
+  border-color:#1267ff;
+  background:#eff6ff;
+  color:#074bd1;
+}
+
+
+/* =========================================
+   COMPACT TYPE
+   ========================================= */
+
+.type-cell{
+  text-align:center;
+  transition:
+    width .15s ease,
+    min-width .15s ease;
+}
+
+.compact-type-wrap{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+}
+
+.compact-type-logo{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:28px;
+  height:28px;
+  flex:0 0 28px;
+
+  border-radius:999px;
+
+  color:#ffffff;
+  font-size:11px;
+  font-weight:950;
+  line-height:1;
+
+  box-shadow:
+    0 0 0 3px rgba(18,103,255,.10);
+}
+
+.compact-type-logo.blue{
+  background:#1267ff;
+}
+
+.compact-type-logo.purple{
+  background:#7c3aed;
+}
+
+.compact-type-logo.orange{
+  background:#f97316;
+}
+
+.compact-type-logo.red{
+  background:#dc2626;
+}
+
+.compact-type-logo.green{
+  background:#16a34a;
+}
+
+
+/*
+ * Type is standaard compact.
+ */
+#ordersTableWrap:not(.type-column-expanded)
+.type-cell{
+  width:54px;
+  min-width:54px;
+  max-width:54px;
+}
+
+
+/* =========================================
+   COMPACT PRODUCT OWNER
+   ========================================= */
+
+.owner-cell{
+  transition:
+    width .15s ease,
+    min-width .15s ease;
+}
+
+.compact-owner-wrap{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+.compact-owner-logo{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:34px;
+  height:34px;
+  flex:0 0 34px;
+
+  border-radius:999px;
+
+  background:
+    linear-gradient(
+      145deg,
+      #52677e,
+      #31465d
+    );
+
+  border:2px solid #ffffff;
+
+  color:#ffffff;
+  font-size:10px;
+  font-weight:950;
+  letter-spacing:.02em;
+  line-height:1;
+
+  box-shadow:
+    0 2px 7px rgba(15,23,42,.18);
+}
+
+.product-owner-full{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+}
+
+
+/*
+ * Product Owner is standaard compact.
+ */
+#ordersTableWrap:not(.owner-column-expanded)
+.owner-cell{
+  width:62px;
+  min-width:62px;
+  max-width:62px;
+  text-align:center;
+}
+
+
+/* =========================================
+   COMPACT LIFECYCLE
+   ========================================= */
+
+.lifecycle-cell{
+  transition:
+    width .15s ease,
+    min-width .15s ease;
+}
+
+.mini-lifecycle-current{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  min-height:28px;
+}
+
+.lifecycle-column-compact
+.lifecycle-cell{
+  width:54px;
+  min-width:54px;
+  max-width:54px;
+  text-align:center;
+}
+
+
+/* Iets hogere kolomkop voor de knoppen eronder */
+#ordersTableWrap thead th{
+  padding-top:9px;
+  padding-bottom:8px;
 }
 
 .reference-cell{

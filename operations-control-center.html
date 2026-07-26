@@ -640,74 +640,77 @@
 
     <div id="toast" class="notice"></div>
 
-    <section class="occ-kpis">
-      <article class="card occ-kpi">
-        <div class="occ-kpi-icon">□</div>
-        <div>
-          <div class="occ-kpi-label">Total Orders</div>
-          <div class="occ-kpi-value" id="kpiTotal">0</div>
-          <div class="occ-kpi-sub">All operational orders</div>
-        </div>
-      </article>
+<section class="occ-kpis">
 
-      <article class="card occ-kpi">
-        <div class="occ-kpi-icon orange">◇</div>
-        <div>
-          <div class="occ-kpi-label">Awaiting Goods</div>
-          <div class="occ-kpi-value" id="kpiAwaitingGoods">0</div>
-          <div class="occ-kpi-sub">Orders not yet stock complete</div>
-        </div>
-      </article>
+  <article class="card occ-kpi">
+    <div class="occ-kpi-icon">□</div>
+    <div>
+      <div class="occ-kpi-label">Total Orders</div>
+      <div class="occ-kpi-value" id="kpiTotal">0</div>
+      <div class="occ-kpi-sub">All operational orders</div>
+    </div>
+  </article>
 
-      <article class="card occ-kpi">
-        <div class="occ-kpi-icon green">✓</div>
-        <div>
-          <div class="occ-kpi-label">Stock Complete</div>
-          <div class="occ-kpi-value" id="kpiStockComplete">0</div>
-          <div class="occ-kpi-sub">All goods available</div>
-        </div>
-      </article>
+  <article class="card occ-kpi">
+    <div class="occ-kpi-icon orange">◇</div>
+    <div>
+      <div class="occ-kpi-label">Awaiting Goods</div>
+      <div class="occ-kpi-value" id="kpiAwaitingGoods">0</div>
+      <div class="occ-kpi-sub">Orders not yet stock complete</div>
+    </div>
+  </article>
 
-      <article class="card occ-kpi">
-        <div class="occ-kpi-icon purple">◆</div>
-        <div>
-          <div class="occ-kpi-label">Planned / In Transit</div>
-          <div class="occ-kpi-value" id="kpiExpectedDelivery">0</div>
-          <div class="occ-kpi-sub">Planned or on transport</div>
-        </div>
-      </article>
+  <article class="card occ-kpi">
+    <div class="occ-kpi-icon green">✓</div>
+    <div>
+      <div class="occ-kpi-label">Stock Complete</div>
+      <div class="occ-kpi-value" id="kpiStockComplete">0</div>
+      <div class="occ-kpi-sub">All goods available</div>
+    </div>
+  </article>
 
-      <article class="card occ-kpi">
-        <div class="occ-kpi-icon green">✓</div>
-        <div>
-          <div class="occ-kpi-label">Delivered</div>
-          <div class="occ-kpi-value" id="kpiDelivered">0</div>
-          <div class="occ-kpi-sub">Delivered / POD complete</div>
-        </div>
-      </article>
+  <article class="card occ-kpi">
+    <div class="occ-kpi-icon purple">◆</div>
+    <div>
+      <div class="occ-kpi-label">Planned / In Transit</div>
+      <div class="occ-kpi-value" id="kpiExpectedDelivery">0</div>
+      <div class="occ-kpi-sub">Planned or on transport</div>
+    </div>
+  </article>
 
-      <article class="card occ-kpi finance-column">
-        <div class="occ-kpi-icon">£</div>
-        <div>
-          <div class="occ-kpi-label">Invoice Pending</div>
-          <div class="occ-kpi-value" id="kpiInvoicePending">0</div>
-          <div class="occ-kpi-sub">Delivered or ready to invoice</div>
-        </div>
-      </article>
+  <article class="card occ-kpi">
+    <div class="occ-kpi-icon green">✓</div>
+    <div>
+      <div class="occ-kpi-label">Delivered</div>
+      <div class="occ-kpi-value" id="kpiDelivered">0</div>
+      <div class="occ-kpi-sub">Delivered / POD complete</div>
+    </div>
+  </article>
 
-<article class="card occ-kpi finance-column">
-  <div class="occ-kpi-icon orange">m³</div>
-  <div>
-    <div class="occ-kpi-label">Minimum Volume</div>
-    <div class="occ-kpi-value" id="kpiMinimumVolumeGroups">0</div>
-    <div class="occ-kpi-sub" id="kpiMinimumVolumeValue">Retailers below minimum</div>
-  </div>
-</article>
+  <article class="card occ-kpi finance-column">
+    <div class="occ-kpi-icon">£</div>
+    <div>
+      <div class="occ-kpi-label">Invoice Pending</div>
+      <div class="occ-kpi-value" id="kpiInvoicePending">0</div>
+      <div class="occ-kpi-sub">Delivered or ready to invoice</div>
+    </div>
+  </article>
 
-      <span id="kpiProductsMissing" style="display:none;">0</span>
-      <span id="kpiEtaConfirmed" style="display:none;">0</span>
-    </section>
+  <article class="card occ-kpi finance-column">
+    <div class="occ-kpi-icon orange">m³</div>
+    <div>
+      <div class="occ-kpi-label">Minimum Volume</div>
+      <div class="occ-kpi-value" id="kpiMinimumVolumeGroups">0</div>
+      <div class="occ-kpi-sub" id="kpiMinimumVolumeValue">
+        Retailers below minimum
+      </div>
+    </div>
+  </article>
 
+  <span id="kpiProductsMissing" style="display:none;">0</span>
+  <span id="kpiEtaConfirmed" style="display:none;">0</span>
+
+</section>
     <section class="card occ-card">
       <div class="filters-grid">
         <div class="field">
