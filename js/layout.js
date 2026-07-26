@@ -674,12 +674,15 @@ async function updateMessageCenterNavBadge() {
   }
 
 function injectFavicon() {
-  if (document.querySelector('link[rel="icon"]')) return;
+
+  document.querySelectorAll(
+    'link[rel="icon"], link[rel="shortcut icon"]'
+  ).forEach(el => el.remove());
 
   const link = document.createElement("link");
+
   link.rel = "icon";
-  link.type = "image/x-icon";
-  link.href = "/assets/icons/favicon.ico?v=2";
+  link.href = "/assets/icons/favicon.ico?v=3";
 
   document.head.appendChild(link);
 }
