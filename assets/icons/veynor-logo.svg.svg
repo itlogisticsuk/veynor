@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Veynor logo</title>
+  <desc id="desc">Dark navy circular badge with a bright blue ring and a white stylised V.</desc>
+
+  <circle cx="256" cy="256" r="238" fill="#071F4D" stroke="#1267FF" stroke-width="18"/>
+
+  <path
+    d="
+      M 112 154
+      C 153 154, 195 152, 218 160
+      C 241 168, 254 186, 264 211
+      L 293 286
+      L 360 154
+      L 419 154
+      L 316 405
+      L 247 405
+      L 171 207
+      C 161 183, 142 165, 112 154
+      Z
+    "
+    fill="#FFFFFF"
+  />
+</svg>

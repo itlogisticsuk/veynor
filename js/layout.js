@@ -673,7 +673,20 @@ async function updateMessageCenterNavBadge() {
     });
   }
 
-  document.addEventListener("DOMContentLoaded", async () => {
+function injectFavicon() {
+    if (document.querySelector('link[rel="icon"]')) return;
+
+    const link = document.createElement("link");
+    link.rel = "icon";
+    link.type = "image/svg+xml";
+    link.href = "./assets/Icons/veynor-logo.svg";
+
+    document.head.appendChild(link);
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+
+    injectFavicon();
     injectPortalEventsScript();
 
     await loadProfile();
