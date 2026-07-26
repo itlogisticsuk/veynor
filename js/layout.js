@@ -344,8 +344,24 @@ serviceJob: `
       .sidebar-logout-wrap{padding:8px 12px 0;margin-top:auto;}
       .sidebar-logout-btn{width:100%;min-height:42px;border:1px solid rgba(255,255,255,.10);border-radius:14px;background:rgba(255,255,255,.055);color:rgba(255,255,255,.88);font-weight:900;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;transition:.16s ease;}
       .sidebar-logout-btn:hover{background:rgba(239,68,68,.18);border-color:rgba(248,113,113,.35);color:#fff;transform:translateY(-1px);}
-      .sidebar-wordmark{padding:14px 12px 4px;margin-top:0;}
-      .veynor-wordmark-bottom{width:112px;border-radius:22px;background:rgba(255,255,255,.92);padding:9px 16px;box-shadow:0 16px 34px rgba(0,0,0,.22);}
+      .sidebar-wordmark{
+  padding:18px 8px 8px;
+  margin-top:0;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+}
+      .veynor-wordmark-bottom{
+  width:180px;
+  max-width:100%;
+  height:auto;
+  object-fit:contain;
+  background:transparent;
+  border-radius:0;
+  padding:0;
+  box-shadow:none;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.28));
+}
       body.sidebar-collapsed .veynor-top-logo{width:54px;height:54px;border-radius:18px;}
       body.sidebar-collapsed .veynor-icon-large{width:44px;height:44px;border-radius:13px;padding:4px;}
       body.sidebar-collapsed .sidebar-toggle{top:82px!important;right:-25px!important;width:38px!important;height:38px!important;}
