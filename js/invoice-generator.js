@@ -609,6 +609,15 @@ function getTotals(
   };
 }
 
+function getCombinedServiceTotal(totals) {
+  return round2(
+    toNumber(totals.warehouse, 0) +
+    toNumber(totals.transport, 0) +
+    toNumber(totals.credits, 0) +
+    toNumber(totals.minimumDeliverySurcharge, 0)
+  );
+}
+
 async function reserveNextInvoiceNumber(
   client,
   companyId,
@@ -737,6 +746,22 @@ async function reserveNextInvoiceNumber(
       country: address?.country || customer.country || "United Kingdom"
     };
   }
+
+function getInvoiceMode(productOwner) {
+  const customerCode = normalize(
+    productOwner?.customerCode || ""
+  );
+
+  if (customerCode === "zoy") {
+    return "zoy";
+  }
+
+  if (customerCode === "bellstone") {
+    return "bellstone";
+  }
+
+  return "standard";
+}
 
   function validateSingleProductOwner(orders) {
     const ids = [...new Set(orders.map(order => String(order.customer_id || "")).filter(Boolean))];
@@ -922,7 +947,16 @@ async function reserveNextInvoiceNumber(
     });
   }
 
-  function drawCostSummaryBox(doc, x, y, w, h, orders, totals, ctx) {
+  function drawCostSummaryBox(
+  doc,
+  x,
+  y,
+  w,
+  h,
+  orders,
+  totals,
+  ctx
+) {
   doc.setFillColor(248, 249, 251);
   doc.roundedRect(x, y, w, h, 2, 2, "F");
 
@@ -934,37 +968,135 @@ async function reserveNextInvoiceNumber(
   doc.setFontSize(11);
   doc.text("Invoice Overview", x + 5, y + 9);
 
-  const subtotalBeforeFuel = round2(
-    totals.serviceSubtotal + totals.minimumDeliverySurcharge
-  );
+  const isZoy = ctx.invoiceMode === "zoy";
 
-const fuelLabel =
-  `Fuel surcharge ${formatNumber(totals.fuelSurchargePercent, 1)}%`;
+  let rows;
 
-  const rows = [
-    ["Delivered orders", String(orders.length), false],
-    ["Warehouse costs", formatMoney(totals.warehouse), false],
-    ["Transport costs", formatMoney(totals.transport), false],
-...(totals.credits !== 0
-  ? [["Credit notes", formatMoney(totals.credits), false]]
-  : []),
-    ...(totals.minimumDeliverySurcharge > 0
-      ? [["Minimum Delivery Charge", formatMoney(totals.minimumDeliverySurcharge), false]]
-      : []),
-    ["Subtotal excl. VAT", formatMoney(subtotalBeforeFuel), false],
-   [fuelLabel, formatMoney(totals.fuelSurcharge), false],
-    [`VAT ${Math.round(ctx.vatRate * 100)}%`, formatMoney(totals.vat), false],
-    ["Invoice total", formatMoney(totals.total), true]
-  ];
+  if (isZoy) {
+    const logisticsServices = round2(
+      totals.warehouse +
+      totals.transport +
+      totals.credits
+    );
+
+    rows = [
+      [
+        "Delivered orders",
+        String(orders.length),
+        false
+      ],
+      [
+        "Logistics Services",
+        formatMoney(logisticsServices),
+        false
+      ],
+      [
+        "Subtotal excl. VAT",
+        formatMoney(totals.subtotal),
+        false
+      ],
+      [
+        `VAT ${Math.round(ctx.vatRate * 100)}%`,
+        formatMoney(totals.vat),
+        false
+      ],
+      [
+        "Invoice total",
+        formatMoney(totals.total),
+        true
+      ]
+    ];
+  } else {
+    const subtotalBeforeFuel = round2(
+      totals.serviceSubtotal +
+      totals.minimumDeliverySurcharge
+    );
+
+    const fuelLabel =
+      `Fuel surcharge ${formatNumber(
+        totals.fuelSurchargePercent,
+        1
+      )}%`;
+
+    rows = [
+      [
+        "Delivered orders",
+        String(orders.length),
+        false
+      ],
+      [
+        "Warehouse costs",
+        formatMoney(totals.warehouse),
+        false
+      ],
+      [
+        "Transport costs",
+        formatMoney(totals.transport),
+        false
+      ],
+      ...(totals.credits !== 0
+        ? [[
+            "Credit notes",
+            formatMoney(totals.credits),
+            false
+          ]]
+        : []),
+      ...(totals.minimumDeliverySurcharge > 0
+        ? [[
+            "Minimum Delivery Charge",
+            formatMoney(
+              totals.minimumDeliverySurcharge
+            ),
+            false
+          ]]
+        : []),
+      [
+        "Subtotal excl. VAT",
+        formatMoney(subtotalBeforeFuel),
+        false
+      ],
+      [
+        fuelLabel,
+        formatMoney(totals.fuelSurcharge),
+        false
+      ],
+      [
+        `VAT ${Math.round(ctx.vatRate * 100)}%`,
+        formatMoney(totals.vat),
+        false
+      ],
+      [
+        "Invoice total",
+        formatMoney(totals.total),
+        true
+      ]
+    ];
+  }
 
   let rowY = y + 19;
 
   rows.forEach(([label, value, bold]) => {
-    doc.setFont("helvetica", bold ? "bold" : "normal");
-    doc.setFontSize(bold ? 9.4 : 8.3);
+    doc.setFont(
+      "helvetica",
+      bold ? "bold" : "normal"
+    );
 
-    doc.text(label, x + 5, rowY);
-    doc.text(value, x + w - 6, rowY, { align: "right" });
+    doc.setFontSize(
+      bold ? 9.4 : 8.3
+    );
+
+    doc.text(
+      label,
+      x + 5,
+      rowY
+    );
+
+    doc.text(
+      value,
+      x + w - 6,
+      rowY,
+      { align: "right" }
+    );
 
     rowY += bold ? 7 : 6.5;
   });
@@ -1037,95 +1169,231 @@ if (totals.minimumDeliverySurcharge > 0) {
 }
 }
 
-  function drawSpecificationHeader(doc, y) {
-    doc.setFillColor(245, 245, 245);
-    doc.rect(14, y - 6, 182, 10, "F");
+ function drawSpecificationHeader(
+  doc,
+  y,
+  ctx
+) {
+  doc.setFillColor(245, 245, 245);
+  doc.rect(14, y - 6, 182, 10, "F");
 
-    setDark(doc);
+  setDark(doc);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6.8);
+
+  doc.text(
+    "Order / Ref",
+    COL.order,
+    y
+  );
+
+  doc.text(
+    "Retailer",
+    COL.retailer,
+    y
+  );
+
+  doc.text(
+    "Delivery Address",
+    COL.address,
+    y
+  );
+
+  doc.text(
+    "Delivery Date",
+    COL.date,
+    y
+  );
+
+  doc.text(
+    "Packages",
+    COL.amount,
+    y
+  );
+
+  if (ctx.invoiceMode === "zoy") {
+    doc.text(
+      "Logistics Services",
+      COL.transport - 8,
+      y
+    );
+
+    doc.text(
+      "Total",
+      COL.total + 2,
+      y
+    );
+  } else {
+    doc.text(
+      "Warehouse",
+      COL.warehouse,
+      y
+    );
+
+    doc.text(
+      "Transport",
+      COL.transport,
+      y
+    );
+
+    doc.text(
+      "Total",
+      COL.total + 2,
+      y
+    );
+  }
+
+  doc.setDrawColor(80, 80, 80);
+  doc.line(14, y + 4, 196, y + 4);
+
+  return y + 10;
+}
+
+  function drawSpecificationTotalsBlock(
+  doc,
+  y,
+  totals,
+  ctx
+) {
+  if (y > 230) {
+    return null;
+  }
+
+  doc.setDrawColor(80, 80, 80);
+  doc.line(14, y, 196, y);
+
+  y += 10;
+
+  const labelX = 138;
+  const valueX = 194;
+  const isZoy = ctx.invoiceMode === "zoy";
+
+  setDark(doc);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8.5);
+
+  doc.text(
+    "Specification Total",
+    labelX,
+    y
+  );
+
+  y += 8;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+
+  if (isZoy) {
+    const logisticsServices = round2(
+      totals.warehouse +
+      totals.transport +
+      totals.credits
+    );
+
+    doc.text(
+      "Logistics Services",
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(logisticsServices),
+      valueX,
+      y,
+      { align: "right" }
+    );
+
+    y += 7;
+
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.8);
 
-    doc.text("Order / Ref", COL.order, y);
-    doc.text("Retailer", COL.retailer, y);
-    doc.text("Delivery Address", COL.address, y);
-    doc.text("Delivery Date", COL.date, y);
-doc.text("Packages", COL.amount, y);
-    doc.text("Warehouse", COL.warehouse, y);
-    doc.text("Transport", COL.transport, y);
-    doc.text("Total", COL.total + 2, y);
+    doc.text(
+      "Subtotal",
+      labelX,
+      y
+    );
 
-    doc.setDrawColor(80, 80, 80);
-    doc.line(14, y + 4, 196, y + 4);
+    doc.text(
+      formatMoney(totals.subtotal),
+      valueX,
+      y,
+      { align: "right" }
+    );
 
     return y + 10;
   }
 
-  function drawSpecificationTotalsBlock(doc, y, totals) {
-    if (y > 230) return null;
-
-    doc.setDrawColor(80, 80, 80);
-    doc.line(14, y, 196, y);
-
-    y += 10;
-
-    const labelX = 138;
-    const valueX = 194;
-
-    setDark(doc);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.text("Specification Total", labelX, y);
-
-    y += 8;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-
-    doc.text("Warehouse Costs", labelX, y);
-    doc.text(formatMoney(totals.warehouse), valueX, y, { align: "right" });
-
-    y += 7;
-
-   doc.text("Transport Costs", labelX, y);
-doc.text(formatMoney(totals.transport), valueX, y, { align: "right" });
-
-if (totals.minimumDeliverySurcharge > 0) {
-  y += 7;
-
-  doc.setFont("helvetica", "normal");
-
   doc.text(
-    "Minimum Delivery Charge",
+    "Warehouse Costs",
     labelX,
     y
   );
 
   doc.text(
-    formatMoney(totals.minimumDeliverySurcharge),
+    formatMoney(totals.warehouse),
     valueX,
     y,
     { align: "right" }
   );
-}
 
-y += 7;
+  y += 7;
 
-doc.setFont("helvetica", "bold");
+  doc.text(
+    "Transport Costs",
+    labelX,
+    y
+  );
 
-const specificationSubtotal =
+  doc.text(
+    formatMoney(totals.transport),
+    valueX,
+    y,
+    { align: "right" }
+  );
+
+  if (totals.minimumDeliverySurcharge > 0) {
+    y += 7;
+
+    doc.text(
+      "Minimum Delivery Charge",
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(
+        totals.minimumDeliverySurcharge
+      ),
+      valueX,
+      y,
+      { align: "right" }
+    );
+  }
+
+  y += 7;
+
+  doc.setFont("helvetica", "bold");
+
+  const specificationSubtotal = round2(
     totals.serviceSubtotal +
-    totals.minimumDeliverySurcharge;
+    totals.minimumDeliverySurcharge
+  );
 
-doc.text("Subtotal", labelX, y);
-doc.text(
+  doc.text(
+    "Subtotal",
+    labelX,
+    y
+  );
+
+  doc.text(
     formatMoney(specificationSubtotal),
     valueX,
     y,
-    { align:"right"}
-);
+    { align: "right" }
+  );
 
-    return y + 10;
-  }
+  return y + 10;
+}
 
 function drawMinimumDeliverySurchargeRows(
   doc,
@@ -1191,22 +1459,23 @@ function drawMinimumDeliverySurchargeRows(
   }
 
   surcharges.forEach(group => {
-    if (y > 258) {
-      doc.addPage();
+if (y > 258) {
+  doc.addPage();
 
-      y =
-        drawSpecificationHeader(
-          doc,
-          88
-        );
+  y =
+    drawSpecificationHeader(
+      doc,
+      88,
+      ctx
+    );
 
-      doc.setFont(
-        "helvetica",
-        "normal"
-      );
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
 
-      doc.setFontSize(6.5);
-    }
+  doc.setFontSize(6.5);
+}
 
     const postcode =
       cleanText(
@@ -1332,7 +1601,11 @@ ${postcode}`,
   drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
 
   let y = 88;
-  y = drawSpecificationHeader(doc, y);
+  y = drawSpecificationHeader(
+  doc,
+  y,
+  ctx
+);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(6.5);
@@ -1341,7 +1614,11 @@ ${postcode}`,
     if (y > 258) {
       doc.addPage();
       drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
-      y = drawSpecificationHeader(doc, 88);
+      y = drawSpecificationHeader(
+  doc,
+  88,
+  ctx
+);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.5);
     }
@@ -1387,9 +1664,42 @@ if (orderRefLines[1]) {
       doc.text(addressLines, COL.address, y);
       doc.text(deliveryDate, COL.date, y);
       doc.text(String(amount), COL.amount, y);
-doc.text(formatMoney(warehouse), COL.warehouse, y);
-doc.text(formatMoney(transport), COL.transport, y);
-doc.text(formatMoney(total), COL.total, y);
+if (ctx.invoiceMode === "zoy") {
+  const logisticsServices = round2(
+    warehouse +
+    transport
+  );
+
+  doc.text(
+    formatMoney(logisticsServices),
+    COL.transport - 8,
+    y
+  );
+
+  doc.text(
+    formatMoney(total),
+    COL.total,
+    y
+  );
+} else {
+  doc.text(
+    formatMoney(warehouse),
+    COL.warehouse,
+    y
+  );
+
+  doc.text(
+    formatMoney(transport),
+    COL.transport,
+    y
+  );
+
+  doc.text(
+    formatMoney(total),
+    COL.total,
+    y
+  );
+}
 
       y += rowHeight;
        });
@@ -1411,7 +1721,12 @@ doc.text(formatMoney(total), COL.total, y);
       y = 82;
     }
 
-    drawSpecificationTotalsBlock(doc, y, totals);
+    drawSpecificationTotalsBlock(
+  doc,
+  y,
+  totals,
+  ctx
+);
   }
 
   async function createPdfBlob(orders, invoiceNumber, ctx) {
@@ -1725,8 +2040,26 @@ async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
     const productOwnerId = validateSingleProductOwner(orders);
     const ctx = await loadCompanySettings(client, companyId);
 
-    ctx.productOwner = await loadProductOwnerProfile(client, productOwnerId);
-ctx.deliverySurcharges = await loadApprovedDeliverySurcharges(client, companyId, orders);
+ctx.productOwner = await loadProductOwnerProfile(
+  client,
+  productOwnerId
+);
+
+ctx.invoiceMode = getInvoiceMode(
+  ctx.productOwner
+);
+
+if (ctx.invoiceMode === "zoy") {
+  ctx.fuelSurchargePercent = 0;
+  ctx.deliverySurcharges = [];
+} else {
+  ctx.deliverySurcharges =
+    await loadApprovedDeliverySurcharges(
+      client,
+      companyId,
+      orders
+    );
+}
 
 const invoiceNumber = await reserveNextInvoiceNumber(
   client,

@@ -635,8 +635,12 @@ matched = matched;
     if (missingProductLines > 0) blockers.push(`${missingProductLines} line(s) missing product/SKU`);
     if (required <= 0) blockers.push("No required quantity");
     if (matched < required) blockers.push(`${required - matched} complete product(s) not matched`);
-    if (!String(order.delivery_city || "").trim()) blockers.push("Missing city");
-    if (!String(order.delivery_postcode || "").trim()) blockers.push("Missing postcode");
+const hasPostcode = String(order.delivery_postcode || "").trim().length > 0;
+const hasCity = String(order.delivery_city || "").trim().length > 0;
+
+if (!hasPostcode && !hasCity) {
+    blockers.push("Missing postcode / city");
+}
     if (!hasCoordinates(order)) blockers.push("Missing coordinates");
 
     return {

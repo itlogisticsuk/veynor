@@ -251,15 +251,13 @@ function getRegionalPricing(order, settings = {}) {
     );
   }
 
-  function calculateOrderPricing(order, settings = {}) {
+ function calculateOrderPricing(
+  order,
+  settings = {}
+) {
   /*
-   * Een order die expliciet als niet-chargeable
-   * staat gemarkeerd, moet altijd volledig
-   * free of charge blijven.
-   *
-   * Dit voorkomt dat oude bedragen op
-   * order_lines of een regionale toeslag alsnog
-   * op een ACK of factuur verschijnen.
+   * Expliciet gratis orders blijven altijd
+   * volledig £0.00.
    */
   if (order?.is_chargeable === false) {
     return {
@@ -295,31 +293,101 @@ function getRegionalPricing(order, settings = {}) {
       ? order.order_lines
       : [];
 
-  const warehouse =
+  /*
+   * Eerst de bedragen uit de orderregels
+   * berekenen als fallback.
+   */
+  const calculatedWarehouse =
     round2(
       lines.reduce(
-        (sum, line) => {
-          return (
-            sum +
-            getLineWarehouseCost(line)
-          );
-        },
+        (sum, line) =>
+          sum +
+          getLineWarehouseCost(
+            line
+          ),
         0
       )
     );
 
-  const baseTransport =
+  const calculatedBaseTransport =
     round2(
       lines.reduce(
-        (sum, line) => {
-          return (
-            sum +
-            getLineBaseTransportCost(line)
-          );
-        },
+        (sum, line) =>
+          sum +
+          getLineBaseTransportCost(
+            line
+          ),
         0
       )
     );
+
+  /*
+   * Controleren of de order opgeslagen
+   * handmatige ordertotalen bevat.
+   *
+   * Ook een expliciete waarde 0 is geldig
+   * en mag dus niet als "ontbrekend" worden
+   * behandeld.
+   */
+  const hasStoredWarehouseTotals =
+    (
+      order?.total_storage_tariff !==
+        null &&
+      order?.total_storage_tariff !==
+        undefined
+    ) ||
+    (
+      order?.total_admin_tariff !==
+        null &&
+      order?.total_admin_tariff !==
+        undefined
+    ) ||
+    (
+      order?.total_handling_tariff !==
+        null &&
+      order?.total_handling_tariff !==
+        undefined
+    );
+
+  const hasStoredTransportTotal =
+    order?.total_transport_tariff !==
+      null &&
+    order?.total_transport_tariff !==
+      undefined;
+
+  /*
+   * Opgeslagen ordertotalen zijn leidend.
+   *
+   * Daardoor worden handmatige aanpassingen
+   * uit Finance / Tariffs gerespecteerd.
+   */
+  const warehouse =
+    hasStoredWarehouseTotals
+      ? round2(
+          toNumber(
+            order.total_storage_tariff,
+            0
+          ) +
+          toNumber(
+            order.total_admin_tariff,
+            0
+          ) +
+          toNumber(
+            order.total_handling_tariff,
+            0
+          )
+        )
+      : calculatedWarehouse;
+
+  const baseTransport =
+    hasStoredTransportTotal
+      ? round2(
+          toNumber(
+            order.total_transport_tariff,
+            0
+          )
+        )
+      : calculatedBaseTransport;
 
   const transport =
     regional.priceOnRequest
@@ -351,9 +419,12 @@ function getRegionalPricing(order, settings = {}) {
     subtotalExFuel,
     totalExFuel:
       subtotalExFuel,
+
     regional,
+
     priceOnRequest:
       regional.priceOnRequest,
+
     note:
       regional.note
   };

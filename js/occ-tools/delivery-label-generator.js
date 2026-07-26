@@ -650,6 +650,46 @@
     );
   }
 
+function getOneOffLabelAck(
+  orderNumber,
+  sku,
+  unitNumber
+) {
+  if (
+    clean(orderNumber).toUpperCase() !==
+    "SO-03568"
+  ) {
+    return "";
+  }
+
+  const ackMap = {
+    IWCRO803: [
+      "ACK1293",
+      "ACK1375",
+      "ACK1397",
+      "ACK1430"
+    ],
+
+    IWCRO808: [
+      "ACK1412",
+      "ACK1425"
+    ],
+
+    IWCRO825: [
+      "ACK1425"
+    ]
+  };
+
+  const normalizedSku =
+    clean(sku).toUpperCase();
+
+  return (
+    ackMap[normalizedSku]?.[
+      unitNumber - 1
+    ] || ""
+  );
+}
+
   function buildLabels(order, items) {
     const labels = [];
     const itemMap = new Map();
@@ -766,20 +806,24 @@
                 packageNo
               );
 
-            labels.push({
-              order,
-              line,
-              item,
+labels.push({
+  order,
+  line,
+  item,
 
-              sku:
-                clean(
-                  line.sku_base
-                ),
+  unitNumber: unit,
 
-              description:
-                clean(
-                  line.description
-                ),
+  oneOffAck:
+    getOneOffLabelAck(
+      order.order_number,
+      line.sku_base,
+      unit
+    ),
+
+  sku:
+    clean(
+      line.sku_base
+    ),
 
               packageNo,
 
@@ -1460,18 +1504,23 @@
       label.barcodeValue
     );
 
-    const productDescription =
-      clean(
-        label.description ||
-        label.line?.products
-          ?.description ||
-        label.line?.products
-          ?.name ||
-        ""
-      ) ||
-      clean(
-        label.sku || "—"
-      );
+const baseProductDescription =
+  clean(
+    label.description ||
+    label.line?.products
+      ?.description ||
+    label.line?.products
+      ?.name ||
+    ""
+  ) ||
+  clean(
+    label.sku || "—"
+  );
+
+const productDescription =
+  label.oneOffAck
+    ? `${baseProductDescription} (${label.oneOffAck})`
+    : baseProductDescription;
 
     const descriptionCenterX =
       124;

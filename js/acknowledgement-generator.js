@@ -918,9 +918,22 @@ const warehouseCost =
 
 const transportCost =
   chargeable
-    ? getLineTransportCost(
-        line,
-        regional
+    ? (
+        /*
+         * Wanneer transport op orderniveau
+         * handmatig op £0.00 is gezet, mogen
+         * oude transportbedragen op order_lines
+         * niet opnieuw op de ACK verschijnen.
+         */
+        toNumber(
+          pricing.baseTransport,
+          0
+        ) <= 0
+          ? 0
+          : getLineTransportCost(
+              line,
+              regional
+            )
       )
     : 0;
 
@@ -947,9 +960,12 @@ const total =
     ? (
         zoy
           ? lineTotal
-          : getLineTotal(
-              line,
-              regional
+          : round2(
+              warehouseCost +
+              toNumber(
+                transportCost,
+                0
+              )
             )
       )
     : 0;
