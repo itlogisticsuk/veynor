@@ -13,7 +13,9 @@
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
-  <script src="/js/analytics.js" defer></script>
+<script src="/js/analytics.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="/js/analytics-carrier-import.js" defer></script>
 
   <style>
     .analytics-page {
@@ -389,6 +391,443 @@
         width: 140px;
       }
     }
+
+.order-cost-note {
+  padding: 12px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.order-cost-accordion {
+  padding: 0;
+  overflow: hidden;
+}
+
+.order-cost-accordion > summary {
+  list-style: none;
+}
+
+.order-cost-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.order-cost-summary {
+  min-height: 82px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  cursor: pointer;
+  user-select: none;
+  background: #fff;
+}
+
+.order-cost-summary:hover {
+  background: #f8fafc;
+}
+
+.order-cost-accordion[open] .order-cost-summary {
+  border-bottom: 1px solid var(--border);
+  background: #f8fbff;
+}
+
+.order-cost-summary-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 270px;
+}
+
+.order-cost-chevron {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  color: #475569;
+  font-size: 22px;
+  font-weight: 900;
+  transition: transform .15s ease;
+}
+
+.order-cost-accordion[open] .order-cost-chevron {
+  transform: rotate(90deg);
+}
+
+.order-cost-title {
+  font-size: 15px;
+  font-weight: 950;
+  color: #07152f;
+}
+
+.order-cost-description {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.order-cost-summary-totals {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 11.5px;
+}
+
+.order-cost-summary-totals span {
+  display: grid;
+  gap: 3px;
+  min-width: 80px;
+}
+
+.order-cost-summary-totals strong {
+  color: #07152f;
+  font-size: 14px;
+}
+
+.order-cost-content {
+  padding: 14px;
+  background: #f8fafc;
+}
+
+.order-cost-table {
+  min-width: 1650px;
+}
+
+.order-cost-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 130px;
+}
+
+.order-cost-currency {
+  color: #475569;
+  font-weight: 900;
+}
+
+.order-cost-input {
+  width: 95px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.order-cost-reference-input {
+  width: 170px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.order-cost-input:focus,
+.order-cost-reference-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(18, 103, 255, .11);
+}
+
+.order-cost-action-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.order-cost-confirm-btn,
+.order-cost-save-btn {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid var(--primary);
+  border-radius: 9px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.order-cost-unconfirm-btn {
+  min-height: 34px;
+  padding: 7px 11px;
+  border: 1px solid #fed7aa;
+  border-radius: 9px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.order-cost-confirm-btn:disabled,
+.order-cost-save-btn:disabled,
+.order-cost-unconfirm-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.order-cost-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.order-cost-type.own {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.order-cost-type.carrier {
+  color: #7c3aed;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+}
+
+@media(max-width:1000px) {
+  .order-cost-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .order-cost-summary-totals {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* =========================================================
+   ORDERS TAB – COMPACT TRANSPORT CONFIRMATION
+   ========================================================= */
+
+.order-cost-tools {
+  padding: 14px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.order-cost-tools-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 190px)
+    minmax(130px, 170px)
+    minmax(130px, 170px)
+    auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.order-cost-tools .field {
+  min-width: 0;
+}
+
+.order-cost-tools .input {
+  min-width: 0;
+  width: 100%;
+}
+
+.order-cost-tools-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.order-cost-tools-note {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.order-cost-filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.order-cost-filter-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 900;
+  color: #475569;
+  cursor: pointer;
+}
+
+.order-cost-filter-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/*
+ * De pending tabel blijft bewust compact.
+ * Financiële orderdetails verschijnen pas na bevestiging.
+ */
+.order-cost-table.pending {
+  min-width: 1250px;
+}
+
+.order-cost-table.confirmed {
+  min-width: 1500px;
+}
+
+.order-cost-order-cell {
+  display: grid;
+  gap: 3px;
+  min-width: 110px;
+}
+
+.order-cost-order-number {
+  font-weight: 950;
+  color: #07152f;
+}
+
+.order-cost-order-sub {
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.order-cost-money {
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.order-cost-result {
+  white-space: nowrap;
+  font-weight: 950;
+}
+
+.order-cost-result.positive {
+  color: #047857;
+}
+
+.order-cost-result.negative {
+  color: #c2410c;
+}
+
+/*
+ * Compacte financiële uitsplitsing binnen één cel.
+ * Hierdoor zijn geen extra 10 kolommen nodig.
+ */
+.order-finance-breakdown {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 3px 12px;
+  min-width: 205px;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.order-finance-breakdown span:nth-child(odd) {
+  color: var(--muted);
+}
+
+.order-finance-breakdown span:nth-child(even) {
+  color: #07152f;
+  font-weight: 850;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.order-finance-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+/*
+ * FDS factuurverdeling
+ */
+.fds-allocation-panel {
+  display: none;
+}
+
+.fds-allocation-panel.open {
+  display: grid;
+}
+
+.fds-allocation-summary {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #ddd6fe;
+  border-radius: 11px;
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 11.5px;
+}
+
+.fds-allocation-summary strong {
+  color: #4c1d95;
+}
+
+.order-cost-summary-totals .summary-result-positive {
+  color: #047857;
+}
+
+.order-cost-summary-totals .summary-result-negative {
+  color: #c2410c;
+}
+
+@media(max-width:1200px) {
+  .order-cost-tools-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media(max-width:760px) {
+  .order-cost-tools-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.carrier-import-unprocessed {
+  display: grid;
+  gap: 14px;
+  padding-top: 16px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.carrier-import-unprocessed[hidden] {
+  display: none !important;
+}
+
   </style>
 </head>
 
@@ -654,24 +1093,19 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th>Order</th>
-                <th>Retailer</th>
-                <th>Customer</th>
-                <th>Route</th>
-                <th>Transport Type</th>
-                <th>Colli</th>
-                <th>Volume</th>
-                <th>Warehouse Revenue</th>
-                <th>Transport Revenue</th>
-                <th>Total Revenue</th>
-                <th>Warehouse Cost</th>
-                <th>Transport Cost</th>
-                <th>Total Cost</th>
-                <th>Warehouse Result</th>
-                <th>Transport Result</th>
-                <th>Total Result</th>
-                <th>Margin</th>
-              </tr>
+  <th>Order</th>
+  <th>Retailer</th>
+  <th>Products</th>
+  <th>Volume</th>
+  <th>Storage Revenue</th>
+  <th>Admin Revenue</th>
+  <th>Picking Revenue</th>
+  <th>Storage Cost</th>
+  <th>Picking Cost</th>
+  <th>Warehouse Cost</th>
+  <th>Total Warehouse Revenue</th>
+  <th>Warehouse Result</th>
+</tr>
             </thead>
             <tbody id="orderProfitTableBody"></tbody>
           </table>
@@ -868,41 +1302,605 @@
       </section>
     </section>
 
-    <section id="tab-orders" class="tab-panel">
-      <section class="card analytics-card">
-        <div class="card-head">
-          <div>
-            <h2>Order Level Result</h2>
-            <p>Detailed result per order, including allocated transport cost.</p>
+<section id="tab-orders" class="tab-panel">
+
+<section class="card analytics-card">
+  <div class="card-head">
+    <div>
+      <h2>Carrier Invoice Import</h2>
+
+      <p>
+        Upload an FDS Excel invoice to match carrier charges
+        against Veynor orders.
+      </p>
+    </div>
+
+    <div class="order-cost-action-group">
+      <input
+        id="carrierInvoiceFileInput"
+        type="file"
+        accept=".xlsx,.xls"
+        hidden
+      >
+
+      <button
+        id="btnSelectCarrierInvoice"
+        class="btn btn-primary"
+        type="button"
+      >
+        Upload FDS Invoice
+      </button>
+    </div>
+  </div>
+
+  <div
+    id="carrierInvoiceFileName"
+    class="order-cost-tools-note"
+  >
+    No invoice selected.
+  </div>
+</section>
+
+<section
+  id="carrierImportPreview"
+  class="card analytics-card"
+  hidden
+>
+  <div class="card-head">
+    <div>
+      <h2>Carrier Invoice Preview</h2>
+
+      <p>
+        Review order matching and carrier costs before confirming.
+      </p>
+    </div>
+
+    <div class="order-cost-action-group">
+      <button
+        id="btnCancelCarrierImport"
+        class="btn"
+        type="button"
+      >
+        Cancel
+      </button>
+
+      <button
+        id="btnConfirmCarrierImport"
+        class="btn btn-primary"
+        type="button"
+      >
+        Confirm Import
+      </button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+<tr>
+  <th>Job Ref</th>
+  <th>Type</th>
+  <th>Source Reference</th>
+  <th>Postcode</th>
+  <th>Date</th>
+  <th>Suggested Match</th>
+  <th>Reason</th>
+  <th>Base Cost</th>
+  <th>Adjustment</th>
+  <th>Total Cost</th>
+  <th>Assign to Order</th>
+  <th>Status</th>
+</tr>
+      </thead>
+
+      <tbody id="carrierImportPreviewBody"></tbody>
+    </table>
+  </div>
+
+  <div id="carrierImportSummary"></div>
+
+<section
+  id="carrierImportUnprocessed"
+  class="carrier-import-unprocessed"
+  hidden
+>
+  <div class="card-head">
+    <div>
+      <h2>Not Yet Processed</h2>
+
+      <p>
+        Carrier costs that could not be matched automatically and
+        require manual review.
+      </p>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Job Ref</th>
+          <th>Source Reference</th>
+          <th>Suggested Match</th>
+          <th>Reason</th>
+          <th>Base Cost</th>
+          <th>Adjustment</th>
+          <th>Total Cost</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+
+      <tbody id="carrierImportUnprocessedBody"></tbody>
+    </table>
+  </div>
+
+<div
+    id="carrierImportUnprocessedSummary"
+    class="order-cost-tools-note"
+  ></div>
+</section>
+
+</section>
+
+  <!-- =====================================================
+       INTRODUCTIE
+       ===================================================== -->
+
+  <section class="card analytics-card">
+    <div class="card-head">
+      <div>
+        <h2>Order Cost Confirmation</h2>
+
+        <p>
+          Confirm the actual transport cost per delivered order.
+          Enter all carrier costs excluding VAT.
+        </p>
+      </div>
+    </div>
+
+    <div class="order-cost-note">
+      <strong>Revenue:</strong>
+      storage, admin, picking, transport and applicable fuel surcharge.
+      <br>
+
+      <strong>Operational cost:</strong>
+      storage cost, picking cost at £2.00 per product and confirmed
+      transport cost.
+      <br>
+
+      Own transport estimates are suggestions only until confirmed.
+    </div>
+  </section>
+
+
+  <!-- =====================================================
+       FILTERS
+       ===================================================== -->
+
+  <section class="card order-cost-tools">
+
+    <div class="order-cost-filter-row">
+      <button
+        id="btnOrderCostAll"
+        class="order-cost-filter-btn active"
+        type="button"
+      >
+        All Orders
+      </button>
+
+      <button
+        id="btnOrderCostOwn"
+        class="order-cost-filter-btn"
+        type="button"
+      >
+        Own Transport
+      </button>
+
+      <button
+        id="btnOrderCostCarrier"
+        class="order-cost-filter-btn"
+        type="button"
+      >
+        Carrier / FDS
+      </button>
+    </div>
+
+  </section>
+
+
+  <!-- =====================================================
+       FDS FACTUURVERDELING
+       Deze sectie wordt alleen gebruikt voor carrier-orders.
+       ===================================================== -->
+
+  <section
+    id="fdsInvoiceAllocationPanel"
+    class="card order-cost-tools fds-allocation-panel"
+  >
+
+    <div class="card-head">
+      <div>
+        <h2>FDS Invoice Allocation</h2>
+
+        <p>
+          Enter the base amount per order below and the total fuel
+          surcharge from the FDS invoice here. Veynor will distribute
+          the surcharge proportionally.
+        </p>
+      </div>
+    </div>
+
+    <div class="order-cost-tools-grid">
+
+      <div class="field">
+        <label for="fdsInvoiceReference">
+          Invoice Number
+        </label>
+
+        <input
+          id="fdsInvoiceReference"
+          class="input"
+          type="text"
+          placeholder="e.g. INV-9514"
+        >
+      </div>
+
+      <div class="field">
+        <label for="fdsFuelSurchargeAmount">
+          Fuel Surcharge ex VAT
+        </label>
+
+        <input
+          id="fdsFuelSurchargeAmount"
+          class="input"
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="0.00"
+        >
+      </div>
+
+      <div class="field">
+        <label for="fdsInvoiceBaseTotal">
+          Base Cost Total
+        </label>
+
+        <input
+          id="fdsInvoiceBaseTotal"
+          class="input"
+          type="text"
+          value="£0.00"
+          readonly
+        >
+      </div>
+
+      <div class="order-cost-tools-actions">
+        <button
+          id="btnApplyFdsFuel"
+          class="btn btn-primary"
+          type="button"
+        >
+          Apply Fuel Automatically
+        </button>
+
+        <button
+          id="btnClearFdsAllocation"
+          class="btn"
+          type="button"
+        >
+          Clear
+        </button>
+      </div>
+
+    </div>
+
+    <div
+      id="fdsAllocationSummary"
+      class="fds-allocation-summary"
+    >
+      <span>
+        Selected:
+        <strong id="fdsSelectedOrderCount">0 orders</strong>
+      </span>
+
+      <span>
+        Base:
+        <strong id="fdsSelectedBaseTotal">£0.00</strong>
+      </span>
+
+      <span>
+        Fuel:
+        <strong id="fdsSelectedFuelTotal">£0.00</strong>
+      </span>
+
+      <span>
+        Total cost:
+        <strong id="fdsSelectedFinalTotal">£0.00</strong>
+      </span>
+    </div>
+
+    <div class="order-cost-tools-note">
+      Select the carrier orders belonging to the same invoice in the
+      first table. Fuel is allocated according to each order’s share
+      of the invoice base amount.
+    </div>
+
+  </section>
+
+
+  <!-- =====================================================
+       1. TRANSPORT COST TO CONFIRM
+       Compact: alleen informatie nodig voor bevestiging.
+       ===================================================== -->
+
+  <details
+    id="orderCostPendingSection"
+    class="card order-cost-accordion"
+    open
+  >
+
+    <summary class="order-cost-summary">
+
+      <div class="order-cost-summary-main">
+        <span class="order-cost-chevron">›</span>
+
+        <div>
+          <div class="order-cost-title">
+            Transport Cost to Confirm
+          </div>
+
+          <div class="order-cost-description">
+            Own transport estimates and carrier costs awaiting confirmation
           </div>
         </div>
+      </div>
 
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>ACK</th>
-                <th>PO</th>
-                <th>Retailer</th>
-                <th>Customer</th>
-                <th>Status</th>
-                <th>Route</th>
-                <th>Warehouse Revenue</th>
-                <th>Warehouse Cost</th>
-                <th>Transport Revenue</th>
-                <th>Transport Cost</th>
-                <th>Total Revenue</th>
-                <th>Total Cost</th>
-                <th>Total Result</th>
-                <th>Margin</th>
-              </tr>
-            </thead>
-            <tbody id="orderResultTableBody"></tbody>
-          </table>
+      <div class="order-cost-summary-totals">
+
+        <span>
+          Orders
+          <strong id="pendingTransportOrders">0</strong>
+        </span>
+
+        <span>
+          Revenue
+          <strong id="pendingTransportRevenue">£0.00</strong>
+        </span>
+
+        <span>
+          Suggested Cost
+          <strong id="pendingSuggestedCost">£0.00</strong>
+        </span>
+
+      </div>
+
+    </summary>
+
+    <div class="order-cost-content">
+
+      <div class="table-wrap">
+
+        <table class="data-table order-cost-table pending">
+
+          <thead>
+            <tr>
+              <th style="width:42px;">Select</th>
+              <th>Order</th>
+              <th>Retailer</th>
+              <th>Type</th>
+              <th>Transport Revenue</th>
+              <th>Suggested Cost</th>
+              <th>Base / Actual Cost ex VAT</th>
+              <th>Fuel Allocation</th>
+              <th>Final Transport Cost</th>
+              <th>Reference</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+
+          <tbody id="pendingTransportCostBody"></tbody>
+
+        </table>
+
+      </div>
+
+    </div>
+
+  </details>
+
+
+  <!-- =====================================================
+       2. CONFIRMED OWN TRANSPORT
+       Totalen blijven zichtbaar in de gesloten balk.
+       ===================================================== -->
+
+  <details
+    id="orderCostOwnSection"
+    class="card order-cost-accordion"
+  >
+
+    <summary class="order-cost-summary">
+
+      <div class="order-cost-summary-main">
+        <span class="order-cost-chevron">›</span>
+
+        <div>
+          <div class="order-cost-title">
+            Confirmed Own Transport
+          </div>
+
+          <div class="order-cost-description">
+            Confirmed Sofa2U fleet orders
+          </div>
         </div>
-      </section>
-    </section>
+      </div>
+
+      <div class="order-cost-summary-totals">
+
+        <span>
+          Orders
+          <strong id="confirmedOwnOrders">0</strong>
+        </span>
+
+        <span>
+          Revenue
+          <strong id="confirmedOwnRevenue">£0.00</strong>
+        </span>
+
+        <span>
+          Warehouse Cost
+          <strong id="confirmedOwnWarehouseCost">£0.00</strong>
+        </span>
+
+        <span>
+          Transport Cost
+          <strong id="confirmedOwnCost">£0.00</strong>
+        </span>
+
+        <span>
+          Result
+          <strong id="confirmedOwnResult">£0.00</strong>
+        </span>
+
+        <span>
+          Margin
+          <strong id="confirmedOwnMargin">0.0%</strong>
+        </span>
+
+      </div>
+
+    </summary>
+
+    <div class="order-cost-content">
+
+      <div class="table-wrap">
+
+        <table class="data-table order-cost-table confirmed">
+
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Retailer</th>
+              <th>Revenue Breakdown</th>
+              <th>Operational Cost</th>
+              <th>Transport Cost</th>
+              <th>Total Revenue</th>
+              <th>Total Cost</th>
+              <th>Result</th>
+              <th>Margin</th>
+              <th>Reference</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody id="confirmedOwnTransportBody"></tbody>
+
+        </table>
+
+      </div>
+
+    </div>
+
+  </details>
+
+
+  <!-- =====================================================
+       3. CONFIRMED CARRIER
+       ===================================================== -->
+
+  <details
+    id="orderCostCarrierSection"
+    class="card order-cost-accordion"
+  >
+
+    <summary class="order-cost-summary">
+
+      <div class="order-cost-summary-main">
+        <span class="order-cost-chevron">›</span>
+
+        <div>
+          <div class="order-cost-title">
+            Confirmed Carrier
+          </div>
+
+          <div class="order-cost-description">
+            Confirmed FDS and external carrier orders
+          </div>
+        </div>
+      </div>
+
+      <div class="order-cost-summary-totals">
+
+        <span>
+          Orders
+          <strong id="confirmedCarrierOrders">0</strong>
+        </span>
+
+        <span>
+          Revenue
+          <strong id="confirmedCarrierRevenue">£0.00</strong>
+        </span>
+
+        <span>
+          Warehouse Cost
+          <strong id="confirmedCarrierWarehouseCost">£0.00</strong>
+        </span>
+
+        <span>
+          Carrier Cost
+          <strong id="confirmedCarrierCost">£0.00</strong>
+        </span>
+
+        <span>
+          Result
+          <strong id="confirmedCarrierResult">£0.00</strong>
+        </span>
+
+        <span>
+          Margin
+          <strong id="confirmedCarrierMargin">0.0%</strong>
+        </span>
+
+      </div>
+
+    </summary>
+
+    <div class="order-cost-content">
+
+      <div class="table-wrap">
+
+        <table class="data-table order-cost-table confirmed">
+
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Retailer</th>
+              <th>Revenue Breakdown</th>
+              <th>Operational Cost</th>
+<th>Carrier Cost</th>
+<th>Transport Revenue</th>
+<th>Transport Result</th>
+<th>Transport Margin</th>
+<th>Total Revenue</th>
+<th>Total Cost</th>
+<th>Total Result</th>
+<th>Total Margin</th>
+              <th>Invoice / Reference</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody id="confirmedCarrierTransportBody"></tbody>
+
+        </table>
+
+      </div>
+
+    </div>
+
+  </details>
+
+</section>
 
     <section id="tab-customers" class="tab-panel">
       <section class="card analytics-card">

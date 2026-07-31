@@ -1450,6 +1450,30 @@ function addDaysToIsoDate(isoDate, days) {
   return d.toISOString().slice(0, 10);
 }
 
+function resolveZoyCustomerItemSku(customerItemText) {
+  const text = normalize(customerItemText)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const aliases = [
+    {
+      match: /utah\s+chair/i,
+      sku: "5578/1"
+    },
+    {
+      match: /utah\s+(?:2|two)\s*seater/i,
+      sku: "5578/2"
+    },
+    {
+      match: /utah\s+(?:3|three)\s*seater/i,
+      sku: "5578/3"
+    }
+  ];
+
+  const alias = aliases.find(row => row.match.test(text));
+  return alias?.sku || "";
+}
+
 function parseZoyPdfOrder(text) {
   const lines = String(text || "")
     .split(/\r?\n/)
@@ -1457,87 +1481,202 @@ function parseZoyPdfOrder(text) {
     .filter(Boolean);
 
   const fullText = lines.join("\n");
+  const structuredItems = window.__lastPdfStructuredItems || [];
 
-  const orderDateMatch = fullText.match(/Order date:\s*(\d{2}\/\d{2}\/\d{4})/i);
-  const orderDate = orderDateMatch ? parseDateToIso(orderDateMatch[1]) : null;
+  function getValueRightOfLabel(labelRegex) {
+    const label = structuredItems.find(item =>
+      labelRegex.test(cleanText(item.text))
+    );
 
-  const zoyRefMatch = fullText.match(/Zoy reference No:\s*[\r\n\s]*(\d{4,})/i);
-  const zoyReference = zoyRefMatch ? zoyRefMatch[1] : "";
+    if (!label) return "";
 
-  const poMatch = fullText.match(/Customer order No:\s*[\r\n\s]*([A-Za-z0-9 _.-]+)/i);
-  const purchaseOrder = poMatch ? cleanText(poMatch[1]).split("\n")[0] : "";
+    const candidates = structuredItems
+      .filter(item =>
+        item.x > label.x &&
+        Math.abs(item.y - label.y) <= 5 &&
+        cleanText(item.text)
+      )
+      .sort((a, b) => a.x - b.x);
 
-  const leadTimeMatch = fullText.match(/Estimated lead time:\s*[\r\n\s]*(\d+)\s*weeks?/i);
-  const leadWeeks = leadTimeMatch ? Math.max(0, Math.round(toNumber(leadTimeMatch[1], 3))) : 3;
-  const dueDate = orderDate ? addDaysToIsoDate(orderDate, leadWeeks * 7) : null;
+    return cleanText(candidates[0]?.text || "");
+  }
 
-  const customerLine = lines.find(line =>
-    /Castlegate|Furniture|Interiors|Ltd|Limited/i.test(line) &&
-    !/Units|Sheepfoot|Tel:|Email:/i.test(line)
-  ) || "";
+  /*
+   * Ordergegevens rechtstreeks uit de rechterkolom van de PDF.
+   */
+  const orderDateRaw =
+    getValueRightOfLabel(/^Order date:?$/i) ||
+    (fullText.match(
+      /Order date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i
+    ) || [])[1] ||
+    "";
 
-  const deliveryLine = lines.find(line =>
-    /Units|Sheepfoot|Warehouse contact|Tel:|Email:/i.test(line)
-  ) || "";
+  const customerOrderNo =
+    getValueRightOfLabel(/^Customer order No:?$/i);
 
-  const retailName = cleanText(
-    customerLine
-      .replace(/^Customer:\s*/i, "")
-      .replace(/Order date:.*/i, "")
-  ) || "Unknown retailer";
+  const zoyReference =
+    getValueRightOfLabel(/^Zoy reference No:?$/i);
 
-  const postcode = extractPostcode(deliveryLine || fullText);
+  const leadTimeRaw =
+    getValueRightOfLabel(/^Estimated lead time:?$/i);
+
+  const orderDate = parseDateToIso(orderDateRaw);
+
+  const leadWeeksMatch = leadTimeRaw.match(/(\d+)/);
+  const leadWeeks = leadWeeksMatch
+    ? Math.max(0, Math.round(toNumber(leadWeeksMatch[1], 3)))
+    : 3;
+
+  const dueDate = orderDate
+    ? addDaysToIsoDate(orderDate, leadWeeks * 7)
+    : null;
+
+  /*
+   * Retailer en afleveradres.
+   */
+  const retailerMatch = fullText.match(
+    /(Fosters For Furniture[^]*?)(?=Terms of payment:|Within 30 days)/i
+  );
+
+  const retailerBlock = cleanText(retailerMatch?.[1] || "");
+
+  const retailName =
+    dedupeRepeatedWords(
+      retailerBlock.split(",")[0] || ""
+    ) ||
+    "Unknown retailer";
+
+  const postcode = extractPostcode(retailerBlock || fullText);
+
+  const email =
+    (
+      fullText.match(
+        /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
+      ) || []
+    ).find(value =>
+      !/zoy-living|zoyuk/i.test(value)
+    ) || "";
+
+  const phone =
+    (
+      retailerBlock.match(
+        /(?:\+?\d[\d\s().-]{7,}\d)/
+      ) || []
+    )[0] || "";
 
   const shipTo = {
     ...buildEmptyAddress(),
     contactName: retailName,
     companyName: retailName,
-    address1: deliveryLine || "",
+    address1: retailerBlock,
     address2: "",
     address3: "",
     address4: "",
     city: "",
-    county: "",
+    county: "South Yorkshire",
     postcode,
     country: getDefaultCountry(),
-    email: (deliveryLine.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0] || "",
-    phone: (deliveryLine.match(/(?:\+?\d[\d\s().-]{7,}\d)/) || [])[0] || ""
+    email,
+    phone
   };
 
-  const productLines = [];
+  /*
+   * De Zoy-productregel wordt door PDF.js meestal ongeveer zo gelezen:
+   *
+   * Utah
+   * Utah chair RD5578DX51D 2 boxes
+   * Chair Power reclining 1 1 £379.00 £379.00
+   *
+   * We zoeken daarom in de volledige tekst, niet per losse regel.
+   */
+const productLines = [];
 
-  lines.forEach((line, index) => {
-    if (/Surcharge/i.test(line)) return;
+const normalizedPdfText = cleanText(fullText);
 
-    const match = line.match(/^([A-Za-z0-9 ]+?)\s+(.+?)\s+(\d+)\s+(\d+)\s+£/);
-    if (!match) return;
+const productDefinitions = [
+  {
+    customerItem: "Utah chair",
+    internalSku: "5578/1",
+    description: "Utah Chair - Power reclining",
+    match: /Utah\s+chair/i
+  },
+  {
+    customerItem: "Utah 2 Seater",
+    internalSku: "5578/2",
+    description: "Utah 2 Seater - Power reclining",
+    match: /Utah\s+(?:2|two)\s*seater/i
+  },
+  {
+    customerItem: "Utah 3 Seater",
+    internalSku: "5578/3",
+    description: "Utah 3 Seater - Power reclining",
+    match: /Utah\s+(?:3|three)\s*seater/i
+  }
+];
 
-    const zoyItem = cleanText(match[1]);
-    const customerSkuText = cleanText(match[2]);
-    const qty = Math.round(toNumber(match[3], 1));
+productDefinitions.forEach((definition, index) => {
+  if (!definition.match.test(normalizedPdfText)) return;
 
-    productLines.push({
-      itemRaw: line,
-      itemBrand: "Zoy",
-      itemCode: zoyItem,
-      description: customerSkuText,
-      quantity: qty,
-      unitVolume: 0,
-      unitWeight: 0,
-      totalVolume: 0,
-      totalWeight: 0,
-      sourceRow: index + 1,
-      parseError: ""
-    });
+  const supplierSkuMatch = normalizedPdfText.match(
+    /RD5578[A-Z0-9]+/i
+  );
+
+  const quantityMatch = normalizedPdfText.match(
+    /Power reclining\s+(\d+)\s+(\d+)\s+£/i
+  );
+
+  const quantity = quantityMatch
+    ? Math.max(
+        1,
+        Math.round(toNumber(quantityMatch[1], 1))
+      )
+    : 1;
+
+  const packagesFromPdf = quantityMatch
+    ? Math.max(
+        1,
+        Math.round(toNumber(quantityMatch[2], 1))
+      )
+    : 1;
+
+  productLines.push({
+    itemRaw: normalizedPdfText,
+    itemBrand: "Zoy",
+
+    itemCode: definition.internalSku,
+    customerItem: definition.customerItem,
+    supplierSku: supplierSkuMatch?.[0] || "",
+
+    description: definition.description,
+
+    quantity,
+
+    packagesFromPdf,
+
+    unitVolume: 0,
+    unitWeight: 0,
+    totalVolume: 0,
+    totalWeight: 0,
+
+    sourceRow: index + 1,
+    parseError: ""
   });
+});
 
   const order = {
     ...buildEmptyOrder(),
+
     sourceKind: "pdf",
     sourceType: "zoy_order_ack_pdf",
+
+    /*
+     * Zoy reference = acknowledgement/externe referentie.
+     * Customer order number = PO.
+     */
     orderNumber: zoyReference,
     externalReference: zoyReference,
-    purchaseOrder,
+    purchaseOrder: customerOrderNo,
+
     orderDate,
     dueDate,
 
@@ -1558,8 +1697,12 @@ function parseZoyPdfOrder(text) {
     shipTo,
 
     memo: [
-      purchaseOrder ? `Customer order No: ${purchaseOrder}` : "",
-      zoyReference ? `Zoy reference No: ${zoyReference}` : "",
+      customerOrderNo
+        ? `Customer order No: ${customerOrderNo}`
+        : "",
+      zoyReference
+        ? `Zoy reference No: ${zoyReference}`
+        : "",
       `Estimated lead time: ${leadWeeks} weeks`
     ].filter(Boolean).join(" | "),
 
@@ -1567,7 +1710,20 @@ function parseZoyPdfOrder(text) {
     lines: productLines
   };
 
-  return [finalizeOrder(order)];
+  const finalOrder = finalizeOrder(order);
+
+  const parseErrors = productLines
+    .map(line => line.parseError)
+    .filter(Boolean);
+
+  finalOrder.notes = [
+    ...new Set([
+      ...(finalOrder.notes || []),
+      ...parseErrors
+    ])
+  ];
+
+  return [finalOrder];
 }
 
   function parsePackingSlip(text) {
@@ -1635,48 +1791,114 @@ console.log(lines);
     return [finalOrder];
   }
 
-  async function readPdfFile() {
-    if (!selectedPdfFile) {
-      showToast("Select or drop a PDF packing slip first.", "err");
-      return;
-    }
-
-    if (!getSelectedProductOwner()) {
-      showToast("Select a product owner first.", "err");
-      return;
-    }
-
-    currentSourceKind = "pdf";
-    setProgress(true, 10, "Reading PDF...");
-
-  window.__lastPdfStructuredItems = await extractPdfStructured(selectedPdfFile);
-lastPdfText = await extractPdfText(selectedPdfFile);
-
-    const textArea = byId("pdfExtractedText");
-    if (textArea) textArea.value = lastPdfText;
-
-    setProgress(true, 45, "Parsing packing slip...");
-
-    rawRows = lastPdfText.split(/\r?\n/).filter(Boolean);
-groupedOrders = isZoyOwner()
-  ? parseZoyPdfOrder(lastPdfText)
-  : parsePackingSlip(lastPdfText);
-    selectedOrderNo = groupedOrders[0]?.orderNumber || null;
-
-    setProgress(true, 65, "Checking existing orders...");
-    await markExistingOrders();
-
-    setProgress(true, 80, "Checking product master...");
-    await markMissingProducts();
-
-    renderAll();
-    setProgress(false);
-
-    const missingCount = getAllMissingProductSkus().length;
-    const warningText = missingCount ? ` ${missingCount} SKU(s) are not in product master.` : "";
-
-    showToast(`${groupedOrders.length} order(s) found from PDF ${selectedPdfFile.name}.${warningText}`, missingCount ? "err" : "ok");
+ async function readPdfFile() {
+  if (!selectedPdfFile) {
+    showToast(
+      "Select or drop a PDF packing slip first.",
+      "err"
+    );
+    return;
   }
+
+  if (!getSelectedProductOwner()) {
+    showToast(
+      "Select a product owner first.",
+      "err"
+    );
+    return;
+  }
+
+  currentSourceKind = "pdf";
+
+  setProgress(
+    true,
+    10,
+    "Reading PDF..."
+  );
+
+  window.__lastPdfStructuredItems =
+    await extractPdfStructured(
+      selectedPdfFile
+    );
+
+  lastPdfText =
+    await extractPdfText(
+      selectedPdfFile
+    );
+
+  const textArea =
+    byId("pdfExtractedText");
+
+  if (textArea) {
+    textArea.value = lastPdfText;
+  }
+
+  setProgress(
+    true,
+    45,
+    "Parsing PDF..."
+  );
+
+  rawRows = lastPdfText
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  /*
+   * Zoy gebruikt een eigen PDF-parser.
+   * Bellstone blijft de bestaande packing-slip-parser gebruiken.
+   */
+  groupedOrders = isZoyOwner()
+    ? parseZoyPdfOrder(lastPdfText)
+    : parsePackingSlip(lastPdfText);
+
+  /*
+   * Haal volume, gewicht, tarieven en packages al vóór
+   * de preview uit de productmaster.
+   */
+  setProgress(
+    true,
+    55,
+    "Loading product data..."
+  );
+
+  await enrichPreviewOrdersWithProductData();
+
+  selectedOrderNo =
+    groupedOrders[0]?.orderNumber ||
+    null;
+
+  setProgress(
+    true,
+    70,
+    "Checking existing orders..."
+  );
+
+  await markExistingOrders();
+
+  setProgress(
+    true,
+    85,
+    "Checking product master..."
+  );
+
+  await markMissingProducts();
+
+  renderAll();
+  setProgress(false);
+
+  const missingCount =
+    getAllMissingProductSkus().length;
+
+  const warningText =
+    missingCount
+      ? ` ${missingCount} SKU(s) are not in product master.`
+      : "";
+
+  showToast(
+    `${groupedOrders.length} order(s) found from PDF ${selectedPdfFile.name}.${warningText}`,
+    missingCount ? "err" : "ok"
+  );
+}
 
 function getSalesOrderPrefix() {
   return settingsMap.get("sales_order_prefix") || "SO-";
@@ -1847,92 +2069,277 @@ async function reserveSalesOrderNumber() {
     setText("previewSourceLabel", sourceLabel);
   }
 
-  function renderTable() {
-    const tbody = byId("ordersPreviewBody");
-    if (!tbody) return;
+function renderTable() {
+  const tbody = byId("ordersPreviewBody");
 
-    if (!groupedOrders.length) {
-      tbody.innerHTML = `<tr><td colspan="15">Upload an Excel file or PDF packing slip and click Read.</td></tr>`;
-      return;
-    }
+  if (!tbody) return;
 
-    tbody.innerHTML = groupedOrders.map(order => {
-      const disabled = (!order.existing || order.imported || order.notes.length) ? "disabled" : "";
-      const checked = order.importAnyway ? "checked" : "";
-      const exampleLine = order.lines.find(l => l.itemCode) || order.lines[0] || {};
-      const source = order.sourceKind || currentSourceKind || "—";
-      const retailerCode = makeRetailerCode(order.shipTo?.postcode || order.postcode, order.retailName || order.customerName);
+  if (!groupedOrders.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="15">
+          Upload an Excel file or PDF packing slip and click Read.
+        </td>
+      </tr>
+    `;
 
-      const warningText = (order.warnings || []).join(" · ");
-      const noteText =
-        order.importMessage ||
-        order.notes.join(" · ") ||
-        warningText ||
-        order.memo ||
-        (order.existing ? "Manual confirmation required" : "—");
-
-      return `
-        <tr data-order-no="${escapeHtml(order.orderNumber)}" class="${String(selectedOrderNo) === String(order.orderNumber) ? "active" : ""}">
-          <td>
-            ${order.existing ? `
-              <label class="checkbox-row" style="margin:0;">
-                <input class="import-anyway-check" type="checkbox" data-order-no="${escapeHtml(order.orderNumber)}" ${checked} ${disabled}/>
-                <span>Import anyway</span>
-              </label>
-            ` : `<span class="pill pill-ok">New</span>`}
-          </td>
-          <td>${escapeHtml(source)}</td>
-          <td>
-            <strong>${escapeHtml(order.orderNumber || "—")}</strong>
-            <span class="subline">PO: ${escapeHtml(order.purchaseOrder || "Unknown")}</span>
-          </td>
-          <td>${escapeHtml(order.purchaseOrder || "Unknown")}</td>
-          <td>
-            <strong>${escapeHtml(order.retailName || order.customerName || "—")}</strong>
-            <span class="subline">Retailer / delivery customer</span>
-            <span class="subline">Retailer Code: ${escapeHtml(retailerCode)}</span>
-            ${order.contactName ? `<span class="subline">Contact: ${escapeHtml(order.contactName)}</span>` : ""}
-          </td>
-          <td class="address-cell">
-            ${escapeHtml(order.invoiceAddressText || "—")}
-            <span class="subline">From Settings / Product Owner</span>
-          </td>
-          <td class="address-cell">
-            ${escapeHtml(order.deliveryAddressText || "—")}
-            <span class="subline">Retailer delivery address</span>
-          </td>
-          <td class="date-cell">${escapeHtml(displayDate(order.dueDate || order.orderDate))}</td>
-          <td>${formatNumber(order.lines.length)}</td>
-          <td>${formatNumber(order.totalQty)}</td>
-          <td>${formatNumber(order.uniqueSkus)}</td>
-          <td>${formatVolume(order.totalVolume)}</td>
-          <td>
-            <strong>${escapeHtml(exampleLine.itemCode || "—")}</strong>
-            <span class="subline">${escapeHtml(exampleLine.itemBrand || "")}</span>
-          </td>
-          <td>${statusPill(order)}</td>
-          <td>${escapeHtml(noteText)}</td>
-        </tr>
-      `;
-    }).join("");
-
-    tbody.querySelectorAll("tr[data-order-no]").forEach(tr => {
-      tr.addEventListener("click", event => {
-        if (event.target.closest("input")) return;
-        selectedOrderNo = tr.dataset.orderNo;
-        renderAll();
-      });
-    });
-
-    tbody.querySelectorAll(".import-anyway-check").forEach(input => {
-      input.addEventListener("click", event => event.stopPropagation());
-      input.addEventListener("change", () => {
-        const order = groupedOrders.find(o => String(o.orderNumber) === String(input.dataset.orderNo));
-        if (order) order.importAnyway = input.checked;
-        renderAll();
-      });
-    });
+    return;
   }
+
+  tbody.innerHTML = groupedOrders.map(order => {
+    const disabled =
+      !order.existing ||
+      order.imported ||
+      order.notes.length
+        ? "disabled"
+        : "";
+
+    const checked =
+      order.importAnyway
+        ? "checked"
+        : "";
+
+    const exampleLine =
+      order.lines.find(line => line.itemCode) ||
+      order.lines[0] ||
+      {};
+
+    const source =
+      order.sourceKind ||
+      currentSourceKind ||
+      "—";
+
+    const retailerCode =
+      makeRetailerCode(
+        order.shipTo?.postcode ||
+        order.postcode,
+        order.retailName ||
+        order.customerName
+      );
+
+    const warningText =
+      (order.warnings || []).join(" · ");
+
+    const noteText =
+      order.importMessage ||
+      order.notes.join(" · ") ||
+      warningText ||
+      order.memo ||
+      (
+        order.existing
+          ? "Manual confirmation required"
+          : "—"
+      );
+
+    return `
+      <tr
+        data-order-no="${escapeHtml(order.orderNumber)}"
+        class="${
+          String(selectedOrderNo) ===
+          String(order.orderNumber)
+            ? "active"
+            : ""
+        }"
+      >
+        <td>
+          ${
+            order.existing
+              ? `
+                <label
+                  class="checkbox-row"
+                  style="margin:0;"
+                >
+                  <input
+                    class="import-anyway-check"
+                    type="checkbox"
+                    data-order-no="${escapeHtml(order.orderNumber)}"
+                    ${checked}
+                    ${disabled}
+                  />
+
+                  <span>
+                    Import anyway
+                  </span>
+                </label>
+              `
+              : `
+                <span class="pill pill-ok">
+                  New
+                </span>
+              `
+          }
+        </td>
+
+        <td>
+          ${escapeHtml(source)}
+        </td>
+
+        <td>
+          <strong>
+            ${escapeHtml(order.orderNumber || "—")}
+          </strong>
+
+          <span class="subline">
+            PO: ${escapeHtml(order.purchaseOrder || "Unknown")}
+          </span>
+        </td>
+
+        <td>
+          ${escapeHtml(order.purchaseOrder || "Unknown")}
+        </td>
+
+        <td>
+          <strong>
+            ${escapeHtml(
+              order.retailName ||
+              order.customerName ||
+              "—"
+            )}
+          </strong>
+
+          <span class="subline">
+            Retailer / delivery customer
+          </span>
+
+          <span class="subline">
+            Retailer Code:
+            ${escapeHtml(retailerCode)}
+          </span>
+
+          ${
+            order.contactName
+              ? `
+                <span class="subline">
+                  Contact:
+                  ${escapeHtml(order.contactName)}
+                </span>
+              `
+              : ""
+          }
+        </td>
+
+        <td class="address-cell">
+          ${escapeHtml(
+            order.invoiceAddressText ||
+            "—"
+          )}
+
+          <span class="subline">
+            From Settings / Product Owner
+          </span>
+        </td>
+
+        <td class="address-cell">
+          ${escapeHtml(
+            order.deliveryAddressText ||
+            "—"
+          )}
+
+          <span class="subline">
+            Retailer delivery address
+          </span>
+        </td>
+
+        <!--
+          Dit is uitsluitend de echte orderdatum uit de PDF.
+          Voor deze Zoy-order is dat 23/07/2026.
+        -->
+        <td class="date-cell">
+          ${escapeHtml(
+            displayDate(order.orderDate)
+          )}
+        </td>
+
+        <td>
+          ${formatNumber(order.lines.length)}
+        </td>
+
+        <td>
+          ${formatNumber(order.totalQty)}
+        </td>
+
+        <td>
+          ${formatNumber(order.uniqueSkus)}
+        </td>
+
+        <td>
+          ${formatVolume(order.totalVolume)}
+        </td>
+
+        <td>
+          <strong>
+            ${escapeHtml(
+              exampleLine.itemCode ||
+              "—"
+            )}
+          </strong>
+
+          <span class="subline">
+            ${escapeHtml(
+              exampleLine.itemBrand ||
+              ""
+            )}
+          </span>
+        </td>
+
+        <td>
+          ${statusPill(order)}
+        </td>
+
+        <td>
+          ${escapeHtml(noteText)}
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  tbody
+    .querySelectorAll("tr[data-order-no]")
+    .forEach(tr => {
+      tr.addEventListener(
+        "click",
+        event => {
+          if (event.target.closest("input")) {
+            return;
+          }
+
+          selectedOrderNo =
+            tr.dataset.orderNo;
+
+          renderAll();
+        }
+      );
+    });
+
+  tbody
+    .querySelectorAll(".import-anyway-check")
+    .forEach(input => {
+      input.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+        }
+      );
+
+      input.addEventListener(
+        "change",
+        () => {
+          const order =
+            groupedOrders.find(row =>
+              String(row.orderNumber) ===
+              String(input.dataset.orderNo)
+            );
+
+          if (order) {
+            order.importAnyway =
+              input.checked;
+          }
+
+          renderAll();
+        }
+      );
+    });
+}
 
   function renderDetail() {
     const order = groupedOrders.find(o => String(o.orderNumber) === String(selectedOrderNo));
@@ -2196,19 +2603,21 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
 
     const { data, error } = await client
       .from("products")
-      .select(`
-        id,
-        sku_base,
-        volume_m3,
-        weight_kg,
-        net_weight_kg,
-        storage_tariff,
-        admin_tariff,
-        handling_tariff,
-        transport_tariff,
-        total_s2u_fees,
-        total_customer_charge
-      `)
+.select(`
+  id,
+  sku_base,
+  volume_m3,
+  weight_kg,
+  net_weight_kg,
+  package_count,
+  packages_per_unit,
+  storage_tariff,
+  admin_tariff,
+  handling_tariff,
+  transport_tariff,
+  total_s2u_fees,
+  total_customer_charge
+`)
       .eq("company_id", cid)
       .in("sku_base", skus);
 
@@ -2217,56 +2626,171 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
       return new Map();
     }
 
-    return new Map((data || []).map(row => [String(row.sku_base), row]));
+    const productMap = new Map();
+
+(data || []).forEach(row => {
+  const rawSku = String(row.sku_base || "").trim();
+
+  if (!rawSku) return;
+
+  productMap.set(rawSku, row);
+  productMap.set(normalize(rawSku), row);
+});
+
+return productMap;
   }
 
-  function enrichLineWithProductData(line, productMap) {
-    const sku = String(line.itemCode || "").trim();
-    const product = productMap.get(sku) || null;
-    const qty = Math.round(toNumber(line.quantity, 0));
+ function enrichLineWithProductData(line, productMap) {
+  const sku = String(line.itemCode || "").trim();
 
-    const unitVolume = toNumber(line.unitVolume, 0) || toNumber(product?.volume_m3, 0);
-    const totalVolume = toNumber(line.totalVolume, 0) || qty * unitVolume;
+  const product =
+    productMap.get(sku) ||
+    productMap.get(normalize(sku)) ||
+    null;
 
-    const unitWeight =
-      toNumber(line.unitWeight, 0) ||
-      toNumber(product?.weight_kg, 0) ||
-      toNumber(product?.net_weight_kg, 0);
+  const qty = Math.max(
+    0,
+    Math.round(toNumber(line.quantity, 0))
+  );
 
-    const totalWeight = qty * unitWeight;
+  /*
+   * Voor PDF-imports staat volume/gewicht meestal niet in het document.
+   * In dat geval gebruiken we de waarden uit de productmaster.
+   */
+  const unitVolume =
+    toNumber(line.unitVolume, 0) ||
+    toNumber(product?.volume_m3, 0);
 
-    const storageTotal = qty * toNumber(product?.storage_tariff, 0);
-    const adminTotal = qty * toNumber(product?.admin_tariff, 0);
-    const handlingTotal = qty * toNumber(product?.handling_tariff, 0);
-    const transportTotal = qty * toNumber(product?.transport_tariff, 0);
+  const totalVolume =
+    toNumber(line.totalVolume, 0) ||
+    qty * unitVolume;
 
-    const s2uTotal =
-      toNumber(product?.total_s2u_fees, 0) > 0
-        ? qty * toNumber(product?.total_s2u_fees, 0)
-        : storageTotal + adminTotal + handlingTotal;
+  const unitWeight =
+    toNumber(line.unitWeight, 0) ||
+    toNumber(product?.weight_kg, 0) ||
+    toNumber(product?.net_weight_kg, 0);
 
-    const customerChargeTotal =
-      toNumber(product?.total_customer_charge, 0) > 0
-        ? qty * toNumber(product?.total_customer_charge, 0)
-        : s2uTotal + transportTotal;
+  const totalWeight =
+    toNumber(line.totalWeight, 0) ||
+    qty * unitWeight;
 
-    return {
-      ...line,
-      productSnapshot: product,
-      productMissing: !product,
-      quantity: qty,
-      unitVolume,
-      totalVolume,
-      unitWeight,
-      totalWeight,
-      tariff_storage: storageTotal,
-      tariff_admin: adminTotal,
-      tariff_handling: handlingTotal,
-      tariff_transport: transportTotal,
-      total_s2u_fees: s2uTotal,
-      total_customer_charge: customerChargeTotal
-    };
-  }
+  /*
+   * In de interface spreken we over packages.
+   * De bestaande databasevelden heten technisch nog ..._colli.
+   */
+  const packagesPerUnit = Math.max(
+    1,
+    Math.round(
+      toNumber(
+        product?.packages_per_unit ||
+        product?.package_count ||
+        1,
+        1
+      )
+    )
+  );
+
+  const totalPackages =
+    qty * packagesPerUnit;
+
+  const storageTotal =
+    qty * toNumber(
+      product?.storage_tariff ||
+      product?.tariff_storage,
+      0
+    );
+
+  const adminTotal =
+    qty * toNumber(
+      product?.admin_tariff,
+      0
+    );
+
+  const handlingTotal =
+    qty * toNumber(
+      product?.handling_tariff ||
+      product?.tariff_handling,
+      0
+    );
+
+  const transportTotal =
+    qty * toNumber(
+      product?.transport_tariff ||
+      product?.tariff_transport,
+      0
+    );
+
+  const s2uTotal =
+    toNumber(product?.total_s2u_fees, 0) > 0
+      ? qty * toNumber(product.total_s2u_fees, 0)
+      : storageTotal + adminTotal + handlingTotal;
+
+  const customerChargeTotal =
+    toNumber(product?.total_customer_charge, 0) > 0
+      ? qty * toNumber(product.total_customer_charge, 0)
+      : s2uTotal + transportTotal;
+
+  return {
+    ...line,
+
+    productSnapshot: product,
+    productMissing: !product,
+
+    quantity: qty,
+
+    packagesPerUnit,
+    totalPackages,
+
+    unitVolume,
+    totalVolume,
+
+    unitWeight,
+    totalWeight,
+
+    tariff_storage: storageTotal,
+    tariff_admin: adminTotal,
+    tariff_handling: handlingTotal,
+    tariff_transport: transportTotal,
+
+    total_s2u_fees: s2uTotal,
+    total_customer_charge: customerChargeTotal
+  };
+}
+
+async function enrichPreviewOrdersWithProductData() {
+  if (!groupedOrders.length) return;
+
+  const cid = await getCompanyId();
+
+  const allLines = groupedOrders.flatMap(
+    order => order.lines || []
+  );
+
+  const productMap = await loadProductCostMap(
+    cid,
+    allLines
+  );
+
+  groupedOrders = groupedOrders.map(order => {
+    const enrichedLines = (order.lines || []).map(line =>
+      enrichLineWithProductData(
+        line,
+        productMap
+      )
+    );
+
+    return finalizeOrder({
+      ...order,
+      lines: enrichedLines,
+
+      /*
+       * De Zoy-PDF bevat geen logistiek totaalvolume.
+       * Daarom moet het previewvolume uit de productmaster komen.
+       */
+      pdfTotalVolume: 0
+    });
+  });
+}
 
   async function insertOrder(order, cid) {
     const owner = getSelectedProductOwner();
@@ -2287,8 +2811,26 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
         .map(line => String(line.itemCode).trim())
     )];
 
-    const totalQty = enrichedLines.reduce((sum, line) => sum + toNumber(line.quantity, 0), 0);
-    const calculatedVolume = enrichedLines.reduce((sum, line) => sum + toNumber(line.totalVolume, 0), 0);
+const totalQty = enrichedLines.reduce(
+  (sum, line) =>
+    sum + toNumber(line.quantity, 0),
+  0
+);
+
+const totalPackages = enrichedLines.reduce(
+  (sum, line) =>
+    sum + toNumber(
+      line.totalPackages,
+      line.quantity
+    ),
+  0
+);
+
+const calculatedVolume = enrichedLines.reduce(
+  (sum, line) =>
+    sum + toNumber(line.totalVolume, 0),
+  0
+);
 
     const totalVolume =
       getCheckbox("optUsePdfTotalVolume", true) &&
@@ -2319,11 +2861,11 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
       planning_release: false,
       planning_only: false,
 
-      planning_colli: totalQty,
+      planning_colli: totalPackages,
       planning_volume_m3: round3(totalVolume),
       volume_m3: round3(totalVolume),
 
-      total_order_colli: totalQty,
+      total_order_colli: totalPackages,
       total_order_volume_m3: round3(totalVolume),
       total_order_weight_kg: round3(totalWeight),
 

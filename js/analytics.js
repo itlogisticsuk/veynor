@@ -3,14 +3,36 @@
 
   const TENANT_NAME = "Sofa2U";
 
-  const DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT = 8.5;
-  const DEFAULT_FDS_FUEL_SURCHARGE_PCT = 8.0;
+const DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT = 8.5;
+const DEFAULT_FDS_FUEL_SURCHARGE_PCT = 8.0;
 
-  let client = null;
-  let companyId = null;
-  let charts = {};
-  let transportViewMode = "total";
-  let expandedTransportRoutes = new Set();
+/*
+ * Interne operationele pickingkosten.
+ * Bellstone wordt volgens het producttarief gefactureerd,
+ * maar intern rekenen we £2 per besteld product.
+ */
+const DEFAULT_PICKING_COST_PER_PRODUCT_GBP = 2.0;
+
+let client = null;
+let companyId = null;
+let charts = {};
+
+let transportViewMode = "total";
+let orderCostFilter = "all";
+
+let expandedTransportRoutes = new Set();
+
+let expandedOrderCostSections = new Set([
+  "orderCostPendingSection"
+]);
+
+/*
+ * Tijdelijke selectie en verdeling voor één FDS-factuur.
+ * Deze data wordt pas definitief opgeslagen wanneer een order
+ * wordt bevestigd.
+ */
+let selectedFdsInvoiceOrders = new Set();
+let fdsDraftAllocations = new Map();
 
   const state = {
     customers: [],
@@ -302,16 +324,17 @@
     );
   }
 
-  function orderDate(order) {
-    return (
-      order?.planned_route_date ||
-      order?.confirmed_delivery_date ||
-      order?.expected_delivery_date ||
-      order?.requested_delivery_date ||
-      order?.order_date ||
-      order?.created_at
-    );
-  }
+function orderDate(order) {
+  return (
+    order?.confirmed_delivery_date ||
+    order?.pod_completed_at ||
+    order?.planned_route_date ||
+    order?.expected_delivery_date ||
+    order?.requested_delivery_date ||
+    order?.order_date ||
+    order?.created_at
+  );
+}
 
   function routeDate(route) {
     return (
@@ -368,99 +391,203 @@
     }, 0);
   }
 
-  function orderAdminRevenue(order) {
-    return Math.max(
-      toNumber(order?.total_admin_tariff, 0),
-      toNumber(order?.admin_revenue_gbp, 0),
-      toNumber(order?.admin_total, 0),
-      sumLineField(order, "tariff_admin")
+function orderAdminRevenue(order) {
+  return Math.max(
+    toNumber(order?.total_admin_tariff, 0),
+    toNumber(order?.admin_revenue_gbp, 0),
+    toNumber(order?.admin_total, 0),
+    sumLineField(order, "tariff_admin")
+  );
+}
+
+/*
+ * Storage revenue zoals aan de product owner wordt gefactureerd.
+ */
+function orderStorageRevenue(order) {
+  return Math.max(
+    toNumber(order?.total_storage_tariff, 0),
+    toNumber(order?.storage_revenue_gbp, 0),
+    sumLineField(order, "tariff_storage")
+  );
+}
+
+/*
+ * tariff_handling wordt binnen de productmaster en productlijst
+ * functioneel als Pick gebruikt.
+ */
+function orderPickingRevenue(order) {
+  return Math.max(
+    toNumber(order?.total_handling_tariff, 0),
+    toNumber(order?.handling_revenue_gbp, 0),
+    toNumber(order?.picking_revenue_gbp, 0),
+    sumLineField(order, "tariff_handling")
+  );
+}
+
+/*
+ * Warehouse revenue bevat storage en picking.
+ * Admin revenue blijft apart onderdeel van de totale omzet.
+ */
+function orderWarehouseRevenue(order) {
+  return (
+    orderStorageRevenue(order) +
+    orderPickingRevenue(order)
+  );
+}
+
+function orderProductQuantity(order) {
+  return getLines(order).reduce((sum, line) => {
+    const quantity = Math.max(
+      0,
+      toNumber(
+        line?.quantity_ordered ??
+        line?.quantity,
+        0
+      )
     );
+
+    return sum + quantity;
+  }, 0);
+}
+
+function orderTransportBaseRevenue(order) {
+  return Math.max(
+    toNumber(order?.total_transport_tariff, 0),
+    toNumber(order?.transport_revenue_gbp, 0),
+    toNumber(order?.transport_total, 0),
+    toNumber(order?.transport_charge_gbp, 0),
+    sumLineField(order, "tariff_transport")
+  );
+}
+
+function bellstoneFuelSurchargePct(order) {
+  return Math.max(
+    toNumber(
+      order?.transport_fuel_surcharge_pct,
+      0
+    ),
+    toNumber(
+      state.settings.transport_fuel_surcharge_pct,
+      0
+    ),
+    DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT
+  );
+}
+
+function fdsFuelSurchargePct(order) {
+  return Math.max(
+    toNumber(
+      order?.fds_fuel_surcharge_pct,
+      0
+    ),
+    toNumber(
+      state.settings.fds_fuel_surcharge_pct,
+      0
+    ),
+    DEFAULT_FDS_FUEL_SURCHARGE_PCT
+  );
+}
+
+function orderFuelSurchargeRevenue(order) {
+  const stored = toNumber(
+    order?.transport_fuel_surcharge_revenue_gbp,
+    0
+  );
+
+  if (stored > 0) {
+    return stored;
   }
 
-  function orderWarehouseRevenue(order) {
-    return Math.max(
-      toNumber(order?.total_storage_tariff, 0) + toNumber(order?.total_handling_tariff, 0),
-      toNumber(order?.warehouse_revenue_gbp, 0),
-      toNumber(order?.warehouse_total, 0),
-      toNumber(order?.storage_revenue_gbp, 0) + toNumber(order?.handling_revenue_gbp, 0),
-      sumLineField(order, "tariff_storage") + sumLineField(order, "tariff_handling")
-    );
-  }
+  return (
+    orderTransportBaseRevenue(order) *
+    (
+      bellstoneFuelSurchargePct(order) /
+      100
+    )
+  );
+}
 
-  function orderTransportBaseRevenue(order) {
-    return Math.max(
-      toNumber(order?.total_transport_tariff, 0),
-      toNumber(order?.transport_revenue_gbp, 0),
-      toNumber(order?.transport_total, 0),
-      toNumber(order?.transport_charge_gbp, 0),
-      sumLineField(order, "tariff_transport")
-    );
-  }
+function orderTransportRevenue(order) {
+  return (
+    orderTransportBaseRevenue(order) +
+    orderFuelSurchargeRevenue(order)
+  );
+}
 
-  function bellstoneFuelSurchargePct(order) {
-    return Math.max(
-      toNumber(order?.transport_fuel_surcharge_pct, 0),
-      toNumber(state.settings.transport_fuel_surcharge_pct, 0),
-      DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT
-    );
-  }
+function orderTotalRevenue(order) {
+  const calculated =
+    orderStorageRevenue(order) +
+    orderAdminRevenue(order) +
+    orderPickingRevenue(order) +
+    orderTransportRevenue(order);
 
-  function fdsFuelSurchargePct(order) {
-    return Math.max(
-      toNumber(order?.fds_fuel_surcharge_pct, 0),
-      toNumber(state.settings.fds_fuel_surcharge_pct, 0),
-      DEFAULT_FDS_FUEL_SURCHARGE_PCT
-    );
-  }
+  return Math.max(
+    calculated,
+    toNumber(order?.estimated_revenue_gbp, 0),
+    toNumber(order?.total_customer_charge, 0),
+    toNumber(order?.customer_charge_gbp, 0),
+    toNumber(order?.revenue_gbp, 0)
+  );
+}
 
-  function orderFuelSurchargeRevenue(order) {
-    const stored = toNumber(order?.transport_fuel_surcharge_revenue_gbp, 0);
-    if (stored > 0) return stored;
+function warehouseRates() {
+  return {
+    storageRate: toNumber(
+      state.settings.warehouse_storage_per_m3_gbp,
+      0
+    ),
 
-    return orderTransportBaseRevenue(order) * (bellstoneFuelSurchargePct(order) / 100);
-  }
+    pickingRate: toNumber(
+      state.settings.warehouse_picking_per_product_gbp,
+      DEFAULT_PICKING_COST_PER_PRODUCT_GBP
+    ) || DEFAULT_PICKING_COST_PER_PRODUCT_GBP
+  };
+}
 
-  function orderTransportRevenue(order) {
-    return orderTransportBaseRevenue(order) + orderFuelSurchargeRevenue(order);
-  }
+/*
+ * Operationele warehousekosten:
+ *
+ * - Storage cost
+ * - Picking cost £2 per besteld product
+ *
+ * Handling-in, handling-out en VAS worden hier niet meer
+ * als aparte operationele kosten meegenomen.
+ */
+function calcWarehouseCost(order) {
+  const rates = warehouseRates();
 
-  function orderTotalRevenue(order) {
-    const splitTotal =
-      orderAdminRevenue(order) +
-      orderWarehouseRevenue(order) +
-      orderTransportRevenue(order);
+  const volume =
+    orderVolume(order);
 
-    return Math.max(
-      splitTotal,
-      toNumber(order?.estimated_revenue_gbp, 0),
-      toNumber(order?.total_customer_charge, 0),
-      toNumber(order?.customer_charge_gbp, 0),
-      toNumber(order?.revenue_gbp, 0)
-    );
-  }
+  const productQuantity =
+    orderProductQuantity(order);
 
-  function warehouseRates() {
-    return {
-      inRate: toNumber(state.settings.warehouse_handling_in_per_colli_gbp, 0),
-      outRate: toNumber(state.settings.warehouse_handling_out_per_colli_gbp, 0),
-      storageRate: toNumber(state.settings.warehouse_storage_per_m3_gbp, 0),
-      vasRate: toNumber(state.settings.warehouse_repack_per_colli_gbp, 0)
-    };
-  }
+  const storage =
+    volume * rates.storageRate;
 
-  function calcWarehouseCost(order) {
-    const rates = warehouseRates();
-    const colli = orderColli(order);
-    const volume = orderVolume(order);
+  const picking =
+    productQuantity * rates.pickingRate;
 
-    const handlingIn = colli * rates.inRate;
-    const handlingOut = colli * rates.outRate;
-    const storage = volume * rates.storageRate;
-    const vas = colli * rates.vasRate;
-    const total = handlingIn + handlingOut + storage + vas;
+  const total =
+    storage + picking;
 
-    return { handlingIn, handlingOut, storage, vas, total };
-  }
+  return {
+    productQuantity,
+
+    storage,
+    picking,
+
+    /*
+     * Deze blijven op nul staan voor compatibiliteit met
+     * bestaande tabellen en functies.
+     */
+    handlingIn: 0,
+    handlingOut: 0,
+    vas: 0,
+
+    total
+  };
+}
 
   function routeLabel(route) {
     return route?.route_code || route?.route_name || route?.name || "Route";
@@ -480,17 +607,59 @@
     return "own_transport";
   }
 
-  function isOrderPlanned(order) {
-    if (Boolean(order?.route_id) || Boolean(order?.charter_group_id)) {
-      return true;
-    }
+function isOrderRelevantForAnalytics(order) {
+  const status = normal(
+    order?.overall_status ||
+    order?.status ||
+    ""
+  );
 
-    return (
-      normal(order?.transport_type) === "charter" &&
-      normal(order?.status) === "export_for_charter" &&
-      Boolean(order?.carrier_vehicle_id)
-    );
+  const transportStatus = normal(
+    order?.transport_status ||
+    ""
+  );
+
+  const transportType = normal(
+    order?.transport_type ||
+    ""
+  );
+
+  const isDelivered =
+    ["delivered", "completed", "complete"].includes(status) ||
+    ["delivered", "completed"].includes(transportStatus) ||
+    Boolean(order?.confirmed_delivery_date) ||
+    Boolean(order?.pod_completed_at);
+
+  if (isDelivered) {
+    return true;
   }
+
+  if (Boolean(order?.route_id)) {
+    return true;
+  }
+
+  const isCarrier =
+    ["fds", "charter", "carrier", "third_party"].includes(
+      transportType
+    );
+
+  const carrierStatus =
+    [
+      "export_for_charter",
+      "planned",
+      "on_transport",
+      "in_transit",
+      "allocated"
+    ].includes(status);
+
+  return (
+    isCarrier &&
+    (
+      carrierStatus ||
+      Boolean(order?.carrier_vehicle_id)
+    )
+  );
+}
 
   function getStopsForRoute(routeId) {
     return state.stops.filter(stop => String(stop.route_id) === String(routeId));
@@ -557,7 +726,7 @@
     const transportFilter = byId("transportTypeFilter")?.value || "";
 
     return state.orders.filter(order => {
-      if (!isOrderPlanned(order)) return false;
+      if (!isOrderRelevantForAnalytics(order)) return false;
       if (customerId && String(order.customer_id || "") !== String(customerId)) return false;
       if (!inRange(orderDate(order), range)) return false;
 
@@ -639,94 +808,304 @@
     });
   }
 
-  function buildOrderRows() {
-    const routeRowsById = new Map(state.routeRows.map(row => [String(row.routeId), row]));
+function buildOrderRows() {
+  const routeRowsById = new Map(
+    state.routeRows.map(row => [
+      String(row.routeId),
+      row
+    ])
+  );
 
-    state.orderRows = filteredOrderSource().map(order => {
-      const routeRow = routeRowsById.get(String(order.route_id || ""));
-      const route = routeRow?.route || (
+  state.orderRows = filteredOrderSource().map(order => {
+    const routeRow = routeRowsById.get(
+      String(order.route_id || "")
+    );
+
+    const route =
+      routeRow?.route ||
+      (
         normal(order.transport_type) === "charter"
           ? "FDS / Charter"
           : "—"
       );
 
-      const warehouseCostParts = calcWarehouseCost(order);
-      const warehouseCost = warehouseCostParts.total;
-
-      const adminRevenue = orderAdminRevenue(order);
-      const warehouseRevenue = orderWarehouseRevenue(order);
-      const transportBaseRevenue = orderTransportBaseRevenue(order);
-      const fuelSurchargeRevenue = orderFuelSurchargeRevenue(order);
-      const transportRevenue = transportBaseRevenue + fuelSurchargeRevenue;
-      const totalRevenue = adminRevenue + warehouseRevenue + transportRevenue;
-
-      const routeOrderCount = routeRow?.ordersCount || 0;
-
-      const ownAllocatedTransportCost = routeRow && routeOrderCount
-        ? routeRow.transportCost / routeOrderCount
-        : toNumber(order.transport_cost_gbp, 0);
-
-      const fdsBaseCost = toNumber(order.fds_base_cost_gbp, 0);
-      const fdsFuelSurchargeCost =
-        toNumber(order.fds_fuel_surcharge_cost_gbp, 0) ||
-        fdsBaseCost * (fdsFuelSurchargePct(order) / 100);
-
-      const fdsTotalCost =
-        toNumber(order.fds_total_cost_gbp, 0) ||
-        fdsBaseCost + fdsFuelSurchargeCost;
-
-      const type = orderTransportType(order, routeRow?.source);
-
-      const transportCost = type === "fds"
-        ? fdsTotalCost
-        : ownAllocatedTransportCost;
-
-      const transportResult = transportRevenue - transportCost;
-      const warehouseResult = warehouseRevenue - warehouseCost;
-      const adminResult = adminRevenue;
-      const totalCost = warehouseCost + transportCost;
-      const totalResult = totalRevenue - totalCost;
-
-      return {
+    const transportType =
+      orderTransportType(
         order,
-        orderId: order.id,
-        orderNumber: order.order_number || order.sales_order_number || order.so_number || "—",
-        ack: order.ack_number || order.external_reference || order.supplier_order_number || "—",
-        po: order.purchase_order || order.po_number || "—",
-        retailer: retailerName(order),
-        customer: customerName(order),
-        status: order.status || "—",
-        route,
-        transportType: type,
+        routeRow?.source
+      );
 
-        colli: orderColli(order),
-        volume: orderVolume(order),
+    /*
+     * Omzet
+     */
+    const storageRevenue =
+      orderStorageRevenue(order);
 
+    const adminRevenue =
+      orderAdminRevenue(order);
+
+    const pickingRevenue =
+      orderPickingRevenue(order);
+
+    const warehouseRevenue =
+      storageRevenue +
+      pickingRevenue;
+
+    const transportBaseRevenue =
+      orderTransportBaseRevenue(order);
+
+    const fuelSurchargeRevenue =
+      orderFuelSurchargeRevenue(order);
+
+    const transportRevenue =
+      transportBaseRevenue +
+      fuelSurchargeRevenue;
+
+    const totalRevenue =
+      storageRevenue +
+      adminRevenue +
+      pickingRevenue +
+      transportRevenue;
+
+    /*
+     * Operationele warehousekosten
+     */
+    const warehouseCostParts =
+      calcWarehouseCost(order);
+
+    const storageCost =
+      warehouseCostParts.storage;
+
+    const pickingCost =
+      warehouseCostParts.picking;
+
+    const warehouseCost =
+      storageCost +
+      pickingCost;
+
+    /*
+     * Geschatte eigen transportkosten.
+     * Dit is alleen een suggestie totdat de gebruiker bevestigt.
+     */
+    const routeOrderCount =
+      routeRow?.ordersCount || 0;
+
+    const ownSuggestedCost =
+      routeRow && routeOrderCount
+        ? routeRow.transportCost / routeOrderCount
+        : toNumber(
+            order.transport_cost_gbp,
+            0
+          );
+
+    /*
+     * Eventueel al aanwezige FDS-bedragen worden alleen als
+     * suggestie getoond zolang ze niet bevestigd zijn.
+     */
+    const fdsBaseCost =
+      toNumber(
+        order.fds_base_cost_gbp,
+        0
+      );
+
+    const storedFdsFuelCost =
+      toNumber(
+        order.fds_fuel_surcharge_cost_gbp,
+        0
+      );
+
+    const estimatedFdsFuelCost =
+      storedFdsFuelCost > 0
+        ? storedFdsFuelCost
+        : (
+            fdsBaseCost *
+            (
+              fdsFuelSurchargePct(order) /
+              100
+            )
+          );
+
+    const storedFdsTotalCost =
+      toNumber(
+        order.fds_total_cost_gbp,
+        0
+      );
+
+    const fdsSuggestedCost =
+      storedFdsTotalCost > 0
+        ? storedFdsTotalCost
+        : (
+            fdsBaseCost +
+            estimatedFdsFuelCost
+          );
+
+    const suggestedTransportCost =
+      transportType === "fds"
+        ? fdsSuggestedCost
+        : ownSuggestedCost;
+
+    /*
+     * Bevestigde werkelijke transportkosten.
+     */
+    const transportCostConfirmed =
+      Boolean(
+        order.transport_cost_confirmed_at
+      );
+
+    const actualTransportCost =
+      transportCostConfirmed
+        ? toNumber(
+            order.actual_transport_cost_gbp,
+            0
+          )
+        : 0;
+
+    /*
+     * Voor algemene Analytics-tabbladen wordt vóór bevestiging
+     * nog de suggestie getoond. De Confirmed-secties gebruiken
+     * uitsluitend actualTransportCost.
+     */
+    const transportCost =
+      transportCostConfirmed
+        ? actualTransportCost
+        : suggestedTransportCost;
+
+    const warehouseResult =
+      warehouseRevenue -
+      warehouseCost;
+
+    const transportResult =
+      transportRevenue -
+      transportCost;
+
+    const totalCost =
+      warehouseCost +
+      transportCost;
+
+    const totalResult =
+      totalRevenue -
+      totalCost;
+
+    return {
+      order,
+
+      orderId:
+        order.id,
+
+      orderNumber:
+        order.order_number ||
+        order.sales_order_number ||
+        order.so_number ||
+        "—",
+
+      ack:
+        order.ack_number ||
+        order.external_reference ||
+        order.supplier_order_number ||
+        "—",
+
+      po:
+        order.purchase_order ||
+        order.po_number ||
+        "—",
+
+      retailer:
+        retailerName(order),
+
+      customer:
+        customerName(order),
+
+      status:
+        order.status ||
+        "—",
+
+      route,
+      transportType,
+
+      packages:
+        orderColli(order),
+
+      colli:
+        orderColli(order),
+
+      volume:
+        orderVolume(order),
+
+      productQuantity:
+        warehouseCostParts.productQuantity,
+
+      /*
+       * Revenue
+       */
+      storageRevenue,
+      adminRevenue,
+      pickingRevenue,
+      warehouseRevenue,
+
+      transportBaseRevenue,
+      fuelSurchargeRevenue,
+      transportRevenue,
+
+      totalRevenue,
+
+      /*
+       * Operational cost
+       */
+      storageCost,
+      pickingCost,
+      warehouseCostParts,
+      warehouseCost,
+
+      /*
+       * Transport cost
+       */
+      suggestedTransportCost,
+      actualTransportCost,
+      transportCostConfirmed,
+
+      transportCostSource:
+        order.transport_cost_source ||
+        "",
+
+      transportCostReference:
+        order.transport_cost_reference ||
+        "",
+
+      transportCostConfirmedAt:
+        order.transport_cost_confirmed_at ||
+        null,
+
+      transportCost,
+
+      /*
+       * Result
+       */
+      adminResult:
         adminRevenue,
-        adminResult,
 
-        warehouseCostParts,
-        warehouseRevenue,
-        warehouseCost,
-        warehouseResult,
+      warehouseResult,
+      transportResult,
 
-        transportBaseRevenue,
-        fuelSurchargeRevenue,
-        transportRevenue,
-        transportCost,
-        transportResult,
+      totalCost,
+      totalResult,
 
-        fdsBaseCost,
-        fdsFuelSurchargeCost,
-        fdsTotalCost,
+      margin:
+        totalRevenue
+          ? totalResult / totalRevenue
+          : 0,
 
-        totalRevenue,
-        totalCost,
-        totalResult,
-        margin: totalRevenue ? totalResult / totalRevenue : 0
-      };
-    });
-  }
+      /*
+       * FDS detail
+       */
+      fdsBaseCost,
+      fdsFuelSurchargeCost:
+        storedFdsFuelCost,
+
+      fdsTotalCost:
+        storedFdsTotalCost
+    };
+  });
+}
 
   function buildPeriodRows() {
     const map = new Map();
@@ -880,15 +1259,21 @@
     return `<tr><td colspan="${cols}">${escapeHtml(text)}</td></tr>`;
   }
 
-  function renderTables() {
-    renderPeriodProfitTable();
-    renderRouteProfitTable();
-    renderOrderProfitTables();
-    renderWarehouseResultTable();
-    renderTransportResultTable();
-    renderCustomerProfitTable();
-    renderFinanceResultTable();
-  }
+function renderTables() {
+  renderPeriodProfitTable();
+  renderRouteProfitTable();
+  renderOrderProfitTables();
+
+  /*
+   * Nieuw Orders-tabblad met drie aparte secties.
+   */
+  renderOrderCostSections();
+
+  renderWarehouseResultTable();
+  renderTransportResultTable();
+  renderCustomerProfitTable();
+  renderFinanceResultTable();
+}
 
   function renderPeriodProfitTable() {
     const body = byId("periodProfitTableBody");
@@ -942,78 +1327,1601 @@
     `).join("") || emptyRow(16, "No route profitability found.");
   }
 
-  function renderOrderProfitTables() {
-    const profitBody = byId("orderProfitTableBody");
+function renderOrderProfitTables() {
+  const profitBody =
+    byId("orderProfitTableBody");
 
-    if (profitBody) {
-      profitBody.innerHTML = state.orderRows.map(row => `
-        <tr>
-          <td><strong>${escapeHtml(row.orderNumber)}</strong></td>
-          <td>${escapeHtml(row.retailer)}</td>
-          <td>${escapeHtml(row.customer)}</td>
-          <td>${escapeHtml(row.route)}</td>
-          <td>${escapeHtml(row.transportType)}</td>
-          <td>${num(row.colli)}</td>
-          <td>${num(row.volume, 2)} m³</td>
-          <td>${money(row.warehouseRevenue)}</td>
-          <td>${money(row.transportRevenue)}</td>
-          <td><strong>${money(row.totalRevenue)}</strong></td>
-          <td>${money(row.warehouseCost)}</td>
-          <td>${money(row.transportCost)}</td>
-          <td><strong>${money(row.totalCost)}</strong></td>
-          <td>${money(row.warehouseResult)}</td>
-          <td>${money(row.transportResult)}</td>
-          <td><span class="pill ${resultClass(row.totalResult)}">${money(row.totalResult)}</span></td>
-          <td>${pct(row.margin)}</td>
-        </tr>
-      `).join("") || emptyRow(17, "No order profitability found.");
-    }
+  if (!profitBody) return;
 
-    const orderBody = byId("orderResultTableBody");
-
-    if (orderBody) {
-      orderBody.innerHTML = state.orderRows.map(row => `
-        <tr>
-          <td><strong>${escapeHtml(row.orderNumber)}</strong></td>
-          <td>${escapeHtml(row.ack)}</td>
-          <td>${escapeHtml(row.po)}</td>
-          <td>${escapeHtml(row.retailer)}</td>
-          <td>${escapeHtml(row.customer)}</td>
-          <td><span class="pill">${escapeHtml(row.status)}</span></td>
-          <td>${escapeHtml(row.route)}</td>
-          <td>${money(row.warehouseRevenue)}</td>
-          <td>${money(row.warehouseCost)}</td>
-          <td>${money(row.transportRevenue)}</td>
-          <td>${money(row.transportCost)}</td>
-          <td><strong>${money(row.totalRevenue)}</strong></td>
-          <td><strong>${money(row.totalCost)}</strong></td>
-          <td><span class="pill ${resultClass(row.totalResult)}">${money(row.totalResult)}</span></td>
-          <td>${pct(row.margin)}</td>
-        </tr>
-      `).join("") || emptyRow(15, "No order result found.");
-    }
-  }
-
-  function renderWarehouseResultTable() {
-    const body = byId("warehouseResultTableBody");
-    if (!body) return;
-
-    body.innerHTML = state.orderRows.map(row => `
+  profitBody.innerHTML =
+    state.orderRows.map(row => `
       <tr>
-        <td><strong>${escapeHtml(row.orderNumber)}</strong></td>
-        <td>${escapeHtml(row.retailer)}</td>
-        <td>${num(row.colli)}</td>
-        <td>${num(row.volume, 2)} m³</td>
-        <td>${money(row.warehouseCostParts.handlingIn)}</td>
-        <td>${money(row.warehouseCostParts.handlingOut)}</td>
-        <td>${money(row.warehouseCostParts.storage)}</td>
-        <td>${money(row.warehouseCostParts.vas)}</td>
-        <td><strong>${money(row.warehouseCost)}</strong></td>
-        <td>${money(row.warehouseRevenue)}</td>
-        <td><span class="pill ${resultClass(row.warehouseResult)}">${money(row.warehouseResult)}</span></td>
+        <td>
+          <strong>
+            ${escapeHtml(row.orderNumber)}
+          </strong>
+        </td>
+
+        <td>
+          ${escapeHtml(row.retailer)}
+        </td>
+
+        <td>
+          ${escapeHtml(row.customer)}
+        </td>
+
+        <td>
+          ${escapeHtml(row.route)}
+        </td>
+
+        <td>
+          ${escapeHtml(row.transportType)}
+        </td>
+
+        <td>
+          ${num(row.colli)}
+        </td>
+
+        <td>
+          ${num(row.volume, 2)} m³
+        </td>
+
+        <td>
+          ${money(row.warehouseRevenue)}
+        </td>
+
+        <td>
+          ${money(row.transportRevenue)}
+        </td>
+
+        <td>
+          <strong>
+            ${money(row.totalRevenue)}
+          </strong>
+        </td>
+
+        <td>
+          ${money(row.warehouseCost)}
+        </td>
+
+        <td>
+          ${money(row.transportCost)}
+          ${
+            row.transportCostConfirmed
+              ? `
+                <span class="subline">
+                  Confirmed
+                </span>
+              `
+              : `
+                <span class="subline">
+                  Estimated
+                </span>
+              `
+          }
+        </td>
+
+        <td>
+          <strong>
+            ${money(row.totalCost)}
+          </strong>
+        </td>
+
+        <td>
+          ${money(row.warehouseResult)}
+        </td>
+
+        <td>
+          ${money(row.transportResult)}
+        </td>
+
+        <td>
+          <span class="pill ${resultClass(row.totalResult)}">
+            ${money(row.totalResult)}
+          </span>
+        </td>
+
+        <td>
+          ${pct(row.margin)}
+        </td>
       </tr>
-    `).join("") || emptyRow(11, "No warehouse result found.");
+    `).join("") ||
+    emptyRow(
+      17,
+      "No order profitability found."
+    );
+}
+
+function sumOrderRows(rows, field) {
+  return rows.reduce(
+    (sum, row) =>
+      sum + toNumber(row?.[field], 0),
+    0
+  );
+}
+
+function getFilteredOrderCostRows(rows) {
+  if (orderCostFilter === "own_transport") {
+    return rows.filter(
+      row => row.transportType === "own_transport"
+    );
   }
+
+  if (orderCostFilter === "carrier") {
+    return rows.filter(
+      row => row.transportType === "fds"
+    );
+  }
+
+  return rows;
+}
+
+function confirmedOrderTotals(rows) {
+  const totalRevenue =
+    sumOrderRows(
+      rows,
+      "totalRevenue"
+    );
+
+  const warehouseCost =
+    sumOrderRows(
+      rows,
+      "warehouseCost"
+    );
+
+  const actualTransportCost =
+    sumOrderRows(
+      rows,
+      "actualTransportCost"
+    );
+
+  const totalCost =
+    warehouseCost +
+    actualTransportCost;
+
+  const totalResult =
+    totalRevenue -
+    totalCost;
+
+  const margin =
+    totalRevenue
+      ? totalResult / totalRevenue
+      : 0;
+
+  return {
+    orders: rows.length,
+
+    totalRevenue,
+    warehouseCost,
+    actualTransportCost,
+
+    totalCost,
+    totalResult,
+    margin
+  };
+}
+
+function confirmedResultForRow(row) {
+  const totalCost =
+    row.warehouseCost +
+    row.actualTransportCost;
+
+  const totalResult =
+    row.totalRevenue -
+    totalCost;
+
+  const margin =
+    row.totalRevenue
+      ? totalResult / row.totalRevenue
+      : 0;
+
+  return {
+    totalCost,
+    totalResult,
+    margin
+  };
+}
+
+async function saveConfirmedTransportCost(
+  orderId,
+  amount,
+  reference = "",
+  carrierDetails = null
+) {
+  const row =
+    state.orderRows.find(item =>
+      String(item.orderId) ===
+      String(orderId)
+    );
+
+  if (!row) {
+    throw new Error(
+      "Order not found in Analytics."
+    );
+  }
+
+  const cost =
+    toNumber(amount, NaN);
+
+  if (!Number.isFinite(cost) || cost < 0) {
+    throw new Error(
+      "Enter a valid transport cost of 0 or higher."
+    );
+  }
+
+  const confirmedAt =
+    new Date().toISOString();
+
+  const isCarrier =
+    row.transportType === "fds";
+
+  const payload = {
+    actual_transport_cost_gbp:
+      Number(cost.toFixed(2)),
+
+    transport_cost_confirmed_at:
+      confirmedAt,
+
+    transport_cost_source:
+      isCarrier
+        ? "carrier_manual"
+        : "own_transport_manual",
+
+    transport_cost_reference:
+      String(reference || "").trim() ||
+      null
+  };
+
+  /*
+   * Carrierbedragen ook in bestaande FDS-velden bewaren.
+   * Zo blijven andere delen van Analytics compatibel.
+   */
+  if (isCarrier && carrierDetails) {
+    payload.fds_base_cost_gbp =
+      Number(
+        toNumber(
+          carrierDetails.base,
+          0
+        ).toFixed(2)
+      );
+
+    payload.fds_fuel_surcharge_cost_gbp =
+      Number(
+        toNumber(
+          carrierDetails.fuel,
+          0
+        ).toFixed(2)
+      );
+
+    payload.fds_total_cost_gbp =
+      Number(cost.toFixed(2));
+  }
+
+  const { error } =
+    await ensureClient()
+      .from("orders")
+      .update(payload)
+      .eq("id", orderId)
+      .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  Object.assign(
+    row.order,
+    payload
+  );
+
+  selectedFdsInvoiceOrders.delete(
+    String(orderId)
+  );
+
+  fdsDraftAllocations.delete(
+    String(orderId)
+  );
+
+  processAll();
+}
+
+async function removeTransportCostConfirmation(
+  orderId
+) {
+  const row =
+    state.orderRows.find(item =>
+      String(item.orderId) ===
+      String(orderId)
+    );
+
+  if (!row) {
+    throw new Error(
+      "Order not found in Analytics."
+    );
+  }
+
+  const payload = {
+    actual_transport_cost_gbp:
+      null,
+
+    transport_cost_confirmed_at:
+      null,
+
+    transport_cost_source:
+      null,
+
+    transport_cost_reference:
+      null
+  };
+
+  const { error } =
+    await ensureClient()
+      .from("orders")
+      .update(payload)
+      .eq("id", orderId)
+      .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  Object.assign(
+    row.order,
+    payload
+  );
+
+  processAll();
+}
+
+function revenueBreakdownHtml(row) {
+  return `
+    <div class="order-finance-breakdown">
+      <span>Storage</span>
+      <span>${money(row.storageRevenue)}</span>
+
+      <span>Admin</span>
+      <span>${money(row.adminRevenue)}</span>
+
+      <span>Picking</span>
+      <span>${money(row.pickingRevenue)}</span>
+
+      <span>Transport Base</span>
+      <span>${money(row.transportBaseRevenue)}</span>
+
+      <span>Fuel Revenue</span>
+      <span>${money(row.fuelSurchargeRevenue)}</span>
+
+      <span class="order-finance-total">
+        Total Revenue
+      </span>
+
+      <span class="order-finance-total">
+        ${money(row.totalRevenue)}
+      </span>
+    </div>
+  `;
+}
+
+function operationalCostHtml(row) {
+  return `
+    <div class="order-finance-breakdown">
+      <span>Storage Cost</span>
+      <span>${money(row.storageCost)}</span>
+
+      <span>
+        Picking Cost
+        <small>
+          (${num(row.productQuantity)} × £2)
+        </small>
+      </span>
+
+      <span>${money(row.pickingCost)}</span>
+
+      <span class="order-finance-total">
+        Warehouse Cost
+      </span>
+
+      <span class="order-finance-total">
+        ${money(row.warehouseCost)}
+      </span>
+    </div>
+  `;
+}
+
+function pendingOrderCellHtml(row) {
+  return `
+    <div class="order-cost-order-cell">
+      <span class="order-cost-order-number">
+        ${escapeHtml(row.orderNumber)}
+      </span>
+
+      <span class="order-cost-order-sub">
+        ACK: ${escapeHtml(row.ack)}
+      </span>
+
+      <span class="order-cost-order-sub">
+        PO: ${escapeHtml(row.po)}
+      </span>
+    </div>
+  `;
+}
+
+function updateFdsAllocationSummary() {
+  const selectedRows =
+    Array.from(
+      selectedFdsInvoiceOrders
+    )
+      .map(orderId =>
+        state.orderRows.find(row =>
+          String(row.orderId) ===
+          String(orderId)
+        )
+      )
+      .filter(Boolean);
+
+  const baseTotal =
+    selectedRows.reduce(
+      (sum, row) => {
+        const draft =
+          fdsDraftAllocations.get(
+            String(row.orderId)
+          );
+
+        return sum + toNumber(
+          draft?.base,
+          0
+        );
+      },
+      0
+    );
+
+  const fuelTotal =
+    selectedRows.reduce(
+      (sum, row) => {
+        const draft =
+          fdsDraftAllocations.get(
+            String(row.orderId)
+          );
+
+        return sum + toNumber(
+          draft?.fuel,
+          0
+        );
+      },
+      0
+    );
+
+  const finalTotal =
+    baseTotal +
+    fuelTotal;
+
+  setText(
+    "fdsSelectedOrderCount",
+    `${selectedRows.length} order${
+      selectedRows.length === 1
+        ? ""
+        : "s"
+    }`
+  );
+
+  setText(
+    "fdsSelectedBaseTotal",
+    money(baseTotal)
+  );
+
+  setText(
+    "fdsSelectedFuelTotal",
+    money(fuelTotal)
+  );
+
+  setText(
+    "fdsSelectedFinalTotal",
+    money(finalTotal)
+  );
+
+  const baseTotalInput =
+    byId("fdsInvoiceBaseTotal");
+
+  if (baseTotalInput) {
+    baseTotalInput.value =
+      money(baseTotal);
+  }
+}
+
+function renderPendingTransportRows(rows) {
+  const body =
+    byId("pendingTransportCostBody");
+
+  if (!body) return;
+
+  body.innerHTML =
+    rows.map(row => {
+      const isCarrier =
+        row.transportType === "fds";
+
+      const orderId =
+        String(row.orderId);
+
+      const draft =
+        fdsDraftAllocations.get(
+          orderId
+        ) || {};
+
+      const selected =
+        selectedFdsInvoiceOrders.has(
+          orderId
+        );
+
+      const ownInputValue =
+        !isCarrier &&
+        row.suggestedTransportCost > 0
+          ? row.suggestedTransportCost.toFixed(2)
+          : "";
+
+      const baseValue =
+        isCarrier
+          ? (
+              draft.base !== undefined
+                ? toNumber(draft.base, 0).toFixed(2)
+                : ""
+            )
+          : ownInputValue;
+
+      const fuelValue =
+        isCarrier
+          ? toNumber(draft.fuel, 0)
+          : 0;
+
+      const finalValue =
+        isCarrier
+          ? (
+              draft.final !== undefined
+                ? toNumber(draft.final, 0)
+                : toNumber(baseValue, 0)
+            )
+          : toNumber(baseValue, 0);
+
+      return `
+        <tr
+          data-order-cost-row="${escapeHtml(orderId)}"
+          data-order-cost-type="${
+            isCarrier
+              ? "carrier"
+              : "own_transport"
+          }"
+        >
+          <td>
+            ${
+              isCarrier
+                ? `
+                  <input
+                    type="checkbox"
+                    data-fds-order-select="${escapeHtml(orderId)}"
+                    ${selected ? "checked" : ""}
+                    aria-label="Select carrier order"
+                  >
+                `
+                : "—"
+            }
+          </td>
+
+          <td>
+            ${pendingOrderCellHtml(row)}
+          </td>
+
+          <td>
+            ${escapeHtml(row.retailer)}
+          </td>
+
+          <td>
+            <span class="order-cost-type ${
+              isCarrier
+                ? "carrier"
+                : "own"
+            }">
+              ${
+                isCarrier
+                  ? "Carrier / FDS"
+                  : "Own Transport"
+              }
+            </span>
+          </td>
+
+          <td class="order-cost-money">
+            ${money(row.transportRevenue)}
+          </td>
+
+          <td class="order-cost-money">
+            ${
+              row.suggestedTransportCost > 0
+                ? money(
+                    row.suggestedTransportCost
+                  )
+                : "—"
+            }
+          </td>
+
+          <td>
+            <div class="order-cost-input-wrap">
+              <span class="order-cost-currency">
+                £
+              </span>
+
+              <input
+                class="order-cost-input"
+                type="number"
+                min="0"
+                step="0.01"
+                value="${escapeHtml(baseValue)}"
+                placeholder="0.00"
+                data-order-base-cost
+              >
+            </div>
+          </td>
+
+          <td
+            class="order-cost-money"
+            data-order-fuel-cost
+          >
+            ${money(fuelValue)}
+          </td>
+
+          <td
+            class="order-cost-money"
+            data-order-final-cost
+          >
+            ${money(finalValue)}
+          </td>
+
+          <td>
+            <input
+              class="order-cost-reference-input"
+              type="text"
+              value="${escapeHtml(
+                draft.reference ||
+                row.transportCostReference ||
+                ""
+              )}"
+              placeholder="${
+                isCarrier
+                  ? "Invoice / FDS reference"
+                  : "Route / cost reference"
+              }"
+              data-order-cost-reference
+            >
+          </td>
+
+          <td>
+            <div class="order-cost-action-group">
+              <button
+                class="order-cost-confirm-btn"
+                type="button"
+                data-confirm-order-cost="${escapeHtml(orderId)}"
+              >
+                Confirm
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("") ||
+    emptyRow(
+      11,
+      "All transport costs in this selection have been confirmed."
+    );
+}
+
+function renderConfirmedTransportRows(
+  rows,
+  bodyId,
+  carrierMode
+) {
+  const body =
+    byId(bodyId);
+
+  if (!body) return;
+
+  body.innerHTML =
+    rows.map(row => {
+      const result =
+        confirmedResultForRow(row);
+const transportResult =
+  row.transportRevenue -
+  row.actualTransportCost;
+
+const transportMargin =
+  row.transportRevenue
+    ? transportResult /
+      row.transportRevenue
+    : 0;
+
+      return `
+        <tr data-order-cost-row="${escapeHtml(row.orderId)}">
+          <td>
+            ${pendingOrderCellHtml(row)}
+          </td>
+
+          <td>
+            ${escapeHtml(row.retailer)}
+          </td>
+
+          <td>
+            ${revenueBreakdownHtml(row)}
+          </td>
+
+          <td>
+            ${operationalCostHtml(row)}
+          </td>
+
+          <td>
+            <div class="order-cost-input-wrap">
+              <span class="order-cost-currency">
+                £
+              </span>
+
+              <input
+                class="order-cost-input"
+                type="number"
+                min="0"
+                step="0.01"
+                value="${row.actualTransportCost.toFixed(2)}"
+                data-order-actual-cost
+              >
+            </div>
+          </td>
+
+<td class="order-cost-money">
+  ${money(row.transportRevenue)}
+</td>
+
+<td>
+  <span class="pill ${resultClass(transportResult)}">
+    ${money(transportResult)}
+  </span>
+</td>
+
+<td>
+  ${pct(transportMargin)}
+</td>
+
+<td class="order-cost-money">
+  ${money(row.totalRevenue)}
+</td>
+
+<td class="order-cost-money">
+  ${money(result.totalCost)}
+</td>
+
+<td>
+  <span class="pill ${resultClass(result.totalResult)}">
+    ${money(result.totalResult)}
+  </span>
+</td>
+
+<td>
+  ${pct(result.margin)}
+</td>
+
+          <td>
+            <input
+              class="order-cost-reference-input"
+              type="text"
+              value="${escapeHtml(row.transportCostReference)}"
+              placeholder="${
+                carrierMode
+                  ? "Invoice / carrier reference"
+                  : "Route / cost reference"
+              }"
+              data-order-cost-reference
+            >
+          </td>
+
+          <td>
+            <div class="order-cost-action-group">
+              <button
+                class="order-cost-save-btn"
+                type="button"
+                data-save-order-cost="${escapeHtml(row.orderId)}"
+              >
+                Save
+              </button>
+
+              <button
+                class="order-cost-unconfirm-btn"
+                type="button"
+                data-unconfirm-order-cost="${escapeHtml(row.orderId)}"
+              >
+                Undo
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("") ||
+    emptyRow(
+      14,
+      carrierMode
+        ? "No confirmed carrier orders found."
+        : "No confirmed own transport orders found."
+    );
+}
+
+function renderOrderCostSummary(
+  prefix,
+  rows
+) {
+  const totals =
+    confirmedOrderTotals(rows);
+
+  setText(
+    `${prefix}Orders`,
+    num(totals.orders)
+  );
+
+  setText(
+    `${prefix}Revenue`,
+    money(totals.totalRevenue)
+  );
+
+  setText(
+    `${prefix}WarehouseCost`,
+    money(totals.warehouseCost)
+  );
+
+  setText(
+    `${prefix}Cost`,
+    money(totals.actualTransportCost)
+  );
+
+  setText(
+    `${prefix}Result`,
+    money(totals.totalResult)
+  );
+
+  setText(
+    `${prefix}Margin`,
+    pct(totals.margin)
+  );
+}
+
+function restoreOrderCostAccordionState() {
+  [
+    "orderCostPendingSection",
+    "orderCostOwnSection",
+    "orderCostCarrierSection"
+  ].forEach(id => {
+    const element =
+      byId(id);
+
+    if (!element) return;
+
+    element.open =
+      expandedOrderCostSections.has(id);
+
+    element.ontoggle = () => {
+      if (element.open) {
+        expandedOrderCostSections.add(id);
+      } else {
+        expandedOrderCostSections.delete(id);
+      }
+    };
+  });
+}
+
+function bindOrderCostFilterButtons() {
+  const buttons = {
+    all: byId("btnOrderCostAll"),
+    own_transport: byId("btnOrderCostOwn"),
+    carrier: byId("btnOrderCostCarrier")
+  };
+
+  Object.entries(buttons).forEach(
+    ([mode, button]) => {
+      if (!button) return;
+
+      button.classList.toggle(
+        "active",
+        orderCostFilter === mode
+      );
+
+      button.onclick = () => {
+        orderCostFilter = mode;
+
+        renderOrderCostSections();
+      };
+    }
+  );
+
+  const panel =
+    byId("fdsInvoiceAllocationPanel");
+
+  panel?.classList.toggle(
+    "open",
+    orderCostFilter === "carrier"
+  );
+}
+
+function bindPendingBaseInputs() {
+  document
+    .querySelectorAll(
+      "#pendingTransportCostBody [data-order-base-cost]"
+    )
+    .forEach(input => {
+      input.addEventListener(
+        "input",
+        () => {
+          const rowElement =
+            input.closest(
+              "[data-order-cost-row]"
+            );
+
+          if (!rowElement) return;
+
+          const orderId =
+            String(
+              rowElement.dataset.orderCostRow ||
+              ""
+            );
+
+          const type =
+            rowElement.dataset.orderCostType;
+
+          if (type !== "carrier") {
+            const finalCell =
+              rowElement.querySelector(
+                "[data-order-final-cost]"
+              );
+
+            if (finalCell) {
+              finalCell.textContent =
+                money(input.value);
+            }
+
+            return;
+          }
+
+          const previous =
+            fdsDraftAllocations.get(orderId) ||
+            {};
+
+          const base =
+            Math.max(
+              0,
+              toNumber(input.value, 0)
+            );
+
+          const fuel =
+            toNumber(previous.fuel, 0);
+
+          fdsDraftAllocations.set(
+            orderId,
+            {
+              ...previous,
+              base,
+              fuel,
+              final: base + fuel
+            }
+          );
+
+          updateFdsAllocationSummary();
+        }
+      );
+    });
+}
+
+function bindFdsSelectionActions() {
+  document
+    .querySelectorAll(
+      "[data-fds-order-select]"
+    )
+    .forEach(checkbox => {
+      checkbox.addEventListener(
+        "change",
+        () => {
+          const orderId =
+            String(
+              checkbox.dataset.fdsOrderSelect ||
+              ""
+            );
+
+          if (checkbox.checked) {
+            selectedFdsInvoiceOrders.add(
+              orderId
+            );
+          } else {
+            selectedFdsInvoiceOrders.delete(
+              orderId
+            );
+          }
+
+          updateFdsAllocationSummary();
+        }
+      );
+    });
+
+  byId("btnApplyFdsFuel")?.addEventListener(
+    "click",
+    () => {
+      const selectedIds =
+        Array.from(
+          selectedFdsInvoiceOrders
+        );
+
+      if (!selectedIds.length) {
+        showToast(
+          "Select at least one carrier order.",
+          "err"
+        );
+
+        return;
+      }
+
+      const invoiceReference =
+        String(
+          byId("fdsInvoiceReference")?.value ||
+          ""
+        ).trim();
+
+      const fuelTotal =
+        Math.max(
+          0,
+          toNumber(
+            byId("fdsFuelSurchargeAmount")?.value,
+            0
+          )
+        );
+
+      const rows =
+        selectedIds.map(orderId => {
+          const rowElement =
+            document.querySelector(
+              `[data-order-cost-row="${CSS.escape(orderId)}"]`
+            );
+
+          const baseInput =
+            rowElement?.querySelector(
+              "[data-order-base-cost]"
+            );
+
+          return {
+            orderId,
+            rowElement,
+            base:
+              Math.max(
+                0,
+                toNumber(
+                  baseInput?.value,
+                  0
+                )
+              )
+          };
+        });
+
+      const baseTotal =
+        rows.reduce(
+          (sum, row) =>
+            sum + row.base,
+          0
+        );
+
+      if (baseTotal <= 0) {
+        showToast(
+          "Enter the base carrier cost for the selected orders first.",
+          "err"
+        );
+
+        return;
+      }
+
+      let allocatedFuel = 0;
+
+      rows.forEach((row, index) => {
+        const isLast =
+          index === rows.length - 1;
+
+        const fuel =
+          isLast
+            ? Number(
+                (
+                  fuelTotal -
+                  allocatedFuel
+                ).toFixed(2)
+              )
+            : Number(
+                (
+                  fuelTotal *
+                  (
+                    row.base /
+                    baseTotal
+                  )
+                ).toFixed(2)
+              );
+
+        allocatedFuel += fuel;
+
+        const final =
+          Number(
+            (
+              row.base +
+              fuel
+            ).toFixed(2)
+          );
+
+        fdsDraftAllocations.set(
+          row.orderId,
+          {
+            base: row.base,
+            fuel,
+            final,
+            reference:
+              invoiceReference
+          }
+        );
+
+        const fuelCell =
+          row.rowElement?.querySelector(
+            "[data-order-fuel-cost]"
+          );
+
+        const finalCell =
+          row.rowElement?.querySelector(
+            "[data-order-final-cost]"
+          );
+
+        const referenceInput =
+          row.rowElement?.querySelector(
+            "[data-order-cost-reference]"
+          );
+
+        if (fuelCell) {
+          fuelCell.textContent =
+            money(fuel);
+        }
+
+        if (finalCell) {
+          finalCell.textContent =
+            money(final);
+        }
+
+        if (
+          referenceInput &&
+          invoiceReference
+        ) {
+          referenceInput.value =
+            invoiceReference;
+        }
+      });
+
+      updateFdsAllocationSummary();
+
+      showToast(
+        "FDS fuel surcharge distributed automatically.",
+        "ok"
+      );
+    }
+  );
+
+  byId("btnClearFdsAllocation")?.addEventListener(
+    "click",
+    () => {
+      selectedFdsInvoiceOrders.clear();
+      fdsDraftAllocations.clear();
+
+      const invoiceInput =
+        byId("fdsInvoiceReference");
+
+      const fuelInput =
+        byId("fdsFuelSurchargeAmount");
+
+      if (invoiceInput) {
+        invoiceInput.value = "";
+      }
+
+      if (fuelInput) {
+        fuelInput.value = "";
+      }
+
+      renderOrderCostSections();
+    }
+  );
+}
+
+function bindOrderCostActions() {
+  document
+    .querySelectorAll(
+      "[data-confirm-order-cost]"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        async () => {
+          const orderId =
+            String(
+              button.dataset.confirmOrderCost ||
+              ""
+            );
+
+          const rowElement =
+            button.closest(
+              "[data-order-cost-row]"
+            );
+
+          const type =
+            rowElement?.dataset.orderCostType;
+
+          const baseInput =
+            rowElement?.querySelector(
+              "[data-order-base-cost]"
+            );
+
+          const referenceInput =
+            rowElement?.querySelector(
+              "[data-order-cost-reference]"
+            );
+
+          const base =
+            Math.max(
+              0,
+              toNumber(
+                baseInput?.value,
+                0
+              )
+            );
+
+          const draft =
+            fdsDraftAllocations.get(
+              orderId
+            );
+
+          const fuel =
+            type === "carrier"
+              ? toNumber(
+                  draft?.fuel,
+                  0
+                )
+              : 0;
+
+          const final =
+            type === "carrier"
+              ? (
+                  draft?.final !== undefined
+                    ? toNumber(
+                        draft.final,
+                        base
+                      )
+                    : base
+                )
+              : base;
+
+          button.disabled = true;
+
+          const oldText =
+            button.textContent;
+
+          button.textContent =
+            "Saving...";
+
+          try {
+            await saveConfirmedTransportCost(
+              orderId,
+              final,
+              referenceInput?.value || "",
+              type === "carrier"
+                ? {
+                    base,
+                    fuel
+                  }
+                : null
+            );
+
+            showToast(
+              "Transport cost confirmed and results recalculated.",
+              "ok"
+            );
+          } catch (error) {
+            console.error(error);
+
+            showToast(
+              error.message ||
+              "Transport cost could not be confirmed.",
+              "err"
+            );
+
+            button.disabled = false;
+            button.textContent =
+              oldText;
+          }
+        }
+      );
+    });
+
+  document
+    .querySelectorAll(
+      "[data-save-order-cost]"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        async () => {
+          const orderId =
+            String(
+              button.dataset.saveOrderCost ||
+              ""
+            );
+
+          const rowElement =
+            button.closest(
+              "[data-order-cost-row]"
+            );
+
+          const costInput =
+            rowElement?.querySelector(
+              "[data-order-actual-cost]"
+            );
+
+          const referenceInput =
+            rowElement?.querySelector(
+              "[data-order-cost-reference]"
+            );
+
+          button.disabled = true;
+
+          try {
+            await saveConfirmedTransportCost(
+              orderId,
+              costInput?.value,
+              referenceInput?.value || ""
+            );
+
+            showToast(
+              "Confirmed transport cost updated.",
+              "ok"
+            );
+          } catch (error) {
+            console.error(error);
+
+            showToast(
+              error.message ||
+              "Transport cost could not be updated.",
+              "err"
+            );
+
+            button.disabled = false;
+          }
+        }
+      );
+    });
+
+  document
+    .querySelectorAll(
+      "[data-unconfirm-order-cost]"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        async () => {
+          const orderId =
+            String(
+              button.dataset.unconfirmOrderCost ||
+              ""
+            );
+
+          const approved =
+            window.confirm(
+              "Return this order to Transport Cost to Confirm?"
+            );
+
+          if (!approved) return;
+
+          button.disabled = true;
+
+          try {
+            await removeTransportCostConfirmation(
+              orderId
+            );
+
+            showToast(
+              "Transport cost confirmation removed.",
+              "ok"
+            );
+          } catch (error) {
+            console.error(error);
+
+            showToast(
+              error.message ||
+              "Confirmation could not be removed.",
+              "err"
+            );
+
+            button.disabled = false;
+          }
+        }
+      );
+    });
+}
+
+function renderOrderCostSections() {
+  const allPendingRows =
+    state.orderRows.filter(
+      row => !row.transportCostConfirmed
+    );
+
+  const allConfirmedOwnRows =
+    state.orderRows.filter(
+      row =>
+        row.transportCostConfirmed &&
+        row.transportType === "own_transport"
+    );
+
+  const allConfirmedCarrierRows =
+    state.orderRows.filter(
+      row =>
+        row.transportCostConfirmed &&
+        row.transportType === "fds"
+    );
+
+  const pendingRows =
+    getFilteredOrderCostRows(
+      allPendingRows
+    );
+
+  const confirmedOwnRows =
+    getFilteredOrderCostRows(
+      allConfirmedOwnRows
+    );
+
+  const confirmedCarrierRows =
+    getFilteredOrderCostRows(
+      allConfirmedCarrierRows
+    );
+
+  setText(
+    "pendingTransportOrders",
+    num(pendingRows.length)
+  );
+
+  setText(
+    "pendingTransportRevenue",
+    money(
+      sumOrderRows(
+        pendingRows,
+        "totalRevenue"
+      )
+    )
+  );
+
+  setText(
+    "pendingSuggestedCost",
+    money(
+      sumOrderRows(
+        pendingRows,
+        "suggestedTransportCost"
+      )
+    )
+  );
+
+  renderOrderCostSummary(
+    "confirmedOwn",
+    confirmedOwnRows
+  );
+
+  renderOrderCostSummary(
+    "confirmedCarrier",
+    confirmedCarrierRows
+  );
+
+  renderPendingTransportRows(
+    pendingRows
+  );
+
+  renderConfirmedTransportRows(
+    confirmedOwnRows,
+    "confirmedOwnTransportBody",
+    false
+  );
+
+  renderConfirmedTransportRows(
+    confirmedCarrierRows,
+    "confirmedCarrierTransportBody",
+    true
+  );
+
+  bindOrderCostFilterButtons();
+  restoreOrderCostAccordionState();
+
+  bindPendingBaseInputs();
+  bindFdsSelectionActions();
+  bindOrderCostActions();
+
+  updateFdsAllocationSummary();
+}
+
+function renderWarehouseResultTable() {
+  const body =
+    byId("warehouseResultTableBody");
+
+  if (!body) return;
+
+  body.innerHTML =
+    state.orderRows.map(row => `
+      <tr>
+        <td>
+          <strong>
+            ${escapeHtml(row.orderNumber)}
+          </strong>
+        </td>
+
+        <td>
+          ${escapeHtml(row.retailer)}
+        </td>
+
+        <td>
+          ${num(row.productQuantity)}
+        </td>
+
+        <td>
+          ${num(row.volume, 2)} m³
+        </td>
+
+        <td>
+          ${money(row.storageRevenue)}
+        </td>
+
+        <td>
+          ${money(row.adminRevenue)}
+        </td>
+
+        <td>
+          ${money(row.pickingRevenue)}
+        </td>
+
+        <td>
+          ${money(row.storageCost)}
+        </td>
+
+        <td>
+          ${money(row.pickingCost)}
+        </td>
+
+        <td>
+          <strong>
+            ${money(row.warehouseCost)}
+          </strong>
+        </td>
+
+        <td>
+          <strong>
+            ${money(
+              row.storageRevenue +
+              row.adminRevenue +
+              row.pickingRevenue
+            )}
+          </strong>
+        </td>
+
+        <td>
+          <span class="pill ${
+            resultClass(
+              (
+                row.storageRevenue +
+                row.adminRevenue +
+                row.pickingRevenue
+              ) -
+              row.warehouseCost
+            )
+          }">
+            ${money(
+              (
+                row.storageRevenue +
+                row.adminRevenue +
+                row.pickingRevenue
+              ) -
+              row.warehouseCost
+            )}
+          </span>
+        </td>
+      </tr>
+    `).join("") ||
+    emptyRow(
+      12,
+      "No warehouse result found."
+    );
+}
 
   function renderTransportResultTable() {
     const wrap = byId("transportRouteList");
@@ -1493,6 +3401,34 @@
       showToast(error.message || "Analytics could not load.", "err");
     }
   }
+
+window.VeynorAnalytics = {
+  getClient: ensureClient,
+
+  getCompanyId: async () => {
+    return getCompanyId();
+  },
+
+  getOrders: () => {
+    return state.orders;
+  },
+
+  getOrderRows: () => {
+    return state.orderRows;
+  },
+
+  refresh: async () => {
+    await loadData();
+  },
+
+  recalculate: () => {
+    processAll();
+  },
+
+  toast: (message, type = "ok") => {
+    showToast(message, type);
+  }
+};
 
   document.addEventListener("DOMContentLoaded", init);
 })();

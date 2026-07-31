@@ -105,6 +105,30 @@ const signedNoticeOrderIds = new Set();
       .replace(/\b\w/g, char => char.toUpperCase());
   }
 
+function safeDocumentFileName(
+  value,
+  fallback = "Route"
+) {
+  const result = String(
+    value || fallback
+  )
+    .trim()
+    .replace(
+      /[^a-zA-Z0-9._-]+/g,
+      "_"
+    )
+    .replace(
+      /_+/g,
+      "_"
+    )
+    .replace(
+      /^_+|_+$/g,
+      ""
+    );
+
+  return result || fallback;
+}
+
   function showToast(message, type = "ok") {
     const el = byId("toast");
     if (!el) return;
@@ -362,6 +386,64 @@ function getCustomerOrderLabel(order) {
   const ref = order?.external_reference ? `Ref ${order.external_reference}` : "";
 
   return [po, ref].filter(Boolean).join(" · ");
+}
+
+function getRouteStopEta(stop) {
+  return formatTime(
+    stop?.planned_arrival_time ||
+    stop?.arrival_eta ||
+    stop?.eta ||
+    stop?.planned_time ||
+    ""
+  );
+}
+
+function getRouteStopAddress(stop, order) {
+  return [
+    stop?.address_1 ||
+      stop?.delivery_address_1 ||
+      order?.delivery_address_1,
+
+    stop?.address_2 ||
+      stop?.delivery_address_2 ||
+      order?.delivery_address_2,
+
+    stop?.address_3 ||
+      stop?.delivery_address_3 ||
+      order?.delivery_address_3,
+
+    stop?.city ||
+      order?.delivery_city,
+
+    stop?.postcode ||
+      order?.delivery_postcode,
+
+    order?.delivery_country
+  ]
+    .map(value => String(value || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getRouteStopVolume(stop, order) {
+  return (
+    toNumber(stop?.planned_volume_m3, 0) ||
+    getOrderVolume(order)
+  );
+}
+
+function getRouteStopColli(stop, order) {
+  return (
+    toNumber(stop?.planned_colli, 0) ||
+    getOrderColli(order)
+  );
+}
+
+function getRouteStopWeight(stop, order) {
+  return (
+    toNumber(stop?.planned_weight_kg, 0) ||
+    getOrderWeight(order)
+  );
 }
 
   function getRouteSummary(route) {
@@ -2048,8 +2130,7 @@ function renderCarrierOrders(vehicle) {
 }
 
 function renderWarehousePickupOrders(vehicle) {
-  const orders =
-    getWarehousePickupOrders(vehicle);
+  const orders = getWarehousePickupOrders(vehicle);
 
   if (!orders.length) {
     return `
@@ -2060,20 +2141,17 @@ function renderWarehousePickupOrders(vehicle) {
   }
 
   const volume = orders.reduce(
-    (sum, order) =>
-      sum + getOrderVolume(order),
+    (sum, order) => sum + getOrderVolume(order),
     0
   );
 
   const colli = orders.reduce(
-    (sum, order) =>
-      sum + getOrderColli(order),
+    (sum, order) => sum + getOrderColli(order),
     0
   );
 
   const weight = orders.reduce(
-    (sum, order) =>
-      sum + getOrderWeight(order),
+    (sum, order) => sum + getOrderWeight(order),
     0
   );
 
@@ -2687,10 +2765,96 @@ function renderVehicle(vehicle) {
         </div>
       </div>
 
-      <div class="av-own-route-extra">
-        ${renderRouteAssignment(route, vehicle)}
-        ${renderRouteStops(route)}
+<div class="av-own-route-extra">
+
+  ${renderOwnRouteDocuments(route)}
+
+  ${renderRouteAssignment(route, vehicle)}
+
+  ${renderRouteStops(route)}
+
+</div>
+    </div>
+  `;
+}
+
+function renderOwnRouteDocuments(route) {
+  const routeId = String(route?.id || "");
+
+  const orders = getOrdersForRoute(routeId);
+
+  const orderCount = orders.length;
+
+  const volume = orders.reduce(
+    (sum, order) =>
+      sum + getOrderVolume(order),
+    0
+  );
+
+  const colli = orders.reduce(
+    (sum, order) =>
+      sum + getOrderColli(order),
+    0
+  );
+
+  return `
+    <div class="av-carrier-documents">
+
+      <div class="av-carrier-documents-head">
+
+        <div class="av-carrier-documents-icon">
+          ▤
+        </div>
+
+        <div>
+          <div class="av-carrier-documents-title">
+            Route Documents
+          </div>
+
+          <div class="av-carrier-documents-sub">
+            Generate combined documents for this route.
+            ${formatNumber(orderCount)} order(s)
+            · ${formatNumber(colli)} colli
+            · ${formatNumber(volume, 2)} m³
+          </div>
+        </div>
+
       </div>
+
+      <div
+        class="av-carrier-documents-grid"
+        style="grid-template-columns:repeat(3,minmax(0,1fr));"
+      >
+
+        <button
+          class="av-btn av-carrier-document-btn primary-document"
+          type="button"
+          data-route-delivery-notes="${escapeHtml(routeId)}"
+          ${orderCount ? "" : "disabled"}
+        >
+          Generate Delivery Notes
+        </button>
+
+        <button
+          class="av-btn av-carrier-document-btn"
+          type="button"
+          data-route-labels="${escapeHtml(routeId)}"
+          ${orderCount ? "" : "disabled"}
+        >
+          Generate Labels
+        </button>
+
+        <button
+          class="av-btn av-carrier-document-btn"
+          type="button"
+          data-route-sheet="${escapeHtml(routeId)}"
+          ${orderCount ? "" : "disabled"}
+        >
+          Download Route Sheet
+        </button>
+
+      </div>
+
     </div>
   `;
 }
@@ -3161,6 +3325,45 @@ mount.querySelectorAll("[data-fds-labels]").forEach(button => {
     await generateFdsDeliveryLabels(button.dataset.fdsLabels);
   });
 });
+
+mount
+  .querySelectorAll("[data-route-delivery-notes]")
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await generateRouteDeliveryNotes(
+          button.dataset.routeDeliveryNotes
+        );
+      }
+    );
+  });
+
+mount
+  .querySelectorAll("[data-route-labels]")
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await generateRouteDeliveryLabels(
+          button.dataset.routeLabels
+        );
+      }
+    );
+  });
+
+mount
+  .querySelectorAll("[data-route-sheet]")
+  .forEach(button => {
+    button.addEventListener(
+      "click",
+      async () => {
+        await generateRouteSheetPdf(
+          button.dataset.routeSheet
+        );
+      }
+    );
+  });
 
 mount
   .querySelectorAll(
@@ -4045,6 +4248,1095 @@ showToast(
   } finally {
     if (button) {
       button.disabled = false;
+    }
+  }
+}
+
+async function generateRouteSheetPdf(routeId) {
+  const button = document.querySelector(
+    `[data-route-sheet="${CSS.escape(
+      String(routeId)
+    )}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() ||
+    "Download Route Sheet";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating... ⏳";
+    }
+
+    const route = allRoutes.find(
+      row => String(row.id) === String(routeId)
+    );
+
+    if (!route) {
+      throw new Error("Route not found.");
+    }
+
+    const stops = getStopsForRoute(routeId);
+
+    if (!stops.length) {
+      throw new Error(
+        "No stops found for this route."
+      );
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    const {
+      PDFDocument,
+      StandardFonts,
+      rgb
+    } = window.PDFLib;
+
+    const pdfDocument =
+      await PDFDocument.create();
+
+    const regularFont =
+      await pdfDocument.embedFont(
+        StandardFonts.Helvetica
+      );
+
+    const boldFont =
+      await pdfDocument.embedFont(
+        StandardFonts.HelveticaBold
+      );
+
+    const pageWidth = 595.28;
+    const pageHeight = 841.89;
+
+    const margin = 38;
+    const contentWidth =
+      pageWidth - margin * 2;
+
+    let page = null;
+    let y = 0;
+    let pageNumber = 0;
+
+    const routeLabel =
+      getRouteLabel(route);
+
+    const routeDate =
+      formatDate(getRouteDate(route));
+
+    const vehicleName =
+      route.vehicle_name ||
+      route.assigned_vehicle_name ||
+      "Not assigned";
+
+    const vehicleRegistration =
+      route.vehicle_registration ||
+      "";
+
+    const driverName =
+      getRouteDriverName(route);
+
+    const startTime =
+      formatTime(
+        route.planned_start_time ||
+        route.start_time
+      );
+
+    const endTime =
+      formatTime(
+        route.planned_end_time ||
+        route.end_time
+      );
+
+    function drawText(
+      text,
+      x,
+      textY,
+      options = {}
+    ) {
+      const {
+        size = 9,
+        font = regularFont,
+        colour = rgb(0.12, 0.16, 0.23)
+      } = options;
+
+      page.drawText(
+        String(text || ""),
+        {
+          x,
+          y: textY,
+          size,
+          font,
+          color: colour
+        }
+      );
+    }
+
+    function wrapText(
+      text,
+      maxWidth,
+      size = 9,
+      font = regularFont
+    ) {
+      const words =
+        String(text || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .split(" ")
+          .filter(Boolean);
+
+      if (!words.length) {
+        return [""];
+      }
+
+      const lines = [];
+      let currentLine = "";
+
+      for (const word of words) {
+        const testLine =
+          currentLine
+            ? `${currentLine} ${word}`
+            : word;
+
+        const width =
+          font.widthOfTextAtSize(
+            testLine,
+            size
+          );
+
+        if (
+          width <= maxWidth ||
+          !currentLine
+        ) {
+          currentLine = testLine;
+        } else {
+          lines.push(currentLine);
+          currentLine = word;
+        }
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+
+      return lines;
+    }
+
+    function addPage() {
+      page =
+        pdfDocument.addPage([
+          pageWidth,
+          pageHeight
+        ]);
+
+      pageNumber += 1;
+
+      page.drawRectangle({
+        x: 0,
+        y: pageHeight - 92,
+        width: pageWidth,
+        height: 92,
+        color: rgb(0.035, 0.11, 0.23)
+      });
+
+      drawText(
+        "VEYNOR",
+        margin,
+        pageHeight - 37,
+        {
+          size: 11,
+          font: boldFont,
+          colour: rgb(0.48, 0.83, 0.98)
+        }
+      );
+
+      drawText(
+        "DRIVER ROUTE SHEET",
+        margin,
+        pageHeight - 61,
+        {
+          size: 20,
+          font: boldFont,
+          colour: rgb(1, 1, 1)
+        }
+      );
+
+      drawText(
+        routeLabel,
+        pageWidth - margin - 170,
+        pageHeight - 54,
+        {
+          size: 12,
+          font: boldFont,
+          colour: rgb(1, 1, 1)
+        }
+      );
+
+      y = pageHeight - 120;
+
+      if (pageNumber > 1) {
+        drawText(
+          `Route continued · Page ${pageNumber}`,
+          margin,
+          y,
+          {
+            size: 9,
+            font: boldFont
+          }
+        );
+
+        y -= 22;
+      }
+    }
+
+    function ensureSpace(requiredHeight) {
+      if (y - requiredHeight < 55) {
+        addPage();
+      }
+    }
+
+    function drawMetaBox(
+      label,
+      value,
+      x,
+      boxY,
+      width
+    ) {
+      page.drawRectangle({
+        x,
+        y: boxY,
+        width,
+        height: 42,
+        borderWidth: 0.8,
+        borderColor: rgb(0.82, 0.86, 0.91),
+        color: rgb(0.975, 0.985, 1)
+      });
+
+      drawText(
+        label.toUpperCase(),
+        x + 9,
+        boxY + 27,
+        {
+          size: 7,
+          font: boldFont,
+          colour: rgb(0.38, 0.45, 0.55)
+        }
+      );
+
+      drawText(
+        value || "—",
+        x + 9,
+        boxY + 11,
+        {
+          size: 9,
+          font: boldFont
+        }
+      );
+    }
+
+    addPage();
+
+    const gap = 8;
+    const metaWidth =
+      (contentWidth - gap * 2) / 3;
+
+    drawMetaBox(
+      "Route date",
+      routeDate,
+      margin,
+      y - 42,
+      metaWidth
+    );
+
+    drawMetaBox(
+      "Driver",
+      driverName,
+      margin + metaWidth + gap,
+      y - 42,
+      metaWidth
+    );
+
+    drawMetaBox(
+      "Vehicle",
+      [
+        vehicleName,
+        vehicleRegistration
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      margin + (metaWidth + gap) * 2,
+      y - 42,
+      metaWidth
+    );
+
+    y -= 56;
+
+    drawMetaBox(
+      "Start time",
+      startTime,
+      margin,
+      y - 42,
+      metaWidth
+    );
+
+    drawMetaBox(
+      "Expected finish",
+      endTime,
+      margin + metaWidth + gap,
+      y - 42,
+      metaWidth
+    );
+
+    drawMetaBox(
+      "Stops",
+      String(stops.length),
+      margin + (metaWidth + gap) * 2,
+      y - 42,
+      metaWidth
+    );
+
+    y -= 68;
+
+    drawText(
+      "ROUTE ORDER",
+      margin,
+      y,
+      {
+        size: 11,
+        font: boldFont,
+        colour: rgb(0.07, 0.32, 0.72)
+      }
+    );
+
+    y -= 20;
+
+    for (
+      let index = 0;
+      index < stops.length;
+      index += 1
+    ) {
+      const stop = stops[index];
+      const order =
+        getOrderById(stop.order_id);
+
+      const orderNumber =
+        order?.order_number ||
+        `Stop ${index + 1}`;
+
+      const retailer =
+        getRetailerName(order, stop);
+
+      const address =
+        getRouteStopAddress(
+          stop,
+          order
+        );
+
+      const eta =
+        getRouteStopEta(stop);
+
+      const customerReference =
+        getCustomerOrderLabel(order);
+
+      const volume =
+        getRouteStopVolume(
+          stop,
+          order
+        );
+
+      const colli =
+        getRouteStopColli(
+          stop,
+          order
+        );
+
+      const weight =
+        getRouteStopWeight(
+          stop,
+          order
+        );
+
+      const addressLines =
+        wrapText(
+          address,
+          contentWidth - 92,
+          8.5,
+          regularFont
+        );
+
+      const referenceLines =
+        customerReference
+          ? wrapText(
+              customerReference,
+              contentWidth - 92,
+              8,
+              regularFont
+            )
+          : [];
+
+      const rowHeight =
+        Math.max(
+          76,
+          57 +
+            addressLines.length * 11 +
+            referenceLines.length * 10
+        );
+
+      ensureSpace(rowHeight + 12);
+
+      const rowY = y - rowHeight;
+
+      page.drawRectangle({
+        x: margin,
+        y: rowY,
+        width: contentWidth,
+        height: rowHeight,
+        borderWidth: 0.8,
+        borderColor: rgb(0.84, 0.87, 0.91),
+        color:
+          index % 2 === 0
+            ? rgb(1, 1, 1)
+            : rgb(0.98, 0.985, 0.995)
+      });
+
+      page.drawCircle({
+        x: margin + 21,
+        y: y - 23,
+        size: 12,
+        borderWidth: 1,
+        borderColor: rgb(0.72, 0.78, 0.86),
+        color: rgb(1, 1, 1)
+      });
+
+      const stopNumber =
+        String(index + 1);
+
+      const numberWidth =
+        boldFont.widthOfTextAtSize(
+          stopNumber,
+          9
+        );
+
+      drawText(
+        stopNumber,
+        margin + 21 - numberWidth / 2,
+        y - 26,
+        {
+          size: 9,
+          font: boldFont
+        }
+      );
+
+      drawText(
+        `${orderNumber} · ${retailer}`,
+        margin + 46,
+        y - 18,
+        {
+          size: 10,
+          font: boldFont
+        }
+      );
+
+      drawText(
+        `ETA ${eta || "—"}`,
+        pageWidth - margin - 78,
+        y - 18,
+        {
+          size: 9,
+          font: boldFont,
+          colour: rgb(0.07, 0.32, 0.72)
+        }
+      );
+
+      let lineY = y - 35;
+
+      if (customerReference) {
+        for (
+          const referenceLine of referenceLines
+        ) {
+          drawText(
+            referenceLine,
+            margin + 46,
+            lineY,
+            {
+              size: 8,
+              colour: rgb(0.38, 0.45, 0.55)
+            }
+          );
+
+          lineY -= 10;
+        }
+      }
+
+      for (
+        const addressLine of addressLines
+      ) {
+        drawText(
+          addressLine,
+          margin + 46,
+          lineY,
+          {
+            size: 8.5
+          }
+        );
+
+        lineY -= 11;
+      }
+
+      const totalsText =
+        `${formatNumber(colli)} colli` +
+        ` · ${formatNumber(volume, 2)} m³` +
+        ` · ${formatNumber(weight, 0)} kg`;
+
+      drawText(
+        totalsText,
+        margin + 46,
+        rowY + 12,
+        {
+          size: 8,
+          font: boldFont,
+          colour: rgb(0.38, 0.45, 0.55)
+        }
+      );
+
+      y = rowY - 10;
+    }
+
+    ensureSpace(70);
+
+    y -= 8;
+
+    page.drawLine({
+      start: {
+        x: margin,
+        y
+      },
+      end: {
+        x: pageWidth - margin,
+        y
+      },
+      thickness: 0.7,
+      color: rgb(0.78, 0.82, 0.88)
+    });
+
+    y -= 21;
+
+    drawText(
+      "Driver notes",
+      margin,
+      y,
+      {
+        size: 10,
+        font: boldFont
+      }
+    );
+
+    y -= 22;
+
+    for (let line = 0; line < 3; line += 1) {
+      page.drawLine({
+        start: {
+          x: margin,
+          y
+        },
+        end: {
+          x: pageWidth - margin,
+          y
+        },
+        thickness: 0.5,
+        color: rgb(0.78, 0.82, 0.88)
+      });
+
+      y -= 22;
+    }
+
+    const pages =
+      pdfDocument.getPages();
+
+    pages.forEach((pdfPage, index) => {
+      pdfPage.drawText(
+        `Page ${index + 1} of ${pages.length}`,
+        {
+          x: pageWidth - margin - 70,
+          y: 25,
+          size: 8,
+          font: regularFont,
+          color: rgb(0.42, 0.47, 0.55)
+        }
+      );
+
+      pdfPage.drawText(
+        `Generated ${new Date().toLocaleString(
+          "en-GB"
+        )}`,
+        {
+          x: margin,
+          y: 25,
+          size: 8,
+          font: regularFont,
+          color: rgb(0.42, 0.47, 0.55)
+        }
+      );
+    });
+
+    const pdfBytes =
+      await pdfDocument.save();
+
+    const blob = new Blob(
+      [pdfBytes],
+      {
+        type: "application/pdf"
+      }
+    );
+
+    const blobUrl =
+      URL.createObjectURL(blob);
+
+    const safeRouteLabel =
+      safeDocumentFileName(
+        routeLabel,
+        "Route"
+      );
+
+    const link =
+      document.createElement("a");
+
+    link.href = blobUrl;
+
+    link.download =
+      `${safeRouteLabel} Route Sheet.pdf`;
+
+    document.body.appendChild(link);
+
+    link.click();
+    link.remove();
+
+    setTimeout(
+      () => URL.revokeObjectURL(blobUrl),
+      30000
+    );
+
+    showToast(
+      `Route sheet downloaded for ${routeLabel}.`,
+      "ok"
+    );
+  } catch (error) {
+    console.error(
+      "Route sheet generation failed:",
+      error
+    );
+
+    showToast(
+      error.message ||
+        "Could not generate route sheet.",
+      "err"
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+async function generateRouteDeliveryNotes(routeId) {
+  const button = document.querySelector(
+    `[data-route-delivery-notes="${CSS.escape(
+      String(routeId)
+    )}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() ||
+    "Generate Delivery Notes";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating... ⏳";
+    }
+
+    const db = ensureClient();
+    const cid = getCompanyId();
+
+    if (!cid) {
+      throw new Error("Company id missing.");
+    }
+
+    const route = allRoutes.find(
+      row =>
+        String(row.id) === String(routeId)
+    );
+
+    if (!route) {
+      throw new Error("Route not found.");
+    }
+
+    const orders = getOrdersForRoute(routeId);
+
+    if (!orders.length) {
+      throw new Error(
+        "No orders found for this route."
+      );
+    }
+
+    if (
+      !window.DeliveryNoteGenerator?.generate
+    ) {
+      throw new Error(
+        "Delivery Note Generator is not loaded."
+      );
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    showToast(
+      `Generating delivery notes for ${getRouteLabel(route)}...`,
+      "ok"
+    );
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded =
+          await window
+            .DeliveryNoteGenerator
+            .generate(
+              order,
+              db,
+              cid
+            );
+
+        if (uploaded?.fileUrl) {
+          pdfUrls.push(
+            uploaded.fileUrl
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `Delivery note skipped for ${order.order_number}:`,
+          error.message
+        );
+      }
+    }
+
+    if (!pdfUrls.length) {
+      throw new Error(
+        "No delivery note PDFs were generated."
+      );
+    }
+
+    const mergedPdf =
+      await window.PDFLib
+        .PDFDocument
+        .create();
+
+    for (const url of pdfUrls) {
+      try {
+        const response = await fetch(
+          url,
+          {
+            cache: "no-store"
+          }
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `Could not load delivery note: ${url}`
+          );
+          continue;
+        }
+
+        const bytes =
+          await response.arrayBuffer();
+
+        const pdf =
+          await window.PDFLib
+            .PDFDocument
+            .load(bytes);
+
+        const pages =
+          await mergedPdf.copyPages(
+            pdf,
+            pdf.getPageIndices()
+          );
+
+        pages.forEach(page =>
+          mergedPdf.addPage(page)
+        );
+      } catch (error) {
+        console.warn(
+          "Delivery note could not be merged:",
+          error
+        );
+      }
+    }
+
+    if (!mergedPdf.getPageCount()) {
+      throw new Error(
+        "No valid delivery note pages could be combined."
+      );
+    }
+
+    const mergedBytes =
+      await mergedPdf.save();
+
+    const blob = new Blob(
+      [mergedBytes],
+      {
+        type: "application/pdf"
+      }
+    );
+
+    const blobUrl =
+      URL.createObjectURL(blob);
+
+    const routeLabel =
+      safeDocumentFileName(
+        getRouteLabel(route),
+        "Route"
+      );
+
+    const link =
+      document.createElement("a");
+
+    link.href = blobUrl;
+
+    link.download =
+      `${routeLabel} Delivery Notes.pdf`;
+
+    document.body.appendChild(link);
+
+    link.click();
+    link.remove();
+
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(blobUrl),
+      30000
+    );
+
+    showToast(
+      `${orders.length} delivery note(s) downloaded for ${getRouteLabel(route)}.`,
+      "ok"
+    );
+  } catch (error) {
+    console.error(
+      "Route delivery notes failed:",
+      error
+    );
+
+    showToast(
+      error.message ||
+        "Could not generate route delivery notes.",
+      "err"
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+async function generateRouteDeliveryLabels(routeId) {
+  const button = document.querySelector(
+    `[data-route-labels="${CSS.escape(
+      String(routeId)
+    )}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() ||
+    "Generate Labels";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating... ⏳";
+    }
+
+    const route = allRoutes.find(
+      row =>
+        String(row.id) === String(routeId)
+    );
+
+    if (!route) {
+      throw new Error("Route not found.");
+    }
+
+    const orders = getOrdersForRoute(routeId);
+
+    if (!orders.length) {
+      throw new Error(
+        "No orders found for this route."
+      );
+    }
+
+    if (
+      !window.DeliveryLabelGenerator?.generate
+    ) {
+      throw new Error(
+        "Delivery Label Generator is not loaded."
+      );
+    }
+
+    if (!window.PDFLib?.PDFDocument) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    showToast(
+      `Generating labels for ${getRouteLabel(route)}...`,
+      "ok"
+    );
+
+    const pdfUrls = [];
+
+    for (const order of orders) {
+      try {
+        const uploaded =
+          await window
+            .DeliveryLabelGenerator
+            .generate(order.id);
+
+        if (uploaded?.fileUrl) {
+          pdfUrls.push(
+            uploaded.fileUrl
+          );
+        }
+      } catch (error) {
+        console.warn(
+          `Labels skipped for ${order.order_number}:`,
+          error.message
+        );
+      }
+    }
+
+    if (!pdfUrls.length) {
+      throw new Error(
+        "No label PDFs were generated."
+      );
+    }
+
+    const mergedPdf =
+      await window.PDFLib
+        .PDFDocument
+        .create();
+
+    for (const url of pdfUrls) {
+      try {
+        const response = await fetch(
+          url,
+          {
+            cache: "no-store"
+          }
+        );
+
+        if (!response.ok) {
+          console.warn(
+            `Could not load labels: ${url}`
+          );
+          continue;
+        }
+
+        const bytes =
+          await response.arrayBuffer();
+
+        const pdf =
+          await window.PDFLib
+            .PDFDocument
+            .load(bytes);
+
+        const pages =
+          await mergedPdf.copyPages(
+            pdf,
+            pdf.getPageIndices()
+          );
+
+        pages.forEach(page =>
+          mergedPdf.addPage(page)
+        );
+      } catch (error) {
+        console.warn(
+          "Labels could not be merged:",
+          error
+        );
+      }
+    }
+
+    if (!mergedPdf.getPageCount()) {
+      throw new Error(
+        "No valid label pages could be combined."
+      );
+    }
+
+    const mergedBytes =
+      await mergedPdf.save();
+
+    const blob = new Blob(
+      [mergedBytes],
+      {
+        type: "application/pdf"
+      }
+    );
+
+    const blobUrl =
+      URL.createObjectURL(blob);
+
+    const routeLabel =
+      safeDocumentFileName(
+        getRouteLabel(route),
+        "Route"
+      );
+
+    const link =
+      document.createElement("a");
+
+    link.href = blobUrl;
+
+    link.download =
+      `${routeLabel} Delivery Labels.pdf`;
+
+    document.body.appendChild(link);
+
+    link.click();
+    link.remove();
+
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(blobUrl),
+      30000
+    );
+
+    showToast(
+      `${orders.length} order label file(s) downloaded for ${getRouteLabel(route)}.`,
+      "ok"
+    );
+  } catch (error) {
+    console.error(
+      "Route labels failed:",
+      error
+    );
+
+    showToast(
+      error.message ||
+        "Could not generate route labels.",
+      "err"
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
     }
   }
 }
