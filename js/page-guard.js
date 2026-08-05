@@ -9,33 +9,62 @@
   const CUSTOMER_ROLES = [...PRODUCT_OWNER_ROLES, ...RETAILER_ROLES];
   const ALL_ROLES = [...SOFA2U_ROLES, ...CUSTOMER_ROLES];
 
-  const PAGE_RULES = {
-    index: SOFA2U_ROLES,
-    "customer-dashboard": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+const PAGE_RULES = {
+  index: SOFA2U_ROLES,
+  "customer-dashboard": [
+    ...SOFA2U_ROLES,
+    ...PRODUCT_OWNER_ROLES
+  ],
 
-    "order-import": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-    "order-matching": SOFA2U_ROLES,
-    "operations-control-center": ALL_ROLES,
-    orders: SOFA2U_ROLES,
+  "order-import": [
+    ...SOFA2U_ROLES,
+    ...PRODUCT_OWNER_ROLES
+  ],
 
-    products: SOFA2U_ROLES,
-    scan: SOFA2U_ROLES,
-    stock: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-    outbound: SOFA2U_ROLES,
-    inventory: SOFA2U_ROLES,
+  "order-matching": SOFA2U_ROLES,
 
-    pod: ALL_ROLES,
-    billing: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+  "operations-control-center": ALL_ROLES,
 
-    analytics: SOFA2U_ROLES,
-    reports: SOFA2U_ROLES,
+  orders: SOFA2U_ROLES,
 
-    events: SOFA2U_ROLES,
-    "customer-activity": SOFA2U_ROLES,
+  products: SOFA2U_ROLES,
 
-    support: ALL_ROLES,
-    settings: ["veynor_admin", "tenant_admin"]
-  };
+  "inbound-containers": [
+    ...SOFA2U_ROLES,
+    ...PRODUCT_OWNER_ROLES
+  ],
+
+  scan: SOFA2U_ROLES,
+
+  stock: [
+    ...SOFA2U_ROLES,
+    ...PRODUCT_OWNER_ROLES
+  ],
+
+  outbound: SOFA2U_ROLES,
+
+  inventory: SOFA2U_ROLES,
+
+  pod: ALL_ROLES,
+
+  billing: [
+    ...SOFA2U_ROLES,
+    ...PRODUCT_OWNER_ROLES
+  ],
+
+  analytics: SOFA2U_ROLES,
+  reports: SOFA2U_ROLES,
+
+  events: SOFA2U_ROLES,
+  "customer-activity": SOFA2U_ROLES,
+
+  support: ALL_ROLES,
+
+  settings: [
+    "veynor_admin",
+    "tenant_admin"
+  ]
+};
 
   function pageKey() {
     let name = String(window.location.pathname || "")
