@@ -1051,6 +1051,18 @@ function getProductPackageCount(product) {
 }
 
 function getLineRequiredPackages(line) {
+  /*
+   * ALBCH wordt verkocht per stoel,
+   * maar één fysieke doos bevat 2 stoelen.
+   */
+  if (
+    getLineSku(line).toUpperCase() === "ALBCH"
+  ) {
+    return Math.ceil(
+      getLineRequiredQty(line) / 2
+    );
+  }
+
   if (normalize(line.line_type) === "hard_stock") {
     const totalPackages = toNumber(line.total_packages, 0);
 
@@ -3495,36 +3507,201 @@ function renderCompactLifecycle(order) {
   `;
 }
 
-  function renderCompletenessDonut(order) {
-    const c = order.product_completeness || getProductCompleteness(order);
-    const pct = Math.max(0, Math.min(100, toNumber(c.pct, 0)));
-    const complete = c.status === "complete";
+function isOrderExpectedComplete(order) {
+  return Boolean(
+    order?.is_expected_complete === true ||
+    normalize(
+      order?.expected_match_status
+    ) === "full"
+  );
+}
 
-    let fill = "#f97316";
-    if (pct <= 25 && !complete) fill = "#ef4444";
-    if (complete) fill = "#16a34a";
+function getOrderExpectedCompleteDate(order) {
+  return (
+    order?.expected_complete_date ||
+    null
+  );
+}
 
-    const label = c.status === "none"
-      ? "No lines"
-      : complete
-        ? "Complete"
-        : `${formatNumber(pct, 0)}%`;
+function renderCompletenessDonut(order) {
+  const completeness =
+    order.product_completeness ||
+    getProductCompleteness(order);
 
+  const physicalPercentage =
+    Math.max(
+      0,
+      Math.min(
+        100,
+        toNumber(
+          completeness.pct,
+          0
+        )
+      )
+    );
+
+  const physicallyComplete =
+    completeness.status ===
+    "complete";
+
+  const expectedComplete =
+    !physicallyComplete &&
+    isOrderExpectedComplete(order);
+
+  const expectedCompleteDate =
+    getOrderExpectedCompleteDate(
+      order
+    );
+
+  /*
+   * Fysiek compleet:
+   * gewone groene weergave.
+   */
+  if (physicallyComplete) {
     return `
       <div class="colli-wrap">
         <div
-          class="colli-donut ${complete ? "complete" : ""}"
-          style="--pct:${escapeHtml(pct)};--fill:${escapeHtml(fill)};"
-          title="${escapeHtml(label)}">
-        </div>
+          class="colli-donut complete"
+          style="
+            --pct:100;
+            --fill:#16a34a;
+          "
+          title="Physically complete"
+        ></div>
 
         <div>
-          <span class="colli-count">${formatNumber(c.matched, 0)} / ${formatNumber(c.required, 0)}</span>
-          <span class="colli-percent">${escapeHtml(label)}</span>
+          <span class="colli-count">
+            ${formatNumber(
+              completeness.matched,
+              0
+            )}
+            /
+            ${formatNumber(
+              completeness.required,
+              0
+            )}
+          </span>
+
+          <span class="colli-percent">
+            Complete
+          </span>
         </div>
       </div>
     `;
   }
+
+  /*
+   * Nog niet fysiek compleet, maar wel volledig
+   * gedekt door een verwachte containerlevering.
+   *
+   * De fysieke teller blijft zichtbaar, zodat
+   * niet de indruk ontstaat dat alles al in het
+   * magazijn staat.
+   */
+  if (expectedComplete) {
+    const expectedDateText =
+      expectedCompleteDate
+        ? formatDate(
+            expectedCompleteDate
+          )
+        : "date pending";
+
+    return `
+      <div
+        class="colli-wrap expected-complete-wrap"
+        title="Expected complete from ${escapeHtml(
+          expectedDateText
+        )}"
+      >
+        <div
+          class="colli-donut expected-complete"
+          style="
+            --pct:100;
+            --fill:#2563eb;
+          "
+        ></div>
+
+        <div>
+          <span class="colli-count">
+            ${formatNumber(
+              completeness.matched,
+              0
+            )}
+            /
+            ${formatNumber(
+              completeness.required,
+              0
+            )}
+          </span>
+
+          <span class="colli-percent expected">
+            Expected complete
+          </span>
+
+          <span class="colli-expected-date">
+            From ${escapeHtml(
+              expectedDateText
+            )}
+          </span>
+        </div>
+      </div>
+    `;
+  }
+
+  /*
+   * Gewone incomplete order.
+   */
+  let fill = "#f97316";
+
+  if (
+    physicalPercentage <= 25
+  ) {
+    fill = "#ef4444";
+  }
+
+  const label =
+    completeness.status === "none"
+      ? "No lines"
+      : `${formatNumber(
+          physicalPercentage,
+          0
+        )}%`;
+
+  return `
+    <div class="colli-wrap">
+      <div
+        class="colli-donut"
+        style="
+          --pct:${escapeHtml(
+            physicalPercentage
+          )};
+          --fill:${escapeHtml(
+            fill
+          )};
+        "
+        title="${escapeHtml(label)}"
+      ></div>
+
+      <div>
+        <span class="colli-count">
+          ${formatNumber(
+            completeness.matched,
+            0
+          )}
+          /
+          ${formatNumber(
+            completeness.required,
+            0
+          )}
+        </span>
+
+        <span class="colli-percent">
+          ${escapeHtml(label)}
+        </span>
+      </div>
+    </div>
+  `;
+}
 
 function getVisibleDocumentTypes(order) {
 
@@ -4794,19 +4971,50 @@ function renderExpandedRow(order) {
                     </div>
                   `
                   : `
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Completeness
-                      </span>
+<div class="detail-line">
+  <span class="detail-label">
+    Completeness
+  </span>
 
-                      <span class="detail-value">
-                        ${formatNumber(c.matched, 0)} /
-                        ${formatNumber(c.required, 0)}
-                        packages ·
-                        ${formatNumber(c.pct, 0)}%
-                      </span>
-                    </div>
+  <span class="detail-value">
+    ${formatNumber(
+      c.matched,
+      0
+    )}
+    /
+    ${formatNumber(
+      c.required,
+      0
+    )}
+    packages physically available
 
+    ${
+      isOrderExpectedComplete(order) &&
+      c.status !== "complete"
+        ? `
+          <span class="subline">
+            <span class="status-pill blue">
+              Expected complete
+            </span>
+          </span>
+
+          <span class="subline">
+            Complete from:
+            <strong>
+              ${escapeHtml(
+                formatDate(
+                  getOrderExpectedCompleteDate(
+                    order
+                  )
+                )
+              )}
+            </strong>
+          </span>
+        `
+        : ""
+    }
+  </span>
+</div>
                     <div class="detail-line">
                       <span class="detail-label">
                         Requested
@@ -7634,6 +7842,40 @@ box-shadow:
   color:#1d4ed8;
   background:#eff6ff;
 }
+
+/* =========================================
+   EXPECTED STOCK COMPLETENESS
+   ========================================= */
+
+.colli-donut.expected-complete{
+  background:#2563eb;
+  box-shadow:
+    0 0 0 4px rgba(37,99,235,.12);
+}
+
+.colli-donut.expected-complete::after{
+  display:none;
+}
+
+.colli-percent.expected{
+  color:#1d4ed8;
+  font-weight:950;
+}
+
+.colli-expected-date{
+  display:block;
+  margin-top:2px;
+  color:#2563eb;
+  font-size:10.5px;
+  line-height:1.25;
+  font-weight:900;
+  white-space:nowrap;
+}
+
+.expected-complete-wrap{
+  min-width:150px;
+}
+
 `;
 
 document.head.appendChild(style);
@@ -8509,6 +8751,213 @@ async function saveTariffModal(orderId) {
     }
   }
 
+async function moveDeliveredOrderStockToOutbound(orderId) {
+  if (!orderId) {
+    throw new Error("Order ID missing.");
+  }
+
+  const db = ensureClient();
+  const cid = await getCompanyId();
+  const shippedAt = new Date().toISOString();
+
+  /*
+   * Stap 1: haal de orderregels op.
+   */
+  const {
+    data: orderLines,
+    error: orderLinesError
+  } = await db
+    .from("order_lines")
+    .select("id")
+    .eq("order_id", orderId);
+
+  if (orderLinesError) {
+    throw new Error(
+      `Order lines could not be loaded: ${orderLinesError.message}`
+    );
+  }
+
+  const orderLineIds = (orderLines || [])
+    .map(row => row.id)
+    .filter(Boolean);
+
+  console.log("OUTBOUND order lines:", orderLineIds);
+
+  if (!orderLineIds.length) {
+    return {
+      allocationsUpdated: 0,
+      itemsUpdated: 0
+    };
+  }
+
+  /*
+   * Stap 2: haal de allocations rechtstreeks op.
+   */
+  const {
+    data: allocations,
+    error: allocationsError
+  } = await db
+    .from("order_allocations")
+    .select(`
+      id,
+      item_id,
+      stock_set_id,
+      allocation_status
+    `)
+    .in("order_line_id", orderLineIds)
+    .neq("allocation_status", "cancelled");
+
+  if (allocationsError) {
+    throw new Error(
+      `Allocations could not be loaded: ${allocationsError.message}`
+    );
+  }
+
+  console.log("OUTBOUND allocations:", allocations);
+
+  const allocationRows = allocations || [];
+
+  const allocationIds = [
+    ...new Set(
+      allocationRows
+        .map(row => row.id)
+        .filter(Boolean)
+    )
+  ];
+
+  const itemIds = [
+    ...new Set(
+      allocationRows
+        .map(row => row.item_id)
+        .filter(Boolean)
+    )
+  ];
+
+  const stockSetIds = [
+    ...new Set(
+      allocationRows
+        .map(row => row.stock_set_id)
+        .filter(Boolean)
+    )
+  ];
+
+  let updatedItemIds = [];
+
+  /*
+   * Stap 3: rechtstreeks gekoppelde items uitboeken.
+   */
+if (itemIds.length) {
+  const {
+    data: updatedItems,
+    error: itemUpdateError
+  } = await db
+    .from("items")
+    .update({
+      status: "shipped",
+      shipped_at: shippedAt
+    })
+    .in("id", itemIds)
+    .select("id, status, shipped_at");
+
+  if (itemUpdateError) {
+    throw new Error(
+      `Items could not be marked shipped: ${itemUpdateError.message}`
+    );
+  }
+
+  if (!updatedItems?.length) {
+    throw new Error(
+      `No stock items were updated. ` +
+      `Check the items RLS update policy. Item IDs: ${itemIds.join(", ")}`
+    );
+  }
+
+  updatedItemIds.push(
+    ...updatedItems.map(row => row.id)
+  );
+}
+
+  /*
+   * Stap 4: alle packages van gekoppelde stocksets uitboeken.
+   */
+  if (stockSetIds.length) {
+    const {
+      data: updatedStockSetItems,
+      error: stockSetItemsError
+    } = await db
+      .from("items")
+      .update({
+        status: "shipped",
+        shipped_at: shippedAt
+      })
+      .eq("company_id", cid)
+      .in("stock_set_id", stockSetIds)
+      .neq("status", "shipped")
+      .select("id");
+
+    if (stockSetItemsError) {
+      throw new Error(
+        `Stock-set items could not be marked shipped: ${stockSetItemsError.message}`
+      );
+    }
+
+    updatedItemIds.push(
+      ...(updatedStockSetItems || []).map(row => row.id)
+    );
+
+    /*
+     * Alleen uitvoeren wanneer stock_sets deze status toestaat.
+     * Een fout hier blokkeert het uitboeken van de items niet.
+     */
+  }
+
+  /*
+   * Stap 5: allocations afsluiten.
+   */
+if (allocationIds.length) {
+  const {
+    data: updatedAllocations,
+    error: allocationUpdateError
+  } = await db
+    .from("order_allocations")
+    .update({
+      allocation_status: "shipped"
+    })
+    .in("id", allocationIds)
+    .select("id, allocation_status");
+
+  if (allocationUpdateError) {
+    throw new Error(
+      `Allocations could not be marked shipped: ${allocationUpdateError.message}`
+    );
+  }
+
+  if (!updatedAllocations?.length) {
+    throw new Error(
+      `No allocations were updated. ` +
+      `Check the order_allocations RLS update policy.`
+    );
+  }
+}
+
+  updatedItemIds = [
+    ...new Set(updatedItemIds)
+  ];
+
+  console.log("OUTBOUND completed:", {
+    orderId,
+    allocationIds,
+    itemIds,
+    stockSetIds,
+    updatedItemIds
+  });
+
+  return {
+    allocationsUpdated: allocationIds.length,
+    itemsUpdated: updatedItemIds.length
+  };
+}
+
   async function safeUpdateOrder(orderId, payload) {
     const cid = await getCompanyId();
 
@@ -8776,37 +9225,90 @@ async function saveManualDeliveryDate() {
     showToast("Signed POD uploaded and made visible for Bellstone.", "ok");
   }
 
-  async function manualMarkDelivered() {
-    const order = getManualOpsOrder();
+ async function manualMarkDelivered() {
+  const order = getManualOpsOrder();
 
-    const deliveredTo = byId("manualDeliveredTo")?.value || "";
-    const notes = byId("manualDeliveryNotes")?.value || "";
-    const today = new Date().toISOString().slice(0, 10);
+  const deliveredTo =
+    byId("manualDeliveredTo")?.value || "";
 
-    const payload = {
-      status: "delivered",
-      transport_status: "delivered",
-      warehouse_status: "delivered",
-      overall_status: "delivered",
-      confirmed_delivery_date: order.confirmed_delivery_date || today,
-      pod_status: "signed",
-      pod_signed_at: new Date().toISOString(),
-      last_activity_at: new Date().toISOString()
-    };
+  const notes =
+    byId("manualDeliveryNotes")?.value || "";
 
-    if (deliveredTo) payload.pod_signed_by = deliveredTo;
+  const now =
+    new Date().toISOString();
 
-    await safeUpdateOrder(order.id, payload);
+  const today =
+    now.slice(0, 10);
 
-    await insertOrderActivity(
-      order.id,
-      `Order marked delivered manually by Sofa2U${deliveredTo ? `, received by ${deliveredTo}` : ""}.${notes ? ` Notes: ${notes}` : ""}`,
-      "manual_mark_delivered"
+  const payload = {
+    status: "delivered",
+    transport_status: "delivered",
+    warehouse_status: "delivered",
+    overall_status: "delivered",
+
+    confirmed_delivery_date:
+      order.confirmed_delivery_date ||
+      today,
+
+    pod_status: "signed",
+    pod_signed_at: now,
+    last_activity_at: now
+  };
+
+  if (deliveredTo) {
+    payload.pod_signed_by =
+      deliveredTo;
+  }
+
+  /*
+   * Eerst de voorraad uitboeken.
+   *
+   * Wanneer dit mislukt, wordt de order niet
+   * alsnog op delivered gezet.
+   */
+  const outboundResult =
+    await moveDeliveredOrderStockToOutbound(
+      order.id
     );
 
-    await loadOrders();
-    showToast("Order marked delivered. Lifecycle moved to Delivered.", "ok");
-  }
+  /*
+   * Daarna pas de orderstatus op delivered.
+   */
+  await safeUpdateOrder(
+    order.id,
+    payload
+  );
+
+  await insertOrderActivity(
+    order.id,
+
+    `Order marked delivered manually by Sofa2U` +
+    `${
+      deliveredTo
+        ? `, received by ${deliveredTo}`
+        : ""
+    }.` +
+    `${
+      notes
+        ? ` Notes: ${notes}`
+        : ""
+    } ` +
+    `${outboundResult.allocationsUpdated} allocation(s) closed and ` +
+    `${outboundResult.itemsUpdated} stock package(s) moved to Outbound History.`,
+
+    "manual_mark_delivered"
+  );
+
+  closeManualOpsModal();
+
+  await loadOrders();
+
+  showToast(
+    `Order marked delivered. ` +
+    `${outboundResult.itemsUpdated} stock package(s) moved to Outbound History.`,
+    "ok"
+  );
+}
 
   async function createPlaceholderDocument(orderId, docType) {
     showToast(`${statusLabel(docType)} generation is not configured here yet.`, "err");

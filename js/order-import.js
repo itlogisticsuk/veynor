@@ -933,55 +933,47 @@ function extractOrderNumber(lines, text) {
   const fullText = String(text || "");
 
   /*
-   * Herken bekende Bellstone-referenties direct,
-   * ongeacht waar ze op de PDF staan.
-   *
-   * Voorbeelden:
-   * ACK1447
+   * Herken:
+   * ACK1211
+   * ACK1211-1
    * REP1429
+   * REP1429-2
    * DIS1442
    */
   let match = fullText.match(
-    /\b((?:ACK|REP|DIS)\s*-?\s*\d+)\b/i
+    /\b((?:ACK|REP|DIS)\s*-?\s*\d+(?:-\d+)?)\b/i
   );
 
   if (match) {
     return match[1]
       .replace(/\s+/g, "")
-      .replace("-", "")
       .toUpperCase();
   }
 
   /*
-   * Alternatief: zoek op een regel met een datum
-   * gevolgd door het ordernummer.
-   *
    * Voorbeeld:
-   * 01/07/2026 REP1429
+   * 04/08/2026 ACK1211-1
    */
   match = fullText.match(
-    /\b\d{1,2}\/\d{1,2}\/\d{4}\s+([A-Z]{2,}\s*-?\s*\d+)\b/i
+    /\b\d{1,2}\/\d{1,2}\/\d{4}\s+([A-Z]{2,}\s*-?\s*\d+(?:-\d+)?)\b/i
   );
 
   if (match) {
     return match[1]
       .replace(/\s+/g, "")
-      .replace("-", "")
       .toUpperCase();
   }
 
   /*
-   * Algemene fallback voor ORDER #.
-   * Er mag eventueel eerst een datum staan.
+   * ORDER #
    */
   match = fullText.match(
-    /ORDER\s*#(?:\s+\d{1,2}\/\d{1,2}\/\d{4})?\s+([A-Z]{2,}\s*-?\s*\d+)/i
+    /ORDER\s*#(?:\s+\d{1,2}\/\d{1,2}\/\d{4})?\s+([A-Z]{2,}\s*-?\s*\d+(?:-\d+)?)/i
   );
 
   if (match) {
     return match[1]
       .replace(/\s+/g, "")
-      .replace("-", "")
       .toUpperCase();
   }
 
@@ -1474,6 +1466,197 @@ function resolveZoyCustomerItemSku(customerItemText) {
   return alias?.sku || "";
 }
 
+function deriveZoyInternalSku(supplierSku, customerItem = "") {
+  const supplier = String(supplierSku || "")
+    .trim()
+    .toUpperCase();
+
+  /*
+   * Voorbeelden:
+   * RD5578DX51D  -> 5578/1
+   * RD5578DX52D  -> 5578/2
+   * RD5578DX53D  -> 5578/3
+   * RD5256IF51D  -> 5256/1
+   * RD5256IF52DM -> 5256/2
+   */
+  const modelMatch = supplier.match(/^RD(\d{4})/i);
+
+  if (!modelMatch) {
+    return resolveZoyCustomerItemSku(customerItem);
+  }
+
+  const model = modelMatch[1];
+
+  /*
+   * 51 = chair
+   * 52 = 2-seater
+   * 53 = 3-seater
+   */
+  const typeMatch = supplier.match(/5([123])(?=[A-Z]|$)/i);
+
+  if (typeMatch) {
+    return `${model}/${typeMatch[1]}`;
+  }
+
+  const customerText = normalize(customerItem);
+
+  if (/\bchair\b/i.test(customerText)) {
+    return `${model}/1`;
+  }
+
+  if (
+    /\b(?:2|two)\s*(?:str|seater)\b/i.test(customerText)
+  ) {
+    return `${model}/2`;
+  }
+
+  if (
+    /\b(?:3|three)\s*(?:str|seater)\b/i.test(customerText)
+  ) {
+    return `${model}/3`;
+  }
+
+  return model;
+}
+
+function parseZoyProductLines(lines) {
+  const productLines = [];
+
+  const startIndex = lines.findIndex(line => {
+    const value = cleanText(line);
+
+    return (
+      /ZOY ITEM#/i.test(value) &&
+      /QTY/i.test(value)
+    );
+  });
+
+  if (startIndex < 0) {
+    return productLines;
+  }
+
+  const relevantLines = [];
+
+  for (
+    let index = startIndex + 1;
+    index < lines.length;
+    index++
+  ) {
+    const line = cleanText(lines[index]);
+
+    if (!line) continue;
+
+    if (
+      /^Total\b/i.test(line) ||
+      /^REMARK\b/i.test(line)
+    ) {
+      break;
+    }
+
+    relevantLines.push(line);
+  }
+
+  let buffer = "";
+
+  relevantLines.forEach((line, index) => {
+    /*
+     * Shipping surcharge is geen productregel.
+     */
+    if (
+      /^Surcharge\b/i.test(line) ||
+      /Shipping Surcharge/i.test(line)
+    ) {
+      buffer = "";
+      return;
+    }
+
+    buffer = cleanText(
+      [buffer, line]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    /*
+     * Voorbeeld:
+     *
+     * Henley Henley 2str RD5256IF52DM
+     * 2str Power reclining 1 1 £329.00 £329.00
+     *
+     * PDF.js kan dit als één of meerdere regels uitlezen.
+     */
+    const match = buffer.match(
+      /^(.+?)\s+(RD[A-Z0-9]+)\s+(.+?)\s+(\d+)\s+(\d+)\s+£\s*([\d,.]+)\s+£\s*([\d,.]+)$/i
+    );
+
+    if (!match) {
+      return;
+    }
+
+    const customerItemRaw = cleanText(match[1]);
+    const supplierSku = cleanText(match[2]).toUpperCase();
+    const productDescription = cleanText(match[3]);
+
+    const quantity = Math.max(
+      1,
+      Math.round(
+        toNumber(match[4], 1)
+      )
+    );
+
+    const packagesFromPdf = Math.max(
+      1,
+      Math.round(
+        toNumber(match[5], quantity)
+      )
+    );
+
+    /*
+     * "Henley Henley 2str"
+     * wordt "Henley 2str".
+     */
+    const customerItem = customerItemRaw.replace(
+      /^([A-Za-z0-9_-]+)\s+\1\b/i,
+      "$1"
+    );
+
+    const internalSku = deriveZoyInternalSku(
+      supplierSku,
+      customerItem
+    );
+
+    productLines.push({
+      itemRaw: buffer,
+      itemBrand: "Zoy",
+
+      itemCode: internalSku,
+      customerItem,
+      supplierSku,
+
+      description: cleanText(
+        `${customerItem} - ${productDescription}`
+      ),
+
+      quantity,
+      packagesFromPdf,
+
+      unitVolume: 0,
+      unitWeight: 0,
+      totalVolume: 0,
+      totalWeight: 0,
+
+      sourceRow: index + 1,
+
+      parseError: internalSku
+        ? ""
+        : `Could not derive product SKU from ${supplierSku}`
+    });
+
+    buffer = "";
+  });
+
+  return productLines;
+}
+
 function parseZoyPdfOrder(text) {
   const lines = String(text || "")
     .split(/\r?\n/)
@@ -1481,14 +1664,17 @@ function parseZoyPdfOrder(text) {
     .filter(Boolean);
 
   const fullText = lines.join("\n");
-  const structuredItems = window.__lastPdfStructuredItems || [];
+  const structuredItems =
+    window.__lastPdfStructuredItems || [];
 
   function getValueRightOfLabel(labelRegex) {
     const label = structuredItems.find(item =>
       labelRegex.test(cleanText(item.text))
     );
 
-    if (!label) return "";
+    if (!label) {
+      return "";
+    }
 
     const candidates = structuredItems
       .filter(item =>
@@ -1502,13 +1688,15 @@ function parseZoyPdfOrder(text) {
   }
 
   /*
-   * Ordergegevens rechtstreeks uit de rechterkolom van de PDF.
+   * Ordergegevens.
    */
   const orderDateRaw =
     getValueRightOfLabel(/^Order date:?$/i) ||
-    (fullText.match(
-      /Order date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i
-    ) || [])[1] ||
+    (
+      fullText.match(
+        /Order date:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4})/i
+      ) || []
+    )[1] ||
     "";
 
   const customerOrderNo =
@@ -1522,31 +1710,91 @@ function parseZoyPdfOrder(text) {
 
   const orderDate = parseDateToIso(orderDateRaw);
 
-  const leadWeeksMatch = leadTimeRaw.match(/(\d+)/);
+  const leadWeeksMatch =
+    String(leadTimeRaw || "").match(/(\d+)/);
+
   const leadWeeks = leadWeeksMatch
-    ? Math.max(0, Math.round(toNumber(leadWeeksMatch[1], 3)))
+    ? Math.max(
+        0,
+        Math.round(
+          toNumber(leadWeeksMatch[1], 3)
+        )
+      )
     : 3;
 
   const dueDate = orderDate
-    ? addDaysToIsoDate(orderDate, leadWeeks * 7)
+    ? addDaysToIsoDate(
+        orderDate,
+        leadWeeks * 7
+      )
     : null;
 
   /*
-   * Retailer en afleveradres.
+   * Retailerregel zoeken.
+   *
+   * In deze PDF:
+   * Richard F Mackay, 60 Stevenson Rd,
+   * Edinburgh EH11 2SG
    */
-  const retailerMatch = fullText.match(
-    /(Fosters For Furniture[^]*?)(?=Terms of payment:|Within 30 days)/i
-  );
-
-  const retailerBlock = cleanText(retailerMatch?.[1] || "");
+  const customerLine = lines.find(line =>
+    extractPostcode(line) &&
+    !/HONG KONG|CANMOV|HANG WAI|TUEN MUN/i.test(line) &&
+    !/^Unit\s+/i.test(line)
+  ) || "";
 
   const retailName =
     dedupeRepeatedWords(
-      retailerBlock.split(",")[0] || ""
+      customerLine.split(",")[0] || ""
     ) ||
     "Unknown retailer";
 
-  const postcode = extractPostcode(retailerBlock || fullText);
+  /*
+   * Afleveradres zoeken.
+   *
+   * In deze PDF:
+   * Unit 4/3 Borthwick View, Loanhead,
+   * Edinburgh, EH20 9QH
+   */
+  const deliveryStartIndex = lines.findIndex(line =>
+    /^Unit\s+/i.test(line) ||
+    (
+      /Deliveries:/i.test(line) &&
+      extractPostcode(line)
+    )
+  );
+
+  let deliveryEndIndex = lines.findIndex(
+    (line, index) =>
+      index > deliveryStartIndex &&
+      (
+        /Terms of payment:/i.test(line) ||
+        /^ZOY ITEM#/i.test(line) ||
+        /^Henley\b/i.test(line) ||
+        /^Utah\b/i.test(line)
+      )
+  );
+
+  if (deliveryEndIndex < 0) {
+    deliveryEndIndex = lines.length;
+  }
+
+  const retailerBlock =
+    deliveryStartIndex >= 0
+      ? cleanText(
+          lines
+            .slice(
+              deliveryStartIndex,
+              deliveryEndIndex
+            )
+            .join(" ")
+        )
+      : customerLine;
+
+  const postcode = extractPostcode(
+    retailerBlock ||
+    customerLine ||
+    fullText
+  );
 
   const email =
     (
@@ -1554,7 +1802,7 @@ function parseZoyPdfOrder(text) {
         /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
       ) || []
     ).find(value =>
-      !/zoy-living|zoyuk/i.test(value)
+      !/zoy-living|zoyuk|ordersuk/i.test(value)
     ) || "";
 
   const phone =
@@ -1564,115 +1812,51 @@ function parseZoyPdfOrder(text) {
       ) || []
     )[0] || "";
 
+  const cityMatch =
+    retailerBlock.match(
+      /,\s*([^,]+),?\s*[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i
+    );
+
+  const city = cleanText(
+    cityMatch?.[1] || ""
+  );
+
   const shipTo = {
     ...buildEmptyAddress(),
+
     contactName: retailName,
     companyName: retailName,
+
     address1: retailerBlock,
     address2: "",
     address3: "",
     address4: "",
-    city: "",
-    county: "South Yorkshire",
+
+    city,
+    county: "",
+
     postcode,
     country: getDefaultCountry(),
+
     email,
     phone
   };
 
   /*
-   * De Zoy-productregel wordt door PDF.js meestal ongeveer zo gelezen:
-   *
-   * Utah
-   * Utah chair RD5578DX51D 2 boxes
-   * Chair Power reclining 1 1 £379.00 £379.00
-   *
-   * We zoeken daarom in de volledige tekst, niet per losse regel.
+   * Productregels uitlezen.
    */
-const productLines = [];
+  const productLines =
+    parseZoyProductLines(lines);
 
-const normalizedPdfText = cleanText(fullText);
-
-const productDefinitions = [
-  {
-    customerItem: "Utah chair",
-    internalSku: "5578/1",
-    description: "Utah Chair - Power reclining",
-    match: /Utah\s+chair/i
-  },
-  {
-    customerItem: "Utah 2 Seater",
-    internalSku: "5578/2",
-    description: "Utah 2 Seater - Power reclining",
-    match: /Utah\s+(?:2|two)\s*seater/i
-  },
-  {
-    customerItem: "Utah 3 Seater",
-    internalSku: "5578/3",
-    description: "Utah 3 Seater - Power reclining",
-    match: /Utah\s+(?:3|three)\s*seater/i
-  }
-];
-
-productDefinitions.forEach((definition, index) => {
-  if (!definition.match.test(normalizedPdfText)) return;
-
-  const supplierSkuMatch = normalizedPdfText.match(
-    /RD5578[A-Z0-9]+/i
-  );
-
-  const quantityMatch = normalizedPdfText.match(
-    /Power reclining\s+(\d+)\s+(\d+)\s+£/i
-  );
-
-  const quantity = quantityMatch
-    ? Math.max(
-        1,
-        Math.round(toNumber(quantityMatch[1], 1))
-      )
-    : 1;
-
-  const packagesFromPdf = quantityMatch
-    ? Math.max(
-        1,
-        Math.round(toNumber(quantityMatch[2], 1))
-      )
-    : 1;
-
-  productLines.push({
-    itemRaw: normalizedPdfText,
-    itemBrand: "Zoy",
-
-    itemCode: definition.internalSku,
-    customerItem: definition.customerItem,
-    supplierSku: supplierSkuMatch?.[0] || "",
-
-    description: definition.description,
-
-    quantity,
-
-    packagesFromPdf,
-
-    unitVolume: 0,
-    unitWeight: 0,
-    totalVolume: 0,
-    totalWeight: 0,
-
-    sourceRow: index + 1,
-    parseError: ""
-  });
-});
-
+  /*
+   * Orderobject opbouwen.
+   */
   const order = {
     ...buildEmptyOrder(),
 
     sourceKind: "pdf",
     sourceType: "zoy_order_ack_pdf",
 
-    /*
-     * Zoy reference = acknowledgement/externe referentie.
-     * Customer order number = PO.
-     */
     orderNumber: zoyReference,
     externalReference: zoyReference,
     purchaseOrder: customerOrderNo,
@@ -1687,10 +1871,12 @@ productDefinitions.forEach((definition, index) => {
     address1: shipTo.address1,
     address2: shipTo.address2,
     address3: shipTo.address3,
+
     city: shipTo.city,
     state: shipTo.county,
     postcode: shipTo.postcode,
     country: shipTo.country,
+
     email: shipTo.email,
     phone: shipTo.phone,
 
@@ -1700,17 +1886,22 @@ productDefinitions.forEach((definition, index) => {
       customerOrderNo
         ? `Customer order No: ${customerOrderNo}`
         : "",
+
       zoyReference
         ? `Zoy reference No: ${zoyReference}`
         : "",
+
       `Estimated lead time: ${leadWeeks} weeks`
-    ].filter(Boolean).join(" | "),
+    ]
+      .filter(Boolean)
+      .join(" | "),
 
     pdfTotalVolume: 0,
     lines: productLines
   };
 
-  const finalOrder = finalizeOrder(order);
+  const finalOrder =
+    finalizeOrder(order);
 
   const parseErrors = productLines
     .map(line => line.parseError)

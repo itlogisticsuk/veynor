@@ -170,18 +170,59 @@ function isZoyOrder(order, ctx = {}) {
     return cleanText(line.sku_base || line.products?.sku_base || "—");
   }
 
-  function getLineDescription(line) {
-    return cleanText(
-      line.description ||
-      line.products?.description ||
-      line.products?.name ||
-      "—"
-    );
-  }
+function makePdfSafeText(value) {
+  return String(value ?? "")
+    .normalize("NFKC")
+
+    // Typografische aanhalingstekens
+    .replace(/[\u2018\u2019\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u2033]/g, '"')
+
+    // Lange streepjes
+    .replace(/[\u2013\u2014]/g, "-")
+
+    // Bijzondere spaties
+    .replace(/\u00A0/g, " ")
+
+    // Eventuele reeds verkeerd gedecodeerde tekens
+    .replace(/ÿý/g, '"')
+
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getLineDescription(line) {
+  return makePdfSafeText(
+    line.description ||
+    line.products?.description ||
+    line.products?.name ||
+    "-"
+  );
+}
 
   function getLineQty(line) {
     return toNumber(line.quantity_ordered || line.quantity || 0, 0);
   }
+
+function getPhysicalQuantity(line) {
+  const quantity = Math.max(
+    0,
+    Math.round(
+      getLineQty(line)
+    )
+  );
+
+  if (
+    getLineSku(line).toUpperCase() ===
+    "ALBCH"
+  ) {
+    return Math.ceil(
+      quantity / 2
+    );
+  }
+
+  return quantity;
+}
 
   function getProductPackageCount(product) {
     const packageCount = toNumber(product?.package_count, 0);
@@ -210,16 +251,42 @@ function isZoyOrder(order, ctx = {}) {
     );
   }
 
-  function getLinePackageCount(line) {
-    const qty = Math.max(0, Math.round(getLineQty(line)));
+function getLinePackageCount(line) {
+  const qty = Math.max(
+    0,
+    Math.round(
+      getLineQty(line)
+    )
+  );
 
-    if (isServiceLine(line)) return qty;
-
-    return qty * getProductPackageCount(line.products || {});
+  if (isServiceLine(line)) {
+    return qty;
   }
 
+  const physicalQuantity =
+    getPhysicalQuantity(line);
+
+  return (
+    physicalQuantity *
+    getProductPackageCount(
+      line.products || {}
+    )
+  );
+}
+
   function getPackageLabel(line) {
-    const qty = Math.max(1, Math.round(getLineQty(line) || 1));
+    const orderedQty = Math.max(
+  1,
+  Math.round(
+    getLineQty(line) || 1
+  )
+);
+
+const qty =
+  getLineSku(line).toUpperCase() ===
+  "ALBCH"
+    ? Math.ceil(orderedQty / 2)
+    : orderedQty;
 
     if (isServiceLine(line)) {
       const label =

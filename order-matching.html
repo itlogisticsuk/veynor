@@ -11,9 +11,20 @@
   <script src="/js/supabase.js"></script>
 <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
-  <script src="/js/event-log.js"></script>
-  <script src="/js/allocation-engine.js"></script>
-  <script src="/js/order-matching.js" defer></script>
+<script src="/js/event-log.js"></script>
+<script src="/js/allocation-engine.js"></script>
+
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+  defer>
+</script>
+
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"
+  defer>
+</script>
+
+<script src="/js/order-matching.js?v=20260804-1" defer></script>
 
   <style>
     .matching-page{display:grid;gap:14px}
@@ -211,10 +222,11 @@
             <label for="filterMatch">Match status</label>
             <select id="filterMatch" class="select">
               <option value="">All</option>
-              <option value="full">Fully matched</option>
-              <option value="partial">Partial</option>
-              <option value="none">No match</option>
-              <option value="missing_product">Missing product</option>
+<option value="full">Physically complete</option>
+<option value="expected_full">Expected complete</option>
+<option value="partial">Partial</option>
+<option value="none">No match</option>
+<option value="missing_product">Missing product</option>
             </select>
           </div>
 
@@ -245,11 +257,39 @@
             <button id="btnSelectReady" class="btn" type="button">Select ready</button>
           </div>
 
-          <div class="actions-right">
-            <button id="btnGeocodeSelected" class="btn" type="button">Geocode selected</button>
-            <button id="btnReleaseSelected" class="btn btn-primary" type="button">Geocode + Release to Planning</button>
-            <button id="btnExportSelected" class="btn" type="button">Export External CSV</button>
-          </div>
+<div class="actions-right">
+  <button
+    id="btnExportMissingStockPdf"
+    class="btn"
+    type="button"
+  >
+    Export Missing Stock PDF
+  </button>
+
+  <button
+    id="btnGeocodeSelected"
+    class="btn"
+    type="button"
+  >
+    Geocode selected
+  </button>
+
+  <button
+    id="btnReleaseSelected"
+    class="btn btn-primary"
+    type="button"
+  >
+    Geocode + Release to Planning
+  </button>
+
+  <button
+    id="btnExportSelected"
+    class="btn"
+    type="button"
+  >
+    Export External CSV
+  </button>
+</div>
         </div>
 
         <div id="progressWrap" class="progress-wrap">

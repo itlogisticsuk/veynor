@@ -157,6 +157,26 @@
     return toNumber(line.quantity_ordered || line.quantity || line.delivered_quantity || 0, 0);
   }
 
+function getPhysicalQuantity(line) {
+  const quantity = Math.max(
+    0,
+    Math.round(
+      getLineQty(line)
+    )
+  );
+
+  if (
+    getLineSku(line).toUpperCase() ===
+    "ALBCH"
+  ) {
+    return Math.ceil(
+      quantity / 2
+    );
+  }
+
+  return quantity;
+}
+
 function isServiceLine(line) {
   return (
     toNumber(line?.requested_package_no, 0) > 0 &&
@@ -216,18 +236,37 @@ function getServiceWarning(line) {
     return getProductPackageCount(line.products || {});
   }
 
-  function getLinePackageCount(line) {
-  const qty = Math.max(0, Math.round(getLineQty(line)));
+function getLinePackageCount(line) {
+  const qty = Math.max(
+    0,
+    Math.round(
+      getLineQty(line)
+    )
+  );
 
   if (
-    toNumber(line.requested_package_no, 0) > 0 &&
-    toNumber(line.requested_package_total, 0) > 0
+    toNumber(
+      line.requested_package_no,
+      0
+    ) > 0 &&
+    toNumber(
+      line.requested_package_total,
+      0
+    ) > 0
   ) {
     return qty;
   }
 
-  const packagesPerProduct = getLinePackagesPerProduct(line);
-  return qty * packagesPerProduct;
+  const physicalQuantity =
+    getPhysicalQuantity(line);
+
+  const packagesPerProduct =
+    getLinePackagesPerProduct(line);
+
+  return (
+    physicalQuantity *
+    packagesPerProduct
+  );
 }
 
   function getSingleProductPackageLabels(line) {
@@ -240,7 +279,19 @@ function getServiceWarning(line) {
   }
 
  function getPackageLabel(line) {
-  const qty = Math.max(1, Math.round(getLineQty(line) || 1));
+  const orderedQty = Math.max(
+  1,
+  Math.round(
+    getLineQty(line) || 1
+  )
+);
+
+const qty =
+  getLineSku(line).toUpperCase() ===
+  "ALBCH"
+    ? Math.ceil(orderedQty / 2)
+    : orderedQty;
+
 
   if (
     toNumber(line.requested_package_no, 0) > 0 &&

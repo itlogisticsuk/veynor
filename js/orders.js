@@ -154,6 +154,90 @@ let warehouseCostSettings = {
     return toNumber(order?.planning_volume_m3 ?? order?.volume_m3, 0);
   }
 
+function getEarliestPlanningDate(order) {
+  return String(
+    order?.earliest_planning_date ||
+    ""
+  ).slice(0, 10);
+}
+
+function isExpectedStockOrder(order) {
+  return (
+    normalize(
+      order?.planning_stock_basis
+    ) === "expected" &&
+    Boolean(
+      getEarliestPlanningDate(order)
+    )
+  );
+}
+
+function getPlanningDateBlockedOrders(
+  orders,
+  planningDate
+) {
+  const selectedDate =
+    String(
+      planningDate || ""
+    ).slice(0, 10);
+
+  if (!selectedDate) {
+    return [];
+  }
+
+  return (
+    orders || []
+  ).filter(order => {
+    const earliestDate =
+      getEarliestPlanningDate(order);
+
+    return (
+      earliestDate &&
+      selectedDate < earliestDate
+    );
+  });
+}
+
+function assertOrdersCanBePlannedOnDate(
+  orders,
+  planningDate
+) {
+  for (const order of (orders || [])) {
+    if (order.planning_release !== true) {
+      throw new Error(
+        `${order.order_number} has not been released to planning.`
+      );
+    }
+  }
+
+  const blockedOrders =
+    getPlanningDateBlockedOrders(
+      orders,
+      planningDate
+    );
+
+  if (!blockedOrders.length) {
+    return true;
+  }
+
+  const first =
+    blockedOrders[0];
+
+  const extraCount =
+    blockedOrders.length - 1;
+
+  throw new Error(
+    `${first.order_number} can only be planned from ` +
+    `${formatDate(
+      getEarliestPlanningDate(first)
+    )}` +
+    (
+      extraCount > 0
+        ? ` · ${extraCount} other order(s) are also not yet available.`
+        : ""
+    )
+  );
+}
 function makeRetailerCode(postcode, retailerName) {
   const pc = String(postcode || "")
     .toUpperCase()
@@ -187,54 +271,315 @@ function getDeliveryGroupKey(order) {
 function markBelowMinimumOrders() {
   const groups = new Map();
 
+  /*
+   * Reset eerst alle tijdelijke delivery-group velden.
+   * Alleen nog niet-goedgekeurde groepen onder 1.25 m³
+   * worden daarna opnieuw gemarkeerd.
+   */
   allOrders.forEach(order => {
     order.belowMinimumVolume = false;
+    order.deliveryGroupApproved = false;
+    order.deliveryGroupId = null;
 
-    const state = getCompletionState(order);
+    const state =
+      getCompletionState(order);
 
-const status = normalize(order.status || "");
-const warehouseStatus = normalize(order.warehouse_status || "");
-const overallStatus = normalize(order.overall_status || "");
+    const status =
+      normalize(
+        order.status || ""
+      );
 
-const isReady =
-  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(state) ||
-  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(status) ||
-  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(warehouseStatus) ||
-  ["stock_complete", "planned", "ready_for_planning", "ready_for_picking"].includes(overallStatus) ||
-  order.planning_release === true;
+    const warehouseStatus =
+      normalize(
+        order.warehouse_status || ""
+      );
 
-if (!isReady) return;
+    const overallStatus =
+      normalize(
+        order.overall_status || ""
+      );
 
-    const key = getDeliveryGroupKey(order);
-    const volume = getOrderVolume(order);
+    const isReady =
+      [
+        "stock_complete",
+        "planned",
+        "ready_for_planning",
+        "ready_for_picking"
+      ].includes(state) ||
+      [
+        "stock_complete",
+        "planned",
+        "ready_for_planning",
+        "ready_for_picking"
+      ].includes(status) ||
+      [
+        "stock_complete",
+        "planned",
+        "ready_for_planning",
+        "ready_for_picking"
+      ].includes(warehouseStatus) ||
+      [
+        "stock_complete",
+        "planned",
+        "ready_for_planning",
+        "ready_for_picking"
+      ].includes(overallStatus) ||
+      order.planning_release === true;
+
+    if (!isReady) {
+      return;
+    }
+
+    const key =
+      getDeliveryGroupKey(order);
+
+    const volume =
+      getOrderVolume(order);
 
     if (!groups.has(key)) {
       groups.set(key, {
         key,
         volume: 0,
-        ids: []
+        ids: [],
+        orders: []
       });
     }
 
-    const group = groups.get(key);
+    const group =
+      groups.get(key);
+
     group.volume += volume;
-    group.ids.push(String(order.id));
+    group.ids.push(
+      String(order.id)
+    );
+    group.orders.push(order);
   });
 
   groups.forEach(group => {
-    const stored = storedDeliveryGroups.find(row =>
-      row.group_key === group.key
-    );
+    const firstOrder =
+      group.orders[0];
 
-    const approved = normalize(stored?.status) === "approved";
+    if (!firstOrder) {
+      return;
+    }
 
-    if (approved) return;
+    const orderProductOwnerId =
+      String(
+        firstOrder.customer_id ||
+        firstOrder.product_owner_id ||
+        ""
+      );
 
-    if (group.volume > 0 && group.volume < 1.25) {
-      allOrders.forEach(order => {
-        if (group.ids.includes(String(order.id))) {
-          order.belowMinimumVolume = true;
-        }
+    const orderPostcode =
+      String(
+        firstOrder.delivery_postcode ||
+        ""
+      )
+        .toUpperCase()
+        .replace(/\s+/g, "");
+
+    const orderRetailerCode =
+      normalize(
+        firstOrder.retailer_code ||
+        makeRetailerCode(
+          firstOrder.delivery_postcode,
+          getRetailerName(firstOrder)
+        )
+      );
+
+    const orderRetailerName =
+      normalize(
+        getRetailerName(firstOrder)
+      );
+
+    /*
+     * Zoek alle delivery groups die bij deze ordergroep
+     * kunnen horen.
+     *
+     * Dit ondersteunt:
+     * - exacte group_key
+     * - group_key met cyclus-suffix zoals |C1
+     * - oudere records zonder product_owner_id
+     * - oudere records zonder retailer_code
+     */
+    const matchingStoredGroups =
+      storedDeliveryGroups
+        .filter(row => {
+          const storedGroupKey =
+            String(
+              row.group_key || ""
+            );
+
+          const sameGroupKey =
+            storedGroupKey ===
+              group.key ||
+            storedGroupKey.startsWith(
+              `${group.key}|C`
+            );
+
+          if (sameGroupKey) {
+            return true;
+          }
+
+          const storedProductOwnerId =
+            String(
+              row.product_owner_id ||
+              ""
+            );
+
+          const storedPostcode =
+            String(
+              row.delivery_postcode ||
+              ""
+            )
+              .toUpperCase()
+              .replace(/\s+/g, "");
+
+          const storedRetailerCode =
+            normalize(
+              row.retailer_code ||
+              ""
+            );
+
+          const storedRetailerName =
+            normalize(
+              row.retailer_name ||
+              ""
+            );
+
+          const sameProductOwner =
+            !storedProductOwnerId ||
+            storedProductOwnerId ===
+              orderProductOwnerId;
+
+          const samePostcode =
+            storedPostcode ===
+            orderPostcode;
+
+          const sameRetailer =
+            (
+              storedRetailerCode &&
+              storedRetailerCode ===
+                orderRetailerCode
+            ) ||
+            (
+              storedRetailerName &&
+              storedRetailerName ===
+                orderRetailerName
+            );
+
+          return (
+            sameProductOwner &&
+            samePostcode &&
+            sameRetailer
+          );
+        })
+        .sort((a, b) => {
+          /*
+           * Approved heeft altijd voorrang.
+           */
+          const approvedA =
+            normalize(a.status) ===
+            "approved"
+              ? 1
+              : 0;
+
+          const approvedB =
+            normalize(b.status) ===
+            "approved"
+              ? 1
+              : 0;
+
+          if (
+            approvedA !== approvedB
+          ) {
+            return approvedB - approvedA;
+          }
+
+          /*
+           * Daarna de hoogste cyclus.
+           */
+          const cycleA =
+            Number(
+              a.cycle_number || 0
+            );
+
+          const cycleB =
+            Number(
+              b.cycle_number || 0
+            );
+
+          if (cycleA !== cycleB) {
+            return cycleB - cycleA;
+          }
+
+          /*
+           * Als laatste de nieuwste wijziging.
+           */
+          const dateA =
+            new Date(
+              a.updated_at ||
+              a.approved_at ||
+              a.created_at ||
+              0
+            ).getTime();
+
+          const dateB =
+            new Date(
+              b.updated_at ||
+              b.approved_at ||
+              b.created_at ||
+              0
+            ).getTime();
+
+          return dateB - dateA;
+        });
+
+    const storedGroup =
+      matchingStoredGroups[0] ||
+      null;
+
+    const approved =
+      normalize(
+        storedGroup?.status
+      ) === "approved";
+
+    /*
+     * Goedgekeurde groepen zijn niet meer geblokkeerd
+     * en krijgen geen paarse marker meer.
+     */
+    if (approved) {
+      group.orders.forEach(order => {
+        order.belowMinimumVolume =
+          false;
+
+        order.deliveryGroupApproved =
+          true;
+
+        order.deliveryGroupId =
+          storedGroup.id || null;
+      });
+
+      return;
+    }
+
+    /*
+     * Alleen nog niet-goedgekeurde groepen onder
+     * 1.25 m³ blijven paars.
+     */
+    if (
+      group.volume > 0 &&
+      group.volume < 1.25
+    ) {
+      group.orders.forEach(order => {
+        order.belowMinimumVolume =
+          true;
+
+        order.deliveryGroupApproved =
+          false;
+
+        order.deliveryGroupId =
+          storedGroup?.id || null;
       });
     }
   });
@@ -1160,6 +1505,29 @@ const qty =
   }
 
   <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
+
+${
+  isExpectedStockOrder(order)
+    ? `
+      <span
+        class="subline"
+        style="
+          color:#1d4ed8;
+          font-weight:800;
+        "
+      >
+        Expected stock · Available from
+        ${escapeHtml(
+          formatDate(
+            getEarliestPlanningDate(
+              order
+            )
+          )
+        )}
+      </span>
+    `
+    : ""
+}
 </td>
 
           <td>
@@ -1257,119 +1625,283 @@ const qty =
     notifyDataChanged();
   }
 
-  function renderMap() {
-    window.ordersMapRows = filteredOrders.filter(order => {
-  if (!order.route_id) return true;
+function renderMap() {
+  const today =
+    todayIso();
 
-  const route = getRouteById(order.route_id);
-  return getRouteDateValue(route) === selectedPlanningDate;
-});
-   const selectedDateRoutes = allRoutes.filter(route =>
-  getRouteDateValue(route) === selectedPlanningDate
-);
+  /*
+   * Alleen routes van vandaag en later
+   * worden op de live kaart getoond.
+   */
+  const futureRoutes =
+    allRoutes.filter(route => {
+      const routeDate =
+        String(
+          getRouteDateValue(route) ||
+          ""
+        ).slice(0, 10);
 
-const selectedDateRouteIds = new Set(
-  selectedDateRoutes.map(route => String(route.id))
-);
+      return (
+        routeDate &&
+        routeDate >= today
+      );
+    });
 
-const selectedDateStops = allStops.filter(stop =>
-  selectedDateRouteIds.has(String(stop.route_id))
-);
+  const futureRouteIds =
+    new Set(
+      futureRoutes.map(route =>
+        String(route.id)
+      )
+    );
 
-window.allRouteStopsMapRows = selectedDateStops;
-window.visibleRoutesMapRows = selectedDateRoutes;
-    window.activeVehiclesMapRows = activeVehicles;
-    window.selectedOrderIdsForMap = [...selectedOrderIds];
-    window.selectedRouteIdForMap = null;
-    const selectedTransportFilter = normalize(
-  byId("filterTransport")?.value || ""
-);
+  /*
+   * Alleen stops van toekomstige routes.
+   */
+  const futureStops =
+    allStops.filter(stop =>
+      futureRouteIds.has(
+        String(stop.route_id)
+      )
+    );
 
-window.orderMapFilters = {
-  ownTransportOnly:
-    selectedTransportFilter === "own_transport",
+  /*
+   * Toon:
+   * - orders zonder route;
+   * - orders op routes van vandaag of later;
+   * - FDS- en pickuporders zonder route.
+   *
+   * Orders op historische routes verdwijnen
+   * alleen van de kaart, niet uit de database.
+   */
+  const mapOrders =
+    filteredOrders.filter(order => {
+      if (!order.route_id) {
+        return true;
+      }
 
-  charterOnly:
-    selectedTransportFilter === "charter",
+      return futureRouteIds.has(
+        String(order.route_id)
+      );
+    });
 
-  warehousePickupOnly:
-    selectedTransportFilter === "warehouse_pickup"
-};
+  window.ordersMapRows =
+    mapOrders;
 
-    if (window.OrdersMap?.reload) window.OrdersMap.reload();
-    else if (typeof window.reloadOrdersMap === "function") window.reloadOrdersMap();
-  }
+  window.allRouteStopsMapRows =
+    futureStops;
 
-  function notifyDataChanged() {
-    window.ordersMapRows = filteredOrders;
-    window.allRouteStopsMapRows = allStops;
-    window.activeVehiclesMapRows = activeVehicles;
-    window.selectedOrderIdsForMap = [...selectedOrderIds];
+  window.visibleRoutesMapRows =
+    futureRoutes;
 
-const planningOrders = allOrders.filter(order => {
-  const transportType = normalize(
-    order.transport_type
-  );
+  window.activeVehiclesMapRows =
+    activeVehicles;
+
+  window.selectedOrderIdsForMap = [
+    ...selectedOrderIds
+  ];
+
+  window.selectedRouteIdForMap =
+    null;
+
+  const selectedTransportFilter =
+    normalize(
+      byId("filterTransport")
+        ?.value ||
+      ""
+    );
+
+  window.orderMapFilters = {
+    ownTransportOnly:
+      selectedTransportFilter ===
+      "own_transport",
+
+    charterOnly:
+      selectedTransportFilter ===
+      "charter",
+
+    warehousePickupOnly:
+      selectedTransportFilter ===
+      "warehouse_pickup"
+  };
 
   if (
-    transportType !== "charter" &&
-    transportType !== "warehouse_pickup"
+    window.OrdersMap?.reload
   ) {
-    return true;
+    window.OrdersMap.reload();
+  } else if (
+    typeof window.reloadOrdersMap ===
+    "function"
+  ) {
+    window.reloadOrdersMap();
   }
+}
 
-  const planningDate =
-    order.planned_route_date ||
-    order.expected_delivery_date ||
-    "";
+function notifyDataChanged() {
+  const today =
+    todayIso();
 
-  return (
-    !planningDate ||
-    planningDate === selectedPlanningDate
+  /*
+   * Dezelfde toekomstige routes gebruiken als renderMap().
+   * Hierdoor kan deze functie de kaart niet meer per ongeluk
+   * overschrijven met historische route-stops.
+   */
+  const futureRoutes =
+    allRoutes.filter(route => {
+      const routeDate =
+        String(
+          getRouteDateValue(route) ||
+          ""
+        ).slice(0, 10);
+
+      return (
+        routeDate &&
+        routeDate >= today
+      );
+    });
+
+  const futureRouteIds =
+    new Set(
+      futureRoutes.map(route =>
+        String(route.id)
+      )
+    );
+
+  const futureStops =
+    allStops.filter(stop =>
+      futureRouteIds.has(
+        String(stop.route_id)
+      )
+    );
+
+  const mapOrders =
+    filteredOrders.filter(order => {
+      if (!order.route_id) {
+        return true;
+      }
+
+      return futureRouteIds.has(
+        String(order.route_id)
+      );
+    });
+
+  /*
+   * Houd de kaartdata consequent toekomstgericht.
+   */
+  window.ordersMapRows =
+    mapOrders;
+
+  window.allRouteStopsMapRows =
+    futureStops;
+
+  window.visibleRoutesMapRows =
+    futureRoutes;
+
+  window.activeVehiclesMapRows =
+    activeVehicles;
+
+  window.selectedOrderIdsForMap = [
+    ...selectedOrderIds
+  ];
+
+  const planningOrders =
+    allOrders.filter(order => {
+      const transportType =
+        normalize(
+          order.transport_type
+        );
+
+      if (
+        transportType !== "charter" &&
+        transportType !== "warehouse_pickup"
+      ) {
+        return true;
+      }
+
+      const planningDate =
+        String(
+          order.planned_route_date ||
+          order.expected_delivery_date ||
+          ""
+        ).slice(0, 10);
+
+      return (
+        !planningDate ||
+        planningDate >= today
+      );
+    });
+
+  const filteredPlanningOrders =
+    filteredOrders.filter(order => {
+      const transportType =
+        normalize(
+          order.transport_type
+        );
+
+      if (
+        transportType !== "charter" &&
+        transportType !== "warehouse_pickup"
+      ) {
+        return true;
+      }
+
+      const planningDate =
+        String(
+          order.planned_route_date ||
+          order.expected_delivery_date ||
+          ""
+        ).slice(0, 10);
+
+      return (
+        !planningDate ||
+        planningDate >= today
+      );
+    });
+
+  window.VeynorPlannerData = {
+    companyId,
+
+    allOrders:
+      planningOrders,
+
+    filteredOrders:
+      filteredPlanningOrders,
+
+    /*
+     * Volledige data blijft beschikbaar voor
+     * plannerfunctionaliteit en historie.
+     */
+    allRoutes,
+    allStops,
+
+    /*
+     * De kaart gebruikt uitsluitend deze
+     * toekomstgerichte subsets.
+     */
+    futureRoutes,
+    futureStops,
+
+    activeVehicles,
+    driverUsers,
+
+    selectedOrderIds: [
+      ...selectedOrderIds
+    ],
+
+    selectedVehicleId,
+    selectedDriverId,
+    selectedPlanningDate
+  };
+
+  window.dispatchEvent(
+    new CustomEvent(
+      "veynor:planner-data-changed",
+      {
+        detail:
+          window.VeynorPlannerData
+      }
+    )
   );
-});
-
-const filteredPlanningOrders =
-  filteredOrders.filter(order => {
-    const transportType = normalize(
-      order.transport_type
-    );
-
-    if (
-      transportType !== "charter" &&
-      transportType !== "warehouse_pickup"
-    ) {
-      return true;
-    }
-
-    const planningDate =
-      order.planned_route_date ||
-      order.expected_delivery_date ||
-      "";
-
-    return (
-      !planningDate ||
-      planningDate === selectedPlanningDate
-    );
-  });
-window.VeynorPlannerData = {
-  companyId,
-  allOrders: planningOrders,
-  filteredOrders: filteredPlanningOrders,
-      allRoutes,
-      allStops,
-      activeVehicles,
-      driverUsers,
-      selectedOrderIds: [...selectedOrderIds],
-      selectedVehicleId,
-      selectedDriverId,
-      selectedPlanningDate
-    };
-
-    window.dispatchEvent(new CustomEvent("veynor:planner-data-changed", {
-      detail: window.VeynorPlannerData
-    }));
-  }
+}
 
   function notifySelectionChanged() {
     window.VeynorPlannerSelection = {
@@ -1865,6 +2397,20 @@ async function openPlanningConfirmModal() {
     const date = byId("modalRouteDate")?.value || todayIso();
     const time = byId("modalRouteStartTime")?.value || "08:00";
 
+try {
+  assertOrdersCanBePlannedOnDate(
+    selectedOrders,
+    date
+  );
+} catch (error) {
+  showToast(
+    error.message,
+    "err"
+  );
+
+  return;
+}
+
     const dateInput = byId("manualRouteDeliveryDate");
     const timeInput = byId("manualRouteStartTime");
 
@@ -1896,6 +2442,21 @@ async function openPlanningConfirmModal() {
         showToast("Planning engine is not loaded.", "err");
         return;
       }
+
+const selectedOrders =
+  selectedIds
+    .map(id =>
+      getOrderById(id)
+    )
+    .filter(Boolean);
+
+const planningDate =
+  getManualRouteDeliveryDate();
+
+assertOrdersCanBePlannedOnDate(
+  selectedOrders,
+  planningDate
+);
 
       showToast("Planning selected orders...", "ok");
 
@@ -1991,13 +2552,32 @@ async function assignSelectedToWarehousePickup(
       return;
     }
 
-    const cid = await getCompanyId();
-    const now = new Date().toISOString();
+const cid =
+  await getCompanyId();
 
-    /*
-     * A date is optional. No date means pickup date pending.
-     */
-    const date = pickupDate || null;
+const now =
+  new Date().toISOString();
+
+/*
+ * A date is optional.
+ * No date means pickup date pending.
+ */
+const date =
+  pickupDate || null;
+
+const selectedOrders =
+  selectedIds
+    .map(id =>
+      getOrderById(id)
+    )
+    .filter(Boolean);
+
+if (date) {
+  assertOrdersCanBePlannedOnDate(
+    selectedOrders,
+    date
+  );
+}
 
     const updatePayload = {
       transport_type: "warehouse_pickup",
@@ -2164,58 +2744,192 @@ function isSelectedVehicleCarrier() {
   ) === "carrier";
 }
 
-async function assignSelectedToCarrierNoRoute(carrierDate = null) {
+async function assignSelectedToCarrierNoRoute(
+  carrierDate = null
+) {
   try {
-    const selectedIds = [...selectedOrderIds];
+    const selectedIds = [
+      ...selectedOrderIds
+    ];
 
     if (!selectedIds.length) {
-      showToast("Select at least one order first.", "err");
+      showToast(
+        "Select at least one order first.",
+        "err"
+      );
       return;
     }
 
     if (!selectedVehicleId) {
-      showToast("Select FDS / carrier first.", "err");
+      showToast(
+        "Select FDS / carrier first.",
+        "err"
+      );
       return;
     }
 
-    const vehicle = activeVehicles.find(v =>
-      String(v.id) === String(selectedVehicleId)
+    const vehicle =
+      activeVehicles.find(row =>
+        String(row.id) ===
+        String(selectedVehicleId)
+      );
+
+    if (
+      !vehicle ||
+      normalize(
+        vehicle.vehicle_type ||
+        vehicle.type
+      ) !== "carrier"
+    ) {
+      showToast(
+        "Selected resource is not a carrier.",
+        "err"
+      );
+      return;
+    }
+
+    const selectedOrders =
+      selectedIds
+        .map(id =>
+          getOrderById(id)
+        )
+        .filter(Boolean);
+
+    if (
+      selectedOrders.length !==
+      selectedIds.length
+    ) {
+      throw new Error(
+        "One or more selected orders could not be found."
+      );
+    }
+
+    const date =
+      carrierDate ||
+      getManualRouteDeliveryDate();
+
+    if (!date) {
+      throw new Error(
+        "Select a carrier collection date."
+      );
+    }
+
+    /*
+     * Expected Stock-orders may not be assigned
+     * before their earliest planning date.
+     */
+    assertOrdersCanBePlannedOnDate(
+      selectedOrders,
+      date
     );
 
-    if (!vehicle || normalize(vehicle.vehicle_type || vehicle.type) !== "carrier") {
-      showToast("Selected resource is not a carrier.", "err");
-      return;
+    const cid =
+      await getCompanyId();
+
+    const now =
+      new Date().toISOString();
+
+    const updatePayload = {
+      transport_type:
+        "charter",
+
+      status:
+        "export_for_charter",
+
+      transport_status:
+        "export_for_charter",
+
+      overall_status:
+        "export_for_charter",
+
+      route_id:
+        null,
+
+      carrier_vehicle_id:
+        selectedVehicleId,
+
+      planned_route_date:
+        date,
+
+      fds_collection_date:
+        date,
+
+      /*
+       * The actual delivery date is still unknown.
+       * The selected date is the carrier collection date.
+       */
+      expected_delivery_date:
+        null,
+
+      confirmed_delivery_date:
+        null,
+
+      driver_user_id:
+        null,
+
+      driver_profile_id:
+        null,
+
+      driver_name:
+        null,
+
+      driver_email:
+        null,
+
+      delivery_eta_from:
+        null,
+
+      delivery_eta_to:
+        null,
+
+      delivery_eta_status:
+        "carrier",
+
+      last_activity_at:
+        now
+    };
+
+    const {
+      data,
+      error
+    } =
+      await client
+        .from("orders")
+        .update(
+          updatePayload
+        )
+        .eq(
+          "company_id",
+          cid
+        )
+        .in(
+          "id",
+          selectedIds
+        )
+        .select(`
+          id,
+          order_number,
+          status,
+          transport_type,
+          carrier_vehicle_id,
+          planned_route_date,
+          fds_collection_date,
+          planning_stock_basis,
+          earliest_planning_date
+        `);
+
+    if (error) {
+      throw error;
     }
 
-    const cid = await getCompanyId();
-    const date = carrierDate || getManualRouteDeliveryDate();
-
-    const { error } = await client
-      .from("orders")
-      .update({
-        transport_type: "charter",
-        status: "export_for_charter",
-        route_id: null,
-        carrier_vehicle_id: selectedVehicleId,
-        transport_status: "export_for_charter",
-planned_route_date: date || null,
-fds_collection_date: date || null,
-
-expected_delivery_date: null,
-confirmed_delivery_date: null,
-        driver_user_id: null,
-        driver_profile_id: null,
-        driver_name: null,
-        driver_email: null,
-        delivery_eta_from: null,
-        delivery_eta_to: null,
-        delivery_eta_status: "carrier",
-        last_activity_at: new Date().toISOString()
-      })
-      .eq("company_id", cid)
-      .in("id", selectedIds);
-
-    if (error) throw error;
+    if (
+      !Array.isArray(data) ||
+      data.length !== selectedIds.length
+    ) {
+      throw new Error(
+        "Not all selected orders were assigned to the carrier."
+      );
+    }
 
     selectedOrderIds.clear();
     selectedOrderId = null;
@@ -2223,14 +2937,25 @@ confirmed_delivery_date: null,
     await refreshAll();
 
     showToast(
-      `Selected orders assigned to ${vehicle.name || vehicle.vehicle_name || "carrier"} without route.`,
+      `${data.length} order(s) assigned to ` +
+      `${vehicle.name || vehicle.vehicle_name || "carrier"} ` +
+      `for ${formatDate(date)}.`,
       "ok"
     );
   } catch (error) {
-    console.error(error);
-    showToast(error.message || "Could not assign orders to carrier.", "err");
+    console.error(
+      "[orders.js] Carrier assignment failed:",
+      error
+    );
+
+    showToast(
+      error.message ||
+      "Could not assign orders to carrier.",
+      "err"
+    );
   }
 }
+
 function getRouteDateValue(route) {
   return route?.planned_delivery_date || route?.route_date || "";
 }
@@ -2516,6 +3241,21 @@ async function addSelectedOrdersToExistingRoute(routeId) {
       return;
     }
 
+const routeDate =
+  getRouteDateValue(route);
+
+const selectedOrders =
+  selectedIds
+    .map(id =>
+      getOrderById(id)
+    )
+    .filter(Boolean);
+
+assertOrdersCanBePlannedOnDate(
+  selectedOrders,
+  routeDate
+);
+
     const existingStops = allStops.filter(stop =>
       String(stop.route_id) === String(routeId)
     );
@@ -2573,8 +3313,6 @@ if (!cleanOrdersToAdd.length) {
 
   if (stopError) throw stopError;
 }
-
-    const routeDate = getRouteDateValue(route);
 
     const { error: orderError } = await client
       .from("orders")

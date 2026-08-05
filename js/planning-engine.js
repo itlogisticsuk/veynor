@@ -52,6 +52,48 @@ warehouse_repack_per_colli_gbp: 0,
     return new Date().toISOString().slice(0, 10);
   }
 
+function getEarliestPlanningDate(order) {
+  return String(
+    order?.earliest_planning_date ||
+    ""
+  ).slice(0, 10);
+}
+
+function validatePlanningDate(
+  orders,
+  routeDate
+) {
+  const selectedDate =
+    String(
+      routeDate || ""
+    ).slice(0, 10);
+
+  const blocked =
+    (
+      orders || []
+    ).filter(order => {
+      const earliestDate =
+        getEarliestPlanningDate(order);
+
+      return (
+        earliestDate &&
+        selectedDate < earliestDate
+      );
+    });
+
+  if (!blocked.length) {
+    return;
+  }
+
+  const first =
+    blocked[0];
+
+  throw new Error(
+    `${first.order_number} can only be planned from ` +
+    `${getEarliestPlanningDate(first)}.`
+  );
+}
+
   function timeToMinutes(value) {
     const m = String(value || "08:00").match(/^(\d{1,2}):(\d{2})/);
     if (!m) return 480;
@@ -918,9 +960,25 @@ estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
     const depot = depotPoint(settings);
     const drivers = await loadDrivers(client, companyId);
     const vehicles = await loadVehicles(client, companyId, settings);
-    const orders = await loadOrders(client, companyId, args);
+const orders =
+  await loadOrders(
+    client,
+    companyId,
+    args
+  );
 
-    if (!orders.length) {
+const routeDate =
+  args.planned_delivery_date ||
+  args.route_delivery_date ||
+  args.delivery_date ||
+  todayIso();
+
+validatePlanningDate(
+  orders,
+  routeDate
+);
+
+if (!orders.length) {
       return {
         ok: false,
         message: "No plan-ready orders found. Check status, planning release, route_id and coordinates.",
@@ -932,7 +990,6 @@ estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
       throw new Error("No active vehicles available. Check Settings > Vehicles.");
     }
 
-    const routeDate = args.planned_delivery_date || args.route_delivery_date || args.delivery_date || todayIso();
     const manualOnly = Array.isArray(args.order_ids) && args.order_ids.length > 0;
 
     const clusters = await buildClusters(orders, settings, routeDate, depot, manualOnly);

@@ -33,6 +33,10 @@
     return String(value ?? "").trim().toLowerCase();
   }
 
+function isMiscellaneousLine(line) {
+  return normalize(line?.sku_base) === "miscellaneous";
+}
+
   function toNumber(value, fallback = 0) {
     const num = Number(String(value ?? "").replace(",", "."));
     return Number.isFinite(num) ? num : fallback;
@@ -145,6 +149,7 @@ return stockUnits * packageCountFromProduct(product);
     lines.forEach(line => {
       const product = line.products || {};
       const qty = Math.max(0, toNumber(line.quantity_ordered, 0));
+  const miscellaneous = isMiscellaneousLine(line);
       const packageCount = packageCountFromProduct(product);
 
       const activeAllocations = (line.order_allocations || []).filter(isActiveAllocation);
@@ -161,15 +166,31 @@ return stockUnits * packageCountFromProduct(product);
         if (physicalId) physicalIds.add(String(physicalId));
       });
 
-      const matchedProductsRaw = physicalIds.size || activeAllocations.length;
-      const requiredPackages = requiredPackageCountForLine(line, product);
+const matchedStockUnits =
+  physicalIds.size ||
+  activeAllocations.length;
 
-      const matchedPackagesRaw = activeAllocations.reduce((sum, allocation) => {
-        return sum + Math.max(
-          1,
-          Math.round(toNumber(allocation?.items?.package_total, packageCount))
-        );
-      }, 0);
+const matchedProductsRaw =
+  miscellaneous
+    ? qty
+    : Math.min(
+        qty,
+        matchedStockUnits *
+          salesUnitsPerPackage(product)
+      );
+
+const requiredPackages = miscellaneous
+  ? qty
+  : requiredPackageCountForLine(line, product);
+
+const matchedPackagesRaw = miscellaneous
+  ? requiredPackages
+  : activeAllocations.reduce((sum, allocation) => {
+      return sum + Math.max(
+        1,
+        Math.round(toNumber(allocation?.items?.package_total, packageCount))
+      );
+    }, 0);
 
       const lineSummary = {
         order_line_id: line.id,
@@ -223,124 +244,218 @@ requested_package_label: line.requested_package_label || null
     return data.id;
   }
 
-  async function fetchOrders(client, companyId, options = {}) {
-    let query = client
-      .from("orders")
-      .select(`
-        id,
-        company_id,
-        customer_id,
+async function fetchOrders(
+  client,
+  companyId,
+  options = {}
+) {
+  let query = client
+    .from("orders")
+    .select(`
+      id,
+      company_id,
+      customer_id,
       order_number,
-external_reference,
-created_at,
-status,
-        planning_release,
-        planning_colli,
-        planning_volume_m3,
-        delivery_city,
-        delivery_postcode,
-        delivery_lat,
-        delivery_lng,
-        customers (
+      external_reference,
+      created_at,
+      status,
+      planning_release,
+      planning_colli,
+      planning_volume_m3,
+      delivery_city,
+      delivery_postcode,
+      delivery_lat,
+      delivery_lng,
+
+      expected_match_status,
+      expected_complete_date,
+      expected_allocated_quantity,
+      expected_allocated_packages,
+      expected_allocated_volume_m3,
+      expected_allocated_weight_kg,
+      is_expected_complete,
+
+      customers (
+        id,
+        name
+      ),
+
+      order_lines (
+        id,
+        order_id,
+        product_id,
+        sku_base,
+        description,
+        line_type,
+
+        quantity_ordered,
+        requested_package_no,
+        requested_package_total,
+        requested_package_label,
+
+        total_volume_m3,
+        total_line_volume_m3,
+        total_line_weight_kg,
+
+        expected_quantity_allocated,
+        expected_packages_allocated,
+        expected_volume_m3,
+        expected_weight_kg,
+        expected_complete_date,
+
+        order_line_stock_priorities (
           id,
-          name
+          priority_level,
+          priority_status,
+          reason,
+          created_at,
+          fulfilled_at
         ),
-order_lines (
-  id,
-  order_id,
-  product_id,
-  sku_base,
-  description,
-  line_type,
 
-  order_line_stock_priorities (
-    id,
-    priority_level,
-    priority_status,
-    reason,
-    created_at,
-    fulfilled_at
-  ),
+        products (
+          id,
+          sku_base,
+          name,
+          description,
+          volume_m3,
+          weight_kg,
+          net_weight_kg,
+          package_count,
+          package_1_qty,
+          package_2_qty,
+          package_3_qty,
+          packages_per_unit,
+          sales_units_per_package
+        ),
 
-  quantity_ordered,
-requested_package_no,
-requested_package_total,
-requested_package_label,
-total_volume_m3,
-products (
+        order_allocations (
+          id,
+          company_id,
+          order_line_id,
+          item_id,
+          stock_set_id,
+          allocation_status,
+          allocated_at,
+
+          items (
             id,
-            sku_base,
-            name,
-            description,
+            product_id,
+            sku_unique,
+            storage_mutation_id,
+            status,
             volume_m3,
             weight_kg,
-            net_weight_kg,
-            package_count,
-            package_1_qty,
-            package_2_qty,
-            package_3_qty,
-            packages_per_unit
-          ),
-          order_allocations (
-            id,
-            company_id,
-            order_line_id,
-            item_id,
+            package_no,
+            package_total,
+            package_label,
+            physical_product_id,
             stock_set_id,
-            allocation_status,
-            allocated_at,
-            items (
+            warehouse_id,
+            location_id,
+
+            warehouses (
               id,
-              product_id,
-              sku_unique,
-              storage_mutation_id,
-              status,
-              volume_m3,
-              weight_kg,
-              package_no,
-              package_total,
-              package_label,
-              physical_product_id,
-              stock_set_id,
-              warehouse_id,
-              location_id,
-              warehouses (
-                id,
-                name
-              ),
-              warehouse_locations (
-                id,
-                code
-              )
+              name
+            ),
+
+            warehouse_locations (
+              id,
+              code
             )
           )
+        ),
+
+        inbound_expected_allocations (
+          id,
+          company_id,
+          order_id,
+          order_line_id,
+          container_id,
+          container_line_id,
+          expected_quantity,
+          status,
+          created_at,
+
+          inbound_containers (
+            id,
+            container_number,
+            eta_warehouse_date,
+            status
+          )
         )
-      `)
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: true });
+      )
+    `)
+    .eq(
+      "company_id",
+      companyId
+    )
+    .order(
+      "created_at",
+      {
+        ascending: true
+      }
+    );
 
-if (Array.isArray(options.orderIds) && options.orderIds.length) {
-  query = query.in("id", options.orderIds);
-} else {
-  query = query.in("status", [
-    "imported",
-    "matching_review",
-    "ready_for_planning",
-    "ready_for_picking"
-  ]);
-}
-
-const { data, error } = await query;
-
-if (error) throw error;
-
-return data || [];
-    if (error) throw error;
-
-    return data || [];
+  if (
+    Array.isArray(options.orderIds) &&
+    options.orderIds.length
+  ) {
+    query = query.in(
+      "id",
+      options.orderIds
+    );
+  } else {
+    query = query.in(
+      "status",
+      [
+        "imported",
+        "matching_review",
+        "ready_for_planning",
+        "ready_for_picking"
+      ]
+    );
   }
 
-  async function fetchAvailableItemSets(client, companyId) {
+  const { data, error } =
+    await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+  async function fetchAvailableItemSets(
+  client,
+  companyId,
+  productIds = []
+) {
+  const wantedProductIds = unique(
+    (productIds || [])
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+  );
+
+  if (!wantedProductIds.length) {
+    return [];
+  }
+
+  /*
+   * Alleen voorraad ophalen voor producten die daadwerkelijk
+   * in de geselecteerde orders voorkomen.
+   *
+   * Dit voorkomt dat recente voorraad buiten de Supabase
+   * row limit valt doordat eerst alle voorraadproducten
+   * van de volledige warehouse worden geladen.
+   */
+  const pageSize = 1000;
+  let from = 0;
+  let allItems = [];
+
+  while (true) {
+    const to = from + pageSize - 1;
+
     const { data, error } = await client
       .from("items")
       .select(`
@@ -361,99 +476,350 @@ return data || [];
         stock_set_id,
         inbound_reference,
         created_at,
-        products (
-          id,
-          sku_base,
-          name,
-          description,
-          volume_m3,
-          weight_kg,
-          net_weight_kg,
-          package_count,
-          package_1_qty,
-          package_2_qty,
-          package_3_qty,
-          packages_per_unit
-        )
+products (
+  id,
+  sku_base,
+  name,
+  description,
+  volume_m3,
+  weight_kg,
+  net_weight_kg,
+  package_count,
+  package_1_qty,
+  package_2_qty,
+  package_3_qty,
+  packages_per_unit,
+  sales_units_per_package
+)
       `)
       .eq("company_id", companyId)
       .eq("status", "in_stock")
       .not("physical_product_id", "is", null)
-      .order("created_at", { ascending: true });
+      .in("product_id", wantedProductIds)
+      .order("created_at", {
+        ascending: true
+      })
+      .range(from, to);
 
-    if (error) throw error;
-
-    const groups = new Map();
-
-    (data || []).forEach(item => {
-      if (!item.product_id) return;
-      if (!item.physical_product_id) return;
-      if (normalize(item.status) !== "in_stock") return;
-      if (isOutboundStatus(item.status)) return;
-
-      const key = String(item.physical_product_id);
-
-      if (!groups.has(key)) {
-        groups.set(key, []);
-      }
-
-      groups.get(key).push(item);
-    });
-
-    const sets = [];
-
-    for (const [physicalProductId, items] of groups.entries()) {
-      if (!items.length) continue;
-
-      const packageTotal = Math.max(
-        1,
-        ...items.map(item => toNumber(item.package_total, 1))
-      );
-
-      const present = new Set(
-        items.map(item => toNumber(item.package_no, 1))
-      );
-
-      const complete = Array.from({ length: packageTotal }, (_, i) => i + 1)
-        .every(no => present.has(no));
-
-      if (!complete) continue;
-
-      const sortedItems = [...items].sort((a, b) => {
-        const pa = toNumber(a.package_no, 1);
-        const pb = toNumber(b.package_no, 1);
-        return pa - pb;
-      });
-
-      const firstItem = sortedItems[0];
-      const product = firstItem.products || {};
-
-      sets.push({
-        id: `physical:${physicalProductId}`,
-        company_id: companyId,
-        product_id: firstItem.product_id,
-        physical_product_id: physicalProductId,
-        stock_set_id: firstItem.stock_set_id || null,
-        set_code: physicalProductId,
-        status: "complete",
-        package_total: packageTotal,
-        package_count: sortedItems.length,
-        volume_m3: productVolume(product),
-        weight_kg: productWeight(product),
-        warehouse_id: firstItem.warehouse_id || null,
-        location_id: firstItem.location_id || null,
-        created_at: firstItem.created_at || null,
-        products: product,
-        items: sortedItems
-      });
+    if (error) {
+      throw error;
     }
 
-    return sets.sort((a, b) => {
-      const da = new Date(a.created_at || 0).getTime();
-      const db = new Date(b.created_at || 0).getTime();
-      return da - db;
+    const rows = data || [];
+
+    allItems.push(...rows);
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  const groups = new Map();
+
+  allItems.forEach(item => {
+    if (!item.product_id) return;
+    if (!item.physical_product_id) return;
+    if (normalize(item.status) !== "in_stock") return;
+    if (isOutboundStatus(item.status)) return;
+
+    const key = String(
+      item.physical_product_id
+    );
+
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+
+    groups.get(key).push(item);
+  });
+
+  const sets = [];
+
+  for (
+    const [physicalProductId, items]
+    of groups.entries()
+  ) {
+    if (!items.length) continue;
+
+    const packageTotal = Math.max(
+      1,
+      ...items.map(item =>
+        toNumber(item.package_total, 1)
+      )
+    );
+
+    const present = new Set(
+      items.map(item =>
+        toNumber(item.package_no, 1)
+      )
+    );
+
+    const complete = Array.from(
+      {
+        length: packageTotal
+      },
+      (_, index) => index + 1
+    ).every(packageNo =>
+      present.has(packageNo)
+    );
+
+    if (!complete) {
+      continue;
+    }
+
+    const sortedItems = [...items].sort(
+      (a, b) => {
+        const packageA = toNumber(
+          a.package_no,
+          1
+        );
+
+        const packageB = toNumber(
+          b.package_no,
+          1
+        );
+
+        return packageA - packageB;
+      }
+    );
+
+    const firstItem = sortedItems[0];
+    const product =
+      firstItem.products || {};
+
+    sets.push({
+      id: `physical:${physicalProductId}`,
+
+      company_id: companyId,
+      product_id: firstItem.product_id,
+
+      physical_product_id:
+        physicalProductId,
+
+      stock_set_id:
+        firstItem.stock_set_id || null,
+
+      set_code:
+        physicalProductId,
+
+      status: "complete",
+
+      package_total:
+        packageTotal,
+
+      package_count:
+        sortedItems.length,
+
+      volume_m3:
+        productVolume(product),
+
+      weight_kg:
+        productWeight(product),
+
+      warehouse_id:
+        firstItem.warehouse_id || null,
+
+      location_id:
+        firstItem.location_id || null,
+
+      created_at:
+        firstItem.created_at || null,
+
+      products:
+        product,
+
+      items:
+        sortedItems
     });
   }
+
+  return sets.sort((a, b) => {
+    const dateA = new Date(
+      a.created_at || 0
+    ).getTime();
+
+    const dateB = new Date(
+      b.created_at || 0
+    ).getTime();
+
+    return dateA - dateB;
+  });
+}
+
+async function fetchExpectedStock(
+  client,
+  companyId,
+  productIds = []
+) {
+  const wantedProductIds = unique(
+    (productIds || [])
+      .map(value =>
+        String(value || "").trim()
+      )
+      .filter(Boolean)
+  );
+
+  if (!wantedProductIds.length) {
+    return [];
+  }
+
+  const pageSize = 1000;
+  let from = 0;
+  const allRows = [];
+
+  while (true) {
+    const to =
+      from + pageSize - 1;
+
+    const { data, error } =
+      await client
+        .from("expected_stock_overview")
+        .select(`
+          company_id,
+          product_owner_id,
+          container_id,
+          container_number,
+          container_status,
+          eta_warehouse_date,
+          warehouse_id,
+          location_id,
+          container_line_id,
+          product_id,
+          sku_snapshot,
+          product_name_snapshot,
+          description_snapshot,
+          expected_quantity,
+          expected_packages,
+          packages_per_unit,
+          expected_volume_m3,
+          expected_weight_kg,
+          expected_allocated_quantity,
+          expected_available_quantity,
+          expected_order_count,
+          receipt_status,
+          is_expected_stock
+        `)
+        .eq(
+          "company_id",
+          companyId
+        )
+        .eq(
+          "is_expected_stock",
+          true
+        )
+        .gt(
+          "expected_available_quantity",
+          0
+        )
+        .in(
+          "product_id",
+          wantedProductIds
+        )
+        .order(
+          "eta_warehouse_date",
+          {
+            ascending: true,
+            nullsFirst: false
+          }
+        )
+        .order(
+          "container_number",
+          {
+            ascending: true
+          }
+        )
+        .range(from, to);
+
+    if (error) {
+      throw error;
+    }
+
+    const rows = data || [];
+
+    allRows.push(...rows);
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    from += pageSize;
+  }
+
+  return allRows;
+}
+
+function buildExpectedStockMap(rows) {
+  const map = new Map();
+
+  (rows || []).forEach(row => {
+    if (!row.product_id) {
+      return;
+    }
+
+    const available =
+      Math.max(
+        0,
+        Math.round(
+          toNumber(
+            row.expected_available_quantity,
+            0
+          )
+        )
+      );
+
+    if (!available) {
+      return;
+    }
+
+    const productKey =
+      String(row.product_id);
+
+    if (!map.has(productKey)) {
+      map.set(productKey, []);
+    }
+
+    map.get(productKey).push({
+      ...row,
+      remaining_quantity:
+        available
+    });
+  });
+
+  map.forEach(pool => {
+    pool.sort((a, b) => {
+      const dateA = new Date(
+        a.eta_warehouse_date || "9999-12-31"
+      ).getTime();
+
+      const dateB = new Date(
+        b.eta_warehouse_date || "9999-12-31"
+      ).getTime();
+
+      if (dateA !== dateB) {
+        return dateA - dateB;
+      }
+
+      return String(
+        a.container_number || ""
+      ).localeCompare(
+        String(
+          b.container_number || ""
+        ),
+        "en",
+        {
+          numeric: true,
+          sensitivity: "base"
+        }
+      );
+    });
+  });
+
+  return map;
+}
+
+
 
 function filterOrdersForProduct(
   orders,
@@ -536,6 +902,92 @@ function filterOrdersForProduct(
   function getLineAllocations(line) {
     return (line.order_allocations || []).filter(isActiveAllocation);
   }
+
+function isActiveExpectedAllocation(row) {
+  return (
+    row &&
+    normalize(row.status) === "expected"
+  );
+}
+
+function getLineExpectedAllocations(line) {
+  return (
+    line.inbound_expected_allocations || []
+  ).filter(isActiveExpectedAllocation);
+}
+
+function getExpectedAllocationQuantity(line) {
+  return getLineExpectedAllocations(line)
+    .reduce(
+      (total, allocation) =>
+        total +
+        Math.max(
+          0,
+          toNumber(
+            allocation.expected_quantity,
+            0
+          )
+        ),
+      0
+    );
+}
+
+function getExpectedAllocationDate(line) {
+  const dates = getLineExpectedAllocations(line)
+    .map(allocation =>
+      allocation.inbound_containers
+        ?.eta_warehouse_date ||
+      allocation.eta_warehouse_date ||
+      null
+    )
+    .filter(Boolean)
+    .map(value => new Date(value))
+    .filter(date =>
+      !Number.isNaN(date.getTime())
+    );
+
+  if (!dates.length) {
+    return null;
+  }
+
+  return new Date(
+    Math.max(
+      ...dates.map(date =>
+        date.getTime()
+      )
+    )
+  )
+    .toISOString()
+    .slice(0, 10);
+}
+
+function expectedStockUnitVolume(row) {
+  const quantity = Math.max(
+    1,
+    toNumber(row.expected_quantity, 1)
+  );
+
+  return (
+    toNumber(
+      row.expected_volume_m3,
+      0
+    ) / quantity
+  );
+}
+
+function expectedStockUnitWeight(row) {
+  const quantity = Math.max(
+    1,
+    toNumber(row.expected_quantity, 1)
+  );
+
+  return (
+    toNumber(
+      row.expected_weight_kg,
+      0
+    ) / quantity
+  );
+}
 
 function getLinePriorityRecord(line) {
   const value = line?.order_line_stock_priorities;
@@ -651,160 +1103,695 @@ function getOrderCreatedAt(order) {
     );
   }
 
-  function calculateOrderSummary(order, pendingAllocations = []) {
-    const lines = Array.isArray(order.order_lines)
-  ? order.order_lines.filter(line => normalize(line.line_type) !== "manual")
-  : [];
-    const packageStats = calculateOrderPackages(order);
+function calculateOrderSummary(
+  order,
+  pendingAllocations = [],
+  pendingExpectedAllocations = []
+) {
+  const lines = Array.isArray(
+    order.order_lines
+  )
+    ? order.order_lines.filter(line =>
+        normalize(line.line_type) !==
+        "manual"
+      )
+    : [];
 
-    let totalLines = lines.length;
-    let totalRequired = 0;
-    let totalAllocated = 0;
-    let totalAllocatedColli = 0;
-    let totalMissing = 0;
-    let missingProductLines = 0;
-    let requestedVolume = 0;
-    let requestedWeight = 0;
-    let allocatedVolume = 0;
-    let allocatedWeight = 0;
+  const packageStats =
+    calculateOrderPackages(order);
 
-    const lineSummaries = lines.map(line => {
-      const product = line.products || {};
-      const required = requiredStockUnitsForLine(line, product);
+  let totalLines =
+    lines.length;
 
-      const existingAllocations = getLineAllocations(line);
-      const existingSetKeys = allocatedSetKeysFromAllocations(existingAllocations);
+  let totalRequired = 0;
 
-      const pendingForLine = pendingAllocations.filter(a =>
-        String(a.order_line_id) === String(line.id)
+  let totalPhysicalAllocated = 0;
+  let totalExpectedAllocated = 0;
+  let totalCombinedAllocated = 0;
+
+  let totalAllocatedColli = 0;
+  let totalExpectedColli = 0;
+
+  let totalPhysicalMissing = 0;
+  let totalCombinedMissing = 0;
+
+  let missingProductLines = 0;
+
+  let requestedVolume = 0;
+  let requestedWeight = 0;
+
+  let allocatedVolume = 0;
+  let allocatedWeight = 0;
+
+  let expectedVolume = 0;
+  let expectedWeight = 0;
+
+  const expectedDates = [];
+
+  const lineSummaries = lines.map(line => {
+    const product =
+      line.products || {};
+
+    const miscellaneous =
+      isMiscellaneousLine(line);
+
+    const required = miscellaneous
+      ? Math.max(
+          0,
+          toNumber(
+            line.quantity_ordered,
+            0
+          )
+        )
+      : requiredStockUnitsForLine(
+          line,
+          product
+        );
+
+    const existingAllocations =
+      getLineAllocations(line);
+
+    const existingSetKeys =
+      allocatedSetKeysFromAllocations(
+        existingAllocations
       );
 
-      const pendingSetKeys = allocatedSetKeysFromAllocations(pendingForLine);
+    const pendingPhysicalForLine =
+      pendingAllocations.filter(
+        allocation =>
+          String(
+            allocation.order_line_id
+          ) === String(line.id)
+      );
 
-      const allocated = existingSetKeys.size + pendingSetKeys.size;
-      const missing = Math.max(0, required - allocated);
+    const pendingPhysicalKeys =
+      allocatedSetKeysFromAllocations(
+        pendingPhysicalForLine
+      );
 
-      if (!line.product_id) missingProductLines += 1;
+    const physicalAllocated =
+      miscellaneous
+        ? required
+        : existingSetKeys.size +
+          pendingPhysicalKeys.size;
 
-      const lineRequestedVolume = required * productVolume(product);
-      const lineRequestedWeight = required * productWeight(product);
+    const existingExpectedQuantity =
+      getExpectedAllocationQuantity(line);
 
-      const existingUniqueBySet = new Map();
-      existingAllocations.forEach(alloc => {
-        const key = allocationPhysicalKey(alloc);
-        if (key && !existingUniqueBySet.has(String(key))) {
-          existingUniqueBySet.set(String(key), alloc);
-        }
-      });
+    const pendingExpectedForLine =
+      pendingExpectedAllocations.filter(
+        allocation =>
+          String(
+            allocation.order_line_id
+          ) === String(line.id)
+      );
 
-      const pendingUniqueBySet = new Map();
-      pendingForLine.forEach(alloc => {
-        const key = allocationPhysicalKey(alloc);
-        if (key && !pendingUniqueBySet.has(String(key))) {
-          pendingUniqueBySet.set(String(key), alloc);
-        }
-      });
+    const pendingExpectedQuantity =
+      pendingExpectedForLine.reduce(
+        (total, allocation) =>
+          total +
+          toNumber(
+            allocation.expected_quantity,
+            0
+          ),
+        0
+      );
 
-      let lineAllocatedVolume = 0;
-      let lineAllocatedWeight = 0;
-      let lineAllocatedColli = 0;
+    const expectedAllocated =
+      miscellaneous
+        ? 0
+        : Math.min(
+            Math.max(
+              0,
+              required -
+              physicalAllocated
+            ),
+            existingExpectedQuantity +
+            pendingExpectedQuantity
+          );
 
-      existingUniqueBySet.forEach(alloc => {
-        lineAllocatedVolume += allocationSetVolume(alloc, product);
-        lineAllocatedWeight += allocationSetWeight(alloc, product);
-        lineAllocatedColli += allocationPackageCount(alloc);
-      });
+    const combinedAllocated =
+      miscellaneous
+        ? required
+        : Math.min(
+            required,
+            physicalAllocated +
+            expectedAllocated
+          );
 
-      pendingUniqueBySet.forEach(alloc => {
-        lineAllocatedVolume += toNumber(alloc.stock_set_volume_m3, productVolume(product));
-        lineAllocatedWeight += toNumber(alloc.stock_set_weight_kg, productWeight(product));
-        lineAllocatedColli += toNumber(alloc.stock_set_package_count, 1);
-      });
+    const physicalMissing =
+      Math.max(
+        0,
+        required -
+        physicalAllocated
+      );
 
-      totalRequired += required;
-      totalAllocated += allocated;
-      totalAllocatedColli += lineAllocatedColli;
-      totalMissing += missing;
-      requestedVolume += lineRequestedVolume;
-      requestedWeight += lineRequestedWeight;
-      allocatedVolume += lineAllocatedVolume;
-      allocatedWeight += lineAllocatedWeight;
+    const combinedMissing =
+      Math.max(
+        0,
+        required -
+        combinedAllocated
+      );
 
-      return {
-        order_line_id: line.id,
-        product_id: line.product_id || null,
-        sku_base: product.sku_base || line.sku_base || "Missing SKU",
-        product_name: product.name || line.description || "Unknown product",
-        required,
-        allocated,
-        allocated_colli: lineAllocatedColli,
-        missing,
-        requested_volume_m3: lineRequestedVolume,
-        requested_weight_kg: lineRequestedWeight,
-        allocated_volume_m3: lineAllocatedVolume,
-        allocated_weight_kg: lineAllocatedWeight
-      };
+    if (
+      !miscellaneous &&
+      !line.product_id
+    ) {
+      missingProductLines += 1;
+    }
+
+    const lineRequestedVolume =
+      miscellaneous
+        ? toNumber(
+            line.total_line_volume_m3 ??
+            line.total_volume_m3,
+            0
+          )
+        : required *
+          productVolume(product);
+
+    const lineRequestedWeight =
+      miscellaneous
+        ? toNumber(
+            line.total_line_weight_kg,
+            0
+          )
+        : required *
+          productWeight(product);
+
+    const existingUniqueBySet =
+      new Map();
+
+    existingAllocations.forEach(allocation => {
+      const key =
+        allocationPhysicalKey(
+          allocation
+        );
+
+      if (
+        key &&
+        !existingUniqueBySet.has(
+          String(key)
+        )
+      ) {
+        existingUniqueBySet.set(
+          String(key),
+          allocation
+        );
+      }
     });
 
-    const matchPercentage = totalRequired > 0
-      ? Math.min(100, (totalAllocated / totalRequired) * 100)
-      : 0;
+    const pendingUniqueBySet =
+      new Map();
 
-    let matchStatus = "none";
+    pendingPhysicalForLine
+      .forEach(allocation => {
+        const key =
+          allocationPhysicalKey(
+            allocation
+          );
 
-    if (missingProductLines > 0) matchStatus = "missing_product";
-    else if (totalRequired > 0 && totalAllocated >= totalRequired) matchStatus = "full";
-    else if (totalAllocated > 0) matchStatus = "partial";
+        if (
+          key &&
+          !pendingUniqueBySet.has(
+            String(key)
+          )
+        ) {
+          pendingUniqueBySet.set(
+            String(key),
+            allocation
+          );
+        }
+      });
 
-    const blockers = [];
+    let lineAllocatedVolume = 0;
+    let lineAllocatedWeight = 0;
+    let lineAllocatedColli = 0;
 
-    if (!totalLines) blockers.push("No order lines");
-    if (missingProductLines) blockers.push(`${missingProductLines} line(s) missing product`);
-    if (totalRequired <= 0) blockers.push("No required quantity");
-    if (totalAllocated < totalRequired) blockers.push(`${totalRequired - totalAllocated} complete product(s) missing`);
-    if (!hasCoordinates(order)) blockers.push("Missing coordinates");
+    existingUniqueBySet.forEach(
+      allocation => {
+        lineAllocatedVolume +=
+          allocationSetVolume(
+            allocation,
+            product
+          );
 
-    let suggestedStatus = ORDER_STATUSES.NO_MATCH;
+        lineAllocatedWeight +=
+          allocationSetWeight(
+            allocation,
+            product
+          );
 
-    if (!totalLines) suggestedStatus = ORDER_STATUSES.NO_LINES;
-    else if (matchStatus === "full") suggestedStatus = ORDER_STATUSES.FULL;
-    else if (matchStatus === "partial") suggestedStatus = ORDER_STATUSES.PARTIAL;
+        lineAllocatedColli +=
+          allocationPackageCount(
+            allocation
+          );
+      }
+    );
+
+    pendingUniqueBySet.forEach(
+      allocation => {
+        lineAllocatedVolume +=
+          toNumber(
+            allocation.stock_set_volume_m3,
+            productVolume(product)
+          );
+
+        lineAllocatedWeight +=
+          toNumber(
+            allocation.stock_set_weight_kg,
+            productWeight(product)
+          );
+
+        lineAllocatedColli +=
+          toNumber(
+            allocation.stock_set_package_count,
+            1
+          );
+      }
+    );
+
+    if (miscellaneous) {
+      lineAllocatedColli =
+        required;
+
+      lineAllocatedVolume =
+        lineRequestedVolume;
+
+      lineAllocatedWeight =
+        lineRequestedWeight;
+    }
+
+    const lineExpectedVolume =
+      expectedAllocated *
+      productVolume(product);
+
+    const lineExpectedWeight =
+      expectedAllocated *
+      productWeight(product);
+
+    const lineExpectedColli =
+      expectedAllocated *
+      packageCountFromProduct(product);
+
+    const existingExpectedDate =
+      getExpectedAllocationDate(line);
+
+    if (existingExpectedDate) {
+      expectedDates.push(
+        existingExpectedDate
+      );
+    }
+
+    pendingExpectedForLine
+      .map(allocation =>
+        allocation.eta_warehouse_date
+      )
+      .filter(Boolean)
+      .forEach(date =>
+        expectedDates.push(date)
+      );
+
+    totalRequired +=
+      required;
+
+    totalPhysicalAllocated +=
+      physicalAllocated;
+
+    totalExpectedAllocated +=
+      expectedAllocated;
+
+    totalCombinedAllocated +=
+      combinedAllocated;
+
+    totalAllocatedColli +=
+      lineAllocatedColli;
+
+    totalExpectedColli +=
+      lineExpectedColli;
+
+    totalPhysicalMissing +=
+      physicalMissing;
+
+    totalCombinedMissing +=
+      combinedMissing;
+
+    requestedVolume +=
+      lineRequestedVolume;
+
+    requestedWeight +=
+      lineRequestedWeight;
+
+    allocatedVolume +=
+      lineAllocatedVolume;
+
+    allocatedWeight +=
+      lineAllocatedWeight;
+
+    expectedVolume +=
+      lineExpectedVolume;
+
+    expectedWeight +=
+      lineExpectedWeight;
 
     return {
-      order_id: order.id,
-      order_number: order.order_number,
-      customer_name: order.customers?.name || order.customer_name || "—",
+      order_line_id:
+        line.id,
 
-      total_lines: totalLines,
-      total_required: totalRequired,
-      total_allocated: totalAllocated,
-      total_allocated_colli: totalAllocatedColli,
-      total_missing: totalMissing,
+      product_id:
+        line.product_id || null,
 
-      required_products: packageStats.requiredProducts,
-      matched_products: packageStats.matchedProducts,
-      missing_products: packageStats.missingProducts,
-      required_packages: packageStats.requiredPackages,
-      matched_packages: packageStats.matchedPackages,
-      missing_packages: packageStats.missingPackages,
-      product_match_pct: packageStats.productMatchPct,
-      package_match_pct: packageStats.packageMatchPct,
+      sku_base:
+        product.sku_base ||
+        line.sku_base ||
+        "Missing SKU",
 
-      missing_product_lines: missingProductLines,
-      match_percentage: matchPercentage,
-      match_status: matchStatus,
-      suggested_status: suggestedStatus,
-      ready_for_planning: blockers.length === 0,
-      has_coordinates: hasCoordinates(order),
-      requested_volume_m3: requestedVolume,
-      requested_weight_kg: requestedWeight,
-      allocated_volume_m3: allocatedVolume,
-      allocated_weight_kg: allocatedWeight,
-      blockers,
-      lines: lineSummaries,
-      package_lines: packageStats.lines
+      product_name:
+        product.name ||
+        line.description ||
+        "Unknown product",
+
+      required,
+
+      allocated:
+        physicalAllocated,
+
+      expected_allocated:
+        expectedAllocated,
+
+      combined_allocated:
+        combinedAllocated,
+
+      allocated_colli:
+        lineAllocatedColli,
+
+      expected_colli:
+        lineExpectedColli,
+
+      missing:
+        physicalMissing,
+
+      combined_missing:
+        combinedMissing,
+
+      requested_volume_m3:
+        lineRequestedVolume,
+
+      requested_weight_kg:
+        lineRequestedWeight,
+
+      allocated_volume_m3:
+        lineAllocatedVolume,
+
+      allocated_weight_kg:
+        lineAllocatedWeight,
+
+      expected_volume_m3:
+        lineExpectedVolume,
+
+      expected_weight_kg:
+        lineExpectedWeight,
+
+      expected_complete_date:
+        existingExpectedDate ||
+        pendingExpectedForLine
+          .map(row =>
+            row.eta_warehouse_date
+          )
+          .filter(Boolean)
+          .sort()
+          .at(-1) ||
+        null
     };
+  });
+
+  const physicalMatchPercentage =
+    totalRequired > 0
+      ? Math.min(
+          100,
+          (
+            totalPhysicalAllocated /
+            totalRequired
+          ) * 100
+        )
+      : 0;
+
+  const combinedMatchPercentage =
+    totalRequired > 0
+      ? Math.min(
+          100,
+          (
+            totalCombinedAllocated /
+            totalRequired
+          ) * 100
+        )
+      : 0;
+
+  let matchStatus =
+    "none";
+
+  if (missingProductLines > 0) {
+    matchStatus =
+      "missing_product";
+  } else if (
+    totalRequired > 0 &&
+    totalPhysicalAllocated >=
+      totalRequired
+  ) {
+    matchStatus =
+      "full";
+  } else if (
+    totalPhysicalAllocated > 0
+  ) {
+    matchStatus =
+      "partial";
   }
+
+  let expectedMatchStatus =
+    "none";
+
+  if (
+    totalRequired > 0 &&
+    totalCombinedAllocated >=
+      totalRequired &&
+    totalPhysicalAllocated <
+      totalRequired
+  ) {
+    expectedMatchStatus =
+      "full";
+  } else if (
+    totalExpectedAllocated > 0
+  ) {
+    expectedMatchStatus =
+      "partial";
+  }
+
+  const physicalBlockers = [];
+
+  if (!totalLines) {
+    physicalBlockers.push(
+      "No order lines"
+    );
+  }
+
+  if (missingProductLines) {
+    physicalBlockers.push(
+      `${missingProductLines} line(s) missing product`
+    );
+  }
+
+  if (totalRequired <= 0) {
+    physicalBlockers.push(
+      "No required quantity"
+    );
+  }
+
+  if (
+    totalPhysicalAllocated <
+    totalRequired
+  ) {
+    physicalBlockers.push(
+      `${totalRequired - totalPhysicalAllocated} complete product(s) not physically available`
+    );
+  }
+
+  if (!hasCoordinates(order)) {
+    physicalBlockers.push(
+      "Missing coordinates"
+    );
+  }
+
+  const expectedCompleteDate =
+    expectedDates.length
+      ? expectedDates
+          .filter(Boolean)
+          .sort()
+          .at(-1)
+      : null;
+
+  let suggestedStatus =
+    ORDER_STATUSES.NO_MATCH;
+
+  if (!totalLines) {
+    suggestedStatus =
+      ORDER_STATUSES.NO_LINES;
+  } else if (
+    matchStatus === "full"
+  ) {
+    suggestedStatus =
+      ORDER_STATUSES.FULL;
+  } else if (
+    matchStatus === "partial" ||
+    expectedMatchStatus !== "none"
+  ) {
+    suggestedStatus =
+      ORDER_STATUSES.PARTIAL;
+  }
+
+  return {
+    order_id:
+      order.id,
+
+    order_number:
+      order.order_number,
+
+    customer_name:
+      order.customers?.name ||
+      order.customer_name ||
+      "—",
+
+    total_lines:
+      totalLines,
+
+    total_required:
+      totalRequired,
+
+    total_allocated:
+      totalPhysicalAllocated,
+
+    total_expected_allocated:
+      totalExpectedAllocated,
+
+    total_combined_allocated:
+      totalCombinedAllocated,
+
+    total_allocated_colli:
+      totalAllocatedColli,
+
+    total_expected_colli:
+      totalExpectedColli,
+
+    total_missing:
+      totalPhysicalMissing,
+
+    total_combined_missing:
+      totalCombinedMissing,
+
+    required_products:
+      packageStats.requiredProducts,
+
+    matched_products:
+      packageStats.matchedProducts,
+
+    missing_products:
+      packageStats.missingProducts,
+
+    required_packages:
+      packageStats.requiredPackages,
+
+    matched_packages:
+      packageStats.matchedPackages,
+
+    expected_packages:
+      totalExpectedColli,
+
+    combined_packages:
+      totalAllocatedColli +
+      totalExpectedColli,
+
+    missing_packages:
+      packageStats.missingPackages,
+
+    product_match_pct:
+      packageStats.productMatchPct,
+
+    package_match_pct:
+      packageStats.packageMatchPct,
+
+    missing_product_lines:
+      missingProductLines,
+
+    match_percentage:
+      physicalMatchPercentage,
+
+    combined_match_percentage:
+      combinedMatchPercentage,
+
+    match_status:
+      matchStatus,
+
+    expected_match_status:
+      expectedMatchStatus,
+
+    is_expected_complete:
+      expectedMatchStatus ===
+      "full",
+
+    expected_complete_date:
+      expectedCompleteDate,
+
+    suggested_status:
+      suggestedStatus,
+
+    /*
+     * Nog alleen fysieke voorraad mag rechtstreeks
+     * ready_for_planning zijn.
+     *
+     * Dit wordt later uitgebreid met datumcontrole.
+     */
+    ready_for_planning:
+      physicalBlockers.length === 0,
+
+    has_coordinates:
+      hasCoordinates(order),
+
+    requested_volume_m3:
+      requestedVolume,
+
+    requested_weight_kg:
+      requestedWeight,
+
+    allocated_volume_m3:
+      allocatedVolume,
+
+    allocated_weight_kg:
+      allocatedWeight,
+
+    expected_volume_m3:
+      expectedVolume,
+
+    expected_weight_kg:
+      expectedWeight,
+
+    combined_volume_m3:
+      allocatedVolume +
+      expectedVolume,
+
+    combined_weight_kg:
+      allocatedWeight +
+      expectedWeight,
+
+    blockers:
+      physicalBlockers,
+
+    lines:
+      lineSummaries,
+
+    package_lines:
+      packageStats.lines
+  };
+}
+
 
   function buildAvailableSetMap(sets, activeAllocatedSetKeys) {
     const map = new Map();
@@ -942,6 +1929,9 @@ function getOrderCreatedAt(order) {
 
   allocationTasks.forEach(task => {
     const { order, line } = task;
+if (isMiscellaneousLine(line)) {
+  return;
+}
 
     const orderKey = String(order.id);
 
@@ -1202,6 +2192,262 @@ function getOrderCreatedAt(order) {
   };
 }
 
+function buildExpectedAllocations(
+  companyId,
+  touchedOrders,
+  expectedStockMap,
+  timestamp
+) {
+  const expectedAllocationRows = [];
+
+  const allocationTasks = [];
+
+  (touchedOrders || []).forEach(entry => {
+    const order = entry.order;
+
+    (
+      order.order_lines || []
+    )
+      .filter(line =>
+        normalize(line.line_type) !==
+        "manual"
+      )
+      .forEach(line => {
+        allocationTasks.push({
+          order,
+          line,
+          pendingPhysicalAllocations:
+            entry.pendingAllocations || [],
+
+          priorityLevel:
+            getLinePriorityLevel(line),
+
+          priorityCreatedAt:
+            getLinePriorityCreatedAt(line),
+
+          orderCreatedAt:
+            getOrderCreatedAt(order)
+        });
+      });
+  });
+
+  allocationTasks.sort((a, b) => {
+    if (
+      b.priorityLevel !==
+      a.priorityLevel
+    ) {
+      return (
+        b.priorityLevel -
+        a.priorityLevel
+      );
+    }
+
+    if (
+      a.priorityCreatedAt !==
+      b.priorityCreatedAt
+    ) {
+      return (
+        a.priorityCreatedAt -
+        b.priorityCreatedAt
+      );
+    }
+
+    if (
+      a.orderCreatedAt !==
+      b.orderCreatedAt
+    ) {
+      return (
+        a.orderCreatedAt -
+        b.orderCreatedAt
+      );
+    }
+
+    return String(
+      a.order.order_number || ""
+    ).localeCompare(
+      String(
+        b.order.order_number || ""
+      ),
+      "en",
+      {
+        numeric: true,
+        sensitivity: "base"
+      }
+    );
+  });
+
+  allocationTasks.forEach(task => {
+    const {
+      order,
+      line,
+      pendingPhysicalAllocations
+    } = task;
+
+    if (isMiscellaneousLine(line)) {
+      return;
+    }
+
+    if (!line.product_id) {
+      return;
+    }
+
+    const product =
+      line.products || {};
+
+    const required =
+      requiredStockUnitsForLine(
+        line,
+        product
+      );
+
+    const existingPhysicalKeys =
+      allocatedSetKeysFromAllocations(
+        getLineAllocations(line)
+      );
+
+    const pendingPhysicalForLine =
+      pendingPhysicalAllocations.filter(
+        allocation =>
+          String(
+            allocation.order_line_id
+          ) === String(line.id)
+      );
+
+    const pendingPhysicalKeys =
+      allocatedSetKeysFromAllocations(
+        pendingPhysicalForLine
+      );
+
+    const existingExpectedQuantity =
+      getExpectedAllocationQuantity(line);
+
+    const stillMissing = Math.max(
+      0,
+      required -
+      existingPhysicalKeys.size -
+      pendingPhysicalKeys.size -
+      existingExpectedQuantity
+    );
+
+    if (!stillMissing) {
+      return;
+    }
+
+    const pool =
+      expectedStockMap.get(
+        String(line.product_id)
+      ) || [];
+
+    let quantityNeeded =
+      stillMissing;
+
+    for (
+      let index = 0;
+      index < pool.length &&
+      quantityNeeded > 0;
+      index++
+    ) {
+      const expectedRow =
+        pool[index];
+
+      const available =
+        Math.max(
+          0,
+          Math.round(
+            toNumber(
+              expectedRow.remaining_quantity,
+              0
+            )
+          )
+        );
+
+      if (!available) {
+        continue;
+      }
+
+      const quantityToAllocate =
+        Math.min(
+          available,
+          quantityNeeded
+        );
+
+      if (!quantityToAllocate) {
+        continue;
+      }
+
+      expectedAllocationRows.push({
+        company_id:
+          companyId,
+
+        container_id:
+          expectedRow.container_id,
+
+        container_line_id:
+          expectedRow.container_line_id,
+
+        order_id:
+          order.id,
+
+        order_line_id:
+          line.id,
+
+        expected_quantity:
+          quantityToAllocate,
+
+        status:
+          "expected",
+
+        allocated_at:
+          timestamp,
+
+        eta_warehouse_date:
+          expectedRow.eta_warehouse_date,
+
+        container_number:
+          expectedRow.container_number,
+
+        product_id:
+          expectedRow.product_id,
+
+        unit_volume_m3:
+          expectedStockUnitVolume(
+            expectedRow
+          ),
+
+        unit_weight_kg:
+          expectedStockUnitWeight(
+            expectedRow
+          ),
+
+        packages_per_unit:
+          Math.max(
+            1,
+            Math.round(
+              toNumber(
+                expectedRow.packages_per_unit,
+                packageCountFromProduct(product)
+              )
+            )
+          )
+      });
+
+      expectedRow.remaining_quantity =
+        available -
+        quantityToAllocate;
+
+      quantityNeeded -=
+        quantityToAllocate;
+    }
+  });
+
+console.log(
+  "EXPECTED ALLOCATIONS",
+  expectedAllocationRows
+);
+
+  return expectedAllocationRows;
+}
+
   function rowsForInsert(rows) {
     return rows.map(row => ({
       company_id: row.company_id,
@@ -1214,28 +2460,106 @@ function getOrderCreatedAt(order) {
     }));
   }
 
-  function buildOrderUpdates(touchedOrders) {
-    return touchedOrders.map(({ order, pendingAllocations }) => {
-      const summary = calculateOrderSummary(order, pendingAllocations);
+async function insertAllocations(
+  client,
+  rows
+) {
+  if (!rows.length) {
+    return;
+  }
+
+  const { error } = await client
+    .from("order_allocations")
+    .insert(
+      rowsForInsert(rows)
+    );
+
+  if (error) {
+    throw error;
+  }
+}
+
+function buildOrderUpdates(
+  touchedOrders,
+  expectedAllocationRows = []
+) {
+  return touchedOrders.map(
+    ({
+      order,
+      pendingAllocations
+    }) => {
+      const pendingExpected =
+        expectedAllocationRows.filter(
+          allocation =>
+            String(allocation.order_id) ===
+            String(order.id)
+        );
+
+      const summary =
+        calculateOrderSummary(
+          order,
+          pendingAllocations,
+          pendingExpected
+        );
 
       return {
-        order_id: order.id,
-        old_status: order.status,
-        new_status: summary.suggested_status,
+        order_id:
+          order.id,
+
+        old_status:
+          order.status,
+
+        new_status:
+          summary.suggested_status,
+
         summary
       };
-    });
+    }
+  );
+}
+
+async function insertExpectedAllocations(
+  client,
+  rows
+) {
+  if (!rows.length) {
+    return;
   }
 
-  async function insertAllocations(client, rows) {
-    if (!rows.length) return;
+  const insertRows = rows.map(row => ({
+    company_id:
+      row.company_id,
 
-    const { error } = await client
-      .from("order_allocations")
-      .insert(rowsForInsert(rows));
+    container_id:
+      row.container_id,
 
-    if (error) throw error;
+    container_line_id:
+      row.container_line_id,
+
+    order_id:
+      row.order_id,
+
+    order_line_id:
+      row.order_line_id,
+
+    expected_quantity:
+      row.expected_quantity,
+
+    status:
+      "expected",
+
+    created_at:
+      row.allocated_at
+  }));
+
+  const { error } = await client
+    .from("inbound_expected_allocations")
+    .insert(insertRows);
+
+  if (error) {
+    throw error;
   }
+}
 
  async function reserveItems(client, allocationRows, timestamp) {
   const byOrder = new Map();
@@ -1270,60 +2594,181 @@ function getOrderCreatedAt(order) {
   }
 }
 
-  async function updateOrders(client, updates) {
-    for (const row of updates) {
+async function updateOrders(
+  client,
+  updates
+) {
+  for (const row of updates) {
+    const summary =
+      row.summary;
+
+    const payload = {
+      status:
+        row.new_status,
+
+      planning_colli:
+        summary.matched_packages ||
+        summary.total_allocated_colli,
+
+      planning_volume_m3:
+        Number(
+          summary.allocated_volume_m3
+            .toFixed(3)
+        ),
+
+      expected_match_status:
+        summary.expected_match_status,
+
+      expected_complete_date:
+        summary.expected_complete_date,
+
+      expected_allocated_quantity:
+        Math.round(
+          summary.total_expected_allocated
+        ),
+
+      expected_allocated_packages:
+        Math.round(
+          summary.total_expected_colli
+        ),
+
+      expected_allocated_volume_m3:
+        Number(
+          summary.expected_volume_m3
+            .toFixed(3)
+        ),
+
+      expected_allocated_weight_kg:
+        Number(
+          summary.expected_weight_kg
+            .toFixed(3)
+        ),
+
+      is_expected_complete:
+        Boolean(
+          summary.is_expected_complete
+        )
+    };
+
+    const { error } = await client
+      .from("orders")
+      .update(payload)
+      .eq(
+        "id",
+        row.order_id
+      );
+
+    if (error) {
+      throw error;
+    }
+  }
+}
+
+  async function updateOrderLines(
+  client,
+  updates
+) {
+  for (const row of updates) {
+    for (
+      const line
+      of row.summary.lines || []
+    ) {
+      const packageLine =
+        (
+          row.summary.package_lines || []
+        ).find(packageRow =>
+          String(packageRow.order_line_id) ===
+          String(line.order_line_id)
+        );
+
+      const allocatedProducts =
+        packageLine?.matchedProducts ??
+        line.allocated;
+
+      const allocatedPackages =
+        packageLine?.matchedPackages ??
+        line.allocated_colli;
+
       const payload = {
-        status: row.new_status,
-        planning_colli: row.summary.matched_packages || row.summary.total_allocated_colli,
-        planning_volume_m3: Number(row.summary.allocated_volume_m3.toFixed(3))
+        quantity_allocated:
+          allocatedProducts,
+
+        matched_quantity:
+          allocatedProducts,
+
+        matched_volume_m3:
+          Number(
+            line.allocated_volume_m3
+              .toFixed(3)
+          ),
+
+        matched_weight_kg:
+          Number(
+            line.allocated_weight_kg
+              .toFixed(3)
+          ),
+
+        matched_packages:
+          allocatedPackages,
+
+        expected_quantity_allocated:
+          Math.round(
+            line.expected_allocated
+          ),
+
+        expected_packages_allocated:
+          Math.round(
+            line.expected_colli
+          ),
+
+        expected_volume_m3:
+          Number(
+            line.expected_volume_m3
+              .toFixed(3)
+          ),
+
+        expected_weight_kg:
+          Number(
+            line.expected_weight_kg
+              .toFixed(3)
+          ),
+
+        expected_complete_date:
+          line.expected_complete_date
       };
 
       const { error } = await client
-        .from("orders")
+        .from("order_lines")
         .update(payload)
-        .eq("id", row.order_id);
-
-      if (error) throw error;
-    }
-  }
-
-  async function updateOrderLines(client, updates) {
-    for (const row of updates) {
-      for (const line of row.summary.lines || []) {
-        const packageLine = (row.summary.package_lines || []).find(x =>
-          String(x.order_line_id) === String(line.order_line_id)
+        .eq(
+          "id",
+          line.order_line_id
         );
 
-        const allocatedProducts = packageLine?.matchedProducts ?? line.allocated;
-        const allocatedPackages = packageLine?.matchedPackages ?? line.allocated_colli;
+      if (error) {
+        /*
+         * Fallback voor het geval matched_packages
+         * niet in deze databaseversie bestaat.
+         */
+        delete payload.matched_packages;
 
-        const { error } = await client
-          .from("order_lines")
-          .update({
-            quantity_allocated: allocatedProducts,
-            matched_quantity: allocatedProducts,
-            matched_volume_m3: Number(line.allocated_volume_m3.toFixed(3)),
-            matched_weight_kg: Number(line.allocated_weight_kg.toFixed(3)),
-            matched_packages: allocatedPackages
-          })
-          .eq("id", line.order_line_id);
-
-        if (error) {
-          const fallback = await client
+        const fallback =
+          await client
             .from("order_lines")
-            .update({
-              quantity_allocated: allocatedProducts,
-              matched_quantity: allocatedProducts,
-              matched_volume_m3: Number(line.allocated_volume_m3.toFixed(3)),
-              matched_weight_kg: Number(line.allocated_weight_kg.toFixed(3))
-            })
-            .eq("id", line.order_line_id);
+            .update(payload)
+            .eq(
+              "id",
+              line.order_line_id
+            );
 
-          if (fallback.error) throw fallback.error;
+        if (fallback.error) {
+          throw fallback.error;
         }
       }
     }
   }
+}
+
 
   function buildEventRows(companyId, allocationRows, orderUpdates) {
     const events = [];
@@ -1405,75 +2850,226 @@ function getOrderCreatedAt(order) {
     await window.EventLog.logWarehouseEvents(events);
   }
 
-  async function run(options = {}) {
-    const client = sbClient();
-    const companyId = await getCompanyId(client);
-    const timestamp = nowIso();
-    const dryRun = Boolean(options.dryRun);
+async function run(options = {}) {
+  const client =
+    sbClient();
 
-const [
-  fetchedOrders,
-  availableSets,
+  const companyId =
+    await getCompanyId(client);
+
+  const timestamp =
+    nowIso();
+
+  const dryRun =
+    Boolean(options.dryRun);
+
+  const fetchedOrders =
+    await fetchOrders(
+      client,
+      companyId,
+      options
+    );
+
+  const orders =
+    filterOrdersForProduct(
+      fetchedOrders,
+      options.productId,
+      Boolean(
+        options.priorityOnly
+      )
+    );
+
+  const requiredProductIds =
+    unique(
+      orders.flatMap(order =>
+        (
+          order.order_lines || []
+        )
+          .filter(line =>
+            normalize(
+              line.line_type
+            ) !== "manual"
+          )
+          .map(line =>
+            line.product_id
+          )
+          .filter(Boolean)
+      )
+    );
+
+  const [
+    availableSets,
+    expectedStock,
+    existingAllocations
+  ] = await Promise.all([
+    fetchAvailableItemSets(
+      client,
+      companyId,
+      requiredProductIds
+    ),
+
+    fetchExpectedStock(
+      client,
+      companyId,
+      requiredProductIds
+    ),
+
+    fetchExistingAllocations(
+      client,
+      companyId
+    )
+  ]);
+
+  console.log(
+    "EXPECTED STOCK",
+    expectedStock
+  );
+
+  const activeAllocatedSetKeys =
+    new Set();
+
   existingAllocations
-] = await Promise.all([
-  fetchOrders(client, companyId, options),
-  fetchAvailableItemSets(client, companyId),
-  fetchExistingAllocations(client, companyId)
-]);
+    .filter(isActiveAllocation)
+    .forEach(allocation => {
+      const key =
+        allocationPhysicalKey(
+          allocation
+        );
 
-const orders = filterOrdersForProduct(
-  fetchedOrders,
-  options.productId,
-  Boolean(options.priorityOnly)
+      if (key) {
+        activeAllocatedSetKeys.add(
+          String(key)
+        );
+      }
+    });
+
+  const availableSetMap =
+    buildAvailableSetMap(
+      availableSets,
+      activeAllocatedSetKeys
+    );
+
+  const expectedStockMap =
+    buildExpectedStockMap(
+      expectedStock
+    );
+
+console.log(
+  "EXPECTED STOCK MAP",
+  expectedStockMap
 );
 
-    const activeAllocatedSetKeys = new Set();
+  /*
+   * Eerst fysieke voorraad verdelen.
+   */
+  const {
+    allocationRows,
+    reservedItemIds,
+    touchedOrders
+  } = buildAllocations(
+    companyId,
+    orders,
+    availableSetMap,
+    timestamp
+  );
 
-    existingAllocations
-      .filter(isActiveAllocation)
-      .forEach(alloc => {
-        const key = allocationPhysicalKey(alloc);
-        if (key) activeAllocatedSetKeys.add(String(key));
-      });
+  /*
+   * Daarna het resterende tekort uit
+   * Expected Stock aanvullen.
+   */
+  const expectedAllocationRows =
+    buildExpectedAllocations(
+      companyId,
+      touchedOrders,
+      expectedStockMap,
+      timestamp
+    );
 
-    const availableSetMap = buildAvailableSetMap(availableSets, activeAllocatedSetKeys);
+  const orderUpdates =
+    buildOrderUpdates(
+      touchedOrders,
+      expectedAllocationRows
+    );
 
-    const {
+  if (!dryRun) {
+    await insertAllocations(
+      client,
+      allocationRows
+    );
+
+    await reserveItems(
+      client,
       allocationRows,
-      reservedItemIds,
-      touchedOrders
-    } = buildAllocations(companyId, orders, availableSetMap, timestamp);
+      timestamp
+    );
 
-    const orderUpdates = buildOrderUpdates(touchedOrders);
+    await insertExpectedAllocations(
+      client,
+      expectedAllocationRows
+    );
 
-    if (!dryRun) {
-      await insertAllocations(client, allocationRows);
-      await reserveItems(client, allocationRows, timestamp);
+    await updateOrders(
+      client,
+      orderUpdates
+    );
 
-      await updateOrders(client, orderUpdates);
-      await updateOrderLines(client, orderUpdates);
+    await updateOrderLines(
+      client,
+      orderUpdates
+    );
 
-      const events = buildEventRows(
+    const events =
+      buildEventRows(
         companyId,
         allocationRows,
         orderUpdates
       );
 
-      await logEvents(events);
-    }
-
-    return {
-      dryRun,
-      orders_checked: orders.length,
-      available_stock_sets_checked: availableSets.length,
-      allocations_created: allocationRows.length,
-      stock_sets_reserved: 0,
-      physical_sets_reserved: unique(allocationRows.map(r => r.physical_product_id)).length,
-      items_reserved: unique(reservedItemIds).length,
-      order_updates: orderUpdates.length,
-      summaries: orderUpdates.map(row => row.summary)
-    };
+    await logEvents(events);
   }
+
+  return {
+    dryRun,
+
+    orders_checked:
+      orders.length,
+
+    available_stock_sets_checked:
+      availableSets.length,
+
+    expected_stock_lines_checked:
+      expectedStock.length,
+
+    allocations_created:
+      allocationRows.length,
+
+    expected_allocations_created:
+      expectedAllocationRows.length,
+
+    stock_sets_reserved:
+      0,
+
+    physical_sets_reserved:
+      unique(
+        allocationRows.map(row =>
+          row.physical_product_id
+        )
+      ).length,
+
+    items_reserved:
+      unique(
+        reservedItemIds
+      ).length,
+
+    order_updates:
+      orderUpdates.length,
+
+    summaries:
+      orderUpdates.map(row =>
+        row.summary
+      )
+  };
+}
 
   async function previewOrder(orderId) {
     if (!orderId) throw new Error("Order id is required.");

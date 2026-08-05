@@ -41,6 +41,25 @@ function getLineQuantity(line) {
   );
 }
 
+function getPhysicalQuantity(line) {
+  const quantity =
+    getLineQuantity(line);
+
+  const sku = clean(
+    line?.sku_base ||
+    line?.products?.sku_base ||
+    ""
+  ).toUpperCase();
+
+  if (sku === "ALBCH") {
+    return Math.ceil(
+      quantity / 2
+    );
+  }
+
+  return quantity;
+}
+
 function getProductPackageCount(product) {
   const packageCount = toNumber(product?.package_count, 0);
 
@@ -71,7 +90,14 @@ function getProductPackageCount(product) {
 }
 
 function getLinePackages(line) {
-  const quantity = getLineQuantity(line);
+  const orderedQuantity =
+  getLineQuantity(line);
+
+const quantity =
+  normalize(line?.line_type) ===
+  "manual"
+    ? orderedQuantity
+    : getPhysicalQuantity(line);
 
   if (quantity <= 0) {
     return 0;

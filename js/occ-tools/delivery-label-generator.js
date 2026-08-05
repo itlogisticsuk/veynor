@@ -42,6 +42,36 @@
       : fallback;
   }
 
+function getLineSku(line) {
+  return clean(
+    line?.sku_base ||
+    line?.products?.sku_base ||
+    ""
+  ).toUpperCase();
+}
+
+function getPhysicalQuantity(line) {
+  const quantity = Math.max(
+    1,
+    Math.round(
+      toNum(
+        line?.quantity_ordered,
+        1
+      )
+    )
+  );
+
+  if (
+    getLineSku(line) === "ALBCH"
+  ) {
+    return Math.ceil(
+      quantity / 2
+    );
+  }
+
+  return quantity;
+}
+
   function fmt(value, digits = 2) {
     const num = toNum(value, 0);
 
@@ -565,15 +595,8 @@
       order.order_lines || []
     ).reduce(
       (sum, line) => {
-        const quantity = Math.max(
-          1,
-          Math.round(
-            toNum(
-              line.quantity_ordered,
-              1
-            )
-          )
-        );
+const quantity =
+  getPhysicalQuantity(line);
 
         const packageTotal =
           getPackageTotalForLine(
@@ -732,15 +755,7 @@ function getOneOffLabelAck(
     (
       order.order_lines || []
     ).forEach(line => {
-      const quantity = Math.max(
-        1,
-        Math.round(
-          toNum(
-            line.quantity_ordered,
-            1
-          )
-        )
-      );
+const quantity = getPhysicalQuantity(line);
 
       const serviceLine =
         isServiceLine(line);

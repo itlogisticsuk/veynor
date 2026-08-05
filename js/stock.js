@@ -443,7 +443,10 @@ customers (
       )
     `)
     .eq("company_id", cid)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+.range(0, 2999);
+console.log("Items received:", data.length);
+console.log(data);
 
   if (error) throw error;
 

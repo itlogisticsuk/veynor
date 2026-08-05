@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Inbound Containers · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js" defer></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/inbound-containers.js" defer></script>
+
+  <style>
+    .inbound-page{display:grid;gap:14px}
+    .inbound-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+    .inbound-kpi{padding:15px 16px;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;min-height:94px}
+    .inbound-kpi-icon{width:42px;height:42px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-weight:950;font-size:16px;background:#eff6ff;color:#1267ff;border:1px solid #bfdbfe}
+    .inbound-kpi-icon.orange{background:#fff7ed;color:#ea580c;border-color:#fed7aa}
+    .inbound-kpi-icon.green{background:#ecfdf5;color:#059669;border-color:#bbf7d0}
+    .inbound-kpi-icon.purple{background:#f5f3ff;color:#7c3aed;border-color:#ddd6fe}
+    .inbound-kpi-label{font-size:10px;font-weight:900;text-transform:uppercase;color:#667085;letter-spacing:.06em}
+    .inbound-kpi-value{margin-top:3px;font-size:24px;font-weight:950;line-height:1;color:#07152f}
+    .inbound-kpi-sub{margin-top:5px;font-size:11.5px;color:var(--muted);line-height:1.35}
+
+    .inbound-card{padding:16px;display:grid;gap:14px}
+    .section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+    .section-title{margin:0;font-size:16px;font-weight:950;color:#07152f}
+    .section-sub{margin:4px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+
+    .filters-grid{display:grid;grid-template-columns:minmax(240px,1.5fr) repeat(4,minmax(150px,1fr));gap:12px}
+    .field{display:grid;gap:6px}
+    .field label{font-size:10px;font-weight:900;text-transform:uppercase;color:#667085}
+    .input,.select,.textarea{width:100%;min-height:42px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:0 12px;color:#07152f;font:inherit}
+    .textarea{padding:10px 12px;min-height:88px;resize:vertical}
+
+    .view-tabs{display:inline-flex;padding:3px;border:1px solid var(--border);border-radius:13px;background:#f8fafc;gap:3px}
+    .view-tab{border:0;border-radius:10px;background:transparent;padding:9px 16px;font-weight:900;color:#64748b;cursor:pointer}
+    .view-tab.active{background:#1267ff;color:#fff;box-shadow:0 8px 18px rgba(18,103,255,.22)}
+
+    .container-list{display:grid;gap:10px}
+    .container-row{border:1px solid var(--border);border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 7px 22px rgba(15,23,42,.04)}
+    .container-main{display:grid;grid-template-columns:1.25fr 1fr 1fr .8fr .8fr .8fr .9fr .9fr auto;gap:12px;align-items:center;padding:14px 16px;cursor:pointer}
+    .container-main:hover{background:#fbfdff}
+    .container-code{font-weight:950;color:#07152f}
+    .subline{display:block;margin-top:3px;font-size:11px;color:var(--muted)}
+    .metric strong{display:block;font-size:14px;color:#07152f}
+    .metric span{display:block;margin-top:3px;font-size:10px;text-transform:uppercase;font-weight:900;color:#94a3b8}
+    .status-pill{display:inline-flex;align-items:center;justify-content:center;min-height:26px;padding:0 10px;border-radius:999px;font-size:10px;font-weight:950;border:1px solid}
+    .status-expected{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
+    .status-on_water{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe}
+    .status-at_port{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+    .status-arriving,.status-receiving{background:#ecfeff;color:#0f766e;border-color:#a5f3fc}
+    .status-received{background:#ecfdf5;color:#047857;border-color:#bbf7d0}
+    .status-cancelled{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+    .row-chevron{width:34px;height:34px;border:1px solid var(--border);border-radius:11px;background:#fff;cursor:pointer;font-weight:950;color:#1267ff}
+
+    .container-detail{display:none;border-top:1px solid var(--border);background:#f8fafc;padding:16px}
+    .container-row.open .container-detail{display:grid;gap:14px}
+    .detail-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);gap:14px}
+    .detail-panel{border:1px solid var(--border);border-radius:14px;background:#fff;padding:14px}
+    .detail-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+    .detail-head h3{margin:0;font-size:14px;font-weight:950}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+    .inbound-table{width:100%;border-collapse:collapse;min-width:920px}
+    .inbound-table th,.inbound-table td{padding:10px 12px;border-bottom:1px solid #eef2f7;text-align:left;font-size:11px;vertical-align:top}
+    .inbound-table th{background:#fbfdff;color:#64748b;text-transform:uppercase;font-size:9px;letter-spacing:.05em;font-weight:950}
+    .inbound-table tr:last-child td{border-bottom:0}
+    .empty-state{padding:28px;text-align:center;color:var(--muted);font-weight:800}
+
+    .summary-list{display:grid;gap:10px}
+    .summary-line{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #eef2f7;padding-bottom:10px;font-size:12px}
+    .summary-line:last-child{border-bottom:0;padding-bottom:0}
+    .summary-line span{color:var(--muted)}
+    .summary-line strong{color:#07152f}
+
+    .modal-backdrop{position:fixed;inset:0;background:rgba(7,21,47,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:200}
+    .modal-backdrop.open{display:flex}
+    .modal-card{width:min(980px,100%);max-height:92vh;overflow:auto;background:#fff;border-radius:22px;border:1px solid var(--border);box-shadow:0 28px 80px rgba(15,23,42,.28)}
+    .modal-head,.modal-foot{padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .modal-head{border-bottom:1px solid var(--border)}
+    .modal-foot{border-top:1px solid var(--border);justify-content:flex-end}
+    .modal-body{padding:18px;display:grid;gap:16px}
+    .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .form-grid .span-2{grid-column:span 2}
+    .form-grid .span-3{grid-column:span 3}
+
+    .product-picker-row{display:grid;grid-template-columns:minmax(260px,1.5fr) 120px auto;gap:10px;align-items:end}
+    .draft-lines{display:grid;gap:8px}
+    .draft-line{display:grid;grid-template-columns:1.4fr 90px 100px 100px 100px auto;gap:10px;align-items:center;border:1px solid var(--border);border-radius:12px;padding:10px;background:#fbfdff}
+    .draft-line strong{font-size:12px}
+    .draft-line span{font-size:10px;color:var(--muted)}
+
+    .upload-box{border:1px dashed #93c5fd;background:#f8fbff;border-radius:14px;padding:18px;text-align:center}
+.attachments-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  gap:12px;
+}
+
+.attachment-card{
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:#fff;
+  padding:12px;
+  display:grid;
+  gap:10px;
+  min-width:0;
+}
+
+.attachment-preview{
+  height:140px;
+  border-radius:11px;
+  background:#f3f6fb;
+  border:1px solid #e6edf6;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+}
+
+.attachment-preview img{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.attachment-file-icon{
+  width:54px;
+  height:54px;
+  border-radius:16px;
+  background:#eff6ff;
+  color:#1267ff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:26px;
+  font-weight:950;
+}
+
+.attachment-meta{
+  min-width:0;
+}
+
+.attachment-name{
+  display:block;
+  color:#07152f;
+  font-size:12px;
+  font-weight:950;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.attachment-type{
+  display:block;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:10px;
+  font-weight:800;
+  text-transform:uppercase;
+}
+
+.attachment-note{
+  font-size:11px;
+  color:#475569;
+  line-height:1.45;
+}
+
+.attachment-actions{
+  display:flex;
+  gap:7px;
+  flex-wrap:wrap;
+}
+
+.attachment-actions .btn{
+  min-height:34px;
+  padding:0 11px;
+  font-size:11px;
+}
+
+.detail-section-stack{
+  display:grid;
+  gap:14px;
+}
+
+.note-list{
+  display:grid;
+  gap:9px;
+}
+
+.note-card{
+  border:1px solid var(--border);
+  border-radius:12px;
+  background:#fff;
+  padding:11px 12px;
+}
+
+.note-card-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  margin-bottom:6px;
+}
+
+.note-card-type{
+  font-size:10px;
+  font-weight:950;
+  text-transform:uppercase;
+  color:#1267ff;
+}
+
+.note-card-date{
+  font-size:10px;
+  color:var(--muted);
+}
+
+.note-card-text{
+  font-size:12px;
+  line-height:1.5;
+  color:#334155;
+  white-space:pre-wrap;
+}
+
+.upload-inline{
+  display:grid;
+  grid-template-columns:180px minmax(220px,1fr) auto;
+  gap:10px;
+  align-items:end;
+}
+
+.file-picker-label{
+  display:flex;
+  min-height:42px;
+  align-items:center;
+  padding:0 12px;
+  border:1px dashed #93c5fd;
+  border-radius:12px;
+  background:#f8fbff;
+  color:#1267ff;
+  font-size:11px;
+  font-weight:900;
+  cursor:pointer;
+}
+
+.file-picker-label:hover{
+  background:#eff6ff;
+}
+
+.container-action-bar{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.inspection-badge{
+  display:inline-flex;
+  align-items:center;
+  min-height:25px;
+  padding:0 9px;
+  border-radius:999px;
+  font-size:10px;
+  font-weight:950;
+  border:1px solid;
+}
+
+.inspection-general{
+  background:#eff6ff;
+  color:#1d4ed8;
+  border-color:#bfdbfe;
+}
+
+.inspection-damage{
+  background:#fef2f2;
+  color:#b91c1c;
+  border-color:#fecaca;
+}
+
+.inspection-missing{
+  background:#fff7ed;
+  color:#c2410c;
+  border-color:#fed7aa;
+}
+
+@media(max-width:900px){
+  .upload-inline{
+    grid-template-columns:1fr;
+  }
+}
+    .hidden{display:none!important}
+
+    @media(max-width:1450px){
+      .inbound-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .filters-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+      .container-main{grid-template-columns:1.2fr 1fr 1fr .8fr .8fr .8fr auto}
+      .container-main .hide-mid{display:none}
+    }
+    @media(max-width:900px){
+      .inbound-kpis,.filters-grid,.form-grid,.detail-grid{grid-template-columns:1fr}
+      .form-grid .span-2,.form-grid .span-3{grid-column:auto}
+      .container-main{grid-template-columns:1fr auto}
+      .container-main > :not(:first-child):not(:last-child){display:none}
+      .product-picker-row,.draft-line{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+
+<body>
+<div class="app-shell">
+  <aside id="sidebarMount" class="sidebar"></aside>
+
+  <main class="page inbound-page">
+    <section class="page-topbar">
+      <div class="page-title">
+        <h1>Inbound Containers</h1>
+        <p>Expected container arrivals, incoming products and expected allocation to orders.</p>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btnNewContainer" type="button">+ New Container</button>
+      </div>
+    </section>
+
+    <div id="toast" class="notice"></div>
+
+    <section class="inbound-kpis">
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon">▣</div><div><div class="inbound-kpi-label">Expected Containers</div><div class="inbound-kpi-value" id="kpiExpected">0</div><div class="inbound-kpi-sub">Containers not yet received</div></div></article>
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon purple">◈</div><div><div class="inbound-kpi-label">ETA This Week</div><div class="inbound-kpi-value" id="kpiThisWeek">0</div><div class="inbound-kpi-sub">Expected at warehouse</div></div></article>
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon orange">m³</div><div><div class="inbound-kpi-label">Expected Volume</div><div class="inbound-kpi-value" id="kpiVolume">0.000</div><div class="inbound-kpi-sub">Total incoming volume</div></div></article>
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon green">▦</div><div><div class="inbound-kpi-label">Expected Packages</div><div class="inbound-kpi-value" id="kpiPackages">0</div><div class="inbound-kpi-sub">Incoming physical packages</div></div></article>
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon">□</div><div><div class="inbound-kpi-label">Linked Orders</div><div class="inbound-kpi-value" id="kpiLinkedOrders">0</div><div class="inbound-kpi-sub">Orders linked to expected stock</div></div></article>
+      <article class="card inbound-kpi"><div class="inbound-kpi-icon green">✓</div><div><div class="inbound-kpi-label">Received</div><div class="inbound-kpi-value" id="kpiReceived">0</div><div class="inbound-kpi-sub">Containers already received</div></div></article>
+    </section>
+
+    <section class="card inbound-card">
+      <div class="filters-grid">
+        <div class="field"><label for="filterSearch">Search</label><input id="filterSearch" class="input" placeholder="Container, vessel, owner, SKU..."></div>
+        <div class="field"><label for="filterOwner">Product Owner</label><select id="filterOwner" class="select"><option value="">All owners</option></select></div>
+        <div class="field"><label for="filterStatus">Status</label><select id="filterStatus" class="select"><option value="">All statuses</option><option value="draft">Draft</option><option value="expected">Expected</option><option value="on_water">On Water</option><option value="at_port">At Port</option><option value="arriving">Arriving</option><option value="receiving">Receiving</option><option value="received">Received</option><option value="cancelled">Cancelled</option></select></div>
+        <div class="field"><label for="filterEtaFrom">ETA From</label><input id="filterEtaFrom" class="input" type="date"></div>
+        <div class="field"><label for="filterEtaTo">ETA To</label><input id="filterEtaTo" class="input" type="date"></div>
+      </div>
+
+      <div class="section-head">
+        <div class="view-tabs">
+          <button class="view-tab active" id="tabExpected" type="button">Expected Containers</button>
+          <button class="view-tab" id="tabReceived" type="button">Received Containers</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="btnClearFilters" type="button">Clear Filters</button>
+          <button class="btn" id="btnRefresh" type="button">Refresh</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card inbound-card">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title" id="listTitle">Expected Containers</h2>
+          <p class="section-sub" id="listSubtitle">Containers that have not yet been received at the warehouse.</p>
+        </div>
+        <div class="section-sub" id="resultCount">0 containers shown</div>
+      </div>
+
+      <div class="container-list" id="containerList">
+        <div class="empty-state">Loading containers...</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<template id="containerExtraDetailTemplate">
+  <div class="detail-section-stack">
+
+    <section class="detail-panel">
+      <div class="detail-head">
+        <div>
+          <h3>Documents & Files</h3>
+          <span class="subline">
+            Packing lists, delivery documents and other files.
+          </span>
+        </div>
+
+        <button
+          class="btn btn-primary"
+          type="button"
+          data-open-attachment-upload
+        >
+          + Upload File
+        </button>
+      </div>
+
+      <div
+        class="attachments-grid"
+        data-container-attachments
+      >
+        <div class="empty-state">
+          No documents or files uploaded.
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-panel">
+      <div class="detail-head">
+        <div>
+          <h3>Photos & Inspection</h3>
+          <span class="subline">
+            Container photos, unloading photos and damage evidence.
+          </span>
+        </div>
+
+        <button
+          class="btn"
+          type="button"
+          data-open-photo-upload
+        >
+          + Upload Photos
+        </button>
+      </div>
+
+      <div
+        class="attachments-grid"
+        data-container-photos
+      >
+        <div class="empty-state">
+          No photos uploaded.
+        </div>
+      </div>
+    </section>
+
+    <section class="detail-panel">
+      <div class="detail-head">
+        <div>
+          <h3>Notes & Damage</h3>
+          <span class="subline">
+            General remarks, missing goods, damages and quarantine notes.
+          </span>
+        </div>
+
+        <button
+          class="btn"
+          type="button"
+          data-open-note-modal
+        >
+          + Add Note
+        </button>
+      </div>
+
+      <div
+        class="note-list"
+        data-container-notes
+      >
+        <div class="empty-state">
+          No inspection notes added.
+        </div>
+      </div>
+    </section>
+
+  </div>
+</template>
+
+<div class="modal-backdrop" id="containerModal">
+  <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="containerModalTitle">
+    <div class="modal-head">
+      <div>
+        <h2 id="containerModalTitle" style="margin:0;font-size:18px">New Inbound Container</h2>
+        <p style="margin:4px 0 0;color:var(--muted);font-size:12px">Enter the container details and expected products.</p>
+      </div>
+      <button class="btn" id="btnCloseContainerModal" type="button">×</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="field"><label for="containerOwner">Product Owner *</label><select id="containerOwner" class="select"><option value="">Select owner</option></select></div>
+        <div class="field"><label for="containerNumber">Container Number *</label><input id="containerNumber" class="input" placeholder="MSCU1234567"></div>
+        <div class="field"><label for="containerType">Container Type</label><select id="containerType" class="select"><option value="">Select type</option><option>20 GP</option><option>40 GP</option><option>40 HC</option><option>45 HC</option></select></div>
+
+        <div class="field"><label for="sealNumber">Seal Number</label><input id="sealNumber" class="input"></div>
+        <div class="field"><label for="vesselName">Vessel</label><input id="vesselName" class="input"></div>
+        <div class="field"><label for="voyageNumber">Voyage</label><input id="voyageNumber" class="input"></div>
+
+        <div class="field"><label for="shippingLine">Shipping Line</label><input id="shippingLine" class="input"></div>
+        <div class="field"><label for="carrierName">Carrier</label><input id="carrierName" class="input"></div>
+        <div class="field"><label for="supplierReference">Supplier Reference</label><input id="supplierReference" class="input"></div>
+
+        <div class="field"><label for="etdDate">ETD</label><input id="etdDate" class="input" type="date"></div>
+        <div class="field"><label for="etaPortDate">ETA Port</label><input id="etaPortDate" class="input" type="date"></div>
+        <div class="field"><label for="etaWarehouseDate">ETA Warehouse *</label><input id="etaWarehouseDate" class="input" type="date"></div>
+
+        <div class="field"><label for="warehouseSelect">Warehouse</label><select id="warehouseSelect" class="select"><option value="">Select warehouse</option></select></div>
+        <div class="field"><label for="locationSelect">Location</label><select id="locationSelect" class="select"><option value="">Select location</option></select></div>
+        <div class="field"><label for="containerStatus">Status</label><select id="containerStatus" class="select"><option value="expected">Expected</option><option value="on_water">On Water</option><option value="at_port">At Port</option><option value="arriving">Arriving</option><option value="draft">Draft</option></select></div>
+
+        <div class="field span-3"><label for="containerNotes">Notes</label><textarea id="containerNotes" class="textarea" placeholder="General notes about this container..."></textarea></div>
+      </div>
+
+      <div class="detail-panel">
+        <div class="detail-head">
+          <div><h3>Expected Products</h3><span class="subline">Products are filtered by the selected product owner.</span></div>
+        </div>
+
+        <div class="product-picker-row">
+          <div class="field"><label for="productSelect">Product</label><select id="productSelect" class="select"><option value="">Select owner first</option></select></div>
+          <div class="field"><label for="productQty">Quantity</label><input id="productQty" class="input" type="number" min="1" value="1"></div>
+          <button class="btn btn-primary" id="btnAddProduct" type="button">Add Product</button>
+        </div>
+
+        <div class="draft-lines" id="draftLines" style="margin-top:12px">
+          <div class="empty-state">No products added yet.</div>
+        </div>
+      </div>
+
+      <div class="detail-panel">
+        <div class="detail-head"><div><h3>Packing List</h3><span class="subline">PDF upload is stored against this container.</span></div></div>
+        <div class="upload-box">
+          <input id="packingListInput" type="file" accept="application/pdf" class="hidden">
+          <button class="btn" id="btnSelectPackingList" type="button">Select PDF File</button>
+          <div class="subline" id="packingListLabel">No file selected</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn" id="btnCancelContainer" type="button">Cancel</button>
+      <button class="btn btn-primary" id="btnSaveContainer" type="button">Save Container</button>
+    </div>
+  </section>
+</div>
+<div class="modal-backdrop" id="attachmentModal">
+  <section
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="attachmentModalTitle"
+    style="width:min(720px,100%)"
+  >
+    <div class="modal-head">
+      <div>
+        <h2
+          id="attachmentModalTitle"
+          style="margin:0;font-size:18px"
+        >
+          Upload Container File
+        </h2>
+
+        <p
+          style="margin:4px 0 0;color:var(--muted);font-size:12px"
+        >
+          Add a document or photo to this container.
+        </p>
+      </div>
+
+      <button
+        class="btn"
+        id="btnCloseAttachmentModal"
+        type="button"
+      >
+        ×
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <input
+        id="attachmentContainerId"
+        type="hidden"
+      >
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="attachmentType">
+            File Type *
+          </label>
+
+          <select
+            id="attachmentType"
+            class="select"
+          >
+            <option value="container_photo">
+              Container Photo
+            </option>
+
+            <option value="damage_photo">
+              Damage Photo
+            </option>
+
+            <option value="delivery_document">
+              Delivery Document
+            </option>
+
+            <option value="packing_list">
+              Packing List
+            </option>
+
+            <option value="other">
+              Other
+            </option>
+          </select>
+        </div>
+
+        <div class="field span-2">
+          <label>
+            Select File *
+          </label>
+
+          <label
+            class="file-picker-label"
+            for="attachmentFileInput"
+          >
+            Select photo or document
+          </label>
+
+          <input
+            id="attachmentFileInput"
+            type="file"
+            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+            class="hidden"
+          >
+
+          <div
+            id="attachmentFileLabel"
+            class="subline"
+          >
+            No file selected
+          </div>
+        </div>
+
+        <div class="field span-3">
+          <label for="attachmentNote">
+            Note
+          </label>
+
+          <textarea
+            id="attachmentNote"
+            class="textarea"
+            placeholder="Optional description, damage details or other information..."
+          ></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button
+        class="btn"
+        id="btnCancelAttachment"
+        type="button"
+      >
+        Cancel
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="btnUploadAttachment"
+        type="button"
+      >
+        Upload File
+      </button>
+    </div>
+  </section>
+</div>
+
+<div class="modal-backdrop" id="containerNoteModal">
+  <section
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="containerNoteModalTitle"
+    style="width:min(680px,100%)"
+  >
+    <div class="modal-head">
+      <div>
+        <h2
+          id="containerNoteModalTitle"
+          style="margin:0;font-size:18px"
+        >
+          Add Container Note
+        </h2>
+
+        <p
+          style="margin:4px 0 0;color:var(--muted);font-size:12px"
+        >
+          Record a general, damage, missing or quarantine remark.
+        </p>
+      </div>
+
+      <button
+        class="btn"
+        id="btnCloseContainerNoteModal"
+        type="button"
+      >
+        ×
+      </button>
+    </div>
+
+    <div class="modal-body">
+      <input
+        id="noteContainerId"
+        type="hidden"
+      >
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="containerNoteType">
+            Note Type *
+          </label>
+
+          <select
+            id="containerNoteType"
+            class="select"
+          >
+            <option value="general_note">
+              General Note
+            </option>
+
+            <option value="damage_reported">
+              Damage
+            </option>
+
+            <option value="missing_reported">
+              Missing Goods
+            </option>
+
+            <option value="quarantine_reported">
+              Quarantine
+            </option>
+
+            <option value="inspection_note">
+              Inspection Note
+            </option>
+          </select>
+        </div>
+
+        <div class="field span-3">
+          <label for="containerNoteText">
+            Note *
+          </label>
+
+          <textarea
+            id="containerNoteText"
+            class="textarea"
+            placeholder="Describe the issue, inspection result or general remark..."
+          ></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button
+        class="btn"
+        id="btnCancelContainerNote"
+        type="button"
+      >
+        Cancel
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="btnSaveContainerNote"
+        type="button"
+      >
+        Add Note
+      </button>
+    </div>
+  </section>
+</div>
+
+
+<div
+  class="modal-backdrop"
+  id="photoViewerModal"
+>
+  <section
+    class="modal-card"
+    style="width:min(1100px,100%);background:#07152f"
+  >
+    <div
+      class="modal-head"
+      style="border-color:rgba(255,255,255,.15)"
+    >
+      <div>
+        <h2
+          id="photoViewerTitle"
+          style="margin:0;font-size:18px;color:#fff"
+        >
+          Container Photo
+        </h2>
+      </div>
+
+      <button
+        class="btn"
+        id="btnClosePhotoViewer"
+        type="button"
+      >
+        ×
+      </button>
+    </div>
+
+    <div
+      style="padding:18px;display:flex;justify-content:center"
+    >
+      <img
+        id="photoViewerImage"
+        alt="Container attachment"
+        style="max-width:100%;max-height:75vh;object-fit:contain;border-radius:14px"
+      >
+    </div>
+  </section>
+</div>
+</body>
+</html>

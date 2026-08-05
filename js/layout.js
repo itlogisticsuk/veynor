@@ -37,8 +37,17 @@
   group: "Planning",
   roles: TENANT_ROLES
 },
-    { href: "./products.html", label: "Products", icon: "box", group: "Warehouse", roles: TENANT_ROLES },
-    { href: "./scan.html", label: "Scan In / Out", icon: "scanner", group: "Warehouse", roles: TENANT_ROLES },
+{ href: "./products.html", label: "Products", icon: "box", group: "Warehouse", roles: TENANT_ROLES },
+
+{
+  href: "./inbound-containers.html",
+  label: "Inbound Containers",
+  icon: "container",
+  group: "Warehouse",
+  roles: TENANT_ROLES
+},
+
+{ href: "./scan.html", label: "Scan In / Out", icon: "scanner", group: "Warehouse", roles: TENANT_ROLES },
     { href: "./stock.html", label: "Current Stock", icon: "stock", group: "Warehouse", roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] },
     { href: "./outbound.html", label: "Outbound History", icon: "paperPlane", group: "Warehouse", roles: TENANT_ROLES },
     { href: "./inventory.html", label: "Inventory Check", icon: "checkCircle", group: "Warehouse", roles: TENANT_ROLES },
@@ -60,7 +69,26 @@
     match: `<svg viewBox="0 0 24 24"><path d="M8 7h3a4 4 0 0 1 0 8H8"/><path d="M16 17h-3a4 4 0 0 1 0-8h3"/><path d="M7 12h10"/></svg>`,
     control: `<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg>`,
     truckRoute: `<svg viewBox="0 0 24 24"><path d="M3 8h11v8H3z"/><path d="M14 11h4l3 3v2h-7z"/><circle cx="7" cy="17" r="2"/><circle cx="18" cy="17" r="2"/></svg>`,
-    box: `<svg viewBox="0 0 24 24"><path d="M12 3 4 7l8 4 8-4z"/><path d="M4 7v10l8 4 8-4V7"/><path d="M12 11v10"/></svg>`,
+box: `
+  <svg viewBox="0 0 24 24">
+    <path d="M12 3 4 7l8 4 8-4z"/>
+    <path d="M4 7v10l8 4 8-4V7"/>
+    <path d="M12 11v10"/>
+  </svg>
+`,
+
+container: `
+  <svg viewBox="0 0 24 24">
+    <path d="M3 6h18v12H3z"/>
+    <path d="M7 6v12"/>
+    <path d="M11 6v12"/>
+    <path d="M15 6v12"/>
+    <path d="M19 6v12"/>
+    <path d="M5 4h14"/>
+    <path d="M5 20h14"/>
+  </svg>
+`,
+
 serviceJob: `
 <svg viewBox="0 0 24 24">
   <path d="M5 6h10v8H5z"/>
@@ -714,12 +742,6 @@ renderSidebar();
 await updateMessageCenterNavBadge();
 
 window.VeynorUpdateMessageCenterNavBadge = updateMessageCenterNavBadge;
-
-setInterval(updateMessageCenterNavBadge, 5000);
-
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) updateMessageCenterNavBadge();
-});
 
 setInterval(updateMessageCenterNavBadge, 5000);
 
