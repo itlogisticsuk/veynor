@@ -18,11 +18,12 @@
     "operations-control-center": ALL_ROLES,
     orders: SOFA2U_ROLES,
 
-    products: SOFA2U_ROLES,
-    scan: SOFA2U_ROLES,
-    stock: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-    outbound: SOFA2U_ROLES,
-    inventory: SOFA2U_ROLES,
+products: SOFA2U_ROLES,
+"inbound-containers": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+scan: SOFA2U_ROLES,
+stock: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+outbound: SOFA2U_ROLES,
+inventory: SOFA2U_ROLES,
 
     pod: ALL_ROLES,
     billing: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],

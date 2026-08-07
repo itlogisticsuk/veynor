@@ -802,6 +802,354 @@
   </section>
 </div>
 
+<!-- =========================================================
+     RECEIVE CONTAINER MODAL
+     ========================================================= -->
+
+<div
+  class="modal-backdrop"
+  id="receiveContainerModal"
+>
+  <section
+    class="modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="receiveContainerModalTitle"
+    style="width:min(1180px,100%)"
+  >
+
+    <div class="modal-head">
+      <div>
+        <h2
+          id="receiveContainerModalTitle"
+          style="margin:0;font-size:18px"
+        >
+          Book Container In
+        </h2>
+
+        <p
+          id="receiveContainerModalSubtitle"
+          style="
+            margin:4px 0 0;
+            color:var(--muted);
+            font-size:12px
+          "
+        >
+          Confirm the physical quantities received before booking the goods into stock.
+        </p>
+      </div>
+
+      <button
+        class="btn"
+        id="btnCloseReceiveContainer"
+        type="button"
+      >
+        ×
+      </button>
+    </div>
+
+
+    <div class="modal-body">
+
+      <input
+        id="receiveContainerId"
+        type="hidden"
+      >
+
+
+      <!-- GENERAL CHECK -->
+
+      <section class="detail-panel">
+        <div class="detail-head">
+          <div>
+            <h3>Receiving Check</h3>
+
+            <span class="subline">
+              Confirm whether the shipment arrived exactly as expected.
+            </span>
+          </div>
+        </div>
+
+        <div class="form-grid">
+
+          <div class="field">
+            <label for="receiveEverythingCorrect">
+              Everything received as expected? *
+            </label>
+
+            <select
+              id="receiveEverythingCorrect"
+              class="select"
+            >
+              <option value="yes">
+                Yes - all quantities are correct
+              </option>
+
+              <option value="no">
+                No - there are differences
+              </option>
+            </select>
+          </div>
+
+
+          <div class="field">
+            <label>
+              Container
+            </label>
+
+            <div
+              class="input"
+              id="receiveContainerNumber"
+              style="
+                display:flex;
+                align-items:center;
+                background:#f8fafc
+              "
+            >
+              —
+            </div>
+          </div>
+
+
+          <div class="field">
+            <label>
+              Warehouse / Location
+            </label>
+
+            <div
+              class="input"
+              id="receiveWarehouseLocation"
+              style="
+                display:flex;
+                align-items:center;
+                background:#f8fafc
+              "
+            >
+              —
+            </div>
+          </div>
+
+
+          <div class="field span-3">
+            <label for="receiveContainerNotes">
+              General Receiving Notes
+            </label>
+
+            <textarea
+              id="receiveContainerNotes"
+              class="textarea"
+              placeholder="Optional general remarks about unloading, packaging condition, seal, shortages or damage..."
+            ></textarea>
+          </div>
+
+        </div>
+      </section>
+
+
+      <!-- PRODUCTS -->
+
+      <section class="detail-panel">
+
+        <div class="detail-head">
+          <div>
+            <h3>Products Received</h3>
+
+            <span class="subline">
+              Received means physically present. Damaged and quarantine quantities are included in received but will not count as good stock.
+            </span>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table
+            class="inbound-table"
+            style="min-width:1080px"
+          >
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Product</th>
+                <th>Expected</th>
+                <th>Received</th>
+                <th>Damaged</th>
+                <th>Quarantine</th>
+                <th>Missing</th>
+                <th>Over</th>
+                <th>Good Stock</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+
+            <tbody id="receiveContainerLines">
+              <tr>
+                <td colspan="10">
+                  <div class="empty-state">
+                    Loading container products...
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </section>
+
+
+      <!-- SUMMARY -->
+
+      <section class="detail-panel">
+        <div class="detail-head">
+          <div>
+            <h3>Receipt Summary</h3>
+
+            <span class="subline">
+              Final check before continuing.
+            </span>
+          </div>
+        </div>
+
+        <div
+          style="
+            display:grid;
+            grid-template-columns:repeat(6,minmax(0,1fr));
+            gap:10px
+          "
+        >
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Expected
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryExpected"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Received
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryReceived"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Good Stock
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryGood"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Damaged
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryDamaged"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Missing
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryMissing"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+
+          <div class="inbound-kpi">
+            <div>
+              <div class="inbound-kpi-label">
+                Quarantine
+              </div>
+
+              <div
+                class="inbound-kpi-value"
+                id="receiveSummaryQuarantine"
+              >
+                0
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+
+        <div
+          id="receiveExceptionNotice"
+          class="notice"
+          style="
+            display:none;
+            margin-top:14px
+          "
+        ></div>
+
+      </section>
+
+    </div>
+
+
+    <div class="modal-foot">
+
+      <button
+        class="btn"
+        id="btnCancelReceiveContainer"
+        type="button"
+      >
+        Cancel
+      </button>
+
+      <button
+        class="btn btn-primary"
+        id="btnSaveReceiptCheck"
+        type="button"
+      >
+        Save Receiving Check
+      </button>
+
+    </div>
+
+  </section>
+</div>
 
 <div
   class="modal-backdrop"

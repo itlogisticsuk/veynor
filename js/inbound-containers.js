@@ -40,6 +40,7 @@ const state = {
 
   activeAttachmentContainerId: null,
   activeNoteContainerId: null,
+activeReceiveContainerId: null,
 
   attachmentFile: null
 };
@@ -2107,12 +2108,96 @@ function renderContainerDetailShell(container) {
 
 
 function bindContainerRowEvents() {
+
+  /*
+   * Voeg voor iedere nog niet ontvangen container
+   * automatisch de Receive-knop toe.
+   *
+   * Zo hoeven we renderContainerDetailShell()
+   * niet volledig te herschrijven.
+   */
   document
-    .querySelectorAll("[data-container-toggle]")
+    .querySelectorAll(
+      ".container-row[data-container-id]"
+    )
+    .forEach(row => {
+      const containerId =
+        row.dataset.containerId;
+
+      const container =
+        state.containers.find(
+          item =>
+            String(item.id) ===
+            String(containerId)
+        );
+
+      if (!container) {
+        return;
+      }
+
+      if (
+        [
+          "received",
+          "cancelled"
+        ].includes(
+          normalize(container.status)
+        )
+      ) {
+        return;
+      }
+
+      const actionBar =
+        row.querySelector(
+          ".container-action-bar"
+        );
+
+      if (!actionBar) {
+        return;
+      }
+
+      if (
+        actionBar.querySelector(
+          "[data-container-receive]"
+        )
+      ) {
+        return;
+      }
+
+      const button =
+        document.createElement(
+          "button"
+        );
+
+      button.className =
+        "btn btn-primary";
+
+      button.type =
+        "button";
+
+      button.dataset.containerReceive =
+        containerId;
+
+      button.textContent =
+        "✓ Book Container In";
+
+      actionBar.appendChild(
+        button
+      );
+    });
+
+
+  /*
+   * Open / close container row
+   */
+  document
+    .querySelectorAll(
+      "[data-container-toggle]"
+    )
     .forEach(element => {
       element.addEventListener(
         "click",
         async event => {
+
           if (
             event.target.closest(
               "[data-container-refresh]"
@@ -2128,13 +2213,18 @@ function bindContainerRowEvents() {
             ) ||
             event.target.closest(
               "[data-container-add-note]"
+            ) ||
+            event.target.closest(
+              "[data-container-receive]"
             )
           ) {
             return;
           }
 
+
           const containerId =
             element.dataset.containerToggle;
+
 
           if (
             state.expandedContainers.has(
@@ -2150,30 +2240,40 @@ function bindContainerRowEvents() {
             );
           }
 
+
           renderContainers();
         }
       );
     });
 
 
+  /*
+   * Refresh container detail
+   */
   document
-    .querySelectorAll("[data-container-refresh]")
+    .querySelectorAll(
+      "[data-container-refresh]"
+    )
     .forEach(button => {
       button.addEventListener(
         "click",
         async event => {
           event.stopPropagation();
 
+
           const containerId =
             button.dataset.containerRefresh;
+
 
           clearContainerDetailCache(
             containerId
           );
 
+
           await loadCompleteContainerDetail(
             containerId
           );
+
 
           showToast(
             "Container details refreshed.",
@@ -2184,8 +2284,47 @@ function bindContainerRowEvents() {
     });
 
 
+  /*
+   * Receive / Book Container In
+   */
   document
-    .querySelectorAll("[data-container-upload-file]")
+    .querySelectorAll(
+      "[data-container-receive]"
+    )
+    .forEach(button => {
+      button.addEventListener(
+        "click",
+        async event => {
+          event.stopPropagation();
+
+          try {
+            await openReceiveContainerModal(
+              button.dataset.containerReceive
+            );
+          } catch (error) {
+            console.error(
+              "Receive container modal failed:",
+              error
+            );
+
+            showToast(
+              error.message ||
+              "Receiving screen could not be opened.",
+              "err"
+            );
+          }
+        }
+      );
+    });
+
+
+  /*
+   * Upload File
+   */
+  document
+    .querySelectorAll(
+      "[data-container-upload-file]"
+    )
     .forEach(button => {
       button.addEventListener(
         "click",
@@ -2201,8 +2340,13 @@ function bindContainerRowEvents() {
     });
 
 
+  /*
+   * Upload Photos
+   */
   document
-    .querySelectorAll("[data-container-upload-photo]")
+    .querySelectorAll(
+      "[data-container-upload-photo]"
+    )
     .forEach(button => {
       button.addEventListener(
         "click",
@@ -2218,8 +2362,13 @@ function bindContainerRowEvents() {
     });
 
 
+  /*
+   * Add Note
+   */
   document
-    .querySelectorAll("[data-container-add-note]")
+    .querySelectorAll(
+      "[data-container-add-note]"
+    )
     .forEach(button => {
       button.addEventListener(
         "click",
@@ -2234,8 +2383,13 @@ function bindContainerRowEvents() {
     });
 
 
+  /*
+   * Edit Container
+   */
   document
-    .querySelectorAll("[data-container-edit]")
+    .querySelectorAll(
+      "[data-container-edit]"
+    )
     .forEach(button => {
       button.addEventListener(
         "click",
@@ -2250,7 +2404,6 @@ function bindContainerRowEvents() {
       );
     });
 }
-
 
 function renderLoadedContainerLines(containerId) {
   const target = byId(
@@ -2422,6 +2575,2711 @@ function renderContainerLine(line) {
       </td>
     </tr>
   `;
+}
+
+function findContainerById(
+  containerId
+) {
+  return state.containers.find(
+    container =>
+      String(container.id) ===
+      String(containerId)
+  ) || null;
+}
+
+function ensureReceiveContainerModalEvents() {
+  const modal =
+    byId("receiveContainerModal");
+
+  if (!modal) {
+    throw new Error(
+      "Receive Container modal is missing from inbound-containers.html."
+    );
+  }
+
+  if (
+    modal.dataset.eventsBound ===
+    "true"
+  ) {
+    return;
+  }
+
+  byId(
+    "btnCloseReceiveContainer"
+  ).onclick =
+    closeReceiveContainerModal;
+
+  byId(
+    "btnCancelReceiveContainer"
+  ).onclick =
+    closeReceiveContainerModal;
+
+  modal.onclick =
+    event => {
+      if (
+        event.target === modal
+      ) {
+        closeReceiveContainerModal();
+      }
+    };
+
+  byId(
+    "receiveEverythingCorrect"
+  ).onchange =
+    () => {
+      const everythingCorrect =
+        byId(
+          "receiveEverythingCorrect"
+        ).value === "yes";
+
+      document
+        .querySelectorAll(
+          "[data-receive-line]"
+        )
+        .forEach(row => {
+          const expected =
+            integerValue(
+              row.dataset.expected,
+              0
+            );
+
+          const receivedInput =
+            row.querySelector(
+              "[data-received-qty]"
+            );
+
+          const damagedInput =
+            row.querySelector(
+              "[data-damaged-qty]"
+            );
+
+          const quarantineInput =
+            row.querySelector(
+              "[data-quarantine-qty]"
+            );
+
+          if (everythingCorrect) {
+            if (receivedInput) {
+              receivedInput.value =
+                expected;
+
+              receivedInput.readOnly =
+                true;
+            }
+
+            if (damagedInput) {
+              damagedInput.value =
+                0;
+
+              damagedInput.readOnly =
+                true;
+            }
+
+            if (quarantineInput) {
+              quarantineInput.value =
+                0;
+
+              quarantineInput.readOnly =
+                true;
+            }
+          } else {
+            if (receivedInput) {
+              receivedInput.readOnly =
+                false;
+            }
+
+            if (damagedInput) {
+              damagedInput.readOnly =
+                false;
+            }
+
+            if (quarantineInput) {
+              quarantineInput.readOnly =
+                false;
+            }
+          }
+        });
+
+      recalculateReceiveContainerModal();
+    };
+
+  byId(
+    "btnSaveReceiptCheck"
+  ).onclick =
+    async () => {
+      const button =
+        byId(
+          "btnSaveReceiptCheck"
+        );
+
+      if (!button) {
+        return;
+      }
+
+      button.disabled =
+        true;
+
+      button.textContent =
+        "Booking into stock...";
+
+      try {
+        await saveReceiveContainerCheck();
+      } catch (error) {
+        console.error(
+          "Container receipt failed:",
+          error
+        );
+
+        showToast(
+          error.message ||
+          "Container could not be booked into stock.",
+          "err"
+        );
+      } finally {
+        button.disabled =
+          false;
+
+        button.textContent =
+          "Confirm & Book Into Stock";
+      }
+    };
+
+  modal.dataset.eventsBound =
+    "true";
+}
+
+function renderReceiveContainerLines(
+  lines
+) {
+  const target =
+    byId(
+      "receiveContainerLines"
+    );
+
+
+  if (!target) {
+    return;
+  }
+
+
+  if (!lines.length) {
+    target.innerHTML = `
+      <tr>
+        <td colspan="10">
+          <div class="empty-state">
+            No products found in this container.
+          </div>
+        </td>
+      </tr>
+    `;
+
+    return;
+  }
+
+
+  target.innerHTML =
+    lines
+      .map(line => {
+
+        const expected =
+          integerValue(
+            line.expected_quantity,
+            0
+          );
+
+
+        const existingReceived =
+          line.received_quantity > 0
+            ? integerValue(
+                line.received_quantity,
+                expected
+              )
+            : expected;
+
+
+        const existingDamaged =
+          integerValue(
+            line.damaged_quantity,
+            0
+          );
+
+
+        const existingQuarantine =
+          integerValue(
+            line.quarantine_quantity,
+            0
+          );
+
+
+        const existingNote =
+          line.receiving_note ||
+          "";
+
+
+        return `
+          <tr
+            data-receive-line="${escapeHtml(line.id)}"
+            data-expected="${expected}"
+          >
+
+            <td>
+              <strong>
+                ${escapeHtml(
+                  line.sku_snapshot ||
+                  "Unknown SKU"
+                )}
+              </strong>
+            </td>
+
+
+            <td>
+              ${escapeHtml(
+                line.product_name_snapshot ||
+                line.description_snapshot ||
+                "—"
+              )}
+            </td>
+
+
+            <td>
+              <strong>
+                ${formatNumber(expected)}
+              </strong>
+            </td>
+
+
+            <td>
+              <input
+                class="input"
+                type="number"
+                min="0"
+                step="1"
+                value="${existingReceived}"
+                data-received-qty
+                readonly
+                style="
+                  min-width:86px;
+                  padding:0 8px
+                "
+              >
+            </td>
+
+
+            <td>
+              <input
+                class="input"
+                type="number"
+                min="0"
+                step="1"
+                value="${existingDamaged}"
+                data-damaged-qty
+                readonly
+                style="
+                  min-width:86px;
+                  padding:0 8px
+                "
+              >
+            </td>
+
+
+            <td>
+              <input
+                class="input"
+                type="number"
+                min="0"
+                step="1"
+                value="${existingQuarantine}"
+                data-quarantine-qty
+                readonly
+                style="
+                  min-width:86px;
+                  padding:0 8px
+                "
+              >
+            </td>
+
+
+            <td>
+              <strong
+                data-missing-qty
+              >
+                0
+              </strong>
+            </td>
+
+
+            <td>
+              <strong
+                data-over-qty
+              >
+                0
+              </strong>
+            </td>
+
+
+            <td>
+              <strong
+                data-good-qty
+              >
+                ${formatNumber(
+                  Math.max(
+                    0,
+                    existingReceived -
+                    existingDamaged -
+                    existingQuarantine
+                  )
+                )}
+              </strong>
+            </td>
+
+
+            <td>
+              <input
+                class="input"
+                type="text"
+                value="${escapeHtml(existingNote)}"
+                data-receiving-note
+                placeholder="Optional..."
+                style="min-width:180px"
+              >
+            </td>
+
+          </tr>
+        `;
+      })
+      .join("");
+
+
+  target
+    .querySelectorAll(
+      "input"
+    )
+    .forEach(input => {
+
+      input.addEventListener(
+        "input",
+        recalculateReceiveContainerModal
+      );
+
+    });
+
+
+  recalculateReceiveContainerModal();
+}
+
+function recalculateReceiveContainerModal() {
+  const rows =
+    document.querySelectorAll(
+      "[data-receive-line]"
+    );
+
+
+  let totalExpected =
+    0;
+
+  let totalReceived =
+    0;
+
+  let totalGood =
+    0;
+
+  let totalDamaged =
+    0;
+
+  let totalMissing =
+    0;
+
+  let totalOver =
+    0;
+
+  let totalQuarantine =
+    0;
+
+
+  rows.forEach(row => {
+
+    const expected =
+      Math.max(
+        0,
+        integerValue(
+          row.dataset.expected,
+          0
+        )
+      );
+
+
+    const received =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-received-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    const damaged =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-damaged-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    const quarantine =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-quarantine-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    const missing =
+      Math.max(
+        0,
+        expected -
+        received
+      );
+
+
+    const over =
+      Math.max(
+        0,
+        received -
+        expected
+      );
+
+
+    const good =
+      Math.max(
+        0,
+        received -
+        damaged -
+        quarantine
+      );
+
+
+    const missingTarget =
+      row.querySelector(
+        "[data-missing-qty]"
+      );
+
+
+    const overTarget =
+      row.querySelector(
+        "[data-over-qty]"
+      );
+
+
+    const goodTarget =
+      row.querySelector(
+        "[data-good-qty]"
+      );
+
+
+    if (missingTarget) {
+      missingTarget.textContent =
+        formatNumber(
+          missing
+        );
+    }
+
+
+    if (overTarget) {
+      overTarget.textContent =
+        formatNumber(
+          over
+        );
+    }
+
+
+    if (goodTarget) {
+      goodTarget.textContent =
+        formatNumber(
+          good
+        );
+    }
+
+
+    totalExpected +=
+      expected;
+
+    totalReceived +=
+      received;
+
+    totalDamaged +=
+      damaged;
+
+    totalMissing +=
+      missing;
+
+    totalOver +=
+      over;
+
+    totalQuarantine +=
+      quarantine;
+
+    totalGood +=
+      good;
+  });
+
+
+  byId(
+    "receiveSummaryExpected"
+  ).textContent =
+    formatNumber(
+      totalExpected
+    );
+
+
+  byId(
+    "receiveSummaryReceived"
+  ).textContent =
+    formatNumber(
+      totalReceived
+    );
+
+
+  byId(
+    "receiveSummaryGood"
+  ).textContent =
+    formatNumber(
+      totalGood
+    );
+
+
+  byId(
+    "receiveSummaryDamaged"
+  ).textContent =
+    formatNumber(
+      totalDamaged
+    );
+
+
+  byId(
+    "receiveSummaryMissing"
+  ).textContent =
+    formatNumber(
+      totalMissing
+    );
+
+
+  byId(
+    "receiveSummaryQuarantine"
+  ).textContent =
+    formatNumber(
+      totalQuarantine
+    );
+
+
+  const notice =
+    byId(
+      "receiveExceptionNotice"
+    );
+
+
+  const hasExceptions =
+    totalDamaged > 0 ||
+    totalMissing > 0 ||
+    totalOver > 0 ||
+    totalQuarantine > 0;
+
+
+  if (!notice) {
+    return;
+  }
+
+
+  if (hasExceptions) {
+
+    notice.style.display =
+      "block";
+
+    notice.className =
+      "notice error";
+
+    notice.textContent =
+      `Exceptions found: ` +
+      `${totalMissing} missing, ` +
+      `${totalDamaged} damaged, ` +
+      `${totalQuarantine} quarantine, ` +
+      `${totalOver} over received.`;
+
+  } else {
+
+    notice.style.display =
+      "block";
+
+    notice.className =
+      "notice success";
+
+    notice.textContent =
+      "All quantities match the expected container quantities.";
+
+  }
+}
+
+function getReceiveContainerLineValues() {
+  return Array.from(
+    document.querySelectorAll(
+      "[data-receive-line]"
+    )
+  ).map(row => {
+
+    const expected =
+      Math.max(
+        0,
+        integerValue(
+          row.dataset.expected,
+          0
+        )
+      );
+
+
+    const received =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-received-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    const damaged =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-damaged-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    const quarantine =
+      Math.max(
+        0,
+        integerValue(
+          row.querySelector(
+            "[data-quarantine-qty]"
+          )?.value,
+          0
+        )
+      );
+
+
+    if (
+      damaged +
+      quarantine >
+      received
+    ) {
+      throw new Error(
+        "Damaged + quarantine quantity cannot be higher than the received quantity."
+      );
+    }
+
+
+    const missing =
+      Math.max(
+        0,
+        expected -
+        received
+      );
+
+
+    const overReceived =
+      Math.max(
+        0,
+        received -
+        expected
+      );
+
+
+    const good =
+      Math.max(
+        0,
+        received -
+        damaged -
+        quarantine
+      );
+
+
+    return {
+      id:
+        row.dataset.receiveLine,
+
+      expected_quantity:
+        expected,
+
+      received_quantity:
+        received,
+
+      damaged_quantity:
+        damaged,
+
+      quarantine_quantity:
+        quarantine,
+
+      missing_quantity:
+        missing,
+
+      over_received_quantity:
+        overReceived,
+
+      good_quantity:
+        good,
+
+      receiving_note:
+        row.querySelector(
+          "[data-receiving-note]"
+        )?.value?.trim() ||
+        null
+    };
+  });
+}
+
+async function openReceiveContainerModal(
+  containerId
+) {
+  ensureReceiveContainerModalEvents();
+
+  const container =
+    findContainerById(
+      containerId
+    );
+
+  if (!container) {
+    throw new Error(
+      "Container could not be found."
+    );
+  }
+
+  if (
+    normalize(
+      container.status
+    ) === "received"
+  ) {
+    throw new Error(
+      "This container has already been received."
+    );
+  }
+
+  state.activeReceiveContainerId =
+    String(containerId);
+
+  byId(
+    "receiveContainerId"
+  ).value =
+    String(containerId);
+
+  byId(
+    "receiveContainerNumber"
+  ).textContent =
+    container.container_number ||
+    "—";
+
+  byId(
+    "receiveWarehouseLocation"
+  ).textContent =
+    `${getWarehouseName(
+      container.warehouse_id
+    )} · ${getLocationName(
+      container.location_id
+    )}`;
+
+  byId(
+    "receiveContainerNotes"
+  ).value =
+    container.receiving_notes ||
+    "";
+
+  byId(
+    "receiveEverythingCorrect"
+  ).value =
+    "yes";
+
+  const saveButton =
+    byId(
+      "btnSaveReceiptCheck"
+    );
+
+  if (saveButton) {
+    saveButton.textContent =
+      "Confirm & Book Into Stock";
+  }
+
+  let lines =
+    state.loadedContainerLines.get(
+      String(containerId)
+    );
+
+  if (!lines) {
+    lines =
+      await loadContainerLines(
+        containerId
+      );
+  }
+
+  renderReceiveContainerLines(
+    lines
+  );
+
+  byId(
+    "receiveContainerModal"
+  ).classList.add(
+    "open"
+  );
+}
+
+function closeReceiveContainerModal() {
+  byId(
+    "receiveContainerModal"
+  )
+    ?.classList
+    .remove(
+      "open"
+    );
+
+
+  state.activeReceiveContainerId =
+    null;
+}
+
+function createInboundUuid() {
+  if (
+    window.crypto &&
+    typeof window.crypto.randomUUID ===
+      "function"
+  ) {
+    return window.crypto.randomUUID();
+  }
+
+  /*
+   * RFC4122-compatible UUID v4 fallback.
+   */
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+    .replace(
+      /[xy]/g,
+      character => {
+        const random =
+          Math.random() * 16 | 0;
+
+        const value =
+          character === "x"
+            ? random
+            : (
+                random & 0x3 |
+                0x8
+              );
+
+        return value.toString(16);
+      }
+    );
+}
+
+async function ensureAllocationEngineLoaded() {
+  if (
+    window.AllocationEngine?.run
+  ) {
+    return window.AllocationEngine;
+  }
+
+  let script =
+    document.querySelector(
+      'script[src="/js/allocation-engine.js"]'
+    );
+
+  if (!script) {
+    script =
+      document.createElement(
+        "script"
+      );
+
+    script.src =
+      "/js/allocation-engine.js";
+
+    script.defer =
+      false;
+
+    document.head.appendChild(
+      script
+    );
+  }
+
+  for (
+    let attempt = 0;
+    attempt < 100;
+    attempt++
+  ) {
+    if (
+      window.AllocationEngine?.run
+    ) {
+      return window.AllocationEngine;
+    }
+
+    await new Promise(
+      resolve =>
+        setTimeout(
+          resolve,
+          50
+        )
+    );
+  }
+
+  throw new Error(
+    "Allocation Engine could not be loaded."
+  );
+}
+
+function getInboundPackageMetrics(
+  line,
+  packageNo,
+  packageTotal
+) {
+  let volume =
+    0;
+
+  let weight =
+    0;
+
+  if (packageNo === 1) {
+    volume =
+      numberValue(
+        line.package_1_volume_m3,
+        0
+      );
+
+    weight =
+      numberValue(
+        line.package_1_weight_kg,
+        0
+      );
+  }
+
+  if (packageNo === 2) {
+    volume =
+      numberValue(
+        line.package_2_volume_m3,
+        0
+      );
+
+    weight =
+      numberValue(
+        line.package_2_weight_kg,
+        0
+      );
+  }
+
+  if (packageNo === 3) {
+    volume =
+      numberValue(
+        line.package_3_volume_m3,
+        0
+      );
+
+    weight =
+      numberValue(
+        line.package_3_weight_kg,
+        0
+      );
+  }
+
+  if (volume <= 0) {
+    volume =
+      numberValue(
+        line.unit_volume_m3,
+        0
+      ) /
+      Math.max(
+        1,
+        packageTotal
+      );
+  }
+
+  if (weight <= 0) {
+    weight =
+      numberValue(
+        line.unit_weight_kg,
+        0
+      ) /
+      Math.max(
+        1,
+        packageTotal
+      );
+  }
+
+  return {
+    volume,
+    weight
+  };
+}
+
+async function createPhysicalStockForReceiptLine(
+  container,
+  line,
+  receiptLine,
+  receivedAt
+) {
+  const goodQuantity =
+    Math.max(
+      0,
+      integerValue(
+        receiptLine.good_quantity,
+        0
+      )
+    );
+
+  if (!goodQuantity) {
+    return [];
+  }
+
+  if (!line.product_id) {
+    throw new Error(
+      `${line.sku_snapshot || "Product"} has no product_id.`
+    );
+  }
+
+  if (!container.warehouse_id) {
+    throw new Error(
+      "The container has no warehouse selected."
+    );
+  }
+
+  if (!container.location_id) {
+    throw new Error(
+      "The container has no warehouse location selected."
+    );
+  }
+
+  const db =
+    getDb();
+
+  const packageTotal =
+    Math.max(
+      1,
+      integerValue(
+        line.packages_per_unit,
+        1
+      )
+    );
+
+  const sku =
+    String(
+      line.sku_snapshot ||
+      "SKU"
+    )
+      .trim()
+      .toUpperCase();
+
+  const inboundReference =
+    `INBOUND:${container.id}`;
+
+  const physicalSets =
+    [];
+
+  for (
+    let unitIndex = 1;
+    unitIndex <= goodQuantity;
+    unitIndex++
+  ) {
+    const physicalProductId =
+      createInboundUuid();
+
+    physicalSets.push({
+      physical_product_id:
+        physicalProductId,
+
+      product_id:
+        line.product_id,
+
+      line_id:
+        line.id,
+
+      package_total:
+        packageTotal,
+
+      set_code:
+        `C-${sku}-${createInboundUuid()
+          .replaceAll("-", "")
+          .slice(0, 12)
+        }`
+    });
+  }
+
+  /*
+   * Eerst complete stock_sets aanmaken.
+   */
+  const stockSetRows =
+    physicalSets.map(set => ({
+      company_id:
+        state.companyId,
+
+      product_id:
+        set.product_id,
+
+      physical_product_id:
+        set.physical_product_id,
+
+      set_code:
+        set.set_code,
+
+      status:
+        "complete",
+
+      package_total:
+        packageTotal,
+
+      package_count:
+        packageTotal,
+
+      volume_m3:
+        numberValue(
+          line.unit_volume_m3,
+          0
+        ),
+
+      weight_kg:
+        numberValue(
+          line.unit_weight_kg,
+          0
+        ),
+
+      warehouse_id:
+        container.warehouse_id,
+
+      location_id:
+        container.location_id,
+
+      created_at:
+        receivedAt,
+
+      updated_at:
+        receivedAt
+    }));
+
+  const {
+    data: insertedStockSets,
+    error: stockSetError
+  } =
+    await db
+      .from(
+        "stock_sets"
+      )
+      .insert(
+        stockSetRows
+      )
+      .select(`
+        id,
+        physical_product_id
+      `);
+
+  if (stockSetError) {
+    throw stockSetError;
+  }
+
+  const stockSetIdByPhysical =
+    new Map(
+      (
+        insertedStockSets ||
+        []
+      ).map(row => [
+        String(
+          row.physical_product_id
+        ),
+        row.id
+      ])
+    );
+
+  const itemRows =
+    [];
+
+  physicalSets.forEach(
+    (
+      set,
+      unitIndex
+    ) => {
+      const stockSetId =
+        stockSetIdByPhysical.get(
+          String(
+            set.physical_product_id
+          )
+        );
+
+      if (!stockSetId) {
+        throw new Error(
+          `Stock set was not created for ${sku}.`
+        );
+      }
+
+      for (
+        let packageNo = 1;
+        packageNo <= packageTotal;
+        packageNo++
+      ) {
+        const metrics =
+          getInboundPackageMetrics(
+            line,
+            packageNo,
+            packageTotal
+          );
+
+        const uniqueReference =
+          `${sku}-INB-` +
+          `${String(
+            unitIndex + 1
+          ).padStart(4, "0")}-` +
+          `${packageNo}OF${packageTotal}-` +
+          `${createInboundUuid()
+            .replaceAll("-", "")
+            .slice(0, 8)
+          }`;
+
+        itemRows.push({
+          company_id:
+            state.companyId,
+
+          product_id:
+            line.product_id,
+
+          warehouse_id:
+            container.warehouse_id,
+
+          location_id:
+            container.location_id,
+
+          storage_mutation_id:
+            uniqueReference,
+
+          sku_unique:
+            uniqueReference,
+
+          status:
+            "in_stock",
+
+          volume_m3:
+            metrics.volume,
+
+          weight_kg:
+            metrics.weight,
+
+          inbound_reference:
+            inboundReference,
+
+          inbound_date:
+            receivedAt,
+
+          received_at:
+            receivedAt,
+
+          physical_product_id:
+            set.physical_product_id,
+
+          package_no:
+            packageNo,
+
+          package_total:
+            packageTotal,
+
+          package_label:
+            `${packageNo}/${packageTotal}`,
+
+          stock_set_id:
+            stockSetId,
+
+          stock_set_key:
+            `${line.product_id}:` +
+            `${set.physical_product_id}`,
+
+          stock_set_status:
+            "complete"
+        });
+      }
+    }
+  );
+
+  const {
+    data: insertedItems,
+    error: itemError
+  } =
+    await db
+      .from(
+        "items"
+      )
+      .insert(
+        itemRows
+      )
+      .select(`
+        id,
+        product_id,
+        status,
+        physical_product_id,
+        stock_set_id,
+        package_no,
+        package_total,
+        package_label
+      `);
+
+  if (itemError) {
+    throw itemError;
+  }
+
+  const itemsByPhysical =
+    new Map();
+
+  (
+    insertedItems ||
+    []
+  ).forEach(item => {
+    const key =
+      String(
+        item.physical_product_id
+      );
+
+    if (
+      !itemsByPhysical.has(key)
+    ) {
+      itemsByPhysical.set(
+        key,
+        []
+      );
+    }
+
+    itemsByPhysical
+      .get(key)
+      .push(item);
+  });
+
+  return physicalSets.map(set => ({
+    ...set,
+
+    stock_set_id:
+      stockSetIdByPhysical.get(
+        String(
+          set.physical_product_id
+        )
+      ),
+
+    items:
+      itemsByPhysical.get(
+        String(
+          set.physical_product_id
+        )
+      ) || []
+  }));
+}
+
+async function loadExpectedAllocationsForContainer(
+  containerId
+) {
+  const db =
+    getDb();
+
+  const {
+    data,
+    error
+  } =
+    await db
+      .from(
+        "inbound_expected_allocations"
+      )
+      .select(`
+        id,
+        company_id,
+        container_id,
+        container_line_id,
+        order_id,
+        order_line_id,
+        expected_quantity,
+        status,
+        created_at
+      `)
+      .eq(
+        "container_id",
+        containerId
+      )
+      .eq(
+        "status",
+        "expected"
+      )
+      .order(
+        "created_at",
+        {
+          ascending: true
+        }
+      );
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+async function convertExpectedAllocationsToPhysical(
+  expectedAllocations,
+  physicalSetsByLine,
+  receivedAt
+) {
+  const db =
+    getDb();
+
+  const affectedOrderIds =
+    new Set();
+
+  let physicalAllocationsCreated =
+    0;
+
+  for (
+    const expectedAllocation
+    of expectedAllocations
+  ) {
+    const lineKey =
+      String(
+        expectedAllocation
+          .container_line_id
+      );
+
+    const availableSets =
+      physicalSetsByLine.get(
+        lineKey
+      ) || [];
+
+    const requestedQuantity =
+      Math.max(
+        0,
+        integerValue(
+          expectedAllocation
+            .expected_quantity,
+          0
+        )
+      );
+
+    const setsToAllocate =
+      availableSets.splice(
+        0,
+        Math.min(
+          requestedQuantity,
+          availableSets.length
+        )
+      );
+
+    let firstAllocationId =
+      null;
+
+    for (
+      const set
+      of setsToAllocate
+    ) {
+      const firstItem =
+        set.items?.[0];
+
+      if (!firstItem?.id) {
+        continue;
+      }
+
+      const {
+        data: insertedAllocation,
+        error: allocationError
+      } =
+        await db
+          .from(
+            "order_allocations"
+          )
+          .insert({
+            company_id:
+              state.companyId,
+
+            order_line_id:
+              expectedAllocation
+                .order_line_id,
+
+            item_id:
+              firstItem.id,
+
+            stock_set_id:
+              set.stock_set_id ||
+              null,
+
+            allocation_status:
+              "reserved",
+
+            allocated_at:
+              receivedAt,
+
+            allocated_by_profile_id:
+              state.profile?.id ||
+              null
+          })
+          .select(`
+            id
+          `)
+          .single();
+
+      if (allocationError) {
+        throw allocationError;
+      }
+
+      if (
+        !firstAllocationId
+      ) {
+        firstAllocationId =
+          insertedAllocation.id;
+      }
+
+      const itemIds =
+        (
+          set.items ||
+          []
+        )
+          .map(item =>
+            item.id
+          )
+          .filter(Boolean);
+
+      if (
+        itemIds.length
+      ) {
+        const {
+          error: reserveError
+        } =
+          await db
+            .from(
+              "items"
+            )
+            .update({
+              status:
+                "reserved",
+
+              linked_order_id:
+                expectedAllocation
+                  .order_id,
+
+              reserved_at:
+                receivedAt
+            })
+            .in(
+              "id",
+              itemIds
+            );
+
+        if (reserveError) {
+          throw reserveError;
+        }
+      }
+
+      physicalAllocationsCreated +=
+        1;
+    }
+
+    /*
+     * De expected reservering is nu opgebruikt.
+     *
+     * Ook wanneer er een shortage is, mag de
+     * reeds ontvangen container niet langer als
+     * toekomstige expected stock meetellen.
+     */
+    const {
+      error: expectedUpdateError
+    } =
+      await db
+        .from(
+          "inbound_expected_allocations"
+        )
+        .update({
+          status:
+            "converted",
+
+          converted_allocation_id:
+            firstAllocationId,
+
+          converted_at:
+            receivedAt
+        })
+        .eq(
+          "id",
+          expectedAllocation.id
+        );
+
+    if (
+      expectedUpdateError
+    ) {
+      throw expectedUpdateError;
+    }
+
+    if (
+      expectedAllocation.order_id
+    ) {
+      affectedOrderIds.add(
+        String(
+          expectedAllocation.order_id
+        )
+      );
+    }
+  }
+
+  return {
+    affectedOrderIds:
+      [...affectedOrderIds],
+
+    physicalAllocationsCreated
+  };
+}
+
+async function updatePhysicalPlanningBasis(
+  summaries
+) {
+  const db =
+    getDb();
+
+  const latestByOrder =
+    new Map();
+
+  (
+    summaries ||
+    []
+  ).forEach(summary => {
+    if (
+      summary?.order_id
+    ) {
+      latestByOrder.set(
+        String(
+          summary.order_id
+        ),
+        summary
+      );
+    }
+  });
+
+  for (
+    const summary
+    of latestByOrder.values()
+  ) {
+    const physicallyComplete =
+      numberValue(
+        summary.total_missing,
+        0
+      ) <= 0 &&
+      numberValue(
+        summary.missing_packages,
+        0
+      ) <= 0;
+
+    if (
+      !physicallyComplete
+    ) {
+      continue;
+    }
+
+    const {
+      error
+    } =
+      await db
+        .from(
+          "orders"
+        )
+        .update({
+          planning_stock_basis:
+            "physical",
+
+          earliest_planning_date:
+            null,
+
+          last_activity_at:
+            new Date()
+              .toISOString()
+        })
+        .eq(
+          "id",
+          summary.order_id
+        );
+
+    if (error) {
+      throw error;
+    }
+  }
+}
+
+async function createContainerReceivedNotification(
+  container,
+  receiptLines,
+  databaseLines,
+  hasExceptions
+) {
+  const db = getDb();
+
+  try {
+    const databaseLineById =
+      new Map(
+        (databaseLines || []).map(line => [
+          String(line.id),
+          line
+        ])
+      );
+
+    const productSummary =
+      receiptLines
+        .map(receiptLine => {
+          const databaseLine =
+            databaseLineById.get(
+              String(receiptLine.id)
+            );
+
+          const sku =
+            databaseLine?.sku_snapshot ||
+            "Unknown SKU";
+
+          const qty =
+            integerValue(
+              receiptLine.good_quantity,
+              0
+            );
+
+          return `${sku} × ${qty}`;
+        })
+        .filter(Boolean)
+        .join(" · ");
+
+    const totalDamaged =
+      receiptLines.reduce(
+        (total, line) =>
+          total +
+          integerValue(
+            line.damaged_quantity,
+            0
+          ),
+        0
+      );
+
+    const totalMissing =
+      receiptLines.reduce(
+        (total, line) =>
+          total +
+          integerValue(
+            line.missing_quantity,
+            0
+          ),
+        0
+      );
+
+    const totalQuarantine =
+      receiptLines.reduce(
+        (total, line) =>
+          total +
+          integerValue(
+            line.quarantine_quantity,
+            0
+          ),
+        0
+      );
+
+    const totalOver =
+      receiptLines.reduce(
+        (total, line) =>
+          total +
+          integerValue(
+            line.over_received_quantity,
+            0
+          ),
+        0
+      );
+
+    const exceptionParts = [];
+
+    if (totalMissing > 0) {
+      exceptionParts.push(
+        `${totalMissing} missing`
+      );
+    }
+
+    if (totalDamaged > 0) {
+      exceptionParts.push(
+        `${totalDamaged} damaged`
+      );
+    }
+
+    if (totalQuarantine > 0) {
+      exceptionParts.push(
+        `${totalQuarantine} quarantined`
+      );
+    }
+
+    if (totalOver > 0) {
+      exceptionParts.push(
+        `${totalOver} over received`
+      );
+    }
+
+    const exceptionText =
+      hasExceptions
+        ? `Exceptions reported: ${exceptionParts.join(", ")}.`
+        : "No exceptions were reported.";
+
+    const message =
+      `Container ${container.container_number} has been received and booked into stock. ` +
+      `${exceptionText} ` +
+      `Booked into stock: ${productSummary}.`;
+
+    const { error } =
+      await db
+        .from("system_notifications")
+        .insert({
+          company_id:
+            state.companyId,
+
+          customer_id:
+            container.product_owner_id,
+
+          recipient_role:
+            null,
+
+          notification_type:
+            "container_received",
+
+          title:
+            "Container Received",
+
+          message,
+
+          severity:
+            hasExceptions
+              ? "warning"
+              : "info",
+
+          entity_type:
+            "inbound_container",
+
+          entity_id:
+            container.id,
+
+          action_url:
+            "./inbound-containers.html",
+
+          is_read:
+            false,
+
+          popup_shown:
+            false
+        });
+
+    if (error) {
+      throw error;
+    }
+
+  } catch (error) {
+    console.warn(
+      "Container received notification could not be created:",
+      error.message
+    );
+  }
+}
+
+async function saveReceiveContainerCheck() {
+  const containerId =
+    state.activeReceiveContainerId;
+
+  if (!containerId) {
+    throw new Error(
+      "No container selected."
+    );
+  }
+
+  const db =
+    getDb();
+
+  /*
+   * =========================================================
+   * PRE-FLIGHT
+   *
+   * Eerst ALLES controleren voordat we voorraad muteren.
+   * =========================================================
+   */
+
+  const allocationEngine =
+    await ensureAllocationEngineLoaded();
+
+  if (
+    !allocationEngine?.run ||
+    !allocationEngine?.runForProduct
+  ) {
+    throw new Error(
+      "Allocation Engine is not available. Nothing has been booked into stock."
+    );
+  }
+
+
+  const {
+    data: container,
+    error: containerLoadError
+  } =
+    await db
+      .from(
+        "inbound_containers"
+      )
+      .select(`
+        id,
+        company_id,
+        product_owner_id,
+        container_number,
+        warehouse_id,
+        location_id,
+        status,
+        receipt_confirmed,
+        receiving_notes
+      `)
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "id",
+        containerId
+      )
+      .single();
+
+  if (containerLoadError) {
+    throw containerLoadError;
+  }
+
+  if (!container) {
+    throw new Error(
+      "Container could not be found."
+    );
+  }
+
+
+  /*
+   * Dubbel ontvangen voorkomen.
+   */
+  if (
+    normalize(
+      container.status
+    ) === "received" ||
+    container.receipt_confirmed
+  ) {
+    throw new Error(
+      "This container has already been booked into stock."
+    );
+  }
+
+
+  if (!container.warehouse_id) {
+    throw new Error(
+      "Select a warehouse before receiving this container."
+    );
+  }
+
+
+  if (!container.location_id) {
+    throw new Error(
+      "Select a warehouse location before receiving this container."
+    );
+  }
+
+
+  const receiptLines =
+    getReceiveContainerLineValues();
+
+  if (!receiptLines.length) {
+    throw new Error(
+      "This container has no product lines."
+    );
+  }
+
+
+  const everythingCorrect =
+    byId(
+      "receiveEverythingCorrect"
+    )?.value === "yes";
+
+
+  const hasExceptions =
+    receiptLines.some(line =>
+      line.damaged_quantity > 0 ||
+      line.missing_quantity > 0 ||
+      line.quarantine_quantity > 0 ||
+      line.over_received_quantity > 0
+    );
+
+
+  if (
+    everythingCorrect &&
+    hasExceptions
+  ) {
+    throw new Error(
+      "The receipt is marked as correct, but exceptions have been entered."
+    );
+  }
+
+
+  /*
+   * Extra controle:
+   * geen damaged + quarantine boven received.
+   */
+  for (
+    const line
+    of receiptLines
+  ) {
+    if (
+      (
+        line.damaged_quantity +
+        line.quarantine_quantity
+      ) >
+      line.received_quantity
+    ) {
+      throw new Error(
+        "Damaged + quarantine cannot exceed received quantity."
+      );
+    }
+  }
+
+
+  /*
+   * Controleren of deze container niet al fysieke
+   * voorraad heeft aangemaakt.
+   */
+  const inboundReference =
+    `INBOUND:${containerId}`;
+
+
+  const {
+    data: existingStock,
+    error: existingStockError
+  } =
+    await db
+      .from(
+        "items"
+      )
+      .select("id")
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "inbound_reference",
+        inboundReference
+      )
+      .limit(1);
+
+
+  if (existingStockError) {
+    throw existingStockError;
+  }
+
+
+  if (
+    existingStock?.length
+  ) {
+    throw new Error(
+      "Physical stock already exists for this container. The container will not be booked twice."
+    );
+  }
+
+
+  /*
+   * Actuele containerregels ophalen.
+   */
+  const {
+    data: databaseLines,
+    error: lineLoadError
+  } =
+    await db
+      .from(
+        "inbound_container_lines"
+      )
+      .select("*")
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "container_id",
+        containerId
+      )
+      .order(
+        "line_number",
+        {
+          ascending: true
+        }
+      );
+
+
+  if (lineLoadError) {
+    throw lineLoadError;
+  }
+
+
+  const lineById =
+    new Map(
+      (
+        databaseLines ||
+        []
+      ).map(line => [
+        String(line.id),
+        line
+      ])
+    );
+
+
+  /*
+   * Alle popup-regels moeten werkelijk bestaan
+   * én aan een product gekoppeld zijn.
+   */
+  for (
+    const receiptLine
+    of receiptLines
+  ) {
+    const databaseLine =
+      lineById.get(
+        String(
+          receiptLine.id
+        )
+      );
+
+
+    if (!databaseLine) {
+      throw new Error(
+        "One of the container product lines could not be found."
+      );
+    }
+
+
+    if (!databaseLine.product_id) {
+      throw new Error(
+        `${databaseLine.sku_snapshot || "Product"} has no linked product master record.`
+      );
+    }
+
+
+    if (
+      String(
+        databaseLine.company_id
+      ) !==
+      String(
+        state.companyId
+      )
+    ) {
+      throw new Error(
+        "Container product belongs to another company."
+      );
+    }
+  }
+
+
+  /*
+   * De bestaande expected orderkoppelingen ophalen
+   * VOORDAT iets gewijzigd wordt.
+   */
+  const expectedAllocations =
+    await loadExpectedAllocationsForContainer(
+      containerId
+    );
+
+
+  const receivedAt =
+    new Date()
+      .toISOString();
+
+
+  /*
+   * =========================================================
+   * VANAF HIER WORDT ECHT GEBOEKT
+   * =========================================================
+   */
+
+
+  /*
+   * 1. Definitieve ontvangstgegevens opslaan.
+   */
+  for (
+    const receiptLine
+    of receiptLines
+  ) {
+    const {
+      error
+    } =
+      await db
+        .from(
+          "inbound_container_lines"
+        )
+        .update({
+          received_quantity:
+            receiptLine.received_quantity,
+
+          good_quantity:
+            receiptLine.good_quantity,
+
+          damaged_quantity:
+            receiptLine.damaged_quantity,
+
+          missing_quantity:
+            receiptLine.missing_quantity,
+
+          quarantine_quantity:
+            receiptLine.quarantine_quantity,
+
+          over_received_quantity:
+            receiptLine.over_received_quantity,
+
+          receiving_note:
+            receiptLine.receiving_note
+        })
+        .eq(
+          "company_id",
+          state.companyId
+        )
+        .eq(
+          "id",
+          receiptLine.id
+        );
+
+
+    if (error) {
+      throw error;
+    }
+  }
+
+
+  /*
+   * 2. Good Stock fysiek aanmaken.
+   */
+  const physicalSetsByLine =
+    new Map();
+
+
+  let totalPhysicalPackages =
+    0;
+
+
+  for (
+    const receiptLine
+    of receiptLines
+  ) {
+    const databaseLine =
+      lineById.get(
+        String(
+          receiptLine.id
+        )
+      );
+
+
+    const sets =
+      await createPhysicalStockForReceiptLine(
+        container,
+        databaseLine,
+        receiptLine,
+        receivedAt
+      );
+
+
+    physicalSetsByLine.set(
+      String(
+        receiptLine.id
+      ),
+      sets
+    );
+
+
+    for (
+      const set
+      of sets
+    ) {
+      totalPhysicalPackages +=
+        (
+          set.items ||
+          []
+        ).length;
+    }
+  }
+
+
+  /*
+   * 3. Expected allocations omzetten naar
+   *    fysieke reserveringen.
+   *
+   * De reeds gemaakte orderkoppelingen krijgen
+   * dus voorrang.
+   */
+  const conversion =
+    await convertExpectedAllocationsToPhysical(
+      expectedAllocations,
+      physicalSetsByLine,
+      receivedAt
+    );
+
+
+  /*
+   * 4. Container op received zetten.
+   *
+   * Hierdoor mag hij niet langer als Expected Stock
+   * worden gezien.
+   */
+  const {
+    error: containerReceiveError
+  } =
+    await db
+      .from(
+        "inbound_containers"
+      )
+      .update({
+        status:
+          "received",
+
+        received_at:
+          receivedAt,
+
+        received_by:
+          state.profile?.id ||
+          null,
+
+        receiving_notes:
+          byId(
+            "receiveContainerNotes"
+          )?.value?.trim() ||
+          null,
+
+        receipt_confirmed:
+          true,
+
+        receipt_has_exceptions:
+          hasExceptions
+      })
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "id",
+        containerId
+      );
+
+
+  if (containerReceiveError) {
+    throw containerReceiveError;
+  }
+
+
+  /*
+   * 5. Containerregels definitief ontvangen.
+   */
+  const {
+    error: lineReceiveError
+  } =
+    await db
+      .from(
+        "inbound_container_lines"
+      )
+      .update({
+        received_at:
+          receivedAt,
+
+        received_by:
+          state.profile?.id ||
+          null
+      })
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "container_id",
+        containerId
+      );
+
+
+  if (lineReceiveError) {
+    throw lineReceiveError;
+  }
+
+
+  /*
+   * =========================================================
+   * MATCHING
+   * =========================================================
+   */
+
+
+  const productIds =
+    [
+      ...new Set(
+        (
+          databaseLines ||
+          []
+        )
+          .map(line =>
+            line.product_id
+          )
+          .filter(Boolean)
+          .map(String)
+      )
+    ];
+
+
+  const allSummaries =
+    [];
+
+
+  /*
+   * 6. Vrije fysieke voorraad opnieuw
+   *    aan openstaande orders aanbieden.
+   *
+   * De Allocation Engine gebruikt zelf alleen
+   * complete fysieke productsets.
+   */
+  for (
+    const productId
+    of productIds
+  ) {
+    const result =
+      await allocationEngine
+        .runForProduct(
+          productId,
+          {
+            dryRun:
+              false
+          }
+        );
+
+
+    allSummaries.push(
+      ...(
+        result?.summaries ||
+        []
+      )
+    );
+  }
+
+
+  /*
+   * 7. Orders die vooraf al aan deze container
+   *    gekoppeld waren expliciet nogmaals
+   *    herberekenen.
+   */
+  if (
+    conversion
+      .affectedOrderIds
+      .length
+  ) {
+    const finalResult =
+      await allocationEngine.run({
+        dryRun:
+          false,
+
+        orderIds:
+          conversion
+            .affectedOrderIds
+      });
+
+
+    allSummaries.push(
+      ...(
+        finalResult?.summaries ||
+        []
+      )
+    );
+  }
+
+
+  /*
+   * 8. Orders die nu werkelijk fysiek compleet zijn
+   *    niet langer op expected stock baseren.
+   */
+  await updatePhysicalPlanningBasis(
+    allSummaries
+  );
+
+
+  /*
+   * =========================================================
+   * AUDIT
+   * =========================================================
+   */
+
+  const totalGood =
+    receiptLines.reduce(
+      (
+        total,
+        line
+      ) =>
+        total +
+        line.good_quantity,
+      0
+    );
+
+
+  const totalDamaged =
+    receiptLines.reduce(
+      (
+        total,
+        line
+      ) =>
+        total +
+        line.damaged_quantity,
+      0
+    );
+
+
+  const totalMissing =
+    receiptLines.reduce(
+      (
+        total,
+        line
+      ) =>
+        total +
+        line.missing_quantity,
+      0
+    );
+
+
+  const totalQuarantine =
+    receiptLines.reduce(
+      (
+        total,
+        line
+      ) =>
+        total +
+        line.quarantine_quantity,
+      0
+    );
+
+
+  const totalOver =
+    receiptLines.reduce(
+      (
+        total,
+        line
+      ) =>
+        total +
+        line.over_received_quantity,
+      0
+    );
+
+
+  const {
+    error: logError
+  } =
+    await db
+      .from(
+        "inbound_activity_log"
+      )
+      .insert({
+        company_id:
+          state.companyId,
+
+        container_id:
+          containerId,
+
+        event_type:
+          "container_received",
+
+        description:
+          `Container ${container.container_number} received. ` +
+          `${totalGood} good unit(s), ` +
+          `${totalPhysicalPackages} physical package(s), ` +
+          `${totalDamaged} damaged, ` +
+          `${totalMissing} missing, ` +
+          `${totalQuarantine} quarantine.`,
+
+        new_status:
+          "received",
+
+        payload: {
+          receipt_has_exceptions:
+            hasExceptions,
+
+          good_units:
+            totalGood,
+
+          physical_packages:
+            totalPhysicalPackages,
+
+          damaged_units:
+            totalDamaged,
+
+          missing_units:
+            totalMissing,
+
+          quarantine_units:
+            totalQuarantine,
+
+          over_received_units:
+            totalOver,
+
+          expected_allocations_found:
+            expectedAllocations.length,
+
+          expected_allocations_converted:
+            conversion
+              .physicalAllocationsCreated,
+
+          affected_orders:
+            conversion
+              .affectedOrderIds
+        },
+
+        created_by:
+          state.profile?.id ||
+          null
+      });
+
+
+  if (logError) {
+    console.warn(
+      "Container receipt log could not be written:",
+      logError.message
+    );
+  }
+
+await createContainerReceivedNotification(
+  container,
+  receiptLines,
+  databaseLines,
+  hasExceptions
+);
+
+
+  /*
+   * =========================================================
+   * UI REFRESH
+   * =========================================================
+   */
+
+  clearContainerDetailCache(
+    containerId
+  );
+
+
+  state.expandedContainers.delete(
+    String(containerId)
+  );
+
+
+  await loadContainers();
+
+
+  closeReceiveContainerModal();
+
+
+  showToast(
+    `Container ${container.container_number} booked into stock. ` +
+    `${totalGood} unit(s) / ` +
+    `${totalPhysicalPackages} package(s) received. ` +
+    `${conversion.physicalAllocationsCreated} existing expected allocation(s) converted.`,
+    "ok"
+  );
 }
 
 /* =========================================================
