@@ -2856,11 +2856,12 @@ return productMap;
   );
 
   /*
-   * Volume en gewicht:
+   * Volume en gewicht
    *
-   * Handmatig ingevoerde waarden blijven leidend.
-   * Wanneer niets is ingevuld, gebruiken we
-   * de productmaster als fallback.
+   * Als volume / gewicht al op de regel staat,
+   * gebruiken we dat.
+   *
+   * Anders gebruiken we de productmaster.
    */
   const unitVolume =
     toNumber(
@@ -2901,7 +2902,7 @@ return productMap;
     qty * unitWeight;
 
   /*
-   * Packages blijven uit de productmaster komen.
+   * Packages
    */
   const packagesPerUnit = Math.max(
     1,
@@ -2919,21 +2920,22 @@ return productMap;
     qty * packagesPerUnit;
 
   /*
-   * BELANGRIJK:
+   * TARIEVEN
    *
-   * Bij een MANUAL ORDER zijn de bedragen die
-   * in het Manual Order-scherm zijn ingevuld
-   * altijd leidend.
+   * PDF / Excel:
+   *   Qty × productmastertarief
    *
-   * Dus ook een expliciete £0.00 blijft £0.00.
+   * Manual Order:
+   *   Qty × handmatig ingevuld tarief
    *
-   * Voor Excel/PDF imports blijft de bestaande
-   * berekening vanuit de productmaster werken.
+   * Hierdoor kan bij Manual Order bijvoorbeeld
+   * Transport = 0 blijven, terwijl Storage,
+   * Admin en Handling wel correct × Qty gaan.
    */
 
   const storageTotal =
     preserveManualTariffs
-      ? toNumber(
+      ? qty * toNumber(
           line.tariff_storage,
           0
         )
@@ -2945,7 +2947,7 @@ return productMap;
 
   const adminTotal =
     preserveManualTariffs
-      ? toNumber(
+      ? qty * toNumber(
           line.tariff_admin,
           0
         )
@@ -2956,7 +2958,7 @@ return productMap;
 
   const handlingTotal =
     preserveManualTariffs
-      ? toNumber(
+      ? qty * toNumber(
           line.tariff_handling,
           0
         )
@@ -2968,7 +2970,7 @@ return productMap;
 
   const transportTotal =
     preserveManualTariffs
-      ? toNumber(
+      ? qty * toNumber(
           line.tariff_transport,
           0
         )
@@ -2979,14 +2981,14 @@ return productMap;
         );
 
   /*
-   * S2U fees:
+   * S2U fees
    *
-   * Bij een handmatige order worden deze opnieuw
-   * opgebouwd uit Storage + Admin + Handling.
+   * Manual:
+   * Storage + Admin + Handling.
    *
-   * Daardoor kan een oud total_s2u_fees-bedrag
-   * uit de productmaster de handmatige tarieven
-   * niet weer overschrijven.
+   * PDF / Excel:
+   * Gebruik total_s2u_fees uit de productmaster
+   * wanneer aanwezig. Anders rekenen we hem zelf.
    */
   const s2uTotal =
     preserveManualTariffs
@@ -3012,13 +3014,14 @@ return productMap;
         );
 
   /*
-   * Customer Charge:
+   * Totale charge naar de product owner.
    *
-   * Bij Manual Order:
-   * Warehouse + Transport.
+   * Manual:
+   * S2U fees + het handmatige transportbedrag.
    *
-   * Dus wanneer Transport £0.00 is,
-   * blijft hij daadwerkelijk £0.00.
+   * PDF / Excel:
+   * Productmaster total_customer_charge gebruiken
+   * wanneer aanwezig.
    */
   const customerChargeTotal =
     preserveManualTariffs
@@ -3081,6 +3084,7 @@ return productMap;
       customerChargeTotal
   };
 }
+
 
 async function enrichPreviewOrdersWithProductData() {
   if (!groupedOrders.length) return;

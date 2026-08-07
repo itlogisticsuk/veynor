@@ -2388,6 +2388,531 @@ function renderContainerLine(line) {
   `;
 }
 
+/* =========================================================
+   ATTACHMENT UPLOAD MODAL
+   ========================================================= */
+
+function ensureAttachmentModal() {
+  let modal = byId("attachmentModal");
+
+  if (modal) {
+    return modal;
+  }
+
+  modal = document.createElement("div");
+  modal.id = "attachmentModal";
+  modal.className = "modal-overlay";
+
+  modal.innerHTML = `
+    <div class="modal-card" style="max-width:620px;">
+      <div class="modal-head">
+        <div>
+          <h2 id="attachmentModalTitle">
+            Upload File
+          </h2>
+
+          <p class="subline" id="attachmentModalSubtitle">
+            Add a file to this inbound container.
+          </p>
+        </div>
+
+        <button
+          class="icon-btn"
+          type="button"
+          id="btnCloseAttachmentModal"
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="modal-body">
+
+        <div class="field">
+          <label>File Type</label>
+
+          <select
+            class="select"
+            id="attachmentType"
+          >
+            <option value="container_photo">
+              Container Photo
+            </option>
+
+            <option value="damage_photo">
+              Damage Photo
+            </option>
+
+            <option value="delivery_document">
+              Delivery Document
+            </option>
+
+            <option value="other">
+              Other File
+            </option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>File</label>
+
+          <input
+            class="input"
+            id="attachmentInput"
+            type="file"
+          >
+
+          <span
+            class="subline"
+            id="attachmentFileLabel"
+            style="margin-top:6px;"
+          >
+            No file selected
+          </span>
+        </div>
+
+        <div class="field">
+          <label>Note</label>
+
+          <textarea
+            class="input"
+            id="attachmentNote"
+            rows="4"
+            placeholder="Optional note about this file..."
+          ></textarea>
+        </div>
+
+      </div>
+
+      <div class="modal-actions">
+        <button
+          class="btn"
+          type="button"
+          id="btnCancelAttachment"
+        >
+          Cancel
+        </button>
+
+        <button
+          class="btn btn-primary"
+          type="button"
+          id="btnSaveAttachment"
+        >
+          Upload
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  byId("btnCloseAttachmentModal")
+    ?.addEventListener(
+      "click",
+      closeAttachmentModal
+    );
+
+  byId("btnCancelAttachment")
+    ?.addEventListener(
+      "click",
+      closeAttachmentModal
+    );
+
+  modal.addEventListener(
+    "click",
+    event => {
+      if (event.target === modal) {
+        closeAttachmentModal();
+      }
+    }
+  );
+
+  byId("attachmentInput")
+    ?.addEventListener(
+      "change",
+      event => {
+        const file =
+          event.target.files?.[0] ||
+          null;
+
+        state.attachmentFile =
+          file;
+
+        const label =
+          byId("attachmentFileLabel");
+
+        if (!label) {
+          return;
+        }
+
+        label.textContent =
+          file
+            ? `${file.name} · ${formatNumber(
+                file.size / 1024,
+                0
+              )} KB`
+            : "No file selected";
+      }
+    );
+
+  byId("btnSaveAttachment")
+    ?.addEventListener(
+      "click",
+      async () => {
+        const button =
+          byId("btnSaveAttachment");
+
+        if (!button) {
+          return;
+        }
+
+        button.disabled = true;
+        button.textContent =
+          "Uploading...";
+
+        try {
+          await saveContainerAttachment();
+        } catch (error) {
+          console.error(
+            "Attachment upload failed:",
+            error
+          );
+
+          showToast(
+            error.message ||
+            "File could not be uploaded.",
+            "err"
+          );
+        } finally {
+          button.disabled = false;
+          button.textContent =
+            "Upload";
+        }
+      }
+    );
+
+  return modal;
+}
+
+
+function openAttachmentModal(
+  containerId,
+  attachmentType = "other"
+) {
+  const modal =
+    ensureAttachmentModal();
+
+  state.activeAttachmentContainerId =
+    String(containerId);
+
+  state.attachmentFile =
+    null;
+
+  const input =
+    byId("attachmentInput");
+
+  const typeSelect =
+    byId("attachmentType");
+
+  const note =
+    byId("attachmentNote");
+
+  const label =
+    byId("attachmentFileLabel");
+
+  const title =
+    byId("attachmentModalTitle");
+
+  const subtitle =
+    byId("attachmentModalSubtitle");
+
+  if (input) {
+    input.value = "";
+  }
+
+  if (note) {
+    note.value = "";
+  }
+
+  if (label) {
+    label.textContent =
+      "No file selected";
+  }
+
+  if (typeSelect) {
+    typeSelect.value =
+      attachmentType;
+  }
+
+  /*
+   * Foto-knop:
+   * alleen afbeeldingen selecteren.
+   *
+   * Upload File:
+   * alle gangbare bestanden toestaan.
+   */
+  if (
+    attachmentType ===
+    "container_photo"
+  ) {
+    if (input) {
+      input.accept =
+        "image/*";
+
+      /*
+       * Hiermee kan op mobiel ook direct
+       * de camera gebruikt worden.
+       */
+      input.multiple = true;
+    }
+
+    if (title) {
+      title.textContent =
+        "Upload Photos";
+    }
+
+    if (subtitle) {
+      subtitle.textContent =
+        "Upload container, unloading or damage photos.";
+    }
+  } else {
+    if (input) {
+      input.accept =
+        ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt";
+
+      input.multiple = false;
+    }
+
+    if (title) {
+      title.textContent =
+        "Upload File";
+    }
+
+    if (subtitle) {
+      subtitle.textContent =
+        "Add a document or other file to this inbound container.";
+    }
+  }
+
+  modal.classList.add("open");
+}
+
+
+function closeAttachmentModal() {
+  byId("attachmentModal")
+    ?.classList
+    .remove("open");
+
+  state.activeAttachmentContainerId =
+    null;
+
+  state.attachmentFile =
+    null;
+}
+
+
+async function saveContainerAttachment() {
+  const containerId =
+    state.activeAttachmentContainerId;
+
+  if (!containerId) {
+    throw new Error(
+      "No container selected."
+    );
+  }
+
+  const input =
+    byId("attachmentInput");
+
+  const files =
+    Array.from(
+      input?.files || []
+    );
+
+  if (!files.length) {
+    throw new Error(
+      "Select at least one file."
+    );
+  }
+
+  const attachmentType =
+    byId("attachmentType")
+      ?.value ||
+    "other";
+
+  const note =
+    byId("attachmentNote")
+      ?.value
+      ?.trim() ||
+    null;
+
+  const db =
+    getDb();
+
+  /*
+   * Foto's mogen meerdere tegelijk.
+   * Normale bestanden blijven één voor één.
+   */
+  for (const file of files) {
+
+    /*
+     * Extra controle bij foto-upload.
+     */
+    if (
+      [
+        "container_photo",
+        "damage_photo"
+      ].includes(
+        attachmentType
+      ) &&
+      !String(file.type || "")
+        .toLowerCase()
+        .startsWith("image/")
+    ) {
+      throw new Error(
+        `${file.name} is not an image file.`
+      );
+    }
+
+    const safeFileName =
+      file.name.replace(
+        /[^a-zA-Z0-9._-]/g,
+        "_"
+      );
+
+    const folder =
+      [
+        "container_photo",
+        "damage_photo"
+      ].includes(
+        attachmentType
+      )
+        ? "photos"
+        : "documents";
+
+    const storagePath =
+      `${state.companyId}/` +
+      `${containerId}/` +
+      `${folder}/` +
+      `${Date.now()}-` +
+      `${Math.random()
+        .toString(36)
+        .slice(2, 8)}-` +
+      `${safeFileName}`;
+
+    /*
+     * Upload bestand naar Supabase Storage.
+     */
+    const {
+      error: uploadError
+    } = await db
+      .storage
+      .from("inbound-assets")
+      .upload(
+        storagePath,
+        file,
+        {
+          cacheControl: "3600",
+          upsert: false,
+          contentType:
+            file.type ||
+            "application/octet-stream"
+        }
+      );
+
+    if (uploadError) {
+      throw uploadError;
+    }
+
+    /*
+     * Database registratie.
+     */
+    const {
+      error: attachmentError
+    } = await db
+      .from("inbound_attachments")
+      .insert({
+        company_id:
+          state.companyId,
+
+        container_id:
+          containerId,
+
+        receipt_line_id:
+          null,
+
+        attachment_type:
+          attachmentType,
+
+        file_name:
+          file.name,
+
+        storage_bucket:
+          "inbound-assets",
+
+        storage_path:
+          storagePath,
+
+        mime_type:
+          file.type ||
+          "application/octet-stream",
+
+        file_size:
+          file.size ||
+          null,
+
+        note,
+
+        uploaded_by:
+          state.profile?.id ||
+          null,
+
+        uploaded_at:
+          new Date().toISOString()
+      });
+
+    if (attachmentError) {
+      /*
+       * Wanneer DB insert mislukt,
+       * verwijder het reeds geüploade bestand.
+       */
+      await db
+        .storage
+        .from("inbound-assets")
+        .remove([
+          storagePath
+        ]);
+
+      throw attachmentError;
+    }
+  }
+
+  /*
+   * Cache leegmaken zodat de nieuwe foto's
+   * direct zichtbaar worden.
+   */
+  state.loadedContainerAttachments
+    .delete(
+      String(containerId)
+    );
+
+  await loadContainerAttachments(
+    containerId
+  );
+
+  renderLoadedContainerAttachments(
+    containerId
+  );
+
+  closeAttachmentModal();
+
+  showToast(
+    files.length === 1
+      ? "File uploaded."
+      : `${files.length} photos uploaded.`,
+    "ok"
+  );
+}
+
   /* =========================================================
      NEW CONTAINER MODAL
      ========================================================= */
