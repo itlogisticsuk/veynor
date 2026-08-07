@@ -861,24 +861,102 @@ function drawTableHeader(doc, y, order, ctx = {}) {
   doc.rect(14, y - 5, 182, 8.5, "F");
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.8);
+  doc.setFontSize(6.6);
+
+  /*
+   * Kolommen:
+   *
+   * SKU          14
+   * Description  33
+   * Qty          99  rechts uitgelijnd
+   * Packages     106
+   * Warehouse    150 rechts
+   * Transport    171 rechts
+   * Total        194 rechts
+   */
 
   doc.text("SKU", 14, y);
-  doc.text("Product Description", 33, y);
-  doc.text("Qty", 104, y, { align: "right" });
-  doc.text("Packages", 122, y);
+
+  doc.text(
+    "Product Description",
+    33,
+    y
+  );
+
+  doc.text(
+    "Qty",
+    99,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+  doc.text(
+    "Packages",
+    106,
+    y
+  );
 
   if (zoy) {
-    doc.text("Price", 166, y, { align: "right" });
-    doc.text("Total", 194, y, { align: "right" });
+    doc.text(
+      "Price",
+      171,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+    doc.text(
+      "Total",
+      194,
+      y,
+      {
+        align: "right"
+      }
+    );
   } else {
-    doc.text("Warehouse", 146, y, { align: "right" });
-    doc.text("Transport", 166, y, { align: "right" });
-    doc.text("Total", 194, y, { align: "right" });
+    doc.text(
+      "Warehouse",
+      150,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+    doc.text(
+      "Transport",
+      171,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+    doc.text(
+      "Total",
+      194,
+      y,
+      {
+        align: "right"
+      }
+    );
   }
 
-  doc.setDrawColor(85, 85, 85);
-  doc.line(14, y + 3.3, 196, y + 3.3);
+  doc.setDrawColor(
+    85,
+    85,
+    85
+  );
+
+  doc.line(
+    14,
+    y + 3.3,
+    196,
+    y + 3.3
+  );
 
   return y + 8.5;
 }
