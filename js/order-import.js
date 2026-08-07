@@ -2831,8 +2831,14 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
 return productMap;
   }
 
- function enrichLineWithProductData(line, productMap) {
-  const sku = String(line.itemCode || "").trim();
+ function enrichLineWithProductData(
+  line,
+  productMap,
+  preserveManualTariffs = false
+) {
+  const sku = String(
+    line.itemCode || ""
+  ).trim();
 
   const product =
     productMap.get(sku) ||
@@ -2841,33 +2847,61 @@ return productMap;
 
   const qty = Math.max(
     0,
-    Math.round(toNumber(line.quantity, 0))
+    Math.round(
+      toNumber(
+        line.quantity,
+        0
+      )
+    )
   );
 
   /*
-   * Voor PDF-imports staat volume/gewicht meestal niet in het document.
-   * In dat geval gebruiken we de waarden uit de productmaster.
+   * Volume en gewicht:
+   *
+   * Handmatig ingevoerde waarden blijven leidend.
+   * Wanneer niets is ingevuld, gebruiken we
+   * de productmaster als fallback.
    */
   const unitVolume =
-    toNumber(line.unitVolume, 0) ||
-    toNumber(product?.volume_m3, 0);
+    toNumber(
+      line.unitVolume,
+      0
+    ) ||
+    toNumber(
+      product?.volume_m3,
+      0
+    );
 
   const totalVolume =
-    toNumber(line.totalVolume, 0) ||
+    toNumber(
+      line.totalVolume,
+      0
+    ) ||
     qty * unitVolume;
 
   const unitWeight =
-    toNumber(line.unitWeight, 0) ||
-    toNumber(product?.weight_kg, 0) ||
-    toNumber(product?.net_weight_kg, 0);
+    toNumber(
+      line.unitWeight,
+      0
+    ) ||
+    toNumber(
+      product?.weight_kg,
+      0
+    ) ||
+    toNumber(
+      product?.net_weight_kg,
+      0
+    );
 
   const totalWeight =
-    toNumber(line.totalWeight, 0) ||
+    toNumber(
+      line.totalWeight,
+      0
+    ) ||
     qty * unitWeight;
 
   /*
-   * In de interface spreken we over packages.
-   * De bestaande databasevelden heten technisch nog ..._colli.
+   * Packages blijven uit de productmaster komen.
    */
   const packagesPerUnit = Math.max(
     1,
@@ -2884,50 +2918,140 @@ return productMap;
   const totalPackages =
     qty * packagesPerUnit;
 
+  /*
+   * BELANGRIJK:
+   *
+   * Bij een MANUAL ORDER zijn de bedragen die
+   * in het Manual Order-scherm zijn ingevuld
+   * altijd leidend.
+   *
+   * Dus ook een expliciete £0.00 blijft £0.00.
+   *
+   * Voor Excel/PDF imports blijft de bestaande
+   * berekening vanuit de productmaster werken.
+   */
+
   const storageTotal =
-    qty * toNumber(
-      product?.storage_tariff ||
-      product?.tariff_storage,
-      0
-    );
+    preserveManualTariffs
+      ? toNumber(
+          line.tariff_storage,
+          0
+        )
+      : qty * toNumber(
+          product?.storage_tariff ||
+          product?.tariff_storage,
+          0
+        );
 
   const adminTotal =
-    qty * toNumber(
-      product?.admin_tariff,
-      0
-    );
+    preserveManualTariffs
+      ? toNumber(
+          line.tariff_admin,
+          0
+        )
+      : qty * toNumber(
+          product?.admin_tariff,
+          0
+        );
 
   const handlingTotal =
-    qty * toNumber(
-      product?.handling_tariff ||
-      product?.tariff_handling,
-      0
-    );
+    preserveManualTariffs
+      ? toNumber(
+          line.tariff_handling,
+          0
+        )
+      : qty * toNumber(
+          product?.handling_tariff ||
+          product?.tariff_handling,
+          0
+        );
 
   const transportTotal =
-    qty * toNumber(
-      product?.transport_tariff ||
-      product?.tariff_transport,
-      0
-    );
+    preserveManualTariffs
+      ? toNumber(
+          line.tariff_transport,
+          0
+        )
+      : qty * toNumber(
+          product?.transport_tariff ||
+          product?.tariff_transport,
+          0
+        );
 
+  /*
+   * S2U fees:
+   *
+   * Bij een handmatige order worden deze opnieuw
+   * opgebouwd uit Storage + Admin + Handling.
+   *
+   * Daardoor kan een oud total_s2u_fees-bedrag
+   * uit de productmaster de handmatige tarieven
+   * niet weer overschrijven.
+   */
   const s2uTotal =
-    toNumber(product?.total_s2u_fees, 0) > 0
-      ? qty * toNumber(product.total_s2u_fees, 0)
-      : storageTotal + adminTotal + handlingTotal;
+    preserveManualTariffs
+      ? (
+          storageTotal +
+          adminTotal +
+          handlingTotal
+        )
+      : (
+          toNumber(
+            product?.total_s2u_fees,
+            0
+          ) > 0
+            ? qty * toNumber(
+                product.total_s2u_fees,
+                0
+              )
+            : (
+                storageTotal +
+                adminTotal +
+                handlingTotal
+              )
+        );
 
+  /*
+   * Customer Charge:
+   *
+   * Bij Manual Order:
+   * Warehouse + Transport.
+   *
+   * Dus wanneer Transport £0.00 is,
+   * blijft hij daadwerkelijk £0.00.
+   */
   const customerChargeTotal =
-    toNumber(product?.total_customer_charge, 0) > 0
-      ? qty * toNumber(product.total_customer_charge, 0)
-      : s2uTotal + transportTotal;
+    preserveManualTariffs
+      ? (
+          s2uTotal +
+          transportTotal
+        )
+      : (
+          toNumber(
+            product?.total_customer_charge,
+            0
+          ) > 0
+            ? qty * toNumber(
+                product.total_customer_charge,
+                0
+              )
+            : (
+                s2uTotal +
+                transportTotal
+              )
+        );
 
   return {
     ...line,
 
-    productSnapshot: product,
-    productMissing: !product,
+    productSnapshot:
+      product,
 
-    quantity: qty,
+    productMissing:
+      !product,
+
+    quantity:
+      qty,
 
     packagesPerUnit,
     totalPackages,
@@ -2938,13 +3062,23 @@ return productMap;
     unitWeight,
     totalWeight,
 
-    tariff_storage: storageTotal,
-    tariff_admin: adminTotal,
-    tariff_handling: handlingTotal,
-    tariff_transport: transportTotal,
+    tariff_storage:
+      storageTotal,
 
-    total_s2u_fees: s2uTotal,
-    total_customer_charge: customerChargeTotal
+    tariff_admin:
+      adminTotal,
+
+    tariff_handling:
+      handlingTotal,
+
+    tariff_transport:
+      transportTotal,
+
+    total_s2u_fees:
+      s2uTotal,
+
+    total_customer_charge:
+      customerChargeTotal
   };
 }
 
@@ -2993,8 +3127,24 @@ async function enrichPreviewOrdersWithProductData() {
     const productOwnerId = await getOrCreateProductOwnerCustomer(owner, cid);
     const billingAddressId = await getOrCreateOwnerBillingAddress(owner, productOwnerId);
 
-    const productMap = await loadProductCostMap(cid, order.lines);
-    const enrichedLines = order.lines.map(line => enrichLineWithProductData(line, productMap));
+const productMap =
+  await loadProductCostMap(
+    cid,
+    order.lines
+  );
+
+const preserveManualTariffs =
+  normalize(order.sourceKind) ===
+  "manual";
+
+const enrichedLines =
+  order.lines.map(line =>
+    enrichLineWithProductData(
+      line,
+      productMap,
+      preserveManualTariffs
+    )
+  );
 
     const missingSkus = [...new Set(
       enrichedLines

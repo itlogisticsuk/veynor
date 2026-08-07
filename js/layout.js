@@ -44,10 +44,7 @@
   label: "Inbound Containers",
   icon: "container",
   group: "Warehouse",
-  roles: [
-    ...TENANT_ROLES,
-    ...PRODUCT_OWNER_ROLES
-  ]
+  roles: TENANT_ROLES
 },
 
 { href: "./scan.html", label: "Scan In / Out", icon: "scanner", group: "Warehouse", roles: TENANT_ROLES },
