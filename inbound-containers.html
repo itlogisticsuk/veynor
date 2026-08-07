@@ -541,13 +541,14 @@
           id="attachmentModalTitle"
           style="margin:0;font-size:18px"
         >
-          Upload Container File
+          Upload Photos
         </h2>
 
         <p
+          id="attachmentModalSubtitle"
           style="margin:4px 0 0;color:var(--muted);font-size:12px"
         >
-          Add a document or photo to this container.
+          Add photos or documents to this inbound container.
         </p>
       </div>
 
@@ -561,12 +562,14 @@
     </div>
 
     <div class="modal-body">
+
       <input
         id="attachmentContainerId"
         type="hidden"
       >
 
       <div class="form-grid">
+
         <div class="field">
           <label for="attachmentType">
             File Type *
@@ -578,6 +581,10 @@
           >
             <option value="container_photo">
               Container Photo
+            </option>
+
+            <option value="product_photo">
+              Product Photo
             </option>
 
             <option value="damage_photo">
@@ -598,22 +605,48 @@
           </select>
         </div>
 
-        <div class="field span-2">
+
+        <div
+          class="field span-2"
+          id="attachmentProductWrap"
+          style="display:none"
+        >
+          <label for="attachmentProductLine">
+            Product / SKU *
+          </label>
+
+          <select
+            id="attachmentProductLine"
+            class="select"
+          >
+            <option value="">
+              Select product
+            </option>
+          </select>
+
+          <span class="subline">
+            Select which product these photos belong to.
+          </span>
+        </div>
+
+
+        <div class="field span-3">
           <label>
-            Select File *
+            Select File(s) *
           </label>
 
           <label
             class="file-picker-label"
             for="attachmentFileInput"
           >
-            Select photo or document
+            Select photos or document
           </label>
 
           <input
             id="attachmentFileInput"
             type="file"
-            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+            accept="image/*"
+            multiple
             class="hidden"
           >
 
@@ -621,9 +654,10 @@
             id="attachmentFileLabel"
             class="subline"
           >
-            No file selected
+            No files selected
           </div>
         </div>
+
 
         <div class="field span-3">
           <label for="attachmentNote">
@@ -636,10 +670,13 @@
             placeholder="Optional description, damage details or other information..."
           ></textarea>
         </div>
+
       </div>
     </div>
 
+
     <div class="modal-foot">
+
       <button
         class="btn"
         id="btnCancelAttachment"
@@ -653,8 +690,9 @@
         id="btnUploadAttachment"
         type="button"
       >
-        Upload File
+        Upload Photos
       </button>
+
     </div>
   </section>
 </div>

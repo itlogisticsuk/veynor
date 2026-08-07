@@ -859,14 +859,27 @@ async function createAttachmentSignedUrl(
 
 function attachmentTypeLabel(type) {
   return {
-    packing_list: "Packing List",
-    container_photo: "Container Photo",
-    damage_photo: "Damage Photo",
-    delivery_document: "Delivery Document",
-    other: "Other"
-  }[normalize(type)] || "File";
-}
+    packing_list:
+      "Packing List",
 
+    container_photo:
+      "Container Photo",
+
+    product_photo:
+      "Product Photo",
+
+    damage_photo:
+      "Damage Photo",
+
+    delivery_document:
+      "Delivery Document",
+
+    other:
+      "Other"
+  }[
+    normalize(type)
+  ] || "File";
+}
 
 function renderAttachmentCard(attachment) {
   const isImage =
@@ -957,43 +970,63 @@ function renderAttachmentCard(attachment) {
 }
 
 
-function renderLoadedContainerAttachments(containerId) {
-  const cacheKey = String(containerId);
+function renderLoadedContainerAttachments(
+  containerId
+) {
+  const cacheKey =
+    String(containerId);
 
   const attachments =
-    state.loadedContainerAttachments.get(cacheKey) || [];
+    state.loadedContainerAttachments
+      .get(cacheKey) || [];
 
-  const documentsTarget = byId(
-    `containerDocuments-${cacheKey}`
-  );
+  const documentsTarget =
+    byId(
+      `containerDocuments-${cacheKey}`
+    );
 
-  const photosTarget = byId(
-    `containerPhotos-${cacheKey}`
-  );
+  const photosTarget =
+    byId(
+      `containerPhotos-${cacheKey}`
+    );
 
-  const photos = attachments.filter(attachment =>
-    [
-      "container_photo",
-      "damage_photo"
-    ].includes(
-      normalize(attachment.attachment_type)
-    )
-  );
 
-  const documents = attachments.filter(attachment =>
-    ![
-      "container_photo",
-      "damage_photo"
-    ].includes(
-      normalize(attachment.attachment_type)
-    )
-  );
+  const photoTypes = [
+    "container_photo",
+    "product_photo",
+    "damage_photo"
+  ];
+
+
+  const photos =
+    attachments.filter(
+      attachment =>
+        photoTypes.includes(
+          normalize(
+            attachment.attachment_type
+          )
+        )
+    );
+
+
+  const documents =
+    attachments.filter(
+      attachment =>
+        !photoTypes.includes(
+          normalize(
+            attachment.attachment_type
+          )
+        )
+    );
+
 
   if (documentsTarget) {
     documentsTarget.innerHTML =
       documents.length
         ? documents
-            .map(renderAttachmentCard)
+            .map(
+              renderAttachmentCard
+            )
             .join("")
         : `
           <div class="empty-state">
@@ -1002,11 +1035,14 @@ function renderLoadedContainerAttachments(containerId) {
         `;
   }
 
+
   if (photosTarget) {
     photosTarget.innerHTML =
       photos.length
         ? photos
-            .map(renderAttachmentCard)
+            .map(
+              renderAttachmentCard
+            )
             .join("")
         : `
           <div class="empty-state">
@@ -1015,9 +1051,9 @@ function renderLoadedContainerAttachments(containerId) {
         `;
   }
 
+
   bindAttachmentActions();
 }
-
 
 function renderLoadedContainerNotes(containerId) {
   const cacheKey = String(containerId);
@@ -2393,180 +2429,165 @@ function renderContainerLine(line) {
    ========================================================= */
 
 function ensureAttachmentModal() {
-  let modal = byId("attachmentModal");
+  const modal =
+    byId("attachmentModal");
 
-  if (modal) {
+  if (!modal) {
+    throw new Error(
+      "Attachment modal is missing from inbound-containers.html."
+    );
+  }
+
+
+  /*
+   * Niet steeds opnieuw listeners toevoegen.
+   */
+  if (
+    modal.dataset.eventsBound ===
+    "true"
+  ) {
     return modal;
   }
 
-  modal = document.createElement("div");
-  modal.id = "attachmentModal";
-  modal.className = "modal-overlay";
 
-  modal.innerHTML = `
-    <div class="modal-card" style="max-width:620px;">
-      <div class="modal-head">
-        <div>
-          <h2 id="attachmentModalTitle">
-            Upload File
-          </h2>
-
-          <p class="subline" id="attachmentModalSubtitle">
-            Add a file to this inbound container.
-          </p>
-        </div>
-
-        <button
-          class="icon-btn"
-          type="button"
-          id="btnCloseAttachmentModal"
-        >
-          ×
-        </button>
-      </div>
-
-      <div class="modal-body">
-
-        <div class="field">
-          <label>File Type</label>
-
-          <select
-            class="select"
-            id="attachmentType"
-          >
-            <option value="container_photo">
-              Container Photo
-            </option>
-
-            <option value="damage_photo">
-              Damage Photo
-            </option>
-
-            <option value="delivery_document">
-              Delivery Document
-            </option>
-
-            <option value="other">
-              Other File
-            </option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label>File</label>
-
-          <input
-            class="input"
-            id="attachmentInput"
-            type="file"
-          >
-
-          <span
-            class="subline"
-            id="attachmentFileLabel"
-            style="margin-top:6px;"
-          >
-            No file selected
-          </span>
-        </div>
-
-        <div class="field">
-          <label>Note</label>
-
-          <textarea
-            class="input"
-            id="attachmentNote"
-            rows="4"
-            placeholder="Optional note about this file..."
-          ></textarea>
-        </div>
-
-      </div>
-
-      <div class="modal-actions">
-        <button
-          class="btn"
-          type="button"
-          id="btnCancelAttachment"
-        >
-          Cancel
-        </button>
-
-        <button
-          class="btn btn-primary"
-          type="button"
-          id="btnSaveAttachment"
-        >
-          Upload
-        </button>
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(modal);
-
-  byId("btnCloseAttachmentModal")
-    ?.addEventListener(
-      "click",
-      closeAttachmentModal
+  const closeButton =
+    byId(
+      "btnCloseAttachmentModal"
     );
 
-  byId("btnCancelAttachment")
-    ?.addEventListener(
-      "click",
-      closeAttachmentModal
+  const cancelButton =
+    byId(
+      "btnCancelAttachment"
     );
 
-  modal.addEventListener(
-    "click",
+  const uploadButton =
+    byId(
+      "btnUploadAttachment"
+    );
+
+  const fileInput =
+    byId(
+      "attachmentFileInput"
+    );
+
+  const typeSelect =
+    byId(
+      "attachmentType"
+    );
+
+
+  /*
+   * Kruisje
+   */
+  if (closeButton) {
+    closeButton.onclick =
+      closeAttachmentModal;
+  }
+
+
+  /*
+   * Cancel
+   */
+  if (cancelButton) {
+    cancelButton.onclick =
+      closeAttachmentModal;
+  }
+
+
+  /*
+   * Klik op achtergrond sluit modal.
+   */
+  modal.onclick =
     event => {
-      if (event.target === modal) {
+      if (
+        event.target === modal
+      ) {
         closeAttachmentModal();
       }
-    }
-  );
+    };
 
-  byId("attachmentInput")
-    ?.addEventListener(
-      "change",
-      event => {
-        const file =
-          event.target.files?.[0] ||
-          null;
 
-        state.attachmentFile =
-          file;
+  /*
+   * Bestand(en) gekozen.
+   */
+  if (fileInput) {
+    fileInput.onchange =
+      () => {
+        const files =
+          Array.from(
+            fileInput.files || []
+          );
 
         const label =
-          byId("attachmentFileLabel");
+          byId(
+            "attachmentFileLabel"
+          );
 
         if (!label) {
           return;
         }
 
-        label.textContent =
-          file
-            ? `${file.name} · ${formatNumber(
-                file.size / 1024,
-                0
-              )} KB`
-            : "No file selected";
-      }
-    );
 
-  byId("btnSaveAttachment")
-    ?.addEventListener(
-      "click",
-      async () => {
-        const button =
-          byId("btnSaveAttachment");
+        if (!files.length) {
+          label.textContent =
+            "No files selected";
 
-        if (!button) {
           return;
         }
 
-        button.disabled = true;
-        button.textContent =
+
+        const totalSize =
+          files.reduce(
+            (
+              total,
+              file
+            ) =>
+              total +
+              numberValue(
+                file.size,
+                0
+              ),
+            0
+          );
+
+
+        label.textContent =
+          `${files.length} ` +
+          `${files.length === 1
+            ? "file"
+            : "files"
+          } selected · ` +
+          `${formatNumber(
+            totalSize / 1024,
+            0
+          )} KB`;
+      };
+  }
+
+
+  /*
+   * Wisselen tussen:
+   * Container Photo
+   * Product Photo
+   * Damage Photo
+   * Document
+   */
+  if (typeSelect) {
+    typeSelect.onchange =
+      updateAttachmentModalType;
+  }
+
+
+  /*
+   * Upload
+   */
+  if (uploadButton) {
+    uploadButton.onclick =
+      async () => {
+        uploadButton.disabled =
+          true;
+
+        uploadButton.textContent =
           "Uploading...";
 
         try {
@@ -2579,128 +2600,406 @@ function ensureAttachmentModal() {
 
           showToast(
             error.message ||
-            "File could not be uploaded.",
+            "Files could not be uploaded.",
             "err"
           );
         } finally {
-          button.disabled = false;
-          button.textContent =
-            "Upload";
+          uploadButton.disabled =
+            false;
+
+          updateAttachmentModalType();
         }
-      }
-    );
+      };
+  }
+
+
+  modal.dataset.eventsBound =
+    "true";
 
   return modal;
 }
 
-
-function openAttachmentModal(
+async function openAttachmentModal(
   containerId,
   attachmentType = "other"
 ) {
   const modal =
     ensureAttachmentModal();
 
+
   state.activeAttachmentContainerId =
     String(containerId);
 
-  state.attachmentFile =
-    null;
+
+  const containerInput =
+    byId(
+      "attachmentContainerId"
+    );
 
   const input =
-    byId("attachmentInput");
+    byId(
+      "attachmentFileInput"
+    );
 
   const typeSelect =
-    byId("attachmentType");
+    byId(
+      "attachmentType"
+    );
+
+  const productSelect =
+    byId(
+      "attachmentProductLine"
+    );
 
   const note =
-    byId("attachmentNote");
+    byId(
+      "attachmentNote"
+    );
 
   const label =
-    byId("attachmentFileLabel");
+    byId(
+      "attachmentFileLabel"
+    );
 
-  const title =
-    byId("attachmentModalTitle");
 
-  const subtitle =
-    byId("attachmentModalSubtitle");
+  if (containerInput) {
+    containerInput.value =
+      String(containerId);
+  }
+
 
   if (input) {
-    input.value = "";
+    input.value =
+      "";
   }
 
+
   if (note) {
-    note.value = "";
+    note.value =
+      "";
   }
+
 
   if (label) {
     label.textContent =
-      "No file selected";
+      "No files selected";
   }
+
+
+  if (productSelect) {
+    productSelect.value =
+      "";
+  }
+
 
   if (typeSelect) {
     typeSelect.value =
       attachmentType;
   }
 
+
+  await populateAttachmentProductLines(
+    containerId
+  );
+
+
+  updateAttachmentModalType();
+
+
+  modal.classList.add(
+    "open"
+  );
+}
+function updateAttachmentModalType() {
+  const type =
+    normalize(
+      byId(
+        "attachmentType"
+      )?.value
+    );
+
+  const input =
+    byId(
+      "attachmentFileInput"
+    );
+
+  const productWrap =
+    byId(
+      "attachmentProductWrap"
+    );
+
+  const productSelect =
+    byId(
+      "attachmentProductLine"
+    );
+
+  const title =
+    byId(
+      "attachmentModalTitle"
+    );
+
+  const subtitle =
+    byId(
+      "attachmentModalSubtitle"
+    );
+
+  const uploadButton =
+    byId(
+      "btnUploadAttachment"
+    );
+
+
+  const isPhoto =
+    [
+      "container_photo",
+      "product_photo",
+      "damage_photo"
+    ].includes(type);
+
+
   /*
-   * Foto-knop:
-   * alleen afbeeldingen selecteren.
-   *
-   * Upload File:
-   * alle gangbare bestanden toestaan.
+   * Foto's:
+   * meerdere bestanden toegestaan.
    */
-  if (
-    attachmentType ===
-    "container_photo"
-  ) {
-    if (input) {
+  if (input) {
+    if (isPhoto) {
       input.accept =
         "image/*";
 
-      /*
-       * Hiermee kan op mobiel ook direct
-       * de camera gebruikt worden.
-       */
-      input.multiple = true;
-    }
-
-    if (title) {
-      title.textContent =
-        "Upload Photos";
-    }
-
-    if (subtitle) {
-      subtitle.textContent =
-        "Upload container, unloading or damage photos.";
-    }
-  } else {
-    if (input) {
+      input.multiple =
+        true;
+    } else {
       input.accept =
         ".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt";
 
-      input.multiple = false;
+      input.multiple =
+        false;
     }
+  }
 
+
+  /*
+   * Product selector.
+   *
+   * Product Photo:
+   * verplicht.
+   *
+   * Damage Photo:
+   * beschikbaar maar niet verplicht.
+   */
+  if (productWrap) {
+    productWrap.style.display =
+      [
+        "product_photo",
+        "damage_photo"
+      ].includes(type)
+        ? ""
+        : "none";
+  }
+
+
+  if (
+    ![
+      "product_photo",
+      "damage_photo"
+    ].includes(type) &&
+    productSelect
+  ) {
+    productSelect.value =
+      "";
+  }
+
+
+  if (
+    type ===
+    "product_photo"
+  ) {
     if (title) {
       title.textContent =
-        "Upload File";
+        "Upload Product Photos";
     }
 
     if (subtitle) {
       subtitle.textContent =
-        "Add a document or other file to this inbound container.";
+        "Select a product and upload one or more photos.";
     }
+
+    if (uploadButton) {
+      uploadButton.textContent =
+        "Upload Photos";
+    }
+
+    return;
   }
 
-  modal.classList.add("open");
+
+  if (
+    type ===
+    "damage_photo"
+  ) {
+    if (title) {
+      title.textContent =
+        "Upload Damage Photos";
+    }
+
+    if (subtitle) {
+      subtitle.textContent =
+        "Upload damage photos and optionally select the affected product.";
+    }
+
+    if (uploadButton) {
+      uploadButton.textContent =
+        "Upload Photos";
+    }
+
+    return;
+  }
+
+
+  if (
+    type ===
+    "container_photo"
+  ) {
+    if (title) {
+      title.textContent =
+        "Upload Container Photos";
+    }
+
+    if (subtitle) {
+      subtitle.textContent =
+        "Upload one or more container or unloading photos.";
+    }
+
+    if (uploadButton) {
+      uploadButton.textContent =
+        "Upload Photos";
+    }
+
+    return;
+  }
+
+
+  if (title) {
+    title.textContent =
+      "Upload File";
+  }
+
+  if (subtitle) {
+    subtitle.textContent =
+      "Add a document or other file to this inbound container.";
+  }
+
+  if (uploadButton) {
+    uploadButton.textContent =
+      "Upload File";
+  }
 }
 
+async function populateAttachmentProductLines(
+  containerId
+) {
+  const select =
+    byId(
+      "attachmentProductLine"
+    );
+
+  if (!select) {
+    return;
+  }
+
+
+  let lines =
+    state.loadedContainerLines
+      .get(
+        String(containerId)
+      );
+
+
+  if (!lines) {
+    lines =
+      await loadContainerLines(
+        containerId
+      );
+  }
+
+
+  select.innerHTML =
+    `
+      <option value="">
+        Select product
+      </option>
+    ` +
+    (lines || [])
+      .map(
+        line => {
+          const sku =
+            line.sku_snapshot ||
+            "Unknown SKU";
+
+          const name =
+            line.product_name_snapshot ||
+            line.description_snapshot ||
+            "";
+
+          const quantity =
+            integerValue(
+              line.expected_quantity,
+              0
+            );
+
+          return `
+            <option
+              value="${escapeHtml(line.id)}"
+              data-sku="${escapeHtml(sku)}"
+              data-name="${escapeHtml(name)}"
+            >
+              ${escapeHtml(sku)}
+              ${name
+                ? ` · ${escapeHtml(name)}`
+                : ""
+              }
+              · Qty ${formatNumber(quantity)}
+            </option>
+          `;
+        }
+      )
+      .join("");
+}
 
 function closeAttachmentModal() {
-  byId("attachmentModal")
-    ?.classList
-    .remove("open");
+  const modal =
+    byId(
+      "attachmentModal"
+    );
+
+  if (modal) {
+    modal.classList.remove(
+      "open"
+    );
+  }
+
+
+  const input =
+    byId(
+      "attachmentFileInput"
+    );
+
+  if (input) {
+    input.value =
+      "";
+  }
+
+
+  const label =
+    byId(
+      "attachmentFileLabel"
+    );
+
+  if (label) {
+    label.textContent =
+      "No files selected";
+  }
+
 
   state.activeAttachmentContainerId =
     null;
@@ -2708,7 +3007,6 @@ function closeAttachmentModal() {
   state.attachmentFile =
     null;
 }
-
 
 async function saveContainerAttachment() {
   const containerId =
@@ -2720,13 +3018,18 @@ async function saveContainerAttachment() {
     );
   }
 
+
   const input =
-    byId("attachmentInput");
+    byId(
+      "attachmentFileInput"
+    );
+
 
   const files =
     Array.from(
       input?.files || []
     );
+
 
   if (!files.length) {
     throw new Error(
@@ -2734,44 +3037,158 @@ async function saveContainerAttachment() {
     );
   }
 
-  const attachmentType =
-    byId("attachmentType")
-      ?.value ||
-    "other";
 
-  const note =
-    byId("attachmentNote")
+  const attachmentType =
+    normalize(
+      byId(
+        "attachmentType"
+      )?.value ||
+      "other"
+    );
+
+
+  const productSelect =
+    byId(
+      "attachmentProductLine"
+    );
+
+
+  const selectedProductLineId =
+    productSelect?.value ||
+    "";
+
+
+  /*
+   * Product Photo moet altijd
+   * aan een product worden gekoppeld.
+   */
+  if (
+    attachmentType ===
+      "product_photo" &&
+    !selectedProductLineId
+  ) {
+    throw new Error(
+      "Select the product these photos belong to."
+    );
+  }
+
+
+  const selectedOption =
+    productSelect
+      ?.selectedOptions?.[0] ||
+    null;
+
+
+  const selectedSku =
+    selectedOption
+      ?.dataset?.sku ||
+    "";
+
+
+  const selectedName =
+    selectedOption
+      ?.dataset?.name ||
+    "";
+
+
+  const userNote =
+    byId(
+      "attachmentNote"
+    )
       ?.value
       ?.trim() ||
+    "";
+
+
+  /*
+   * Voor productfoto's slaan we SKU en
+   * productnaam tevens in de note op.
+   *
+   * receipt_line_id laten we bewust leeg.
+   * Dat veld is bedoeld voor ontvangstregels,
+   * niet voor inbound_container_lines.
+   */
+  let note =
+    userNote ||
     null;
+
+
+  if (
+    selectedSku &&
+    [
+      "product_photo",
+      "damage_photo"
+    ].includes(
+      attachmentType
+    )
+  ) {
+    const productPrefix =
+      `Product: ${selectedSku}` +
+      (
+        selectedName
+          ? ` · ${selectedName}`
+          : ""
+      );
+
+
+    note =
+      userNote
+        ? `${productPrefix}\n${userNote}`
+        : productPrefix;
+  }
+
+
+  const isPhoto =
+    [
+      "container_photo",
+      "product_photo",
+      "damage_photo"
+    ].includes(
+      attachmentType
+    );
+
+
+  /*
+   * Documenten blijven één bestand.
+   */
+  if (
+    !isPhoto &&
+    files.length > 1
+  ) {
+    throw new Error(
+      "Only one document can be uploaded at a time."
+    );
+  }
+
 
   const db =
     getDb();
 
-  /*
-   * Foto's mogen meerdere tegelijk.
-   * Normale bestanden blijven één voor één.
-   */
+
+  let uploadedCount =
+    0;
+
+
   for (const file of files) {
 
     /*
-     * Extra controle bij foto-upload.
+     * Foto-types mogen alleen afbeeldingen zijn.
      */
     if (
-      [
-        "container_photo",
-        "damage_photo"
-      ].includes(
-        attachmentType
-      ) &&
-      !String(file.type || "")
+      isPhoto &&
+      !String(
+        file.type || ""
+      )
         .toLowerCase()
-        .startsWith("image/")
+        .startsWith(
+          "image/"
+        )
     ) {
       throw new Error(
         `${file.name} is not an image file.`
       );
     }
+
 
     const safeFileName =
       file.name.replace(
@@ -2779,15 +3196,41 @@ async function saveContainerAttachment() {
         "_"
       );
 
-    const folder =
-      [
-        "container_photo",
-        "damage_photo"
-      ].includes(
-        attachmentType
-      )
-        ? "photos"
-        : "documents";
+
+    let folder =
+      "documents";
+
+
+    if (
+      attachmentType ===
+      "container_photo"
+    ) {
+      folder =
+        "photos/container";
+    }
+
+
+    if (
+      attachmentType ===
+      "product_photo"
+    ) {
+      folder =
+        selectedSku
+          ? `photos/products/${selectedSku}`
+          : "photos/products";
+    }
+
+
+    if (
+      attachmentType ===
+      "damage_photo"
+    ) {
+      folder =
+        selectedSku
+          ? `photos/damage/${selectedSku}`
+          : "photos/damage";
+    }
+
 
     const storagePath =
       `${state.companyId}/` +
@@ -2799,120 +3242,144 @@ async function saveContainerAttachment() {
         .slice(2, 8)}-` +
       `${safeFileName}`;
 
-    /*
-     * Upload bestand naar Supabase Storage.
-     */
+
     const {
       error: uploadError
-    } = await db
-      .storage
-      .from("inbound-assets")
-      .upload(
-        storagePath,
-        file,
-        {
-          cacheControl: "3600",
-          upsert: false,
-          contentType:
-            file.type ||
-            "application/octet-stream"
-        }
-      );
+    } =
+      await db
+        .storage
+        .from(
+          "inbound-assets"
+        )
+        .upload(
+          storagePath,
+          file,
+          {
+            cacheControl:
+              "3600",
+
+            upsert:
+              false,
+
+            contentType:
+              file.type ||
+              "application/octet-stream"
+          }
+        );
+
 
     if (uploadError) {
       throw uploadError;
     }
 
-    /*
-     * Database registratie.
-     */
+
     const {
       error: attachmentError
-    } = await db
-      .from("inbound_attachments")
-      .insert({
-        company_id:
-          state.companyId,
+    } =
+      await db
+        .from(
+          "inbound_attachments"
+        )
+        .insert({
+          company_id:
+            state.companyId,
 
-        container_id:
-          containerId,
+          container_id:
+            containerId,
 
-        receipt_line_id:
-          null,
+          /*
+           * Niet invullen met
+           * inbound_container_lines.id.
+           */
+          receipt_line_id:
+            null,
 
-        attachment_type:
-          attachmentType,
+          attachment_type:
+            attachmentType,
 
-        file_name:
-          file.name,
+          file_name:
+            file.name,
 
-        storage_bucket:
-          "inbound-assets",
+          storage_bucket:
+            "inbound-assets",
 
-        storage_path:
-          storagePath,
+          storage_path:
+            storagePath,
 
-        mime_type:
-          file.type ||
-          "application/octet-stream",
+          mime_type:
+            file.type ||
+            "application/octet-stream",
 
-        file_size:
-          file.size ||
-          null,
+          file_size:
+            file.size ||
+            null,
 
-        note,
+          note,
 
-        uploaded_by:
-          state.profile?.id ||
-          null,
+          uploaded_by:
+            state.profile?.id ||
+            null,
 
-        uploaded_at:
-          new Date().toISOString()
-      });
+          uploaded_at:
+            new Date()
+              .toISOString()
+        });
+
 
     if (attachmentError) {
+
       /*
-       * Wanneer DB insert mislukt,
-       * verwijder het reeds geüploade bestand.
+       * Storage opruimen wanneer
+       * database-insert mislukt.
        */
       await db
         .storage
-        .from("inbound-assets")
+        .from(
+          "inbound-assets"
+        )
         .remove([
           storagePath
         ]);
 
+
       throw attachmentError;
     }
+
+
+    uploadedCount +=
+      1;
   }
 
+
   /*
-   * Cache leegmaken zodat de nieuwe foto's
-   * direct zichtbaar worden.
+   * Attachment-cache opnieuw ophalen.
    */
   state.loadedContainerAttachments
     .delete(
       String(containerId)
     );
 
+
   await loadContainerAttachments(
     containerId
   );
+
 
   renderLoadedContainerAttachments(
     containerId
   );
 
+
   closeAttachmentModal();
 
+
   showToast(
-    files.length === 1
-      ? "File uploaded."
-      : `${files.length} photos uploaded.`,
+    uploadedCount === 1
+      ? "1 file uploaded."
+      : `${uploadedCount} photos uploaded.`,
     "ok"
   );
 }
-
   /* =========================================================
      NEW CONTAINER MODAL
      ========================================================= */
