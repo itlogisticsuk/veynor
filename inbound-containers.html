@@ -15,6 +15,97 @@
 
   <style>
     .inbound-page{display:grid;gap:14px}
+.inbound-hero{
+  position:relative;
+  min-height:190px;
+  border-radius:22px;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  padding:30px 34px;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(3,18,47,.92) 0%,
+      rgba(3,18,47,.76) 34%,
+      rgba(3,18,47,.26) 62%,
+      rgba(3,18,47,.08) 100%
+    ),
+    url("./assets/inbound-containers-banner.png");
+  background-size:cover;
+  background-position:center;
+  box-shadow:0 18px 42px rgba(7,21,47,.18);
+  border:1px solid rgba(37,99,235,.18);
+}
+
+.inbound-hero-content{
+  position:relative;
+  z-index:2;
+  max-width:640px;
+}
+
+.inbound-hero-title{
+  margin:0;
+  color:#fff;
+  font-size:32px;
+  line-height:1.05;
+  font-weight:950;
+  letter-spacing:-.025em;
+  text-shadow:0 4px 18px rgba(0,0,0,.24);
+}
+
+.inbound-hero-subtitle{
+  margin:10px 0 0;
+  max-width:580px;
+  color:rgba(235,244,255,.88);
+  font-size:14px;
+  line-height:1.55;
+  font-weight:650;
+}
+
+.inbound-hero-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:12px;
+  min-height:30px;
+  padding:0 11px;
+  border-radius:999px;
+  color:#dbeafe;
+  background:rgba(18,103,255,.16);
+  border:1px solid rgba(96,165,250,.30);
+  font-size:10px;
+  font-weight:900;
+  text-transform:uppercase;
+  letter-spacing:.07em;
+  backdrop-filter:blur(8px);
+}
+
+.inbound-hero-badge::before{
+  content:"";
+  width:7px;
+  height:7px;
+  border-radius:999px;
+  background:#38bdf8;
+  box-shadow:0 0 0 5px rgba(56,189,248,.13);
+}
+
+@media(max-width:900px){
+  .inbound-hero{
+    min-height:165px;
+    padding:24px;
+    background-position:65% center;
+  }
+
+  .inbound-hero-title{
+    font-size:26px;
+  }
+
+  .inbound-hero-subtitle{
+    font-size:13px;
+    max-width:470px;
+  }
+}
     .inbound-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
     .inbound-kpi{padding:15px 16px;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:center;min-height:94px}
     .inbound-kpi-icon{width:42px;height:42px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-weight:950;font-size:16px;background:#eff6ff;color:#1267ff;border:1px solid #bfdbfe}
@@ -36,9 +127,41 @@
     .input,.select,.textarea{width:100%;min-height:42px;border:1px solid var(--border);border-radius:12px;background:#fff;padding:0 12px;color:#07152f;font:inherit}
     .textarea{padding:10px 12px;min-height:88px;resize:vertical}
 
-    .view-tabs{display:inline-flex;padding:3px;border:1px solid var(--border);border-radius:13px;background:#f8fafc;gap:3px}
-    .view-tab{border:0;border-radius:10px;background:transparent;padding:9px 16px;font-weight:900;color:#64748b;cursor:pointer}
-    .view-tab.active{background:#1267ff;color:#fff;box-shadow:0 8px 18px rgba(18,103,255,.22)}
+.view-tabs{
+  display:inline-flex;
+  padding:4px;
+  border:1px solid #cbd8ea;
+  border-radius:14px;
+  background:#eaf1fb;
+  gap:4px;
+  box-shadow:inset 0 1px 2px rgba(15,23,42,.04);
+}
+
+.view-tab{
+  border:1px solid transparent;
+  border-radius:10px;
+  background:rgba(255,255,255,.72);
+  padding:9px 17px;
+  font-weight:900;
+  color:#52647f;
+  cursor:pointer;
+  transition:all .16s ease;
+}
+
+.view-tab:hover{
+  background:#fff;
+  color:#1267ff;
+  border-color:#c7d8f3;
+}
+
+.view-tab.active{
+  background:linear-gradient(135deg,#1267ff,#2563eb);
+  color:#fff;
+  border-color:#1267ff;
+  box-shadow:
+    0 7px 16px rgba(18,103,255,.28),
+    inset 0 1px 0 rgba(255,255,255,.18);
+}
 
     .container-list{display:grid;gap:10px}
     .container-row{border:1px solid var(--border);border-radius:16px;background:#fff;overflow:hidden;box-shadow:0 7px 22px rgba(15,23,42,.04)}
@@ -322,16 +445,186 @@
       </div>
     </section>
 
-    <div id="toast" class="notice"></div>
+<!-- =========================================================
+     INBOUND HERO
+     ========================================================= -->
 
-    <section class="inbound-kpis">
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon">▣</div><div><div class="inbound-kpi-label">Expected Containers</div><div class="inbound-kpi-value" id="kpiExpected">0</div><div class="inbound-kpi-sub">Containers not yet received</div></div></article>
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon purple">◈</div><div><div class="inbound-kpi-label">ETA This Week</div><div class="inbound-kpi-value" id="kpiThisWeek">0</div><div class="inbound-kpi-sub">Expected at warehouse</div></div></article>
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon orange">m³</div><div><div class="inbound-kpi-label">Expected Volume</div><div class="inbound-kpi-value" id="kpiVolume">0.000</div><div class="inbound-kpi-sub">Total incoming volume</div></div></article>
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon green">▦</div><div><div class="inbound-kpi-label">Expected Packages</div><div class="inbound-kpi-value" id="kpiPackages">0</div><div class="inbound-kpi-sub">Incoming physical packages</div></div></article>
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon">□</div><div><div class="inbound-kpi-label">Linked Orders</div><div class="inbound-kpi-value" id="kpiLinkedOrders">0</div><div class="inbound-kpi-sub">Orders linked to expected stock</div></div></article>
-      <article class="card inbound-kpi"><div class="inbound-kpi-icon green">✓</div><div><div class="inbound-kpi-label">Received</div><div class="inbound-kpi-value" id="kpiReceived">0</div><div class="inbound-kpi-sub">Containers already received</div></div></article>
-    </section>
+<section class="inbound-hero">
+  <div class="inbound-hero-content">
+
+    <div class="inbound-hero-badge">
+      Warehouse Inbound
+    </div>
+
+    <h2 class="inbound-hero-title">
+      Inbound Containers
+    </h2>
+
+    <p class="inbound-hero-subtitle">
+      Monitor expected container arrivals, incoming stock and warehouse receipts in one central overview.
+    </p>
+
+  </div>
+</section>
+
+
+<!-- =========================================================
+     PAGE NOTICES
+     ========================================================= -->
+
+<div id="toast" class="notice"></div>
+
+
+<!-- =========================================================
+     INBOUND KPI OVERVIEW
+     ========================================================= -->
+
+<section class="inbound-kpis">
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon">
+      ▣
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        Expected Containers
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiExpected"
+      >
+        0
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Containers not yet received
+      </div>
+    </div>
+  </article>
+
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon purple">
+      ◈
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        ETA This Week
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiThisWeek"
+      >
+        0
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Expected at warehouse
+      </div>
+    </div>
+  </article>
+
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon orange">
+      m³
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        Expected Volume
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiVolume"
+      >
+        0.000
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Total incoming volume
+      </div>
+    </div>
+  </article>
+
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon green">
+      ▦
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        Expected Packages
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiPackages"
+      >
+        0
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Incoming physical packages
+      </div>
+    </div>
+  </article>
+
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon">
+      □
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        Linked Orders
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiLinkedOrders"
+      >
+        0
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Orders linked to expected stock
+      </div>
+    </div>
+  </article>
+
+
+  <article class="card inbound-kpi">
+    <div class="inbound-kpi-icon green">
+      ✓
+    </div>
+
+    <div>
+      <div class="inbound-kpi-label">
+        Received
+      </div>
+
+      <div
+        class="inbound-kpi-value"
+        id="kpiReceived"
+      >
+        0
+      </div>
+
+      <div class="inbound-kpi-sub">
+        Containers already received
+      </div>
+    </div>
+  </article>
+
+</section>
 
     <section class="card inbound-card">
       <div class="filters-grid">
