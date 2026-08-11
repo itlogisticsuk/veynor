@@ -50,6 +50,11 @@ const POD_PHOTO_QUALITY = 0.72;
   let selectedPodLines = [];
   let signaturePad = null;
 
+let locationWatchId = null;
+let lastLocationSentAt = 0;
+
+const LOCATION_SEND_INTERVAL_MS = 30000;
+
   let deliveredFilter = "today";
   let issueFilter = "all";
 
@@ -196,6 +201,7 @@ function today() {
   }
 
   async function logout() {
+await stopLocationTracking();
     await ensureDb().auth.signOut();
 
     user = null;
@@ -508,6 +514,200 @@ function selectNextDriverRoute(routes) {
   return candidates[0] || null;
 }
 
+function getCurrentDriverRoute() {
+  const stop = stops.find(isOpenForDriver) || stops[0] || null;
+
+  return stop?.routes || null;
+}
+
+function getCurrentDriverRouteId() {
+  return getCurrentDriverRoute()?.id ||
+    stops[0]?.route_id ||
+    null;
+}
+
+function getCurrentVehicleId() {
+  const route = getCurrentDriverRoute();
+
+  return route?.vehicle_id ||
+    route?.assigned_vehicle_id ||
+    null;
+}
+
+function getCurrentVehicleName() {
+  const route = getCurrentDriverRoute();
+
+  return route?.vehicle_name ||
+    route?.assigned_vehicle_name ||
+    "";
+}
+
+async function saveDriverLocation(position) {
+  if (!user?.id || !companyId) return;
+
+  const routeId = getCurrentDriverRouteId();
+
+  // Geen actieve route = niet tracken
+  if (!routeId) return;
+
+  const now = Date.now();
+
+  if (
+    lastLocationSentAt &&
+    now - lastLocationSentAt < LOCATION_SEND_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastLocationSentAt = now;
+
+  const coords = position.coords;
+
+  const payload = {
+    driver_user_id: user.id,
+    company_id: companyId,
+    route_id: routeId,
+    vehicle_id: getCurrentVehicleId(),
+
+    driver_name:
+      profile?.full_name ||
+      user?.email ||
+      "Driver",
+
+    vehicle_name:
+      getCurrentVehicleName() ||
+      null,
+
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+
+    accuracy_m:
+      Number.isFinite(coords.accuracy)
+        ? coords.accuracy
+        : null,
+
+    speed_mps:
+      Number.isFinite(coords.speed)
+        ? coords.speed
+        : null,
+
+    heading:
+      Number.isFinite(coords.heading)
+        ? coords.heading
+        : null,
+
+    tracking_active: true,
+
+    recorded_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await ensureDb()
+    .from("driver_live_locations")
+    .upsert(
+      payload,
+      {
+        onConflict: "driver_user_id"
+      }
+    );
+
+  if (error) {
+    console.warn(
+      "[driver app] location update failed:",
+      error.message
+    );
+  }
+}
+
+function startLocationTracking() {
+  console.log(
+    "[driver app] startLocationTracking() called"
+  );
+
+  if (!navigator.geolocation) {
+    console.error(
+      "[driver app] Geolocation is not supported by this device/browser."
+    );
+
+    alert(
+      "Location services are not supported by this device or browser."
+    );
+
+    return;
+  }
+
+  if (locationWatchId !== null) {
+    console.log(
+      "[driver app] GPS tracking is already running."
+    );
+
+    return;
+  }
+
+  console.log(
+    "[driver app] Requesting location permission..."
+  );
+
+  locationWatchId =
+    navigator.geolocation.watchPosition(
+      position => {
+        console.log(
+          "[driver app] GPS position received:",
+          position.coords.latitude,
+          position.coords.longitude
+        );
+
+        saveDriverLocation(position)
+          .catch(error => {
+            console.warn(
+              "[driver app] Location save failed:",
+              error
+            );
+          });
+      },
+
+      error => {
+        console.error(
+          "[driver app] GPS error:",
+          error.code,
+          error.message
+        );
+
+        if (error.code === 1) {
+          alert(
+            "Location access is blocked. Please allow location access for the Veynor Driver App in your phone settings."
+          );
+        }
+      },
+
+      {
+        enableHighAccuracy: true,
+        maximumAge: 10000,
+        timeout: 20000
+      }
+    );
+}
+
+async function stopLocationTracking() {
+  if (locationWatchId !== null) {
+    navigator.geolocation.clearWatch(
+      locationWatchId
+    );
+
+    locationWatchId = null;
+  }
+
+  if (!user?.id) return;
+
+  await ensureDb()
+    .from("driver_live_locations")
+    .update({
+      tracking_active: false,
+      updated_at: new Date().toISOString()
+    })
+    .eq("driver_user_id", user.id);
+}
+
 async function loadStops() {
   const cid = await getCompanyId();
 
@@ -553,11 +753,19 @@ async function loadStops() {
     .map(route => route.id)
     .filter(Boolean);
 
-  if (!routeIds.length) {
-    stops = [];
-    renderAll();
-    return;
-  }
+if (!routeIds.length) {
+  console.log(
+    "[driver app] No active driver route found. GPS tracking stopped."
+  );
+
+  stops = [];
+  renderAll();
+
+  await stopLocationTracking();
+
+  return;
+}
+
     const routesById = new Map(routeRows.map(r => [String(r.id), r]));
 
     const { data: rawStops, error } = await ensureDb()
@@ -598,7 +806,38 @@ async function loadStops() {
         return num(a.stop_number || a.stop_sequence, 9999) - num(b.stop_number || b.stop_sequence, 9999);
       });
 
-    renderAll();
+renderAll();
+
+const openStops =
+  stops.filter(isOpenForDriver);
+
+console.log(
+  "[driver app] GPS check:",
+  {
+    totalStops: stops.length,
+    openStops: openStops.length,
+    routeId: getCurrentDriverRouteId(),
+    routeCode:
+      stops[0]
+        ? getRouteCode(stops[0])
+        : null
+  }
+);
+
+if (openStops.length > 0) {
+  console.log(
+    "[driver app] Active route found. Starting GPS tracking."
+  );
+
+  startLocationTracking();
+} else {
+  console.log(
+    "[driver app] No open stops. GPS tracking stopped."
+  );
+
+  await stopLocationTracking();
+}
+
   }
 
   async function fetchOrdersMap(orderIds) {

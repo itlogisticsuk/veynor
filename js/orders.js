@@ -17,6 +17,7 @@
   let allRoutes = [];
   let allStops = [];
   let activeVehicles = [];
+let driverLiveLocations = [];
   let driverUsers = [];
 let storedDeliveryGroups = [];
 let productOwnerProfiles = [];
@@ -1133,9 +1134,10 @@ async function loadOrders() {
       .from("order_lines")
       .select(`
         id,
-        order_id,
-        quantity,
-        total_customer_charge,
+order_id,
+quantity,
+quantity_ordered,
+total_customer_charge,
         total_line_charge,
         line_total_gbp,
         revenue_gbp,
@@ -1163,8 +1165,11 @@ async function loadOrders() {
       if (!orderId) return;
 
 const qty =
-  toNumber(line.quantity_ordered, 0) ||
-  1;
+  toNumber(
+    line.quantity_ordered ??
+    line.quantity,
+    1
+  );
 
       const direct =
         toNumber(line.total_customer_charge, 0) ||
@@ -1206,6 +1211,28 @@ const qty =
 
     allRoutes = data || [];
   }
+
+async function loadDriverLiveLocations() {
+  const cid = await getCompanyId();
+
+  const { data, error } = await client
+    .from("driver_live_locations")
+    .select("*")
+    .eq("company_id", cid)
+    .eq("tracking_active", true);
+
+  if (error) {
+    console.warn(
+      "[orders.js] Driver live locations skipped:",
+      error.message
+    );
+
+    driverLiveLocations = [];
+    return;
+  }
+
+  driverLiveLocations = data || [];
+}
 
   async function loadRouteStops() {
     const cid = await getCompanyId();
@@ -1696,6 +1723,9 @@ function renderMap() {
   window.activeVehiclesMapRows =
     activeVehicles;
 
+window.driverLiveLocationsMapRows =
+  driverLiveLocations;
+
   window.selectedOrderIdsForMap = [
     ...selectedOrderIds
   ];
@@ -1796,9 +1826,11 @@ function notifyDataChanged() {
   window.visibleRoutesMapRows =
     futureRoutes;
 
-  window.activeVehiclesMapRows =
-    activeVehicles;
+window.activeVehiclesMapRows =
+  activeVehicles;
 
+window.driverLiveLocationsMapRows =
+  driverLiveLocations;
   window.selectedOrderIdsForMap = [
     ...selectedOrderIds
   ];
@@ -1857,53 +1889,54 @@ function notifyDataChanged() {
       );
     });
 
-  window.VeynorPlannerData = {
-    companyId,
+window.VeynorPlannerData = {
+  companyId,
 
-    allOrders:
-      planningOrders,
+  allOrders:
+    planningOrders,
 
-    filteredOrders:
-      filteredPlanningOrders,
+  filteredOrders:
+    filteredPlanningOrders,
 
-    /*
-     * Volledige data blijft beschikbaar voor
-     * plannerfunctionaliteit en historie.
-     */
-    allRoutes,
-    allStops,
+  /*
+   * Volledige data blijft beschikbaar voor
+   * plannerfunctionaliteit en historie.
+   */
+  allRoutes,
+  allStops,
 
-    /*
-     * De kaart gebruikt uitsluitend deze
-     * toekomstgerichte subsets.
-     */
-    futureRoutes,
-    futureStops,
+  /*
+   * De kaart gebruikt uitsluitend deze
+   * toekomstgerichte subsets.
+   */
+  futureRoutes,
+  futureStops,
 
-    activeVehicles,
-    driverUsers,
+  activeVehicles,
+  driverUsers,
+  driverLiveLocations,
 
-    selectedOrderIds: [
-      ...selectedOrderIds
-    ],
+  selectedOrderIds: [
+    ...selectedOrderIds
+  ],
 
-    selectedVehicleId,
-    selectedDriverId,
-    selectedPlanningDate
-  };
+  selectedVehicleId,
+  selectedDriverId,
+  selectedPlanningDate
+};
 
-  window.dispatchEvent(
-    new CustomEvent(
-      "veynor:planner-data-changed",
-      {
-        detail:
-          window.VeynorPlannerData
-      }
-    )
-  );
+window.dispatchEvent(
+  new CustomEvent(
+    "veynor:planner-data-changed",
+    {
+      detail:
+        window.VeynorPlannerData
+    }
+  )
+);
 }
 
-  function notifySelectionChanged() {
+function notifySelectionChanged() {
     window.VeynorPlannerSelection = {
       selectedOrderIds: [...selectedOrderIds],
       selectedVehicleId,
@@ -1922,9 +1955,10 @@ async function refreshAll() {
   await loadProductOwnerProfiles();
   await loadDrivers();
   await loadActiveVehicles();
-  await loadRoutes();
-  await loadRouteStops();
-  await loadStoredDeliveryGroups();
+await loadRoutes();
+await loadRouteStops();
+await loadDriverLiveLocations();
+await loadStoredDeliveryGroups();
   await loadOrders();
 
     renderSelects();
@@ -3690,19 +3724,36 @@ window.addEventListener("veynor:routes-changed", async () => {
 });
   }
 
-  async function init() {
-    try {
-      if (typeof sb !== "function") {
-        throw new Error("Supabase helper sb() is not available.");
+async function init() {
+  try {
+    if (typeof sb !== "function") {
+      throw new Error("Supabase helper sb() is not available.");
+    }
+
+    client = sb();
+
+    bindEvents();
+    await refreshAll();
+
+    window.setInterval(async () => {
+      try {
+        await loadDriverLiveLocations();
+
+        window.driverLiveLocationsMapRows =
+          driverLiveLocations;
+
+        if (window.OrdersMap?.reload) {
+          window.OrdersMap.reload();
+        }
+      } catch (error) {
+        console.warn(
+          "[orders.js] Live driver refresh failed:",
+          error.message || error
+        );
       }
+    }, 30000);
 
-      client = sb();
-
-      bindEvents();
-      await refreshAll();
-
-      showToast("Orders planner loaded.", "ok");
-    } catch (error) {
+    showToast("Orders planner loaded.", "ok");    } catch (error) {
       console.error(error);
       showToast(error.message || "Could not load orders planner.", "err");
     }

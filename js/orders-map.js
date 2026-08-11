@@ -10,6 +10,7 @@
   let routeStopLayer = null;
   let selectionLayer = null;
   let vertexLayer = null;
+let driverLocationLayer = null;
 
   let topControl = null;
   let panelControl = null;
@@ -1094,6 +1095,122 @@ const fdsDeliveryWeek =
     `;
   }
 
+function buildDriverLocationIcon() {
+  return L.divIcon({
+    className: "driver-live-marker-icon",
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
+
+    html: `
+      <div class="driver-live-marker">
+        🚚
+      </div>
+    `
+  });
+}
+
+function renderDriverLocations() {
+  if (!driverLocationLayer) return;
+
+  driverLocationLayer.clearLayers();
+
+  const locations =
+    Array.isArray(window.driverLiveLocationsMapRows)
+      ? window.driverLiveLocationsMapRows
+      : [];
+
+  locations.forEach(location => {
+    const lat = Number(location.latitude);
+    const lng = Number(location.longitude);
+
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng)
+    ) {
+      return;
+    }
+
+    const lastSeen =
+      location.recorded_at
+        ? new Date(location.recorded_at)
+            .toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit"
+            })
+        : "—";
+
+    const mph =
+      Number.isFinite(Number(location.speed_mps))
+        ? Number(location.speed_mps) * 2.23694
+        : null;
+
+    const marker = L.marker(
+      [lat, lng],
+      {
+        icon: buildDriverLocationIcon(),
+        title: location.driver_name || "Driver"
+      }
+    );
+
+    marker.bindPopup(`
+      <div style="min-width:220px;display:grid;gap:5px;">
+
+        <strong style="font-size:14px;">
+          🚚 ${escapeHtml(
+            location.driver_name || "Driver"
+          )}
+        </strong>
+
+        <div>
+          Vehicle:
+          <strong>
+            ${escapeHtml(
+              location.vehicle_name || "—"
+            )}
+          </strong>
+        </div>
+
+        <div>
+          Last location:
+          <strong>
+            ${escapeHtml(lastSeen)}
+          </strong>
+        </div>
+
+        ${
+          mph !== null
+            ? `
+              <div>
+                Speed:
+                <strong>
+                  ${mph.toFixed(0)} mph
+                </strong>
+              </div>
+            `
+            : ""
+        }
+
+        ${
+          location.accuracy_m
+            ? `
+              <div>
+                GPS accuracy:
+                <strong>
+                  ${Number(location.accuracy_m).toFixed(0)} m
+                </strong>
+              </div>
+            `
+            : ""
+        }
+
+      </div>
+    `);
+
+    driverLocationLayer.addLayer(marker);
+  });
+}
+
   function injectStyles() {
     if (document.getElementById("orders-map-original-plus-style")) return;
 
@@ -1565,6 +1682,26 @@ const fdsDeliveryWeek =
         border-bottom:14px solid #dc2626;
       }
 
+.driver-live-marker-icon{
+  background:transparent !important;
+  border:none !important;
+}
+
+.driver-live-marker{
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  border-radius:999px;
+  background:#07152f;
+  border:3px solid #ffffff;
+  box-shadow:
+    0 5px 14px rgba(15,23,42,.35),
+    0 0 0 4px rgba(18,103,255,.20);
+  font-size:20px;
+  line-height:1;
+}
+
       .custom-shape-icon,
       .depot-marker-icon,
       .vertex-marker-icon{
@@ -1663,12 +1800,13 @@ const fdsDeliveryWeek =
     if (bounds.isValid()) map.fitBounds(bounds.pad(0.12));
   }
 
-  function clearMainLayers() {
-    depotLayer?.clearLayers();
-    orderLayer?.clearLayers();
-    routeLineLayer?.clearLayers();
-    routeStopLayer?.clearLayers();
-  }
+function clearMainLayers() {
+  depotLayer?.clearLayers();
+  orderLayer?.clearLayers();
+  routeLineLayer?.clearLayers();
+  routeStopLayer?.clearLayers();
+  driverLocationLayer?.clearLayers();
+}
 
   function clearSelectionDrawing() {
     selectionLayer?.clearLayers();
@@ -2016,12 +2154,13 @@ function reload() {
 
   map.invalidateSize(true);
 
-  clearMainLayers();
-  renderDepot();
-  renderOrders();
-  renderRoutesToMap();
+clearMainLayers();
+renderDepot();
+renderOrders();
+renderRoutesToMap();
+renderDriverLocations();
 
-  refreshSelectionPanel();
+refreshSelectionPanel();
 }
 
   function buildHintText() {
@@ -2766,12 +2905,19 @@ function reload() {
       attribution: "&copy; OpenStreetMap contributors"
     }).addTo(map);
 
-    depotLayer = L.layerGroup().addTo(map);
-    orderLayer = L.layerGroup().addTo(map);
-    routeLineLayer = L.layerGroup().addTo(map);
-    routeStopLayer = L.layerGroup().addTo(map);
-    selectionLayer = L.layerGroup().addTo(map);
-    vertexLayer = L.layerGroup().addTo(map);
+depotLayer = L.layerGroup().addTo(map);
+orderLayer = L.layerGroup().addTo(map);
+routeLineLayer = L.layerGroup().addTo(map);
+routeStopLayer = L.layerGroup().addTo(map);
+
+driverLocationLayer =
+  L.layerGroup().addTo(map);
+
+selectionLayer =
+  L.layerGroup().addTo(map);
+
+vertexLayer =
+  L.layerGroup().addTo(map);
 
     installTopControl();
     installPanelControl();
