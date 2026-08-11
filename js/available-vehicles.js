@@ -3484,44 +3484,142 @@ mount
   }
 
   async function saveStopOrder(routeId) {
-    try {
-      const db = ensureClient();
-      const cid = getCompanyId();
+  try {
+    const db = ensureClient();
+    const cid = getCompanyId();
 
-      if (!cid) throw new Error("Company id missing.");
-      if (!routeId) throw new Error("Route id missing.");
-
-      const list = document.querySelector(`[data-route-stops="${CSS.escape(String(routeId))}"]`);
-      if (!list) throw new Error("Route stop list not found.");
-
-      const stopIds = Array.from(list.querySelectorAll(".av-stop"))
-        .map(el => el.dataset.stopId)
-        .filter(Boolean);
-
-      if (!stopIds.length) throw new Error("No stops found.");
-
-      for (let index = 0; index < stopIds.length; index++) {
-        const stopId = stopIds[index];
-
-        const { error } = await db
-          .from("route_stops")
-          .update({
-            stop_sequence: index + 1,
-            stop_number: index + 1
-          })
-          .eq("company_id", cid)
-          .eq("id", stopId);
-
-        if (error) throw error;
-      }
-
-      showToast("Route order saved.", "ok");
-      notifyRoutesChanged();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Could not save route order.", "err");
+    if (!cid) {
+      throw new Error("Company id missing.");
     }
+
+    if (!routeId) {
+      throw new Error("Route id missing.");
+    }
+
+    const list = document.querySelector(
+      `[data-route-stops="${CSS.escape(String(routeId))}"]`
+    );
+
+    if (!list) {
+      throw new Error("Route stop list not found.");
+    }
+
+    const stopIds = Array.from(
+      list.querySelectorAll(".av-stop")
+    )
+      .map(el => el.dataset.stopId)
+      .filter(Boolean);
+
+    if (!stopIds.length) {
+      throw new Error("No stops found.");
+    }
+
+    // -------------------------------------------------------
+    // STAP 1
+    // Eerst alle bestaande sequence-nummers tijdelijk
+    // verplaatsen naar een veilig hoog bereik.
+    //
+    // Dit voorkomt:
+    // duplicate key value violates unique constraint
+    // uq_route_stops_route_sequence
+    // -------------------------------------------------------
+
+    for (let index = 0; index < stopIds.length; index++) {
+      const stopId = stopIds[index];
+
+      const temporarySequence = 10000 + index + 1;
+
+      const { error } = await db
+        .from("route_stops")
+        .update({
+          stop_sequence: temporarySequence,
+          stop_number: temporarySequence
+        })
+        .eq("company_id", cid)
+        .eq("route_id", routeId)
+        .eq("id", stopId);
+
+      if (error) {
+        throw error;
+      }
+    }
+
+    // -------------------------------------------------------
+    // STAP 2
+    // Nu bestaat 1,2,3,4,... niet meer binnen deze route.
+    // We kunnen dus veilig de echte nieuwe volgorde schrijven.
+    // -------------------------------------------------------
+
+    for (let index = 0; index < stopIds.length; index++) {
+      const stopId = stopIds[index];
+
+      const newSequence = index + 1;
+
+      const { error } = await db
+        .from("route_stops")
+        .update({
+          stop_sequence: newSequence,
+          stop_number: newSequence
+        })
+        .eq("company_id", cid)
+        .eq("route_id", routeId)
+        .eq("id", stopId);
+
+      if (error) {
+        throw error;
+      }
+    }
+
+    // -------------------------------------------------------
+    // STAP 3
+    // Nieuwe volgorde staat nu definitief in Supabase.
+    // Nu pas de ETA's opnieuw berekenen.
+    // -------------------------------------------------------
+
+    if (
+      !window.PlanningEngine
+        ?.recalculateExistingRouteTiming
+    ) {
+      throw new Error(
+        "PlanningEngine.recalculateExistingRouteTiming is not loaded."
+      );
+    }
+
+    showToast(
+      "Route order saved. Recalculating ETA...",
+      "ok"
+    );
+
+    await window.PlanningEngine
+      .recalculateExistingRouteTiming({
+        route_id: routeId
+      });
+
+    // -------------------------------------------------------
+    // STAP 4
+    // Planner opnieuw laden zodat nieuwe ETA's zichtbaar worden.
+    // -------------------------------------------------------
+
+    notifyRoutesChanged();
+
+    showToast(
+      "Route order and ETA updated.",
+      "ok"
+    );
+
+  } catch (error) {
+    console.error(
+      "Could not save route order:",
+      error
+    );
+
+    showToast(
+      error.message ||
+        "Could not save route order.",
+      "err"
+    );
   }
+}
 
   function getRouteFormValues(routeId) {
     const selector = `[data-route-id="${CSS.escape(String(routeId))}"]`;
@@ -3607,8 +3705,31 @@ async function saveRouteAssignment(routeId) {
       if (orderError) throw orderError;
     }
 
-    showToast("Route assignment saved.", "ok");
+    if (
+      !window.PlanningEngine
+        ?.recalculateExistingRouteTiming
+    ) {
+      throw new Error(
+        "PlanningEngine.recalculateExistingRouteTiming is not loaded."
+      );
+    }
+
+    showToast(
+      "Assignment saved. Recalculating ETA...",
+      "ok"
+    );
+
+    await window.PlanningEngine
+      .recalculateExistingRouteTiming({
+        route_id: routeId
+      });
+
     notifyRoutesChanged();
+
+    showToast(
+      "Route assignment and ETA updated.",
+      "ok"
+    );
 
   } catch (error) {
     console.error(error);

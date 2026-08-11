@@ -242,12 +242,37 @@ function getOrderWarehouseTotal(order) {
  * Bij is_chargeable = false wordt ook transport
  * altijd volledig op nul gezet.
  */
+
 function getOrderTransportTotal(order) {
   if (!isChargeableOrder(order)) {
     return 0;
   }
 
-  const fromLines = round2(
+  /*
+   * Het definitieve transporttarief op orderniveau
+   * is leidend.
+   *
+   * Dit is belangrijk omdat een handmatige override
+   * bijvoorbeeld transport bewust op £0.00 kan zetten.
+   */
+  if (
+    order.total_transport_tariff !== null &&
+    order.total_transport_tariff !== undefined &&
+    order.total_transport_tariff !== ""
+  ) {
+    return round2(
+      toNumber(
+        order.total_transport_tariff,
+        0
+      )
+    );
+  }
+
+  /*
+   * Alleen fallback voor oudere orders waarbij
+   * total_transport_tariff niet aanwezig is.
+   */
+  return round2(
     (order.order_lines || []).reduce(
       (sum, line) => {
         return (
@@ -258,28 +283,8 @@ function getOrderTransportTotal(order) {
       0
     )
   );
-
-  if (fromLines !== 0) {
-    return fromLines;
-  }
-
-  return round2(
-    toNumber(
-      order.total_transport_tariff,
-      0
-    )
-  );
 }
 
-/*
- * Volledige orderwaarde.
- *
- * De expliciete total_customer_charge heeft
- * normaal voorrang.
- *
- * Voor een gratis order wordt deze functie al
- * vóór alle berekeningen beëindigd met £0.00.
- */
 function getOrderTotal(order) {
   if (!isChargeableOrder(order)) {
     return 0;

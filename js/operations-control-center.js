@@ -3815,25 +3815,34 @@ function isWarehousePickupOrder(order) {
   );
 }
 
-function getFdsWeekLabel(order) {  const storedWeek = Math.round(
-    toNumber(order.fds_collection_week, 0)
-  );
-
-  if (storedWeek > 0) {
-    return `FDS Week ${storedWeek}`;
-  }
-
+function getFdsWeekLabel(order) {
   const collectionDate =
     order.fds_collection_date ||
-    order.planned_route_date ||
-    order.expected_delivery_date ||
-    order.confirmed_delivery_date;
+    null;
 
-  const calculatedWeek = getIsoWeekNumber(collectionDate);
+  if (!collectionDate) {
+    return "FDS Delivery";
+  }
 
-  return calculatedWeek
-    ? `FDS Week ${calculatedWeek}`
-    : "FDS Week";
+  const date = new Date(
+    `${String(collectionDate).slice(0, 10)}T12:00:00`
+  );
+
+  if (Number.isNaN(date.getTime())) {
+    return "FDS Delivery";
+  }
+
+  // FDS delivery is always shown as the following week
+  date.setDate(
+    date.getDate() + 7
+  );
+
+  const deliveryWeek =
+    getIsoWeekNumber(date);
+
+  return deliveryWeek
+    ? `FDS Week ${deliveryWeek}`
+    : "FDS Delivery";
 }
 
 function renderDeliveryCell(order) {

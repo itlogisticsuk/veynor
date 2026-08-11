@@ -2579,53 +2579,69 @@ if (date) {
   );
 }
 
-    const updatePayload = {
-      transport_type: "warehouse_pickup",
+const updatePayload = {
+  transport_type:
+    "charter",
 
-      status: "awaiting_pickup",
-      transport_status: "awaiting_pickup",
-      overall_status: "awaiting_pickup",
+  status:
+    "export_for_charter",
 
-      /*
-       * Stock remains complete while awaiting collection.
-       */
-      warehouse_status: "stock_complete",
+  transport_status:
+    "export_for_charter",
 
-      route_id: null,
-      carrier_vehicle_id: selectedVehicleId,
+  overall_status:
+    "export_for_charter",
 
-      planned_route_date: null,
+  route_id:
+    null,
 
-      /*
-       * Reuse expected_delivery_date for now so existing
-       * date displays can still show the expected pickup date.
-       */
-      expected_delivery_date: date,
-      confirmed_delivery_date: null,
+  carrier_vehicle_id:
+    selectedVehicleId,
 
-      driver_user_id: null,
-      driver_profile_id: null,
-      driver_name: null,
-      driver_email: null,
+  /*
+   * FDS does not get a Veynor route date.
+   * The selected date is the FDS collection date.
+   */
+  planned_route_date:
+    null,
 
-      delivery_eta_from: null,
-      delivery_eta_to: null,
-      delivery_eta_status: date
-        ? "pickup_expected"
-        : "pickup_pending",
+  fds_collection_date:
+    date,
 
-      /*
-       * Clear FDS-specific values in case an order was
-       * previously assigned to FDS.
-       */
-      fds_collection_date: null,
-      fds_collection_week: null,
-      fds_job_ref: null,
-      fds_eta_label: null,
-      fds_status: null,
+  /*
+   * Actual delivery date is unknown
+   * until FDS planning is imported.
+   */
+  expected_delivery_date:
+    null,
 
-      last_activity_at: now
-    };
+  confirmed_delivery_date:
+    null,
+
+  driver_user_id:
+    null,
+
+  driver_profile_id:
+    null,
+
+  driver_name:
+    null,
+
+  driver_email:
+    null,
+
+  delivery_eta_from:
+    null,
+
+  delivery_eta_to:
+    null,
+
+  delivery_eta_status:
+    "carrier",
+
+  last_activity_at:
+    now
+};
 
     const { error } = await client
       .from("orders")
@@ -2848,11 +2864,11 @@ async function assignSelectedToCarrierNoRoute(
       carrier_vehicle_id:
         selectedVehicleId,
 
-      planned_route_date:
-        date,
+planned_route_date:
+  null,
 
-      fds_collection_date:
-        date,
+fds_collection_date:
+  date,
 
       /*
        * The actual delivery date is still unknown.

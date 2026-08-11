@@ -611,6 +611,80 @@ function getGroupDeliveryDate(group) {
   return dates[0] || null;
 }
 
+function getGroupFdsCollectionDate(group) {
+  const dates = getGroupFdsOrders(group)
+    .map(order =>
+      order.fds_collection_date ||
+      null
+    )
+    .filter(Boolean)
+    .map(value =>
+      new Date(`${String(value).slice(0, 10)}T12:00:00`)
+    )
+    .filter(date =>
+      !Number.isNaN(date.getTime())
+    )
+    .sort((a, b) => a - b);
+
+  return dates[0] || null;
+}
+
+function getIsoWeekNumber(value) {
+  if (!value) return null;
+
+  const date =
+    value instanceof Date
+      ? new Date(value)
+      : new Date(`${String(value).slice(0, 10)}T12:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const d = new Date(
+    Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    )
+  );
+
+  const dayNum = d.getUTCDay() || 7;
+
+  d.setUTCDate(
+    d.getUTCDate() + 4 - dayNum
+  );
+
+  const yearStart =
+    new Date(
+      Date.UTC(
+        d.getUTCFullYear(),
+        0,
+        1
+      )
+    );
+
+  return Math.ceil(
+    (((d - yearStart) / 86400000) + 1) / 7
+  );
+}
+
+function getNextFdsDeliveryWeek(value) {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  date.setDate(
+    date.getDate() + 7
+  );
+
+  return getIsoWeekNumber(date);
+}
+
 function formatMapDate(value) {
   if (!value) return "Date pending";
 
@@ -791,11 +865,16 @@ function buildOrderGroupTooltip(group) {
   const fdsOrders = getGroupFdsOrders(group);
   const pickupOrders = getGroupPickupOrders(group);
 
-  const deliveryDate =
-    getGroupDeliveryDate(group);
+const deliveryDate =
+  getGroupDeliveryDate(group);
 
-  const fdsWeek =
-    getGroupFdsWeek(group);
+const fdsCollectionDate =
+  getGroupFdsCollectionDate(group);
+
+const fdsDeliveryWeek =
+  getNextFdsDeliveryWeek(
+    fdsCollectionDate
+  );
 
   const orderLines = orders.map(order => `
     <div class="order-map-group-order">
@@ -828,83 +907,118 @@ function buildOrderGroupTooltip(group) {
         </div>
 
                 ${
-          pickupOrders.length
-            ? `
-              <span class="order-map-hover-status pickup">
-                PICK UP
-              </span>
-            `
-            : fdsOrders.length
-              ? `
-                <span class="order-map-hover-status fds">
-                  FDS Delivery
-                </span>
-              `
-              : `
-                <span class="order-map-hover-status">
-                  Own Transport
-                </span>
-              `
-        }
-      </div>
-
-      <div class="order-map-hover-section">
-        <strong>
-          ${escapeHtml(getRetailerName(firstOrder))}
-        </strong>
-
-        <span>
-          ${escapeHtml(getProductOwnerName(firstOrder))}
-        </span>
-
-        <span>
-          ${escapeHtml(firstOrder.delivery_city || "—")}
-          ·
-          ${escapeHtml(firstOrder.delivery_postcode || "—")}
-        </span>
-      </div>
-
-            ${
+     
         pickupOrders.length
           ? `
-            <div class="order-map-pickup-delivery">
-              <strong>PICK UP WAREHOUSE</strong>
+            <span class="order-map-hover-status pickup">
+              PICK UP
+            </span>
+          `
+          : fdsOrders.length
+            ? `
+              <span class="order-map-hover-status fds">
+                FDS Delivery
+              </span>
+            `
+            : `
+              <span class="order-map-hover-status">
+                Own Transport
+              </span>
+            `
+      }
+    </div>
+
+    <div class="order-map-hover-section">
+      <strong>
+        ${escapeHtml(getRetailerName(firstOrder))}
+      </strong>
+
+      <span>
+        ${escapeHtml(getProductOwnerName(firstOrder))}
+      </span>
+
+      <span>
+        ${escapeHtml(firstOrder.delivery_city || "—")}
+        ·
+        ${escapeHtml(firstOrder.delivery_postcode || "—")}
+      </span>
+    </div>
+
+    ${
+      pickupOrders.length
+        ? `
+          <div class="order-map-pickup-delivery">
+            <strong>
+              PICK UP WAREHOUSE
+            </strong>
+
+            <span>
+              Pickup date:
+              <strong>
+                ${
+                  deliveryDate
+                    ? escapeHtml(
+                        formatMapDate(
+                          deliveryDate
+                        )
+                      )
+                    : "Pending"
+                }
+              </strong>
+            </span>
+          </div>
+        `
+        : fdsOrders.length
+          ? `
+            <div class="order-map-fds-delivery">
+              <strong>
+                FDS Delivery
+              </strong>
 
               <span>
-                Pickup date:
+                Collection:
                 <strong>
                   ${
-                    deliveryDate
-                      ? escapeHtml(formatMapDate(deliveryDate))
+                    fdsCollectionDate
+                      ? escapeHtml(
+                          formatMapDate(
+                            fdsCollectionDate
+                          )
+                        )
+                      : "Pending"
+                  }
+                </strong>
+              </span>
+
+              <span>
+                Delivery week:
+                <strong>
+                  ${
+                    fdsDeliveryWeek
+                      ? `Week ${fdsDeliveryWeek}`
                       : "Pending"
                   }
                 </strong>
               </span>
             </div>
           `
-          : fdsOrders.length
+          : deliveryDate
             ? `
               <div class="order-map-fds-delivery">
-                <strong>
-                  ${fdsWeek ? `FDS Week ${fdsWeek}` : "FDS Delivery"}
-                </strong>
-
                 <span>
                   Delivery date:
-                  <strong>${escapeHtml(formatMapDate(deliveryDate))}</strong>
+                  <strong>
+                    ${escapeHtml(
+                      formatMapDate(
+                        deliveryDate
+                      )
+                    )}
+                  </strong>
                 </span>
               </div>
             `
-            : deliveryDate
-              ? `
-                <div class="order-map-fds-delivery">
-                  <span>
-                    Delivery date:
-                    <strong>${escapeHtml(formatMapDate(deliveryDate))}</strong>
-                  </span>
-                </div>
-              `
-              : ""
+            : ""
+    }
       }
 
       <div class="order-map-group-orders">
@@ -1027,10 +1141,8 @@ function buildOrderGroupTooltip(group) {
 }
 
 .order-map-fds-delivery{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:12px;
+  display:grid;
+  gap:5px;
   padding:9px 10px;
   border:1px solid #fdba74;
   border-radius:10px;
@@ -1038,8 +1150,22 @@ function buildOrderGroupTooltip(group) {
   color:#9a3412;
 }
 
-.order-map-fds-delivery span{
+.order-map-fds-delivery > strong{
+  font-size:11px;
+  font-weight:900;
   color:#9a3412;
+}
+
+.order-map-fds-delivery span{
+  display:flex;
+  justify-content:space-between;
+  gap:12px;
+  color:#9a3412;
+}
+
+.order-map-fds-delivery span strong{
+  white-space:nowrap;
+  color:#7c2d12;
 }
 
 .order-map-group-orders{

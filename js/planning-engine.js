@@ -1337,18 +1337,342 @@ estimated_cost_total_gbp: Number(summary.totalCost.toFixed(2)),
     };
   }
 
-  window.PlanningEngine = {
-    run,
-    previewSelection,
-    syncRouteDeliveryData,
-    replanExistingRoute
+async function recalculateExistingRouteTiming(args = {}) {
+  const routeRef =
+    args.route_id ||
+    args.routeId ||
+    args.route_code ||
+    args.routeCode;
+
+  if (!routeRef) {
+    throw new Error("Route id or route code missing.");
+  }
+
+  const client = db();
+  const companyId = await getCompanyId(client);
+  const settings = await loadSettings(client, companyId);
+  const depot = depotPoint(settings);
+
+  // ---------------------------------------------------------
+  // 1. Route ophalen
+  // ---------------------------------------------------------
+
+  let routeQuery = client
+    .from("routes")
+    .select("*")
+    .eq("company_id", companyId)
+    .limit(1);
+
+  routeQuery = isUuid(routeRef)
+    ? routeQuery.eq("id", routeRef)
+    : routeQuery.eq("route_code", routeRef);
+
+  const {
+    data: routesFound,
+    error: routeError
+  } = await routeQuery;
+
+  if (routeError) throw routeError;
+
+  const route = routesFound?.[0];
+
+  if (!route) {
+    throw new Error("Route not found.");
+  }
+
+  const routeId = route.id;
+
+  // ---------------------------------------------------------
+  // 2. Stops ophalen in HUIDIGE handmatige volgorde
+  // ---------------------------------------------------------
+
+  const {
+    data: stops,
+    error: stopError
+  } = await client
+    .from("route_stops")
+    .select("*")
+    .eq("company_id", companyId)
+    .eq("route_id", routeId)
+    .order("stop_sequence", { ascending: true });
+
+  if (stopError) throw stopError;
+
+  if (!stops?.length) {
+    return {
+      ok: true,
+      message: "Route has no stops."
+    };
+  }
+
+  // ---------------------------------------------------------
+  // 3. Voertuig ophalen
+  // ---------------------------------------------------------
+
+  const vehicleId =
+    route.vehicle_id ||
+    route.assigned_vehicle_id ||
+    null;
+
+  let routeVehicle = null;
+
+  if (vehicleId) {
+    const {
+      data,
+      error: vehicleError
+    } = await client
+      .from("vehicles")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("id", vehicleId)
+      .maybeSingle();
+
+    if (vehicleError) {
+      console.warn(
+        "[planning-engine.js] Vehicle could not be loaded:",
+        vehicleError
+      );
+    }
+
+    routeVehicle = data || null;
+  }
+
+  const vehicle = {
+    ...(routeVehicle || {}),
+
+    id:
+      vehicleId ||
+      routeVehicle?.id ||
+      null,
+
+    name:
+      route.vehicle_name ||
+      route.assigned_vehicle_name ||
+      routeVehicle?.name ||
+      null,
+
+    average_speed_kmh:
+      route.assigned_vehicle_speed_kmh ||
+      routeVehicle?.average_speed_kmh ||
+      settings.average_speed_kmh
   };
 
-  window.VeynorPlanningEngine = {
-    planRoutes: run,
-    run,
-    previewSelection,
-    syncRouteDeliveryData,
-    replanExistingRoute
+  // ---------------------------------------------------------
+  // 4. Datum + starttijd
+  // ---------------------------------------------------------
+
+  const routeDate =
+    route.planned_delivery_date ||
+    route.route_date ||
+    todayIso();
+
+  const startTime =
+    route.planned_start_time ||
+    settings.default_departure_time;
+
+  // ---------------------------------------------------------
+  // 5. HUIDIGE volgorde behouden
+  //
+  // BELANGRIJK:
+  // HIER GEEN nearestNeighbour() gebruiken.
+  // ---------------------------------------------------------
+
+  const orderedStops = [...stops]
+    .filter(stop =>
+      Number.isFinite(Number(stop.latitude)) &&
+      Number.isFinite(Number(stop.longitude))
+    )
+    .sort(
+      (a, b) =>
+        Number(a.stop_sequence || 0) -
+        Number(b.stop_sequence || 0)
+    )
+    .map(stop => ({
+      ...stop,
+
+      latitude: Number(stop.latitude),
+      longitude: Number(stop.longitude),
+
+      service_minutes: toNumber(
+        stop.service_minutes,
+        settings.stop_time_minutes
+      )
+    }));
+
+  if (!orderedStops.length) {
+    throw new Error(
+      "No route stops with valid coordinates found."
+    );
+  }
+
+  // ---------------------------------------------------------
+  // 6. ETA opnieuw berekenen via bestaande buildTiming()
+  // ---------------------------------------------------------
+
+  const timingResult = await buildTiming(
+    orderedStops,
+    settings,
+    vehicle,
+    depot,
+    routeDate,
+    startTime
+  );
+
+  const timing = timingResult.stops || [];
+
+  // ---------------------------------------------------------
+  // 7. Nieuwe tijden naar route_stops schrijven
+  // ---------------------------------------------------------
+
+  for (let i = 0; i < orderedStops.length; i++) {
+    const stop = orderedStops[i];
+    const t = timing[i];
+
+    if (!t) continue;
+
+    const {
+      error: updateStopError
+    } = await client
+      .from("route_stops")
+      .update({
+        stop_sequence: i + 1,
+        stop_number: i + 1,
+
+        eta: t.eta || null,
+        etd: t.etd || null,
+
+        arrival_eta:
+          t.arrival_eta || null,
+
+        departure_eta:
+          t.departure_eta || null,
+
+        planned_arrival_time:
+          t.planned_arrival_time || null,
+
+        planned_departure_time:
+          t.planned_departure_time || null,
+
+        planned_time:
+          t.planned_time || null,
+
+        estimated_drive_minutes:
+          t.estimated_drive_minutes || 0,
+
+        service_minutes:
+          t.service_minutes ||
+          settings.stop_time_minutes
+      })
+      .eq("company_id", companyId)
+      .eq("id", stop.id);
+
+    if (updateStopError) {
+      throw updateStopError;
+    }
+
+    // -------------------------------------------------------
+    // 8. Eventuele bevestigde ETA-window op order aanpassen
+    // -------------------------------------------------------
+
+    if (stop.order_id) {
+      const windowEta =
+        t.planned_arrival_time
+          ? etaWindow(
+              t.planned_arrival_time,
+              60,
+              60
+            )
+          : {
+              from: null,
+              to: null
+            };
+
+      const orderPayload = {
+        planned_route_date: routeDate,
+        expected_delivery_date: routeDate,
+        delivery_eta_status:
+          route.eta_finalized
+            ? "confirmed"
+            : "planned",
+
+        last_activity_at:
+          new Date().toISOString()
+      };
+
+      if (route.eta_finalized) {
+        orderPayload.delivery_eta_from =
+          windowEta.from;
+
+        orderPayload.delivery_eta_to =
+          windowEta.to;
+      }
+
+      const {
+        error: orderError
+      } = await client
+        .from("orders")
+        .update(orderPayload)
+        .eq("company_id", companyId)
+        .eq("id", stop.order_id);
+
+      if (orderError) {
+        throw orderError;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------
+  // 9. End Time route aanpassen
+  // ---------------------------------------------------------
+
+  const {
+    error: routeUpdateError
+  } = await client
+    .from("routes")
+    .update({
+      planned_end_time:
+        timingResult.route_end_time ||
+        startTime
+    })
+    .eq("company_id", companyId)
+    .eq("id", routeId);
+
+  if (routeUpdateError) {
+    throw routeUpdateError;
+  }
+
+  return {
+    ok: true,
+
+    message:
+      `${orderedStops.length} stop ETA(s) recalculated.`,
+
+    route_id: routeId,
+
+    start_time: startTime,
+
+    route_end_time:
+      timingResult.route_end_time ||
+      startTime,
+
+    stops: timing
   };
+}
+
+window.PlanningEngine = {
+  run,
+  previewSelection,
+  syncRouteDeliveryData,
+  replanExistingRoute,
+  recalculateExistingRouteTiming
+};
+
+window.VeynorPlanningEngine = {
+  planRoutes: run,
+  run,
+  previewSelection,
+  syncRouteDeliveryData,
+  replanExistingRoute,
+  recalculateExistingRouteTiming
+};
 })();
