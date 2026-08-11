@@ -2,10 +2,13 @@
 (function () {
   "use strict";
 
-  const POD_BUCKET = "pod-assets";
-  const MAX_POD_PHOTOS = 5;
-  const POD_PHOTO_MAX_SIZE = 1280;
-  const POD_PHOTO_QUALITY = 0.72;
+const POD_BUCKET = "pod-assets";
+
+const MIN_POD_PHOTOS = 3;
+const MAX_POD_PHOTOS = 5;
+
+const POD_PHOTO_MAX_SIZE = 1280;
+const POD_PHOTO_QUALITY = 0.72;
 
   const ACTIVE_ROUTE_STATUSES = new Set([
     "sent_to_driver",
@@ -71,9 +74,15 @@
     return new Date().toISOString();
   }
 
-  function today() {
-    return new Date().toISOString().slice(0, 10);
-  }
+function today() {
+  const d = new Date();
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
 
   function nowTime() {
     const d = new Date();
@@ -439,34 +448,116 @@
     return diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
   }
 
-  async function loadStops() {
-    const cid = await getCompanyId();
+function routeDateValue(route) {
+  return String(
+    route?.planned_delivery_date ||
+    route?.route_date ||
+    route?.delivery_date ||
+    ""
+  ).slice(0, 10);
+}
 
-    const currentEmail = norm(user?.email || profile?.email || "");
+function selectNextDriverRoute(routes) {
+  const todayDate = today();
 
-    let routeQuery = ensureDb()
-      .from("routes")
-      .select("*")
-      .eq("company_id", cid)
-      .in("route_status", Array.from(ACTIVE_ROUTE_STATUSES))
-      .order("created_at", { ascending: false });
+  const candidates = (routes || [])
+    .filter(route => {
+      const status = norm(
+        route?.route_status ||
+        route?.status ||
+        ""
+      );
 
-    if (!isAdminOrTenantUser() && currentEmail) {
-      routeQuery = routeQuery.eq("driver_email", currentEmail);
-    }
+      // Geen afgesloten/geannuleerde routes tonen
+      if (HIDDEN_STATUSES.has(status)) return false;
 
-    const { data: activeRoutes, error: routeError } = await routeQuery;
-    if (routeError) throw routeError;
+      if (
+        [
+          "delivered",
+          "completed",
+          "closed"
+        ].includes(status)
+      ) {
+        return false;
+      }
 
-    const routeRows = activeRoutes || [];
-    const routeIds = routeRows.map(r => r.id).filter(Boolean);
+      const routeDate = routeDateValue(route);
 
-    if (!routeIds.length) {
-      stops = [];
-      renderAll();
-      return;
-    }
+      // Route moet een datum hebben
+      if (!routeDate) return false;
 
+      // Geen oude routes tonen
+      if (routeDate < todayDate) return false;
+
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = routeDateValue(a);
+      const dateB = routeDateValue(b);
+
+      if (dateA !== dateB) {
+        return dateA.localeCompare(dateB);
+      }
+
+      return String(a.route_code || a.id || "")
+        .localeCompare(
+          String(b.route_code || b.id || "")
+        );
+    });
+
+  return candidates[0] || null;
+}
+
+async function loadStops() {
+  const cid = await getCompanyId();
+
+  const currentEmail = norm(
+    user?.email ||
+    profile?.email ||
+    ""
+  );
+
+  let routeQuery = ensureDb()
+    .from("routes")
+    .select("*")
+    .eq("company_id", cid)
+    .in(
+      "route_status",
+      Array.from(ACTIVE_ROUTE_STATUSES)
+    );
+
+  if (!isAdminOrTenantUser() && currentEmail) {
+    routeQuery = routeQuery.eq(
+      "driver_email",
+      currentEmail
+    );
+  }
+
+  const {
+    data: activeRoutes,
+    error: routeError
+  } = await routeQuery;
+
+  if (routeError) {
+    throw routeError;
+  }
+
+  const nextRoute =
+    selectNextDriverRoute(activeRoutes || []);
+
+  const routeRows = nextRoute
+    ? [nextRoute]
+    : [];
+
+  const routeIds = routeRows
+    .map(route => route.id)
+    .filter(Boolean);
+
+  if (!routeIds.length) {
+    stops = [];
+    renderAll();
+    return;
+  }
     const routesById = new Map(routeRows.map(r => [String(r.id), r]));
 
     const { data: rawStops, error } = await ensureDb()
@@ -1330,27 +1421,45 @@
     const finalStatus = deriveFinalStatus(originalPodStatus);
     const podStatus = podStatusFromFinalStatus(finalStatus, originalPodStatus);
 
-    const deliveredTo = $("deliveredTo")?.value.trim() || "";
-    const notes = $("podNotes")?.value.trim() || "";
-    const sigDataUrl = signaturePad?.toDataUrl() || null;
-    const photoFiles = $("podPhotos")?.files || [];
+const deliveredTo = $("deliveredTo")?.value.trim() || "";
+const notes = $("podNotes")?.value.trim() || "";
+const sigDataUrl = signaturePad?.toDataUrl() || null;
+const photoFiles = Array.from($("podPhotos")?.files || []);
 
-    if (["delivered", "delivery_issue"].includes(finalStatus) && !deliveredTo) {
-      throw new Error("Enter the receiver name.");
-    }
+const existingPhotos = Array.isArray(stop.delivery_photos)
+  ? stop.delivery_photos.filter(Boolean)
+  : [];
 
-    if (["delivered", "delivery_issue"].includes(finalStatus) && !sigDataUrl) {
-      throw new Error("Customer signature is required.");
-    }
+const totalPhotoCount = existingPhotos.length + photoFiles.length;
 
-    const photoUrls = await uploadPodPhotos(stop, photoFiles);
+if (["delivered", "delivery_issue"].includes(finalStatus) && !deliveredTo) {
+  throw new Error("Enter the receiver name.");
+}
+
+if (["delivered", "delivery_issue"].includes(finalStatus) && !sigDataUrl) {
+  throw new Error("Customer signature is required.");
+}
+
+if (totalPhotoCount < MIN_POD_PHOTOS) {
+  throw new Error(
+    `At least ${MIN_POD_PHOTOS} delivery photos are required. ` +
+    `Currently ${totalPhotoCount} photo${totalPhotoCount === 1 ? "" : "s"} selected.`
+  );
+}
+
+if (totalPhotoCount > MAX_POD_PHOTOS) {
+  throw new Error(
+    `Maximum ${MAX_POD_PHOTOS} delivery photos are allowed.`
+  );
+}
+
+const photoUrls = await uploadPodPhotos(stop, photoFiles);
     const signatureUrl = await uploadSignature(stop, sigDataUrl);
 
     await savePodLines(stop);
 
     const completedAt = nowIso();
-    const existingPhotos = Array.isArray(stop.delivery_photos) ? stop.delivery_photos : [];
-    const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
+const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
 
     const { error: stopError } = await client
       .from("route_stops")
