@@ -248,25 +248,40 @@
 
       <section class="planner-layout">
         <div class="planner-left">
-          <section class="map-card">
-            <div class="map-head">
-              <div>
-                <h3>Route Map</h3>
-                <div class="planner-panel-sub">Shows depot, released orders, delivery points and selected route lines.</div>
-              </div>
+<section class="map-card">
+  <div class="map-head">
+    <div>
+      <h3>Route Map</h3>
+      <div class="planner-panel-sub">
+        Shows depot, released deliveries, collection points and selected route lines.
+      </div>
+    </div>
 
-              <div class="map-actions">
-                <label class="toggle-chip"><input id="toggleShowMarkers" type="checkbox" checked/> Show markers</label>
-                <label class="toggle-chip"><input id="toggleShowRouteLine" type="checkbox" checked/> Show route lines</label>
-                <button id="btnFitUkMap" class="planner-btn" type="button">Fit UK</button>
-                <button id="btnRefreshMap" class="planner-btn" type="button">Refresh Map</button>
-              </div>
-            </div>
+    <div class="map-actions">
+      <label class="toggle-chip">
+        <input id="toggleShowMarkers" type="checkbox" checked/>
+        Show markers
+      </label>
 
-            <div class="map-box">
-              <div id="ordersMap"></div>
-            </div>
-          </section>
+      <label class="toggle-chip">
+        <input id="toggleShowRouteLine" type="checkbox" checked/>
+        Show route lines
+      </label>
+
+      <button id="btnFitUkMap" class="planner-btn" type="button">
+        Fit UK
+      </button>
+
+      <button id="btnRefreshMap" class="planner-btn" type="button">
+        Refresh Map
+      </button>
+    </div>
+  </div>
+
+  <div class="map-box">
+    <div id="ordersMap"></div>
+  </div>
+</section>
 
           <section class="planner-panel">
             <div class="planner-panel-head">

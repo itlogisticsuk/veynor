@@ -28,6 +28,13 @@ function normalize(value) {
   return String(value ?? "").trim().toLowerCase();
 }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
 function getLineQuantity(line) {
   return Math.max(
     0,
@@ -274,153 +281,634 @@ function getOrderWeight(order) {
     );
   }
 
- async function generate({ vehicle, orders, logoUrl }) {
-  const JsPDF = getJsPdf();
+ async function generate({
+  vehicle,
+  orders,
+  logoUrl
+}) {
+  const JsPDF =
+    getJsPdf();
 
   if (!JsPDF) {
-    throw new Error("jsPDF is not loaded.");
+    throw new Error(
+      "jsPDF is not loaded."
+    );
   }
 
   if (!orders?.length) {
-    throw new Error("No FDS orders found.");
+    throw new Error(
+      "No FDS orders found."
+    );
   }
 
-  console.log("===== FDS NOTICE =====");
+  const doc =
+    new JsPDF(
+      "p",
+      "mm",
+      "a4"
+    );
 
-  orders.forEach(order => {
-    console.log({
-      order: order.order_number,
-      planning_colli: order.planning_colli,
-      order_lines: order.order_lines
-    });
-  });
+  const totalPackages =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        getOrderPackages(order),
+      0
+    );
 
-  // rest van de code...
+  const totalVolume =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        getOrderVolume(order),
+      0
+    );
 
-    const doc = new JsPDF("p", "mm", "a4");
+  const totalWeight =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        getOrderWeight(order),
+      0
+    );
 
-    const totalPackages = orders.reduce((s, o) => s + getOrderPackages(o), 0);
-    const totalVolume = orders.reduce((s, o) => s + getOrderVolume(o), 0);
-    const totalWeight = orders.reduce((s, o) => s + getOrderWeight(o), 0);
+  const collectionCount =
+    orders.filter(
+      isCollectionOrder
+    ).length;
 
-    let y = 14;
+  let y = 14;
 
-    if (logoUrl) {
-      try {
-        doc.addImage(logoUrl, "PNG", 14, 10, 28, 18);
-      } catch (error) {
-        console.warn("Logo skipped:", error);
-      }
+  if (logoUrl) {
+    try {
+      doc.addImage(
+        logoUrl,
+        "PNG",
+        14,
+        10,
+        28,
+        18
+      );
+    } catch (error) {
+      console.warn(
+        "Logo skipped:",
+        error
+      );
     }
+  }
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(17);
-    doc.text("FDS COLLECTION NOTICE", 50, 18);
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.text(`Carrier: ${clean(vehicle?.name || vehicle?.vehicle_name || "FDS")}`, 50, 25);
-    doc.text(`Generated: ${new Date().toLocaleString("en-GB")}`, 50, 30);
+  doc.setFontSize(
+    17
+  );
 
-    y = 42;
+  doc.text(
+    "FDS COLLECTION NOTICE",
+    50,
+    18
+  );
 
-    doc.setDrawColor(220, 225, 235);
-    doc.roundedRect(14, y, 182, 24, 3, 3);
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text(`Orders: ${orders.length}`, 20, y + 8);
-    doc.text(`Packages: ${formatNumber(totalPackages)}`, 58, y + 8);
-    doc.text(`Volume: ${formatNumber(totalVolume, 2)} m³`, 108, y + 8);
-    doc.text(`Weight: ${formatNumber(totalWeight, 0)} kg`, 158, y + 8);
+  doc.setFontSize(
+    9
+  );
 
-    y += 36;
+  doc.text(
+    `Carrier: ${clean(
+      vehicle?.name ||
+      vehicle?.vehicle_name ||
+      "FDS"
+    )}`,
+    50,
+    25
+  );
 
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "bold");
+  doc.text(
+    `Generated: ${new Date().toLocaleString(
+      "en-GB"
+    )}`,
+    50,
+    30
+  );
 
-    doc.text("SO", 14, y);
-    doc.text("ACK", 35, y);
-    doc.text("Retailer", 58, y);
-    doc.text("Postcode", 118, y);
-    doc.text("Packages", 142, y);
-    doc.text("m³", 164, y);
-    doc.text("kg", 180, y);
+  y = 42;
 
-    y += 3;
-    doc.setDrawColor(220, 225, 235);
-    doc.line(14, y, 196, y);
-    y += 6;
+  doc.setDrawColor(
+    220,
+    225,
+    235
+  );
 
-    orders.forEach((order, index) => {
-      if (y > 258) {
+  doc.roundedRect(
+    14,
+    y,
+    182,
+    24,
+    3,
+    3
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(
+    9
+  );
+
+  doc.text(
+    `Orders: ${orders.length}`,
+    20,
+    y + 8
+  );
+
+  doc.text(
+    `Packages: ${formatNumber(
+      totalPackages
+    )}`,
+    58,
+    y + 8
+  );
+
+  doc.text(
+    `Volume: ${formatNumber(
+      totalVolume,
+      2
+    )} m³`,
+    108,
+    y + 8
+  );
+
+  doc.text(
+    `Weight: ${formatNumber(
+      totalWeight,
+      0
+    )} kg`,
+    158,
+    y + 8
+  );
+
+  if (collectionCount > 0) {
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.setFontSize(
+      8
+    );
+
+    doc.setTextColor(
+      14,
+      116,
+      144
+    );
+
+    doc.text(
+      `${collectionCount} retailer collection${
+        collectionCount === 1
+          ? ""
+          : "s"
+      } included`,
+      20,
+      y + 17
+    );
+
+    doc.setTextColor(
+      0,
+      0,
+      0
+    );
+  }
+
+  y += 36;
+
+  doc.setFontSize(
+    7.6
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.text(
+    "SO",
+    14,
+    y
+  );
+
+  doc.text(
+    "ACK",
+    33,
+    y
+  );
+
+  doc.text(
+    "Retailer",
+    54,
+    y
+  );
+
+  doc.text(
+    "Type",
+    108,
+    y
+  );
+
+  doc.text(
+    "Postcode",
+    133,
+    y
+  );
+
+  doc.text(
+    "Pkg",
+    158,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+  doc.text(
+    "m³",
+    176,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+  doc.text(
+    "kg",
+    194,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+  y += 3;
+
+  doc.setDrawColor(
+    220,
+    225,
+    235
+  );
+
+  doc.line(
+    14,
+    y,
+    196,
+    y
+  );
+
+  y += 6;
+
+  orders.forEach(
+    (order, index) => {
+      if (y > 254) {
         doc.addPage();
         y = 18;
       }
 
-      const rowHeight = 13;
+      const collection =
+        isCollectionOrder(
+          order
+        );
 
-      if (index % 2 === 1) {
-        doc.setFillColor(226, 232, 240);
-        doc.rect(14, y - 4, 182, rowHeight, "F");
+      const rowHeight =
+        collection
+          ? 17
+          : 13;
+
+      if (collection) {
+        doc.setFillColor(
+          236,
+          254,
+          255
+        );
+
+        doc.rect(
+          14,
+          y - 4,
+          182,
+          rowHeight,
+          "F"
+        );
+      } else if (
+        index % 2 === 1
+      ) {
+        doc.setFillColor(
+          242,
+          245,
+          249
+        );
+
+        doc.rect(
+          14,
+          y - 4,
+          182,
+          rowHeight,
+          "F"
+        );
       }
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(8);
-      doc.setTextColor(7, 21, 47);
-      doc.text(clean(order.order_number || "—"), 14, y);
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
 
-      doc.setTextColor(0, 0, 0);
-      doc.text(clean(order.external_reference || "—"), 35, y);
+      doc.setFontSize(
+        7.6
+      );
 
-      doc.setFont("helvetica", "bold");
-      doc.text(getRetailer(order).slice(0, 32), 58, y);
+      doc.setTextColor(
+        7,
+        21,
+        47
+      );
 
-      doc.setFont("helvetica", "normal");
-      doc.text(clean(order.delivery_postcode || "—"), 118, y);
-      doc.text(formatNumber(getOrderPackages(order)), 142, y);
-      doc.text(formatNumber(getOrderVolume(order), 2), 164, y);
-      doc.text(formatNumber(getOrderWeight(order), 0), 180, y);
+      doc.text(
+        clean(
+          order.order_number ||
+          "—"
+        ),
+        14,
+        y
+      );
+
+      doc.setTextColor(
+        0,
+        0,
+        0
+      );
+
+      doc.text(
+        clean(
+          order.external_reference ||
+          "—"
+        ),
+        33,
+        y
+      );
+
+      doc.text(
+        getRetailer(order)
+          .slice(
+            0,
+            28
+          ),
+        54,
+        y
+      );
+
+      if (collection) {
+        doc.setTextColor(
+          14,
+          116,
+          144
+        );
+
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.text(
+          "COLLECTION",
+          108,
+          y
+        );
+      } else {
+        doc.setTextColor(
+          71,
+          85,
+          105
+        );
+
+        doc.setFont(
+          "helvetica",
+          "normal"
+        );
+
+        doc.text(
+          "DELIVERY",
+          108,
+          y
+        );
+      }
+
+      doc.setTextColor(
+        0,
+        0,
+        0
+      );
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.text(
+        clean(
+          order.delivery_postcode ||
+          "—"
+        ),
+        133,
+        y
+      );
+
+      doc.text(
+        formatNumber(
+          getOrderPackages(order)
+        ),
+        158,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+      doc.text(
+        formatNumber(
+          getOrderVolume(order),
+          2
+        ),
+        176,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+      doc.text(
+        formatNumber(
+          getOrderWeight(order),
+          0
+        ),
+        194,
+        y,
+        {
+          align: "right"
+        }
+      );
 
       y += 5;
 
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.5);
-      doc.setTextColor(80, 85, 95);
-      doc.text(getAddress(order).slice(0, 105), 58, y);
+      doc.setFontSize(
+        7.2
+      );
 
-      doc.setTextColor(0, 0, 0);
+      if (collection) {
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.setTextColor(
+          14,
+          116,
+          144
+        );
+
+        doc.text(
+          "PICK UP FROM RETAILER",
+          54,
+          y
+        );
+
+        y += 4;
+      }
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setTextColor(
+        80,
+        85,
+        95
+      );
+
+      doc.text(
+        getAddress(order)
+          .slice(
+            0,
+            90
+          ),
+        54,
+        y
+      );
+
+      doc.setTextColor(
+        0,
+        0,
+        0
+      );
+
       y += 9;
-    });
-
-    y += 8;
-
-    if (y > 238) {
-      doc.addPage();
-      y = 20;
     }
+  );
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9);
-    doc.text("Collection confirmation", 14, y);
+  y += 8;
 
-    y += 11;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-
-    doc.text("Collected by FDS:", 14, y);
-    doc.line(50, y, 115, y);
-
-    y += 10;
-    doc.text("Signature:", 14, y);
-    doc.line(50, y, 115, y);
-
-    y += 10;
-    doc.text("Date / time:", 14, y);
-    doc.line(50, y, 115, y);
-
-    doc.save(`FDS-Collection-Notice-${new Date().toISOString().slice(0, 10)}.pdf`);
+  if (y > 238) {
+    doc.addPage();
+    y = 20;
   }
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(
+    9
+  );
+
+  doc.text(
+    "Collection confirmation",
+    14,
+    y
+  );
+
+  y += 11;
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.setFontSize(
+    8.5
+  );
+
+  doc.text(
+    "Collected by FDS:",
+    14,
+    y
+  );
+
+  doc.line(
+    50,
+    y,
+    115,
+    y
+  );
+
+  y += 10;
+
+  doc.text(
+    "Signature:",
+    14,
+    y
+  );
+
+  doc.line(
+    50,
+    y,
+    115,
+    y
+  );
+
+  y += 10;
+
+  doc.text(
+    "Date / time:",
+    14,
+    y
+  );
+
+  doc.line(
+    50,
+    y,
+    115,
+    y
+  );
+
+  doc.save(
+    `FDS-Collection-Notice-${
+      new Date()
+        .toISOString()
+        .slice(
+          0,
+          10
+        )
+    }.pdf`
+  );
+}
 
   window.FdsNoticeGenerator = {
     generate

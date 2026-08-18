@@ -1563,6 +1563,10 @@ function rebuildDeliveryGroups() {
   deliveryGroupsMap = new Map();
 
   allOrders.forEach(order => {
+
+    if (isCollectionOrder(order)) {
+      return;
+    }
     if (
       closedDeliveryGroupOrderIds.has(
         String(order.id)
@@ -1632,6 +1636,11 @@ function rebuildDeliveryGroups() {
   });
 }
 function getDeliveryGroup(order) {
+
+  if (isCollectionOrder(order)) {
+    return null;
+  }
+
   if (normalize(order.order_type) === "legacy") {
     return null;
   }
@@ -3524,6 +3533,17 @@ function getOrderExpectedCompleteDate(order) {
 }
 
 function renderCompletenessDonut(order) {
+
+  if (isCollectionOrder(order)) {
+    return `
+      <div class="colli-wrap">
+        <span class="status-pill collection">
+          COLLECTION
+        </span>
+      </div>
+    `;
+  }
+
   const completeness =
     order.product_completeness ||
     getProductCompleteness(order);
@@ -3593,10 +3613,6 @@ function renderCompletenessDonut(order) {
   /*
    * Nog niet fysiek compleet, maar wel volledig
    * gedekt door een verwachte containerlevering.
-   *
-   * De fysieke teller blijft zichtbaar, zodat
-   * niet de indruk ontstaat dat alles al in het
-   * magazijn staat.
    */
   if (expectedComplete) {
     const expectedDateText =
@@ -3806,6 +3822,12 @@ function isFdsCarrierOrder(order) {
   );
 }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) === "collection"
+  );
+}
+
 function isWarehousePickupOrder(order) {
   return (
     normalize(order.transport_type) === "warehouse_pickup" ||
@@ -3861,6 +3883,41 @@ function renderDeliveryCell(order) {
       </div>
     `;
   }
+
+if (isCollectionOrder(order)) {
+  const collectionDate =
+    getExpectedDeliveryDate(order) ||
+    getRequestedDeliveryDate(order);
+
+  return `
+    <div class="delivery-cell">
+
+      ${
+        collectionDate
+          ? `
+            <strong>
+              ${escapeHtml(
+                formatDate(collectionDate)
+              )}
+            </strong>
+          `
+          : ""
+      }
+
+      <span class="status-pill collection">
+        COLLECTION
+      </span>
+
+      <span class="subline">
+        ${
+          collectionDate
+            ? "Collection date"
+            : "Collection date pending"
+        }
+      </span>
+    </div>
+  `;
+}
 
   if (isWarehousePickupOrder(order)) {
     const pickupDate =
@@ -3984,6 +4041,15 @@ function getOrderType(order) {
 }
 
 function getCompactOrderTypeConfig(order) {
+
+  if (isCollectionOrder(order)) {
+    return {
+      letter: "P",
+      label: "Collection from retailer",
+      className: "collection"
+    };
+  }
+
   const type =
     getOrderType(order);
 
@@ -4142,6 +4208,15 @@ function renderProductOwnerCell(order) {
 }
 
 function renderOrderTypeBadge(order) {
+
+  if (isCollectionOrder(order)) {
+    return `
+      <span class="status-pill collection">
+        COLLECTION
+      </span>
+    `;
+  }
+
   const type = getOrderType(order);
 
   if (type === "legacy") {
@@ -7070,6 +7145,19 @@ style.textContent = `
   border:1px solid #eab308;
   color:#854d0e;
   font-weight:950;
+}
+
+.status-pill.collection{
+  background:#ecfeff;
+  border:1px solid #67e8f9;
+  color:#0e7490;
+  font-weight:950;
+}
+
+.compact-type-logo.collection{
+  background:#0891b2;
+  box-shadow:
+    0 0 0 3px rgba(8,145,178,.12);
 }
 
 .orders-top-scrollbar{

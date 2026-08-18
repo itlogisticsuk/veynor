@@ -509,10 +509,12 @@ return dedupeAddressParts(cleaned.addressParts).join(", ");
     const owner = getSelectedProductOwner();
 
     return {
-      sourceKind: currentSourceKind || "unknown",
-      sourceType: "",
+sourceKind: currentSourceKind || "unknown",
+sourceType: "",
 
-      orderNumber: "",
+movementType: "delivery",
+
+orderNumber: "",
       externalReference: "",
       purchaseOrder: "",
 
@@ -570,8 +572,23 @@ return dedupeAddressParts(cleaned.addressParts).join(", ");
     if (!order.lines.length) notes.push("No product lines");
     if (!order.postcode && !order.city) notes.push("Missing city/postcode");
 
-    const missingSku = order.lines.filter(l => !l.itemCode).length;
-    if (missingSku) notes.push(`${missingSku} line(s) missing SKU`);
+const isCollection =
+  normalize(order.movementType) ===
+  "collection";
+
+const missingSku =
+  order.lines.filter(
+    line => !line.itemCode
+  ).length;
+
+if (
+  !isCollection &&
+  missingSku
+) {
+  notes.push(
+    `${missingSku} line(s) missing SKU`
+  );
+}
 
     const invalidQty = order.lines.filter(l => Math.round(toNumber(l.quantity, 0)) <= 0).length;
     if (invalidQty) notes.push(`${invalidQty} line(s) invalid quantity`);
@@ -2192,8 +2209,20 @@ async function reserveSalesOrderNumber() {
 
     const foundSkus = new Set((data || []).map(row => normalize(row.sku_base)));
 
-    groupedOrders = groupedOrders.map(order => {
-      const missing = [...new Set(
+groupedOrders = groupedOrders.map(order => {
+
+  if (
+    normalize(order.movementType) ===
+    "collection"
+  ) {
+    return {
+      ...order,
+      missingProductSkus: [],
+      warnings: []
+    };
+  }
+
+  const missing = [...new Set(
         (order.lines || [])
           .map(line => String(line.itemCode || "").trim())
           .filter(sku => sku && !foundSkus.has(normalize(sku)))
@@ -2667,8 +2696,8 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
     renderDetail();
   }
 
-  async function getOrCreateProductOwnerCustomer(owner, cid) {
-    if (!owner) throw new Error("No product owner selected.");
+async function getOrCreateProductOwnerCustomer(owner, cid) {
+  if (!owner) throw new Error("No product owner selected.");
 
     const ownerName = dedupeRepeatedWords(owner.name || owner.trading_name || "");
     const customerCode = String(owner.customer_code || owner.default_source_name || owner.trading_name || ownerName)
@@ -3121,9 +3150,16 @@ async function enrichPreviewOrdersWithProductData() {
   });
 }
 
-  async function insertOrder(order, cid) {
-    const owner = getSelectedProductOwner();
-    if (!owner) throw new Error("No product owner selected.");
+async function insertOrder(order, cid) {
+  const owner = getSelectedProductOwner();
+
+  if (!owner) {
+    throw new Error("No product owner selected.");
+  }
+
+  const isCollection =
+    normalize(order.movementType) ===
+    "collection";
 
     const productOwnerName = dedupeRepeatedWords(owner.name || owner.trading_name || order.productOwnerName || "");
     const retailerName = dedupeRepeatedWords(order.retailName || order.customerName);
@@ -3201,11 +3237,19 @@ const calculatedVolume = enrichedLines.reduce(
       external_reference: order.externalReference || order.orderNumber,
       purchase_order: order.purchaseOrder || null,
       source_type: order.sourceType || getFieldValue("defaultSourceType", "manual_import"),
+movement_type:
+  isCollection
+    ? "collection"
+    : "delivery",
 
-      status: getDefaultStatus(),
-      planning_release: false,
-      planning_only: false,
+status:
+  isCollection
+    ? "imported"
+    : getDefaultStatus(),
 
+planning_release: false,
+
+planning_only: false,
       planning_colli: totalPackages,
       planning_volume_m3: round3(totalVolume),
       volume_m3: round3(totalVolume),
@@ -3274,7 +3318,10 @@ delivery_region: null,
   return {
     company_id: cid,
     order_id: insertedOrder.id,
-    product_id: line.productSnapshot?.id || null,
+product_id:
+  isCollection
+    ? null
+    : line.productSnapshot?.id || null,
 
     line_number: index + 1,
     sku_base: String(line.itemCode || "").trim() || null,
@@ -3316,9 +3363,13 @@ delivery_region: null,
       line.packageChoice && line.packageChoice !== "full"
         ? `Requested package: ${line.packageChoice}`
         : "",
+isCollection
+  ? "COLLECTION - no stock/product allocation required"
+  : (
       line.productSnapshot?.id
         ? "Product linked at import"
         : "WARNING: No matching product found in product master at import"
+    )
     ].filter(Boolean).join(" | ") || null
   };
 });
@@ -3917,6 +3968,12 @@ async function openManualOrderModal() {
   syncManualOwnerSelect();
   fillManualOwnerFields();
   toggleManualUnknownOwnerFields();
+const movementSelect =
+  byId("manualMovementType");
+
+if (movementSelect) {
+  movementSelect.value = "delivery";
+}
 
   await loadManualProducts();
 
@@ -4132,6 +4189,11 @@ async function saveManualOrder() {
   const postcode = getFieldValue("manualPostcode", "");
   const city = getFieldValue("manualCity", "");
   const lines = getManualLines();
+const movementType =
+  getFieldValue(
+    "manualMovementType",
+    "delivery"
+  );
 
   if (!orderNumber) return showToast("Manual order number is required.", "err");
   if (!retailerName) return showToast("Retailer / shop name is required.", "err");
@@ -4153,11 +4215,19 @@ async function saveManualOrder() {
     country: getFieldValue("manualCountry", getDefaultCountry())
   };
 
-  let manualOrder = {
-    ...buildEmptyOrder(),
-    sourceKind: "manual",
-    sourceType: "manual_order",
-    orderNumber,
+let manualOrder = {
+  ...buildEmptyOrder(),
+
+  sourceKind: "manual",
+
+  sourceType:
+    movementType === "collection"
+      ? "manual_collection"
+      : "manual_order",
+
+  movementType,
+
+  orderNumber,
     externalReference: orderNumber,
     purchaseOrder: getFieldValue("manualPurchaseOrder", ""),
     orderDate: new Date().toISOString().slice(0, 10),

@@ -39,6 +39,13 @@ const signedNoticeOrderIds = new Set();
     return String(value ?? "").trim().toLowerCase();
   }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, char => ({
       "&": "&amp;",
@@ -1496,6 +1503,24 @@ function getRouteWarehouseCost(route) {
   padding-top:13px;
 }
 
+.av-own-stop.collection{
+  border-left:3px solid #0891b2;
+  background:#f0fdff;
+}
+
+.av-collection-badge{
+  display:inline-flex;
+  align-items:center;
+  margin-left:6px;
+  padding:2px 7px;
+  border-radius:999px;
+  border:1px solid #67e8f9;
+  background:#ecfeff;
+  color:#0e7490;
+  font-size:9px;
+  font-weight:900;
+}
+
 .av-own-stops-head{
   display:flex;
   align-items:flex-end;
@@ -2779,23 +2804,40 @@ function renderVehicle(vehicle) {
 }
 
 function renderOwnRouteDocuments(route) {
-  const routeId = String(route?.id || "");
+  const routeId =
+    String(
+      route?.id ||
+      ""
+    );
 
-  const orders = getOrdersForRoute(routeId);
+  const orders =
+    getOrdersForRoute(
+      routeId
+    );
 
-  const orderCount = orders.length;
+  const orderCount =
+    orders.length;
 
-  const volume = orders.reduce(
-    (sum, order) =>
-      sum + getOrderVolume(order),
-    0
-  );
+  const hasCollection =
+    orders.some(
+      isCollectionOrder
+    );
 
-  const colli = orders.reduce(
-    (sum, order) =>
-      sum + getOrderColli(order),
-    0
-  );
+  const volume =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        getOrderVolume(order),
+      0
+    );
+
+  const colli =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        getOrderColli(order),
+      0
+    );
 
   return `
     <div class="av-carrier-documents">
@@ -2816,6 +2858,11 @@ function renderOwnRouteDocuments(route) {
             ${formatNumber(orderCount)} order(s)
             · ${formatNumber(colli)} colli
             · ${formatNumber(volume, 2)} m³
+            ${
+              hasCollection
+                ? " · includes collection"
+                : ""
+            }
           </div>
         </div>
 
@@ -2832,7 +2879,7 @@ function renderOwnRouteDocuments(route) {
           data-route-delivery-notes="${escapeHtml(routeId)}"
           ${orderCount ? "" : "disabled"}
         >
-          Generate Delivery Notes
+          Generate Route Notes
         </button>
 
         <button
@@ -3040,22 +3087,27 @@ function renderRouteStops(route) {
 }
 
 function renderStop(stop) {
-  const order = getOrderById(stop.order_id);
+  const order =
+    getOrderById(stop.order_id);
 
   const statusValue =
-    getStatusValueFromStop(stop, order);
+    getStatusValueFromStop(
+      stop,
+      order
+    );
 
   const stopNumber =
     stop.stop_sequence ||
     stop.stop_number ||
     "—";
 
-  const eta = formatTime(
-    stop.planned_arrival_time ||
-    stop.arrival_eta ||
-    stop.eta ||
-    stop.planned_time
-  );
+  const eta =
+    formatTime(
+      stop.planned_arrival_time ||
+      stop.arrival_eta ||
+      stop.eta ||
+      stop.planned_time
+    );
 
   const city =
     stop.city ||
@@ -3068,7 +3120,9 @@ function renderStop(stop) {
     "—";
 
   const customerOrderLabel =
-    getCustomerOrderLabel(order);
+    getCustomerOrderLabel(
+      order
+    );
 
   const title =
     order?.order_number ||
@@ -3076,11 +3130,23 @@ function renderStop(stop) {
     "Stop";
 
   const retailer =
-    getRetailerName(order, stop);
+    getRetailerName(
+      order,
+      stop
+    );
+
+  const collection =
+    isCollectionOrder(
+      order
+    );
 
   return `
     <div
-      class="av-stop av-own-stop"
+      class="av-stop av-own-stop ${
+        collection
+          ? "collection"
+          : ""
+      }"
       draggable="true"
       data-stop-id="${escapeHtml(stop.id)}"
       data-route-id="${escapeHtml(stop.route_id)}"
@@ -3094,6 +3160,16 @@ function renderStop(stop) {
           ${escapeHtml(title)}
           ·
           ${escapeHtml(retailer)}
+
+          ${
+            collection
+              ? `
+                <span class="av-collection-badge">
+                  COLLECTION
+                </span>
+              `
+              : ""
+          }
         </div>
 
         ${
@@ -3123,7 +3199,9 @@ function renderStop(stop) {
           <span>
             Status:
             <span class="av-own-stop-status">
-              ${escapeHtml(titleCase(statusValue))}
+              ${escapeHtml(
+                titleCase(statusValue)
+              )}
             </span>
           </span>
         </div>
@@ -3135,7 +3213,11 @@ function renderStop(stop) {
           type="button"
           data-manual-delivered="${escapeHtml(stop.id)}"
         >
-          Delivered
+          ${
+            collection
+              ? "Collected"
+              : "Delivered"
+          }
         </button>
 
         <button
@@ -5064,39 +5146,53 @@ async function generateRouteSheetPdf(routeId) {
 }
 
 async function generateRouteDeliveryNotes(routeId) {
-  const button = document.querySelector(
-    `[data-route-delivery-notes="${CSS.escape(
-      String(routeId)
-    )}"]`
-  );
+  const button =
+    document.querySelector(
+      `[data-route-delivery-notes="${CSS.escape(
+        String(routeId)
+      )}"]`
+    );
 
   const oldText =
     button?.textContent?.trim() ||
-    "Generate Delivery Notes";
+    "Generate Route Notes";
 
   try {
     if (button) {
       button.disabled = true;
-      button.textContent = "Generating... ⏳";
+      button.textContent =
+        "Generating... ⏳";
     }
 
-    const db = ensureClient();
-    const cid = getCompanyId();
+    const db =
+      ensureClient();
+
+    const cid =
+      getCompanyId();
 
     if (!cid) {
-      throw new Error("Company id missing.");
+      throw new Error(
+        "Company id missing."
+      );
     }
 
-    const route = allRoutes.find(
-      row =>
-        String(row.id) === String(routeId)
-    );
+    const route =
+      allRoutes.find(
+        row =>
+          String(row.id) ===
+          String(routeId)
+      );
 
     if (!route) {
-      throw new Error("Route not found.");
+      throw new Error(
+        "Route not found."
+      );
     }
 
-    const orders = getOrdersForRoute(routeId);
+    const orders =
+      getOrdersForRoute(
+        routeId
+      );
 
     if (!orders.length) {
       throw new Error(
@@ -5105,27 +5201,34 @@ async function generateRouteDeliveryNotes(routeId) {
     }
 
     if (
-      !window.DeliveryNoteGenerator?.generate
+      !window
+        .DeliveryNoteGenerator
+        ?.generate
     ) {
       throw new Error(
         "Delivery Note Generator is not loaded."
       );
     }
 
-    if (!window.PDFLib?.PDFDocument) {
+    if (
+      !window.PDFLib
+        ?.PDFDocument
+    ) {
       throw new Error(
         "pdf-lib is not loaded."
       );
     }
 
     showToast(
-      `Generating delivery notes for ${getRouteLabel(route)}...`,
+      `Generating route notes for ${getRouteLabel(route)}...`,
       "ok"
     );
 
     const pdfUrls = [];
 
-    for (const order of orders) {
+    for (
+      const order of orders
+    ) {
       try {
         const uploaded =
           await window
@@ -5136,14 +5239,16 @@ async function generateRouteDeliveryNotes(routeId) {
               cid
             );
 
-        if (uploaded?.fileUrl) {
+        if (
+          uploaded?.fileUrl
+        ) {
           pdfUrls.push(
             uploaded.fileUrl
           );
         }
       } catch (error) {
         console.warn(
-          `Delivery note skipped for ${order.order_number}:`,
+          `Route note skipped for ${order.order_number}:`,
           error.message
         );
       }
@@ -5151,119 +5256,154 @@ async function generateRouteDeliveryNotes(routeId) {
 
     if (!pdfUrls.length) {
       throw new Error(
-        "No delivery note PDFs were generated."
+        "No route note PDFs were generated."
       );
     }
 
     const mergedPdf =
-      await window.PDFLib
+      await window
+        .PDFLib
         .PDFDocument
         .create();
 
-    for (const url of pdfUrls) {
+    for (
+      const url of pdfUrls
+    ) {
       try {
-        const response = await fetch(
-          url,
-          {
-            cache: "no-store"
-          }
-        );
-
-        if (!response.ok) {
-          console.warn(
-            `Could not load delivery note: ${url}`
+        const response =
+          await fetch(
+            url,
+            {
+              cache:
+                "no-store"
+            }
           );
+
+        if (
+          !response.ok
+        ) {
           continue;
         }
 
         const bytes =
-          await response.arrayBuffer();
+          await response
+            .arrayBuffer();
 
         const pdf =
-          await window.PDFLib
+          await window
+            .PDFLib
             .PDFDocument
-            .load(bytes);
+            .load(
+              bytes
+            );
 
         const pages =
-          await mergedPdf.copyPages(
-            pdf,
-            pdf.getPageIndices()
-          );
+          await mergedPdf
+            .copyPages(
+              pdf,
+              pdf.getPageIndices()
+            );
 
-        pages.forEach(page =>
-          mergedPdf.addPage(page)
+        pages.forEach(
+          page =>
+            mergedPdf
+              .addPage(
+                page
+              )
         );
       } catch (error) {
         console.warn(
-          "Delivery note could not be merged:",
+          "Route note could not be merged:",
           error
         );
       }
     }
 
-    if (!mergedPdf.getPageCount()) {
+    if (
+      !mergedPdf
+        .getPageCount()
+    ) {
       throw new Error(
-        "No valid delivery note pages could be combined."
+        "No valid route note pages could be combined."
       );
     }
 
     const mergedBytes =
-      await mergedPdf.save();
+      await mergedPdf
+        .save();
 
-    const blob = new Blob(
-      [mergedBytes],
-      {
-        type: "application/pdf"
-      }
-    );
+    const blob =
+      new Blob(
+        [mergedBytes],
+        {
+          type:
+            "application/pdf"
+        }
+      );
 
     const blobUrl =
-      URL.createObjectURL(blob);
+      URL.createObjectURL(
+        blob
+      );
 
     const routeLabel =
       safeDocumentFileName(
-        getRouteLabel(route),
+        getRouteLabel(
+          route
+        ),
         "Route"
       );
 
     const link =
-      document.createElement("a");
+      document.createElement(
+        "a"
+      );
 
-    link.href = blobUrl;
+    link.href =
+      blobUrl;
 
     link.download =
-      `${routeLabel} Delivery Notes.pdf`;
+      `${routeLabel} Route Notes.pdf`;
 
-    document.body.appendChild(link);
+    document.body
+      .appendChild(
+        link
+      );
 
     link.click();
     link.remove();
 
     setTimeout(
       () =>
-        URL.revokeObjectURL(blobUrl),
+        URL
+          .revokeObjectURL(
+            blobUrl
+          ),
       30000
     );
 
     showToast(
-      `${orders.length} delivery note(s) downloaded for ${getRouteLabel(route)}.`,
+      `${orders.length} route note(s) downloaded for ${getRouteLabel(route)}.`,
       "ok"
     );
   } catch (error) {
     console.error(
-      "Route delivery notes failed:",
+      "Route notes failed:",
       error
     );
 
     showToast(
       error.message ||
-        "Could not generate route delivery notes.",
+        "Could not generate route notes.",
       "err"
     );
   } finally {
     if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
+      button.disabled =
+        false;
+
+      button.textContent =
+        oldText;
     }
   }
 }

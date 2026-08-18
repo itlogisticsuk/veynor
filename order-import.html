@@ -634,27 +634,61 @@
         </div>
       </section>
 
-      <section class="manual-section">
-        <h3 class="manual-section-title">Order Details</h3>
+<section class="manual-section">
+  <h3 class="manual-section-title">Order Details</h3>
 
-        <div class="field-grid three">
-          <div class="field">
-            <label for="manualOrderNumber">Order Number</label>
-            <input id="manualOrderNumber" class="input" placeholder="e.g. MAN-0001"/>
-          </div>
+  <div class="field-grid four">
 
-          <div class="field">
-            <label for="manualPurchaseOrder">Purchase Order</label>
-            <input id="manualPurchaseOrder" class="input" placeholder="Optional"/>
-          </div>
+    <div class="field">
+      <label for="manualMovementType">Movement Type</label>
 
-          <div class="field">
-            <label for="manualRequestedDate">Requested Delivery Date</label>
-            <input id="manualRequestedDate" class="input" type="date"/>
-          </div>
-        </div>
-      </section>
+      <select
+        id="manualMovementType"
+        class="select"
+      >
+        <option value="delivery" selected>
+          DELIVERY
+        </option>
 
+        <option value="collection">
+          COLLECTION / PICK UP
+        </option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="manualOrderNumber">Order Number</label>
+      <input
+        id="manualOrderNumber"
+        class="input"
+        placeholder="e.g. MAN-0001"
+      />
+    </div>
+
+    <div class="field">
+      <label for="manualPurchaseOrder">Purchase Order</label>
+      <input
+        id="manualPurchaseOrder"
+        class="input"
+        placeholder="Optional"
+      />
+    </div>
+
+    <div class="field">
+      <label for="manualRequestedDate">
+        Requested Date
+      </label>
+
+      <input
+        id="manualRequestedDate"
+        class="input"
+        type="date"
+      />
+    </div>
+
+  </div>
+</section>
+         
       <section class="manual-section">
         <h3 class="manual-section-title">Delivery Customer / Retailer</h3>
         <p class="manual-section-sub">Select an existing retailer to fill the address automatically, or leave it as New Retailer and enter the details manually.</p>

@@ -287,6 +287,13 @@ function formatNumber(value, digits = 0) {
     ).trim();
   }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
   function shortMemo(
     value,
     maximumLength = 70
@@ -3175,18 +3182,26 @@ ${renderExpectedAllocationHtml(
         );
       }
 
-      const orderIds =
-        selectedOrderIds.size
-          ? [...selectedOrderIds]
-          : allOrders
-.filter(order =>
-  !order.planning_release &&
-  !order.stats.isFullyMatched &&
-  !order.stats.isExpectedComplete
-)
-              .map(order =>
-                String(order.id)
-              );
+const sourceOrders =
+  selectedOrderIds.size
+    ? allOrders.filter(order =>
+        selectedOrderIds.has(
+          String(order.id)
+        )
+      )
+    : allOrders;
+
+const orderIds =
+  sourceOrders
+    .filter(order =>
+      !isCollectionOrder(order) &&
+      !order.planning_release &&
+      !order.stats.isFullyMatched &&
+      !order.stats.isExpectedComplete
+    )
+    .map(order =>
+      String(order.id)
+    );
 
       if (!orderIds.length) {
         showToast(
@@ -3556,50 +3571,63 @@ async function releaseOrders(
       return;
     }
 
-    const physicallyReady =
-      Boolean(
-        order.stats
-          ?.readyForPlanning
-      );
+const collection =
+  isCollectionOrder(order);
 
-    const expectedReady =
-      Boolean(
-        order.stats
-          ?.isExpectedComplete &&
-        order.stats
-          ?.expectedCompleteDate
-      );
+const physicallyReady =
+  Boolean(
+    order.stats
+      ?.readyForPlanning
+  );
 
-    const geoReady =
-      hasCoordinates(order);
+const expectedReady =
+  Boolean(
+    order.stats
+      ?.isExpectedComplete &&
+    order.stats
+      ?.expectedCompleteDate
+  );
 
-    if (
-      (
-        physicallyReady ||
-        expectedReady
-      ) &&
-      geoReady
-    ) {
-      releasable.push(order);
-      return;
-    }
+const geoReady =
+  hasCoordinates(order);
 
-    const reasons = [];
+if (
+  collection &&
+  geoReady
+) {
+  releasable.push(order);
+  return;
+}
 
-    if (
-      !physicallyReady &&
-      !expectedReady
-    ) {
-      reasons.push(
-        "order is not physically or expected complete"
-      );
-    }
+if (
+  !collection &&
+  (
+    physicallyReady ||
+    expectedReady
+  ) &&
+  geoReady
+) {
+  releasable.push(order);
+  return;
+}
 
-    if (!geoReady) {
-      reasons.push(
-        "geolocation is missing"
-      );
-    }
+const reasons = [];
+
+if (
+  !collection &&
+  !physicallyReady &&
+  !expectedReady
+) {
+  reasons.push(
+    "order is not physically or expected complete"
+  );
+}
+
+if (!geoReady) {
+  reasons.push(
+    "geolocation is missing"
+  );
+}
 
     blocked.push({
       order,
@@ -3633,21 +3661,25 @@ if (!releasable.length) {
     );
   }
 
-  for (
-    const order of releasable
-  ) {
-    const physicallyReady =
-      Boolean(
-        order.stats
-          ?.readyForPlanning
-      );
+ for (
+  const order of releasable
+) {
+  const collection =
+    isCollectionOrder(order);
 
-    const expectedOnly =
-      !physicallyReady &&
-      Boolean(
-        order.stats
-          ?.isExpectedComplete
-      );
+  const physicallyReady =
+    Boolean(
+      order.stats
+        ?.readyForPlanning
+    );
+
+const expectedOnly =
+  !collection &&
+  !physicallyReady &&
+  Boolean(
+    order.stats
+      ?.isExpectedComplete
+  );
 
     const expectedCompleteDate =
       expectedOnly
@@ -3683,10 +3715,14 @@ if (!releasable.length) {
       planning_release:
         true,
 
-      planning_stock_basis:
+planning_stock_basis:
+  collection
+    ? null
+    : (
         expectedOnly
           ? "expected"
-          : "physical",
+          : "physical"
+      ),
 
       earliest_planning_date:
         earliestPlanningDate,
@@ -3694,10 +3730,14 @@ if (!releasable.length) {
       released_to_planning_at:
         nowIso(),
 
-      released_to_planning_by:
+released_to_planning_by:
+  collection
+    ? "collection_manual"
+    : (
         expectedOnly
           ? "expected_stock"
-          : "manual",
+          : "manual"
+      ),
 
       planning_colli:
         getPlanningColli(
@@ -3765,36 +3805,40 @@ if (!releasable.length) {
 
 async function geocodeAndReleaseSelected() {
   try {
-    const orderIds =
-      selectedOrderIds.size
-        ? [...selectedOrderIds]
-        : filteredOrders
-            .filter(order => {
-              const physicallyReady =
-                Boolean(
-                  order.stats
-                    ?.isFullyMatched
-                );
+const orderIds =
+  selectedOrderIds.size
+    ? [...selectedOrderIds]
+    : filteredOrders
+        .filter(order => {
+          const collection =
+            isCollectionOrder(order);
 
-              const expectedReady =
-                Boolean(
-                  order.stats
-                    ?.isExpectedComplete &&
-                  order.stats
-                    ?.expectedCompleteDate
-                );
-
-              return (
-                (
-                  physicallyReady ||
-                  expectedReady
-                ) &&
-                !order.planning_release
-              );
-            })
-            .map(order =>
-              String(order.id)
+          const physicallyReady =
+            Boolean(
+              order.stats
+                ?.isFullyMatched
             );
+
+          const expectedReady =
+            Boolean(
+              order.stats
+                ?.isExpectedComplete &&
+              order.stats
+                ?.expectedCompleteDate
+            );
+
+          return (
+            !order.planning_release &&
+            (
+              collection ||
+              physicallyReady ||
+              expectedReady
+            )
+          );
+        })
+        .map(order =>
+          String(order.id)
+        );
 
     if (!orderIds.length) {
       showToast(
@@ -3859,35 +3903,39 @@ async function geocodeAndReleaseSelected() {
 function selectReadyOrders() {
   selectedOrderIds.clear();
 
-  filteredOrders.forEach(
-    order => {
-      const physicallyReady =
-        Boolean(
-          order.stats
-            ?.readyForPlanning
-        );
+filteredOrders.forEach(
+  order => {
+    const collection =
+      isCollectionOrder(order);
 
-      const expectedReady =
-        Boolean(
-          order.stats
-            ?.isExpectedComplete &&
-          order.stats
-            ?.expectedCompleteDate
-        );
+    const physicallyReady =
+      Boolean(
+        order.stats
+          ?.readyForPlanning
+      );
 
-      if (
-        (
-          physicallyReady ||
-          expectedReady
-        ) &&
-        !order.planning_release
-      ) {
-        selectedOrderIds.add(
-          String(order.id)
-        );
-      }
+    const expectedReady =
+      Boolean(
+        order.stats
+          ?.isExpectedComplete &&
+        order.stats
+          ?.expectedCompleteDate
+      );
+
+    if (
+      (
+        collection ||
+        physicallyReady ||
+        expectedReady
+      ) &&
+      !order.planning_release
+    ) {
+      selectedOrderIds.add(
+        String(order.id)
+      );
     }
-  );
+  }
+);
 
   renderTable();
 

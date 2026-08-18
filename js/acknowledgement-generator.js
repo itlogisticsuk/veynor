@@ -51,6 +51,13 @@
     return String(value ?? "").trim().toLowerCase();
   }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
   function formatMoney(value) {
     const num = Number(value ?? 0);
     if (!Number.isFinite(num)) return "£ 0.00";
@@ -763,7 +770,27 @@ async function loadProductOwnerProfile(client, customerId, order, settings = {})
     y += 5.4;
     doc.text(`Order Date: ${formatDate(ackDate)}`, 196, y, { align: "right" });
     y += 5.4;
-    doc.text(`Expected Delivery: ${formatDate(expectedDate)}`, 196, y, { align: "right" });
+if (isCollectionOrder(order)) {
+  const collectionDate =
+    order.requested_delivery_date ||
+    order.expected_delivery_date ||
+    order.confirmed_delivery_date ||
+    null;
+
+  doc.text(
+    `Requested Collection: ${formatDate(collectionDate)}`,
+    196,
+    y,
+    { align: "right" }
+  );
+} else {
+  doc.text(
+    `Expected Delivery: ${formatDate(expectedDate)}`,
+    196,
+    y,
+    { align: "right" }
+  );
+}
 
     if (compact) return;
 
@@ -848,8 +875,27 @@ async function loadProductOwnerProfile(client, customerId, order, settings = {})
       order.delivery_country || "United Kingdom"
     ]));
 
-    drawAddressBlock(doc, "Bill To:", billToLines, 14, 62, 78, 36);
-    drawAddressBlock(doc, "Ship To:", shipToLines, 112, 62, 78, 36);
+drawAddressBlock(
+  doc,
+  "Bill To:",
+  billToLines,
+  14,
+  62,
+  78,
+  36
+);
+
+drawAddressBlock(
+  doc,
+  isCollectionOrder(order)
+    ? "Collect From:"
+    : "Ship To:",
+  shipToLines,
+  112,
+  62,
+  78,
+  36
+);
   }
 
 function drawTableHeader(doc, y, order, ctx = {}) {
@@ -934,8 +980,11 @@ function drawTableHeader(doc, y, order, ctx = {}) {
     return y + 14;
   }
 
-  function drawLines(doc, order, ctx, logoDataUrl, pricing) {
-    let y = 108;
+function drawLines(doc, order, ctx, logoDataUrl, pricing) {
+  let y =
+    isCollectionOrder(order)
+      ? 116
+      : 108;
     y = drawTableHeader(doc, y, order, ctx);
 
     const lines = getOrderLines(order);
@@ -1347,8 +1396,23 @@ function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(7.2);
 
-  const noteLines = splitText(doc, DAMAGE_NOTE, 180);
-  doc.text(noteLines.slice(0, 2), 14, y);
+const noteText =
+  isCollectionOrder(order)
+    ? "Goods must be checked for damage or discrepancies at the time of collection."
+    : DAMAGE_NOTE;
+
+const noteLines =
+  splitText(
+    doc,
+    noteText,
+    180
+  );
+
+doc.text(
+  noteLines.slice(0, 2),
+  14,
+  y
+);
 
   return y + 5;
 }
@@ -1375,6 +1439,38 @@ function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
       setDark(doc);
     }
   }
+
+function drawCollectionNotice(doc, order) {
+  if (!isCollectionOrder(order)) {
+    return;
+  }
+
+  doc.setFillColor(236, 254, 255);
+  doc.setDrawColor(103, 232, 249);
+
+  doc.roundedRect(
+    14,
+    101,
+    182,
+    8,
+    1.5,
+    1.5,
+    "FD"
+  );
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(14, 116, 144);
+
+  doc.text(
+    "COLLECTION FROM RETAILER",
+    105,
+    106,
+    { align: "center" }
+  );
+
+  setDark(doc);
+}
 
 async function createPdfBlob(order, ctx) {
   if (!window.jspdf?.jsPDF) {
@@ -1425,10 +1521,11 @@ console.log("Product owner:", ctx.productOwner);
 console.log("Order:", order);
 console.log("Is Zoy:", isZoyOrder(order, ctx));
 
-  drawHeader(doc, order, ctx, logoDataUrl, false);
-  drawBillToAndShipTo(doc, order, ctx);
+drawHeader(doc, order, ctx, logoDataUrl, false);
+drawBillToAndShipTo(doc, order, ctx);
+drawCollectionNotice(doc, order);
 
-  const result = drawLines(doc, order, ctx, logoDataUrl, pricing);
+const result = drawLines(doc, order, ctx, logoDataUrl, pricing);
   let y = drawTotalsBlock(doc, result.y, pricing, ctx, order, logoDataUrl);
   y = drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl);
 

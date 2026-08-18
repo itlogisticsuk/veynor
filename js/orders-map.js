@@ -388,6 +388,11 @@ function getMarkerFillColor(row) {
     return "#dc2626"; // Red
   }
 
+  // Collection from retailer
+  if (isCollectionOrder(row)) {
+    return "#0891b2"; // Collection
+  }
+
   // Warehouse pickup
   if (isWarehousePickupOrder(row)) {
     return "#eab308"; // Yellow
@@ -556,6 +561,13 @@ function isFdsOrder(order) {
   );
 }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
 function isWarehousePickupOrder(order) {
   const transportType = normalize(
     order?.transport_type ||
@@ -583,6 +595,12 @@ function isWarehousePickupOrder(order) {
     transportType === "pick_up_warehouse" ||
     vehicleText.includes("pick up warehouse") ||
     vehicleText.includes("pickup warehouse")
+  );
+}
+
+function getGroupCollectionOrders(group) {
+  return getGroupOrders(group).filter(
+    isCollectionOrder
   );
 }
 
@@ -752,15 +770,36 @@ function getGroupFdsWeek(group) {
           </span>
         </div>
 
-        <span class="order-map-hover-status">
-          ${escapeHtml(getOrderStatusLabel(row))}
-        </span>
+        ${
+          isCollectionOrder(row)
+            ? `
+              <span class="order-map-hover-status collection">
+                COLLECTION
+              </span>
+            `
+            : `
+              <span class="order-map-hover-status">
+                ${escapeHtml(getOrderStatusLabel(row))}
+              </span>
+            `
+        }
+
       </div>
 
       <div class="order-map-hover-section">
         <strong>
           ${escapeHtml(getRetailerName(row))}
         </strong>
+
+        ${
+          isCollectionOrder(row)
+            ? `
+              <span class="order-map-collection-label">
+                PICK UP FROM RETAILER
+              </span>
+            `
+            : ""
+        }
 
         <span>
           ${escapeHtml(getProductOwnerName(row))}
@@ -813,11 +852,17 @@ function getGroupFdsWeek(group) {
       </div>
 
       <div class="order-map-hover-footer">
-        <span>
-          Requested:
-          <strong>${escapeHtml(getOrderRequestedDate(row))}</strong>
-        </span>
+<span>
+  ${
+    isCollectionOrder(row)
+      ? "Requested collection:"
+      : "Requested delivery:"
+  }
 
+  <strong>
+    ${escapeHtml(getOrderRequestedDate(row))}
+  </strong>
+</span>
         <span>
           Transport:
           <strong>${escapeHtml(transportType)}</strong>
@@ -861,37 +906,64 @@ function getGroupFdsWeek(group) {
 }
 
 function buildOrderGroupTooltip(group) {
-   const orders = getGroupOrders(group);
+  const orders = getGroupOrders(group);
   const firstOrder = orders[0] || {};
-  const fdsOrders = getGroupFdsOrders(group);
-  const pickupOrders = getGroupPickupOrders(group);
 
-const deliveryDate =
-  getGroupDeliveryDate(group);
+  const fdsOrders =
+    getGroupFdsOrders(group);
 
-const fdsCollectionDate =
-  getGroupFdsCollectionDate(group);
+  const pickupOrders =
+    getGroupPickupOrders(group);
 
-const fdsDeliveryWeek =
-  getNextFdsDeliveryWeek(
-    fdsCollectionDate
-  );
+  const collectionOrders =
+    getGroupCollectionOrders(group);
 
-  const orderLines = orders.map(order => `
-    <div class="order-map-group-order">
+  const deliveryDate =
+    getGroupDeliveryDate(group);
+
+  const fdsCollectionDate =
+    getGroupFdsCollectionDate(group);
+
+  const fdsDeliveryWeek =
+    getNextFdsDeliveryWeek(
+      fdsCollectionDate
+    );
+
+ const orderLines = orders.map(order => {
+  const collection =
+    isCollectionOrder(order);
+
+  return `
+    <div class="order-map-group-order ${collection ? "collection" : ""}">
       <span>
-        <strong>${escapeHtml(order.order_number || "Order")}</strong>
+        <strong>
+          ${escapeHtml(order.order_number || "Order")}
+        </strong>
+
         <small>
           ACK: ${escapeHtml(order.external_reference || "—")}
         </small>
       </span>
 
-      <span>
-        ${formatNumber(getOrderColli(order))} pkg ·
-        ${formatNumber(getOrderVolume(order), 2)} m³
+      <span class="order-map-group-order-right">
+        ${
+          collection
+            ? `
+              <strong class="order-map-group-collection-badge">
+                COLLECTION
+              </strong>
+            `
+            : ""
+        }
+
+        <span>
+          ${formatNumber(getOrderColli(order))} pkg ·
+          ${formatNumber(getOrderVolume(order), 2)} m³
+        </span>
       </span>
     </div>
-  `).join("");
+  `;
+}).join("");
 
   return `
     <div class="order-map-hover-card order-map-group-card">
@@ -907,119 +979,139 @@ const fdsDeliveryWeek =
           </span>
         </div>
 
-                ${
-     
-        pickupOrders.length
-          ? `
-            <span class="order-map-hover-status pickup">
-              PICK UP
-            </span>
-          `
-          : fdsOrders.length
+        ${
+          collectionOrders.length
             ? `
-              <span class="order-map-hover-status fds">
-                FDS Delivery
+              <span class="order-map-hover-status collection">
+                COLLECTION
               </span>
             `
-            : `
-              <span class="order-map-hover-status">
-                Own Transport
+            : pickupOrders.length
+              ? `
+                <span class="order-map-hover-status pickup">
+                  PICK UP WAREHOUSE
+                </span>
+              `
+              : fdsOrders.length
+                ? `
+                  <span class="order-map-hover-status fds">
+                    FDS Delivery
+                  </span>
+                `
+                : `
+                  <span class="order-map-hover-status">
+                    Own Transport
+                  </span>
+                `
+        }
+      </div>
+
+      <div class="order-map-hover-section">
+        <strong>
+          ${escapeHtml(getRetailerName(firstOrder))}
+        </strong>
+
+        ${
+          collectionOrders.length
+            ? `
+              <span class="order-map-collection-label">
+                PICK UP FROM RETAILER
               </span>
             `
-      }
-    </div>
+            : ""
+        }
 
-    <div class="order-map-hover-section">
-      <strong>
-        ${escapeHtml(getRetailerName(firstOrder))}
-      </strong>
+        <span>
+          ${escapeHtml(getProductOwnerName(firstOrder))}
+        </span>
 
-      <span>
-        ${escapeHtml(getProductOwnerName(firstOrder))}
-      </span>
+        <span>
+          ${escapeHtml(firstOrder.delivery_city || "—")}
+          ·
+          ${escapeHtml(firstOrder.delivery_postcode || "—")}
+        </span>
+      </div>
 
-      <span>
-        ${escapeHtml(firstOrder.delivery_city || "—")}
-        ·
-        ${escapeHtml(firstOrder.delivery_postcode || "—")}
-      </span>
-    </div>
-
-    ${
-      pickupOrders.length
-        ? `
-          <div class="order-map-pickup-delivery">
-            <strong>
-              PICK UP WAREHOUSE
-            </strong>
-
-            <span>
-              Pickup date:
-              <strong>
-                ${
-                  deliveryDate
-                    ? escapeHtml(
-                        formatMapDate(
-                          deliveryDate
-                        )
-                      )
-                    : "Pending"
-                }
-              </strong>
-            </span>
-          </div>
-        `
-        : fdsOrders.length
+      ${
+        collectionOrders.length
           ? `
-            <div class="order-map-fds-delivery">
+            <div class="order-map-pickup-delivery collection">
               <strong>
-                FDS Delivery
+                COLLECTION
               </strong>
 
               <span>
-                Collection:
-                <strong>
-                  ${
-                    fdsCollectionDate
-                      ? escapeHtml(
-                          formatMapDate(
-                            fdsCollectionDate
-                          )
-                        )
-                      : "Pending"
-                  }
-                </strong>
-              </span>
-
-              <span>
-                Delivery week:
-                <strong>
-                  ${
-                    fdsDeliveryWeek
-                      ? `Week ${fdsDeliveryWeek}`
-                      : "Pending"
-                  }
-                </strong>
+                Pick up from retailer
               </span>
             </div>
           `
-          : deliveryDate
+          : pickupOrders.length
             ? `
-              <div class="order-map-fds-delivery">
+              <div class="order-map-pickup-delivery">
+                <strong>
+                  PICK UP WAREHOUSE
+                </strong>
+
                 <span>
-                  Delivery date:
+                  Pickup date:
                   <strong>
-                    ${escapeHtml(
-                      formatMapDate(
-                        deliveryDate
-                      )
-                    )}
+                    ${
+                      deliveryDate
+                        ? escapeHtml(
+                            formatMapDate(deliveryDate)
+                          )
+                        : "Pending"
+                    }
                   </strong>
                 </span>
               </div>
             `
-            : ""
-    }
+            : fdsOrders.length
+              ? `
+                <div class="order-map-fds-delivery">
+                  <strong>
+                    FDS Delivery
+                  </strong>
+
+                  <span>
+                    Collection:
+                    <strong>
+                      ${
+                        fdsCollectionDate
+                          ? escapeHtml(
+                              formatMapDate(fdsCollectionDate)
+                            )
+                          : "Pending"
+                      }
+                    </strong>
+                  </span>
+
+                  <span>
+                    Delivery week:
+                    <strong>
+                      ${
+                        fdsDeliveryWeek
+                          ? `Week ${fdsDeliveryWeek}`
+                          : "Pending"
+                      }
+                    </strong>
+                  </span>
+                </div>
+              `
+              : deliveryDate
+                ? `
+                  <div class="order-map-fds-delivery">
+                    <span>
+                      Delivery date:
+                      <strong>
+                        ${escapeHtml(
+                          formatMapDate(deliveryDate)
+                        )}
+                      </strong>
+                    </span>
+                  </div>
+                `
+                : ""
       }
 
       <div class="order-map-group-orders">
@@ -1241,6 +1333,25 @@ function renderDriverLocations() {
   color:#854d0e;
 }
 
+.order-map-hover-status.collection{
+  background:#ecfeff;
+  border-color:#67e8f9;
+  color:#0e7490;
+}
+
+.order-map-collection-label{
+  display:inline-flex;
+  width:max-content;
+  margin-top:2px;
+  padding:3px 7px;
+  border-radius:999px;
+  background:#ecfeff;
+  border:1px solid #67e8f9;
+  color:#0e7490 !important;
+  font-size:9px;
+  font-weight:900;
+}
+
 .order-map-pickup-delivery{
   display:flex;
   justify-content:space-between;
@@ -1255,6 +1366,20 @@ function renderDriverLocations() {
 
 .order-map-pickup-delivery span{
   color:#854d0e;
+}
+
+.order-map-pickup-delivery.collection span{
+  color:#0e7490;
+}
+
+.order-map-pickup-delivery.collection{
+  border-color:#67e8f9;
+  background:#ecfeff;
+  color:#0e7490;
+}
+
+.order-map-pickup-delivery.collection span{
+  color:#0e7490;
 }
 
 .order-map-fds-delivery{
@@ -1288,8 +1413,10 @@ function renderDriverLocations() {
 .order-map-group-orders{
   display:grid;
   gap:5px;
-  max-height:145px;
+  max-height:220px;
   overflow-y:auto;
+  overscroll-behavior:contain;
+  pointer-events:auto;
 }
 
 .order-map-group-order{
@@ -1311,6 +1438,31 @@ function renderDriverLocations() {
 .order-map-group-order small{
   color:#64748b;
   font-size:9px;
+}
+
+.order-map-group-order.collection{
+  border-color:#67e8f9;
+  background:#ecfeff;
+}
+
+.order-map-group-order-right{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  justify-content:center;
+  gap:3px;
+}
+
+.order-map-group-collection-badge{
+  display:inline-flex;
+  padding:2px 6px;
+  border-radius:999px;
+  background:#cffafe;
+  border:1px solid #67e8f9;
+  color:#0e7490;
+  font-size:8px;
+  font-weight:900;
+  line-height:1.2;
 }
 
 .order-map-group-order > span:last-child{
@@ -1652,6 +1804,11 @@ function renderDriverLocations() {
     background:#f97316;
 }
 
+.legend-collection{
+    border-radius:999px;
+    background:#0891b2;
+}
+
 .legend-pickup{
     border-radius:999px;
     background:#eab308;
@@ -1904,7 +2061,7 @@ groups.forEach(group => {
 
         opacity: 1,
         sticky: true,
-        interactive: false,
+        interactive: true,
         className: "order-map-hover-tooltip"
       }
     );
@@ -2104,6 +2261,11 @@ function installLegendControl() {
       <div class="orders-map-legend-title">
         Map legend
       </div>
+
+<div class="orders-map-legend-item">
+  <span class="legend-shape legend-collection"></span>
+  <span>Collection from retailer</span>
+</div>
 
       <div class="orders-map-legend-item">
         <span class="legend-shape legend-circle"></span>

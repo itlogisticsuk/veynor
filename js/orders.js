@@ -151,6 +151,13 @@ let warehouseCostSettings = {
     return Number.isFinite(lat) && Number.isFinite(lng);
   }
 
+function isCollectionOrder(order) {
+  return (
+    normalize(order?.movement_type) ===
+    "collection"
+  );
+}
+
   function getOrderVolume(order) {
     return toNumber(order?.planning_volume_m3 ?? order?.volume_m3, 0);
   }
@@ -277,13 +284,21 @@ function markBelowMinimumOrders() {
    * Alleen nog niet-goedgekeurde groepen onder 1.25 m³
    * worden daarna opnieuw gemarkeerd.
    */
-  allOrders.forEach(order => {
-    order.belowMinimumVolume = false;
-    order.deliveryGroupApproved = false;
-    order.deliveryGroupId = null;
+allOrders.forEach(order => {
+  order.belowMinimumVolume = false;
+  order.deliveryGroupApproved = false;
+  order.deliveryGroupId = null;
 
-    const state =
-      getCompletionState(order);
+  /*
+   * Collections from retailers do not belong
+   * to the minimum delivery-volume approval flow.
+   */
+  if (isCollectionOrder(order)) {
+    return;
+  }
+
+  const state =
+    getCompletionState(order);
 
     const status =
       normalize(
@@ -1524,6 +1539,22 @@ async function loadDriverLiveLocations() {
 
           <td>
   <strong>${escapeHtml(order.order_number || "—")}</strong>
+
+${
+  isCollectionOrder(order)
+    ? `
+      <span
+        class="subline"
+        style="
+          color:#0e7490;
+          font-weight:900;
+        "
+      >
+        ↩ COLLECTION FROM RETAILER
+      </span>
+    `
+    : ""
+}
 
   ${
     order.external_reference

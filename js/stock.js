@@ -15,11 +15,13 @@
   let filteredStockItems = [];
   let groupedStock = [];
 
-  let customers = [];
-  let warehouses = [];
-  let locations = [];
+let customers = [];
+let warehouses = [];
+let locations = [];
 
-  let selectedStockId = null;
+let inboundContainerMap = new Map();
+
+let selectedStockId = null;
   const selectedItemIds = new Set();
 
   function byId(id) {
@@ -368,6 +370,58 @@
     }));
   }
 
+async function loadInboundContainers() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const { data, error } = await db
+    .from("inbound_containers")
+    .select("id, container_number")
+    .eq("company_id", cid);
+
+  if (error) {
+    console.warn(
+      "Inbound container references skipped:",
+      error.message
+    );
+
+    inboundContainerMap = new Map();
+    return;
+  }
+
+  inboundContainerMap = new Map(
+    (data || []).map(container => [
+      String(container.id),
+      container.container_number || ""
+    ])
+  );
+}
+
+function getInboundDisplayReference(item) {
+  const reference =
+    String(item?.inbound_reference || "").trim();
+
+  if (!reference) {
+    return "—";
+  }
+
+  if (reference.startsWith("INBOUND:")) {
+    const containerId =
+      reference.slice("INBOUND:".length);
+
+    const containerNumber =
+      inboundContainerMap.get(
+        String(containerId)
+      );
+
+    if (containerNumber) {
+      return containerNumber;
+    }
+  }
+
+  return reference;
+}
+
   function renderCustomerFilter() {
     const select = byId("stockCustomer");
     if (!select) return;
@@ -393,11 +447,12 @@ async function loadStock() {
   const db = ensureClient();
   const cid = await getCompanyId();
 
-  await Promise.all([
-    loadCustomers(),
-    loadWarehouses(),
-    loadLocations()
-  ]);
+await Promise.all([
+  loadCustomers(),
+  loadWarehouses(),
+  loadLocations(),
+  loadInboundContainers()
+]);
 
   const { data, error } = await db
     .from("items")
@@ -1032,7 +1087,7 @@ group.physical_weight_kg = group.complete_weight_kg;
         <td>${statusPill(item.status)}</td>
         <td>${allocationPill(item)}</td>
         <td>${linkedOrderDisplay(item)}</td>
-        <td>${escapeHtml(item.inbound_reference || "—")}</td>
+        <td>${escapeHtml(getInboundDisplayReference(item))}</td>
         <td>${escapeHtml(item.location_code || "—")}<span class="subline">${escapeHtml(item.warehouse_name || "—")}</span></td>
 <td>${formatNumber(item.product_volume_m3, 3)}</td>
 <td>${formatNumber(item.product_weight_kg, 1)}</td>
@@ -1229,7 +1284,7 @@ group.physical_weight_kg = group.complete_weight_kg;
         <div class="detail-box"><div class="detail-label">Package</div><div class="detail-value">${escapeHtml(packageLabel(item))}</div></div>
         <div class="detail-box"><div class="detail-label">Set ID</div><div class="detail-value">${escapeHtml(item.physical_product_id || "—")}</div></div>
         <div class="detail-box"><div class="detail-label">Linked Order</div><div class="detail-value">${linkedOrderDisplay(item)}</div></div>
-        <div class="detail-box"><div class="detail-label">Reference</div><div class="detail-value">${escapeHtml(item.inbound_reference || "—")}</div></div>
+        <div class="detail-box"><div class="detail-label">Container</div><div class="detail-value">${escapeHtml(getInboundDisplayReference(item))}</div></div>
         <div class="detail-box"><div class="detail-label">Inbound Date</div><div class="detail-value">${escapeHtml(formatDateTime(getInboundDate(item)))}</div></div>
         <div class="detail-box"><div class="detail-label">Original Code</div><div class="detail-value">${escapeHtml(item.sku_unique || "—")}</div></div>
         <div class="detail-box"><div class="detail-label">Volume</div><div class="detail-value">${formatNumber(item.volume_m3, 3)} m³</div></div>
@@ -1528,7 +1583,7 @@ function stockProjectExportRows(items) {
       "Supplier Reference": item.supplier_reference || "",
       "Retailer": item.retailer_name || "",
       "Purchase Order": item.purchase_order || "",
-      "Reference": item.inbound_reference || "",
+      "Reference": getInboundDisplayReference(item),
       "Warehouse": item.warehouse_name || "",
       "Location": item.location_code || "",
       "Volume m3": toNumber(item.volume_m3, 0),
