@@ -294,6 +294,20 @@ function isCollectionOrder(order) {
   );
 }
 
+function isServiceOrder(order) {
+  const orderNumber =
+    String(
+      order?.order_number || ""
+    )
+      .trim()
+      .toUpperCase();
+
+  return (
+    normalize(order?.order_type) === "service" ||
+    /^SO-\d+S(?:\d+)?$/.test(orderNumber)
+  );
+}
+
   function shortMemo(
     value,
     maximumLength = 70
@@ -562,22 +576,49 @@ function getExpectedCompleteDate(line) {
     );
   }
 
-  function getPlanningColli(order) {
-    return Math.max(
-      toNumber(
-        order?.stats?.matchedPackages,
-        0
-      ),
-      toNumber(
-        order?.planning_colli,
-        0
-      ),
-      toNumber(
-        order?.stats?.matched,
-        0
-      )
+function getPlanningColli(order) {
+
+  /*
+   * Serviceorders bestaan uit manual lines
+   * en hoeven niet door stock matching.
+   *
+   * Iedere quantity telt daarom als
+   * één planning package.
+   */
+  if (isServiceOrder(order)) {
+    return (
+      order?.order_lines || []
+    ).reduce(
+      (total, line) =>
+        total +
+        Math.max(
+          0,
+          Math.round(
+            toNumber(
+              line.quantity_ordered,
+              0
+            )
+          )
+        ),
+      0
     );
   }
+
+  return Math.max(
+    toNumber(
+      order?.stats?.matchedPackages,
+      0
+    ),
+    toNumber(
+      order?.planning_colli,
+      0
+    ),
+    toNumber(
+      order?.stats?.matched,
+      0
+    )
+  );
+}
 
   /* =========================================================
    * CENTRAL MATCHING SUMMARY
@@ -1195,10 +1236,9 @@ inbound_expected_allocations (
           "in",
           '("loaded","delivered","cancelled","export_for_charter")'
         )
-        .neq(
-          "transport_type",
-          "charter"
-        )
+.or(
+  "transport_type.neq.charter,order_type.eq.service"
+)
         .order(
           "requested_delivery_date",
           {
@@ -3574,6 +3614,9 @@ async function releaseOrders(
 const collection =
   isCollectionOrder(order);
 
+const service =
+  isServiceOrder(order);
+
 const physicallyReady =
   Boolean(
     order.stats
@@ -3600,6 +3643,14 @@ if (
 }
 
 if (
+  service &&
+  geoReady
+) {
+  releasable.push(order);
+  return;
+}
+
+if (
   !collection &&
   (
     physicallyReady ||
@@ -3615,9 +3666,11 @@ const reasons = [];
 
 if (
   !collection &&
+  !service &&
   !physicallyReady &&
   !expectedReady
 ) {
+
   reasons.push(
     "order is not physically or expected complete"
   );
@@ -3664,8 +3717,11 @@ if (!releasable.length) {
  for (
   const order of releasable
 ) {
-  const collection =
-    isCollectionOrder(order);
+const collection =
+  isCollectionOrder(order);
+
+const service =
+  isServiceOrder(order);
 
   const physicallyReady =
     Boolean(
@@ -3675,6 +3731,7 @@ if (!releasable.length) {
 
 const expectedOnly =
   !collection &&
+  !service &&
   !physicallyReady &&
   Boolean(
     order.stats
@@ -3716,7 +3773,7 @@ const expectedOnly =
         true,
 
 planning_stock_basis:
-  collection
+  collection || service
     ? null
     : (
         expectedOnly
@@ -3812,6 +3869,8 @@ const orderIds =
         .filter(order => {
           const collection =
             isCollectionOrder(order);
+const service =
+  isServiceOrder(order);
 
           const physicallyReady =
             Boolean(
@@ -3830,9 +3889,10 @@ const orderIds =
           return (
             !order.planning_release &&
             (
-              collection ||
-              physicallyReady ||
-              expectedReady
+collection ||
+service ||
+physicallyReady ||
+expectedReady
             )
           );
         })
@@ -3907,6 +3967,8 @@ filteredOrders.forEach(
   order => {
     const collection =
       isCollectionOrder(order);
+const service =
+  isServiceOrder(order);
 
     const physicallyReady =
       Boolean(
@@ -3924,9 +3986,10 @@ filteredOrders.forEach(
 
     if (
       (
-        collection ||
-        physicallyReady ||
-        expectedReady
+collection ||
+service ||
+physicallyReady ||
+expectedReady
       ) &&
       !order.planning_release
     ) {

@@ -1,0 +1,3094 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+
+<head>
+  <meta charset="utf-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+
+  <title>
+    Quality / Damage & Claims · Veynor
+  </title>
+
+  <link
+    rel="stylesheet"
+    href="/css/theme.css"
+  >
+
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+/>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
+  ></script>
+
+<script src="/js/supabase.js"></script>
+<script src="/js/page-guard.js" defer></script>
+<script src="/js/layout.js" defer></script>
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
+<script src="/js/quality.js" defer></script>
+
+
+  <style>
+
+    /* =========================================================
+       QUALITY PAGE
+       ========================================================= */
+
+    .quality-page {
+      display: grid;
+      gap: 14px;
+    }
+
+
+    /* =========================================================
+       TOP BAR
+       ========================================================= */
+
+    .quality-top-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+
+    /* =========================================================
+       HERO
+       Afbeelding wordt rechtstreeks als achtergrond geladen.
+       ========================================================= */
+
+    .quality-hero {
+      position: relative;
+
+      width: 100%;
+      height: 230px;
+
+      overflow: hidden;
+
+      border-radius: 16px;
+
+      background-image:
+        linear-gradient(
+          90deg,
+          rgba(5, 20, 45, 0.30) 0%,
+          rgba(5, 20, 45, 0.18) 34%,
+          rgba(5, 20, 45, 0.02) 68%,
+          rgba(5, 20, 45, 0.00) 100%
+        ),
+        url("./assets/quality-damage-header.png");
+
+      background-size: cover;
+      background-position: center center;
+      background-repeat: no-repeat;
+
+      box-shadow:
+        0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    .quality-hero-overlay {
+      position: absolute;
+
+      z-index: 2;
+
+      left: 28px;
+      top: 50%;
+
+      transform: translateY(-50%);
+
+      max-width: 520px;
+
+      color: #fff;
+    }
+
+    .quality-hero-badge {
+      display: inline-flex;
+      align-items: center;
+
+      min-height: 26px;
+
+      padding: 0 10px;
+      margin-bottom: 10px;
+
+      border-radius: 999px;
+
+      border: 1px solid rgba(125, 211, 252, .38);
+
+      background: rgba(18, 103, 255, .22);
+
+      color: #dbeafe;
+
+      font-size: 10px;
+      font-weight: 950;
+
+      letter-spacing: .08em;
+    }
+
+    .quality-hero-overlay h2 {
+      margin: 0;
+
+      font-size: 26px;
+      font-weight: 950;
+
+      letter-spacing: -.03em;
+    }
+
+    .quality-hero-overlay p {
+      margin: 8px 0 0;
+
+      max-width: 460px;
+
+      color: rgba(255,255,255,.88);
+
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+
+    /* =========================================================
+       KPI CARDS
+       ========================================================= */
+
+    .quality-kpis {
+      display: grid;
+
+      grid-template-columns:
+        repeat(5, minmax(0, 1fr))
+        minmax(180px, 1.2fr)
+        minmax(180px, 1.2fr);
+
+      gap: 12px;
+    }
+
+    .quality-kpi {
+      min-height: 96px;
+      padding: 15px 16px;
+
+      display: grid;
+      grid-template-columns: auto 1fr;
+
+      gap: 12px;
+      align-items: center;
+    }
+
+    .quality-kpi-icon {
+      width: 42px;
+      height: 42px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 15px;
+
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+
+      color: #1267ff;
+
+      font-size: 17px;
+      font-weight: 950;
+    }
+
+    .quality-kpi-icon.orange {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      color: #ea580c;
+    }
+
+    .quality-kpi-icon.red {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #dc2626;
+    }
+
+    .quality-kpi-icon.purple {
+      background: #f5f3ff;
+      border-color: #ddd6fe;
+      color: #7c3aed;
+    }
+
+    .quality-kpi-icon.green {
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+      color: #059669;
+    }
+
+    .quality-kpi-label {
+      font-size: 10px;
+      font-weight: 900;
+
+      text-transform: uppercase;
+
+      color: #667085;
+
+      letter-spacing: .06em;
+    }
+
+    .quality-kpi-value {
+      margin-top: 3px;
+
+      font-size: 24px;
+      line-height: 1;
+
+      font-weight: 950;
+
+      color: #07152f;
+    }
+
+    .quality-kpi-sub {
+      margin-top: 5px;
+
+      font-size: 11px;
+      line-height: 1.35;
+
+      color: var(--muted);
+    }
+
+
+    /* =========================================================
+       FILTERS
+       ========================================================= */
+
+    .quality-filter-card {
+      padding: 16px;
+    }
+
+    .quality-filters {
+      display: grid;
+
+      grid-template-columns:
+        minmax(260px, 1.5fr)
+        repeat(5, minmax(140px, 1fr));
+
+      gap: 12px;
+      align-items: end;
+    }
+
+    .quality-filter-actions {
+      margin-top: 14px;
+
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+
+      gap: 9px;
+    }
+
+
+    /* =========================================================
+       MAIN WORKSPACE
+       ========================================================= */
+
+.quality-workspace {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+
+    /* =========================================================
+       CASE LIST
+       ========================================================= */
+
+    .quality-case-list-card {
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .quality-tabs {
+      display: flex;
+      align-items: center;
+
+      gap: 26px;
+
+      padding: 0 18px;
+
+      min-height: 54px;
+
+      border-bottom: 1px solid var(--border);
+
+      background: #fff;
+    }
+
+    .quality-tab {
+      position: relative;
+
+      min-height: 54px;
+
+      border: 0;
+      background: transparent;
+
+      color: #667085;
+
+      padding: 0 2px;
+
+      display: inline-flex;
+      align-items: center;
+
+      gap: 7px;
+
+      cursor: pointer;
+
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .quality-tab:hover {
+      color: #1267ff;
+    }
+
+    .quality-tab.active {
+      color: #1267ff;
+    }
+
+    .quality-tab.active::after {
+      content: "";
+
+      position: absolute;
+
+      left: 0;
+      right: 0;
+      bottom: -1px;
+
+      height: 3px;
+
+      border-radius: 999px 999px 0 0;
+
+      background: #1267ff;
+    }
+
+    .quality-tab-count {
+      min-width: 22px;
+      height: 22px;
+
+      padding: 0 7px;
+
+      border-radius: 999px;
+
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      background: #eef4ff;
+
+      color: #1267ff;
+
+      font-size: 10px;
+      font-weight: 950;
+    }
+
+
+    /* =========================================================
+       TABLE
+       ========================================================= */
+
+    .quality-table-wrap {
+      overflow: auto;
+
+      background: #fff;
+    }
+
+    .quality-table {
+      width: 100%;
+      min-width: 1050px;
+
+      border-collapse: collapse;
+    }
+
+    .quality-table th,
+    .quality-table td {
+      padding: 12px 13px;
+
+      border-bottom: 1px solid var(--border);
+
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    .quality-table th {
+      position: sticky;
+
+      top: 0;
+
+      z-index: 3;
+
+      background: #f8fafc;
+
+      color: #475569;
+
+      font-size: 10px;
+      font-weight: 950;
+
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .quality-table td {
+      font-size: 12px;
+    }
+
+    .quality-table tbody tr {
+      cursor: pointer;
+
+      transition: background .15s ease;
+    }
+
+    .quality-table tbody tr:hover {
+      background: #f8fbff;
+    }
+
+    .quality-table tbody tr.selected {
+      background:
+        linear-gradient(
+          90deg,
+          rgba(18, 103, 255, .07),
+          rgba(18, 103, 255, .015)
+        );
+    }
+
+    .quality-primary {
+      font-weight: 950;
+
+      color: #07152f;
+    }
+
+    .quality-row-menu {
+      width: 34px;
+      height: 34px;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: #fff;
+
+      cursor: pointer;
+
+      font-weight: 950;
+
+      color: #475569;
+    }
+
+
+    /* =========================================================
+       BADGES
+       ========================================================= */
+
+    .quality-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      min-height: 24px;
+
+      padding: 0 9px;
+
+      border-radius: 999px;
+
+      border: 1px solid transparent;
+
+      white-space: nowrap;
+
+      font-size: 10px;
+      font-weight: 950;
+    }
+
+    .quality-badge.open {
+      color: #c2410c;
+      background: #fff7ed;
+      border-color: #fed7aa;
+    }
+
+    .quality-badge.in-progress {
+      color: #1d4ed8;
+      background: #eff6ff;
+      border-color: #bfdbfe;
+    }
+
+    .quality-badge.awaiting {
+      color: #6d28d9;
+      background: #f5f3ff;
+      border-color: #ddd6fe;
+    }
+
+    .quality-badge.resolved {
+      color: #047857;
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+    }
+
+    .quality-badge.review {
+      color: #475569;
+      background: #f1f5f9;
+      border-color: #e2e8f0;
+    }
+
+    .quality-badge.issue-damage {
+      color: #b91c1c;
+      background: #fef2f2;
+      border-color: #fecaca;
+    }
+
+    .quality-badge.issue-packaging {
+      color: #c2410c;
+      background: #fff7ed;
+      border-color: #fed7aa;
+    }
+
+    .quality-badge.issue-missing {
+      color: #047857;
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+    }
+
+    .quality-badge.issue-wrong {
+      color: #b45309;
+      background: #fffbeb;
+      border-color: #fde68a;
+    }
+
+    .quality-badge.carrier {
+      color: #6d28d9;
+      background: #f5f3ff;
+      border-color: #ddd6fe;
+    }
+
+
+    /* =========================================================
+       LIST FOOTER
+       ========================================================= */
+
+    .quality-list-footer {
+      min-height: 58px;
+
+      padding: 12px 16px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 12px;
+
+      color: var(--muted);
+
+      font-size: 11px;
+    }
+
+    .quality-pagination {
+      display: flex;
+      align-items: center;
+
+      gap: 6px;
+    }
+
+    .quality-page-btn {
+      min-width: 30px;
+      height: 30px;
+
+      border: 1px solid transparent;
+      border-radius: 8px;
+
+      background: transparent;
+
+      cursor: pointer;
+
+      font-size: 11px;
+      font-weight: 900;
+
+      color: #64748b;
+    }
+
+    .quality-page-btn.active {
+      color: #1267ff;
+
+      background: #eff6ff;
+
+      border-color: #dbeafe;
+    }
+
+
+    /* =========================================================
+       CASE DETAIL
+       ========================================================= */
+
+.quality-case-detail {
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+    .quality-detail-head {
+      min-height: 58px;
+
+      padding: 14px 16px;
+
+      border-bottom: 1px solid var(--border);
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 12px;
+
+      background:
+        linear-gradient(
+          180deg,
+          #fff,
+          #fbfdff
+        );
+    }
+
+    .quality-detail-title {
+      display: flex;
+      align-items: center;
+
+      gap: 9px;
+    }
+
+    .quality-detail-title h2 {
+      margin: 0;
+
+      font-size: 18px;
+      font-weight: 950;
+
+      letter-spacing: -.02em;
+    }
+
+    .quality-close-detail {
+      width: 34px;
+      height: 34px;
+
+      border: 0;
+      border-radius: 9px;
+
+      background: transparent;
+
+      cursor: pointer;
+
+      font-size: 18px;
+
+      color: #475569;
+    }
+
+    .quality-close-detail:hover {
+      background: #f1f5f9;
+    }
+
+
+    /* =========================================================
+       CASE OVERVIEW
+       ========================================================= */
+
+.quality-detail-overview {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    280px;
+
+  border-bottom: 1px solid var(--border);
+}
+
+    .quality-overview-info {
+      padding: 16px;
+    }
+
+    .quality-overview-info h3,
+    .quality-location-panel h3 {
+      margin: 0 0 13px;
+
+      color: #243552;
+
+      font-size: 11px;
+      font-weight: 950;
+
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+.quality-info-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(5, minmax(0, 1fr));
+  gap: 14px 24px;
+}
+
+    .quality-info-item {
+      min-width: 0;
+    }
+
+    .quality-info-label {
+      display: block;
+
+      margin-bottom: 3px;
+
+      color: #64748b;
+
+      font-size: 10px;
+      font-weight: 850;
+    }
+
+    .quality-info-value {
+      display: block;
+
+      color: #07152f;
+
+      font-size: 12px;
+      font-weight: 900;
+
+      line-height: 1.35;
+
+      word-break: break-word;
+    }
+
+    .quality-location-panel {
+      padding: 16px;
+
+      border-left: 1px solid var(--border);
+
+      background: #fbfdff;
+    }
+
+    .quality-map-placeholder {
+      position: relative;
+
+      height: 170px;
+
+      overflow: hidden;
+
+      border-radius: 12px;
+
+      border: 1px solid var(--border);
+
+      background:
+        linear-gradient(
+          45deg,
+          #eef2f7 25%,
+          transparent 25%
+        ),
+        linear-gradient(
+          -45deg,
+          #eef2f7 25%,
+          transparent 25%
+        ),
+        linear-gradient(
+          45deg,
+          transparent 75%,
+          #eef2f7 75%
+        ),
+        linear-gradient(
+          -45deg,
+          transparent 75%,
+          #eef2f7 75%
+        ),
+        #f8fafc;
+
+      background-size: 24px 24px;
+
+      background-position:
+        0 0,
+        0 12px,
+        12px -12px,
+        -12px 0;
+    }
+
+    .quality-map-pin {
+      position: absolute;
+
+      left: 50%;
+      top: 50%;
+
+      transform:
+        translate(-50%, -50%);
+
+      width: 28px;
+      height: 28px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 999px;
+
+      background: #1267ff;
+
+      color: #fff;
+
+      box-shadow:
+        0 8px 20px rgba(18,103,255,.35),
+        0 0 0 6px rgba(18,103,255,.12);
+    }
+
+    .quality-map-address {
+      margin-top: 8px;
+
+      color: #475569;
+
+      font-size: 10px;
+      font-weight: 800;
+
+      line-height: 1.4;
+    }
+
+
+    /* =========================================================
+       DETAIL TABS
+       ========================================================= */
+
+    .quality-detail-tabs {
+      padding: 0 16px;
+
+      min-height: 48px;
+
+      display: flex;
+      align-items: center;
+
+      gap: 20px;
+
+      overflow-x: auto;
+
+      border-bottom:
+        1px solid var(--border);
+
+      background: #fff;
+    }
+
+    .quality-detail-tab {
+      min-height: 48px;
+
+      position: relative;
+
+      border: 0;
+
+      background: transparent;
+
+      color: #64748b;
+
+      cursor: pointer;
+
+      white-space: nowrap;
+
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .quality-detail-tab.active {
+      color: #1267ff;
+    }
+
+    .quality-detail-tab.active::after {
+      content: "";
+
+      position: absolute;
+
+      left: 0;
+      right: 0;
+      bottom: 0;
+
+      height: 3px;
+
+      border-radius:
+        999px 999px 0 0;
+
+      background: #1267ff;
+    }
+
+
+    /* =========================================================
+       DETAIL CONTENT
+       ========================================================= */
+
+    .quality-detail-body {
+      padding: 16px;
+
+      display: grid;
+
+      gap: 16px;
+    }
+
+    .quality-detail-section h3 {
+      margin: 0 0 8px;
+
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .quality-description {
+      margin: 0;
+
+      color: #475569;
+
+      font-size: 11.5px;
+
+      line-height: 1.55;
+    }
+
+    .quality-detail-metrics {
+      display: grid;
+
+      grid-template-columns:
+        repeat(3, minmax(0,1fr));
+
+      gap: 12px;
+    }
+
+    .quality-detail-metric {
+      padding: 11px 12px;
+
+      border: 1px solid var(--border);
+      border-radius: 12px;
+
+      background: #fbfdff;
+    }
+
+    .quality-detail-metric span {
+      display: block;
+
+      color: #64748b;
+
+      font-size: 9.5px;
+      font-weight: 850;
+    }
+
+    .quality-detail-metric strong {
+      display: block;
+
+      margin-top: 4px;
+
+      color: #07152f;
+
+      font-size: 11.5px;
+      font-weight: 950;
+    }
+
+
+    /* =========================================================
+       PHOTOS
+       ========================================================= */
+
+    .quality-photo-section {
+      padding: 0 16px 16px;
+    }
+
+    .quality-photo-head {
+      margin-bottom: 10px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 10px;
+    }
+
+    .quality-photo-head h3 {
+      margin: 0;
+
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .quality-view-all {
+      border: 0;
+
+      background: transparent;
+
+      color: #1267ff;
+
+      cursor: pointer;
+
+      font-size: 10.5px;
+      font-weight: 900;
+    }
+
+    .quality-photos {
+      display: grid;
+
+      grid-template-columns:
+        repeat(4, minmax(0,1fr));
+
+      gap: 8px;
+    }
+
+    .quality-photo {
+      position: relative;
+
+      aspect-ratio: 1.3 / 1;
+
+      overflow: hidden;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background:
+        linear-gradient(
+          135deg,
+          #f1f5f9,
+          #e2e8f0
+        );
+    }
+
+    .quality-photo img {
+      width: 100%;
+      height: 100%;
+
+      object-fit: cover;
+    }
+
+    .quality-photo-empty {
+      width: 100%;
+      height: 100%;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      color: #94a3b8;
+
+      font-size: 22px;
+      font-weight: 900;
+    }
+
+
+    /* =========================================================
+       DETAIL ACTIONS
+       ========================================================= */
+
+    .quality-detail-actions {
+      padding: 12px 16px;
+
+      border-top: 1px solid var(--border);
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+
+      gap: 10px;
+
+      background: #fbfdff;
+    }
+
+    .quality-detail-actions-left,
+    .quality-detail-actions-right {
+      display: flex;
+      align-items: center;
+
+      gap: 8px;
+    }
+
+
+    /* =========================================================
+       EMPTY CASE DETAIL
+       ========================================================= */
+
+    .quality-detail-empty {
+      min-height: 520px;
+
+      padding: 36px;
+
+      display: flex;
+      flex-direction: column;
+
+      align-items: center;
+      justify-content: center;
+
+      text-align: center;
+
+      color: var(--muted);
+    }
+
+    .quality-detail-empty-icon {
+      width: 58px;
+      height: 58px;
+
+      margin-bottom: 14px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 18px;
+
+      background: #eff6ff;
+
+      border: 1px solid #bfdbfe;
+
+      color: #1267ff;
+
+      font-size: 24px;
+    }
+
+    .quality-detail-empty strong {
+      display: block;
+
+      color: #07152f;
+
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .quality-detail-empty span {
+      display: block;
+
+      margin-top: 6px;
+
+      max-width: 320px;
+
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+
+    /* =========================================================
+       MODAL
+       ========================================================= */
+
+    .quality-modal {
+      position: fixed;
+
+      inset: 0;
+
+      z-index: 100000;
+
+      display: none;
+
+      align-items: center;
+      justify-content: center;
+
+      padding: 24px;
+
+      background:
+        rgba(7,21,47,.55);
+
+      backdrop-filter: blur(7px);
+    }
+
+    .quality-modal.open {
+      display: flex;
+    }
+
+    .quality-modal-card {
+      width: min(900px,100%);
+
+      max-height:
+        calc(100vh - 48px);
+
+      overflow: auto;
+
+      background: #fff;
+
+      border:
+        1px solid var(--border);
+
+      border-radius: 22px;
+
+      box-shadow:
+        0 32px 90px rgba(7,21,47,.28);
+    }
+
+    .quality-modal-head {
+      padding: 18px 20px;
+
+      border-bottom:
+        1px solid var(--border);
+
+      display: flex;
+
+      align-items: flex-start;
+      justify-content: space-between;
+
+      gap: 14px;
+    }
+
+    .quality-modal-head h2 {
+      margin: 0;
+
+      font-size: 20px;
+      font-weight: 950;
+    }
+
+    .quality-modal-head p {
+      margin: 5px 0 0;
+
+      color: var(--muted);
+
+      font-size: 12px;
+    }
+
+    .quality-modal-close {
+      width: 36px;
+      height: 36px;
+
+      border:
+        1px solid var(--border);
+
+      border-radius: 11px;
+
+      background: #fff;
+
+      cursor: pointer;
+    }
+
+    .quality-modal-body {
+      padding: 20px;
+
+      display: grid;
+
+      gap: 18px;
+    }
+
+    .quality-form-grid {
+      display: grid;
+
+      grid-template-columns:
+        repeat(2, minmax(0,1fr));
+
+      gap: 14px;
+    }
+
+    .quality-form-grid .span-2 {
+      grid-column: span 2;
+    }
+
+    .quality-modal-footer {
+      padding: 14px 20px;
+
+      border-top:
+        1px solid var(--border);
+
+      display: flex;
+      justify-content: flex-end;
+
+      gap: 9px;
+
+      background: #fbfdff;
+    }
+
+
+    /* =========================================================
+       RESPONSIVE
+       ========================================================= */
+
+    @media (max-width: 1650px) {
+
+      .quality-kpis {
+        grid-template-columns:
+          repeat(4, minmax(0,1fr));
+      }
+
+      .quality-filters {
+        grid-template-columns:
+          repeat(3, minmax(0,1fr));
+      }
+
+    }
+
+
+    @media (max-width: 1250px) {
+
+      .quality-kpis {
+        grid-template-columns:
+          repeat(3, minmax(0,1fr));
+      }
+
+.quality-info-grid {
+  grid-template-columns:
+    repeat(3, minmax(0, 1fr));
+}
+
+      .quality-workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .quality-case-detail {
+        position: static;
+      }
+
+    }
+
+
+    @media (max-width: 900px) {
+
+      .quality-kpis,
+      .quality-filters,
+      .quality-detail-metrics {
+        grid-template-columns:
+          1fr 1fr;
+      }
+
+      .quality-detail-overview {
+        grid-template-columns: 1fr;
+      }
+
+      .quality-location-panel {
+        border-left: 0;
+
+        border-top:
+          1px solid var(--border);
+      }
+
+.quality-info-grid {
+  grid-template-columns:
+    1fr 1fr;
+}
+
+    }
+
+
+    @media (max-width: 760px) {
+
+      .quality-hero {
+        height: 190px;
+
+        background-position:
+          center center;
+      }
+
+      .quality-hero-overlay {
+        left: 18px;
+        right: 18px;
+      }
+
+      .quality-hero-overlay h2 {
+        font-size: 22px;
+      }
+
+    }
+
+
+    @media (max-width: 700px) {
+
+      .quality-kpis,
+      .quality-filters,
+      .quality-form-grid,
+      .quality-detail-metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .quality-form-grid .span-2 {
+        grid-column: auto;
+      }
+
+      .quality-info-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .quality-photos {
+        grid-template-columns:
+          1fr 1fr;
+      }
+
+      .quality-tabs {
+        gap: 15px;
+
+        overflow-x: auto;
+      }
+
+      .quality-detail-actions {
+        align-items: stretch;
+
+        flex-direction: column;
+      }
+
+      .quality-detail-actions-left,
+      .quality-detail-actions-right {
+        width: 100%;
+      }
+
+      .quality-detail-actions .btn {
+        flex: 1;
+      }
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+
+<div class="app-shell">
+
+
+  <!-- =======================================================
+       GLOBAL SIDEBAR
+       ======================================================= -->
+
+  <aside
+    id="sidebarMount"
+    class="sidebar"
+  ></aside>
+
+
+  <!-- =======================================================
+       PAGE
+       ======================================================= -->
+
+  <main class="page quality-page">
+
+
+    <!-- =====================================================
+         TOP BAR
+         ===================================================== -->
+
+    <section class="page-topbar">
+
+
+      <div class="page-title">
+
+        <h1>
+          Quality / Damage &amp; Claims
+        </h1>
+
+        <p>
+          Register, track and resolve damages,
+          claims and delivery issues.
+        </p>
+
+      </div>
+
+
+      <div class="topbar-actions quality-top-actions">
+
+        <button
+          class="btn btn-primary"
+          id="btnNewQualityCase"
+          type="button"
+        >
+          + New Damage Case
+        </button>
+
+      </div>
+
+
+    </section>
+
+
+    <!-- =====================================================
+         HERO
+         ===================================================== -->
+
+    <section class="quality-hero">
+
+      <div class="quality-hero-overlay">
+
+        <span class="quality-hero-badge">
+          QUALITY CONTROL
+        </span>
+
+        <h2>
+          Damage &amp; Claims
+        </h2>
+
+        <p>
+          Track damaged packaging, product issues,
+          missing items and delivery claims.
+        </p>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         TOAST
+         ===================================================== -->
+
+    <div
+      id="toast"
+      class="notice"
+    ></div>
+
+
+    <!-- =====================================================
+         KPI
+         ===================================================== -->
+
+    <section class="quality-kpis">
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon orange">
+          ◫
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Open Cases
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiOpenCases"
+          >
+            0
+          </div>
+
+          <div class="quality-kpi-sub">
+            Currently unresolved
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon red">
+          ◉
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            New Cases
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiNewCases"
+          >
+            0
+          </div>
+
+          <div class="quality-kpi-sub">
+            Reported in last 7 days
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon purple">
+          ◌
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Awaiting Carrier
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiAwaitingCarrier"
+          >
+            0
+          </div>
+
+          <div class="quality-kpi-sub">
+            Waiting for carrier response
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon orange">
+          ◇
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Awaiting Customer
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiAwaitingCustomer"
+          >
+            0
+          </div>
+
+          <div class="quality-kpi-sub">
+            Waiting for retailer / customer
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon green">
+          ✓
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Resolved
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiResolvedCases"
+          >
+            0
+          </div>
+
+          <div class="quality-kpi-sub">
+            Completed quality cases
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon">
+          £
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Claim Value Open
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiOpenClaimValue"
+          >
+            £0.00
+          </div>
+
+          <div class="quality-kpi-sub">
+            Current unresolved claim value
+          </div>
+
+        </div>
+
+      </article>
+
+
+      <article class="card quality-kpi">
+
+        <div class="quality-kpi-icon red">
+          £
+        </div>
+
+        <div>
+
+          <div class="quality-kpi-label">
+            Claim Value YTD
+          </div>
+
+          <div
+            class="quality-kpi-value"
+            id="kpiYtdClaimValue"
+          >
+            £0.00
+          </div>
+
+          <div class="quality-kpi-sub">
+            Total reported this year
+          </div>
+
+        </div>
+
+      </article>
+
+
+    </section>
+
+
+    <!-- =====================================================
+         FILTERS
+         ===================================================== -->
+
+    <section class="card quality-filter-card">
+
+
+      <div class="quality-filters">
+
+
+        <div class="field">
+
+          <label for="filterQualitySearch">
+            Search
+          </label>
+
+          <input
+            id="filterQualitySearch"
+            class="input"
+            type="search"
+            placeholder="Search case, order, customer, product, carrier..."
+          >
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="filterQualityStatus">
+            Status
+          </label>
+
+          <select
+            id="filterQualityStatus"
+            class="select"
+          >
+
+            <option value="">
+              All
+            </option>
+
+            <option value="open">
+              Open
+            </option>
+
+            <option value="in_progress">
+              In Progress
+            </option>
+
+            <option value="awaiting_carrier">
+              Awaiting Carrier
+            </option>
+
+            <option value="awaiting_customer">
+              Awaiting Customer
+            </option>
+
+            <option value="resolved">
+              Resolved
+            </option>
+
+            <option value="closed">
+              Closed
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="filterQualityIssue">
+            Issue Type
+          </label>
+
+          <select
+            id="filterQualityIssue"
+            class="select"
+          >
+
+            <option value="">
+              All
+            </option>
+
+            <option value="damaged_packaging">
+              Damaged Packaging
+            </option>
+
+            <option value="damaged_product">
+              Damaged Product
+            </option>
+
+            <option value="missing_item">
+              Missing Item
+            </option>
+
+            <option value="wrong_item">
+              Wrong Item
+            </option>
+
+            <option value="incomplete_delivery">
+              Incomplete Delivery
+            </option>
+
+            <option value="delivery_refused">
+              Delivery Refused
+            </option>
+
+            <option value="other">
+              Other
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="filterQualityCustomer">
+            Customer
+          </label>
+
+          <select
+            id="filterQualityCustomer"
+            class="select"
+          >
+            <option value="">
+              All
+            </option>
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="filterQualityCarrier">
+            Carrier
+          </label>
+
+          <select
+            id="filterQualityCarrier"
+            class="select"
+          >
+            <option value="">
+              All
+            </option>
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="filterQualityResponsibility">
+            Responsibility
+          </label>
+
+          <select
+            id="filterQualityResponsibility"
+            class="select"
+          >
+
+            <option value="">
+              All
+            </option>
+
+            <option value="under_review">
+              Under Review
+            </option>
+
+            <option value="s2u">
+              Sofa2U
+            </option>
+
+            <option value="carrier">
+              Carrier
+            </option>
+
+            <option value="product_owner">
+              Product Owner
+            </option>
+
+            <option value="retailer">
+              Retailer
+            </option>
+
+            <option value="customer">
+              Customer
+            </option>
+
+            <option value="unknown">
+              Unknown
+            </option>
+
+          </select>
+
+        </div>
+
+
+      </div>
+
+
+      <div class="quality-filter-actions">
+
+        <button
+          class="btn"
+          id="btnClearQualityFilters"
+          type="button"
+        >
+          Clear Filters
+        </button>
+
+        <button
+          class="btn btn-primary"
+          id="btnApplyQualityFilters"
+          type="button"
+        >
+          Apply Filters
+        </button>
+
+      </div>
+
+
+    </section>
+
+
+    <!-- =====================================================
+         WORKSPACE
+         ===================================================== -->
+
+    <section class="quality-workspace">
+
+
+      <!-- ===================================================
+           CASE LIST
+           =================================================== -->
+
+      <section class="card quality-case-list-card">
+
+
+        <div class="quality-tabs">
+
+
+          <button
+            class="quality-tab active"
+            type="button"
+            data-quality-tab="all"
+          >
+            All Cases
+
+            <span
+              class="quality-tab-count"
+              id="tabCountAll"
+            >
+              0
+            </span>
+          </button>
+
+
+          <button
+            class="quality-tab"
+            type="button"
+            data-quality-tab="open"
+          >
+            Open
+
+            <span
+              class="quality-tab-count"
+              id="tabCountOpen"
+            >
+              0
+            </span>
+          </button>
+
+
+          <button
+            class="quality-tab"
+            type="button"
+            data-quality-tab="resolved"
+          >
+            Resolved
+
+            <span
+              class="quality-tab-count"
+              id="tabCountResolved"
+            >
+              0
+            </span>
+          </button>
+
+
+          <button
+            class="quality-tab"
+            type="button"
+            data-quality-tab="closed"
+          >
+            Closed
+
+            <span
+              class="quality-tab-count"
+              id="tabCountClosed"
+            >
+              0
+            </span>
+          </button>
+
+
+        </div>
+
+
+        <div class="quality-table-wrap">
+
+
+          <table class="quality-table">
+
+
+            <thead>
+
+              <tr>
+
+                <th>Case ID</th>
+                <th>Date</th>
+                <th>Order</th>
+                <th>Customer</th>
+                <th>Product</th>
+                <th>Issue Type</th>
+                <th>Carrier</th>
+                <th>Responsibility</th>
+                <th>Status</th>
+                <th>Claim Value</th>
+                <th>Evidence</th>
+                <th></th>
+
+              </tr>
+
+            </thead>
+
+
+            <tbody id="qualityCasesTableBody">
+
+              <tr>
+
+                <td colspan="12">
+
+                  <div
+                    style="
+                      min-height:180px;
+                      display:flex;
+                      align-items:center;
+                      justify-content:center;
+                      color:var(--muted);
+                      font-size:12px;
+                    "
+                  >
+                    Loading quality cases...
+                  </div>
+
+                </td>
+
+              </tr>
+
+            </tbody>
+
+
+          </table>
+
+
+        </div>
+
+
+        <div class="quality-list-footer">
+
+          <span id="qualityResultsMeta">
+            0 cases shown
+          </span>
+
+          <div
+            class="quality-pagination"
+            id="qualityPagination"
+          ></div>
+
+        </div>
+
+
+      </section>
+
+
+      <!-- ===================================================
+           CASE DETAIL
+           =================================================== -->
+
+      <aside
+        class="card quality-case-detail"
+        id="qualityCaseDetail"
+      >
+
+
+        <div
+          class="quality-detail-empty"
+          id="qualityCaseDetailEmpty"
+        >
+
+          <div class="quality-detail-empty-icon">
+            !
+          </div>
+
+          <strong>
+            Select a quality case
+          </strong>
+
+          <span>
+            Select a case from the list to view
+            order details, products, evidence,
+            activity and resolution.
+          </span>
+
+        </div>
+
+
+        <div
+          id="qualityCaseDetailContent"
+          style="display:none;"
+        >
+
+
+          <!-- DETAIL HEADER -->
+
+          <div class="quality-detail-head">
+
+
+            <div class="quality-detail-title">
+
+              <h2 id="detailCaseNumber">
+                DMG-00000
+              </h2>
+
+              <span
+                id="detailCaseStatus"
+                class="quality-badge open"
+              >
+                Open
+              </span>
+
+            </div>
+
+
+            <button
+              id="btnCloseQualityDetail"
+              class="quality-close-detail"
+              type="button"
+              aria-label="Close case detail"
+            >
+              ×
+            </button>
+
+
+          </div>
+
+
+          <!-- CASE OVERVIEW -->
+
+          <div class="quality-detail-overview">
+
+
+            <section class="quality-overview-info">
+
+
+              <h3>
+                Case Overview
+              </h3>
+
+
+              <div class="quality-info-grid">
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Order
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailOrderNumber"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Issue Type
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailIssueType"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Customer
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailRetailer"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Responsibility
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailResponsibility"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Product Owner
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailProductOwner"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Status
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailStatusText"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Carrier
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailCarrier"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Claim Value
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailClaimValue"
+                  >
+                    £0.00
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Reported Date
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailReportedDate"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+                <div class="quality-info-item">
+
+                  <span class="quality-info-label">
+                    Driver
+                  </span>
+
+                  <span
+                    class="quality-info-value"
+                    id="detailDriver"
+                  >
+                    —
+                  </span>
+
+                </div>
+
+
+              </div>
+
+
+            </section>
+
+
+            <!-- LOCATION -->
+
+            <aside class="quality-location-panel">
+
+              <h3>
+                Location
+              </h3>
+
+              <div
+                class="quality-map-placeholder"
+                id="detailLocationMap"
+              >
+
+                <div class="quality-map-pin">
+                  ●
+                </div>
+
+              </div>
+
+              <div
+                class="quality-map-address"
+                id="detailAddress"
+              >
+                —
+              </div>
+
+            </aside>
+
+
+          </div>
+
+
+          <!-- DETAIL TABS -->
+
+          <div class="quality-detail-tabs">
+
+
+            <button
+              class="quality-detail-tab active"
+              type="button"
+              data-quality-detail-tab="details"
+            >
+              Details
+            </button>
+
+
+            <button
+              class="quality-detail-tab"
+              type="button"
+              data-quality-detail-tab="products"
+            >
+              Products
+
+              <span id="detailProductCount">
+                (0)
+              </span>
+            </button>
+
+
+            <button
+              class="quality-detail-tab"
+              type="button"
+              data-quality-detail-tab="evidence"
+            >
+              Evidence
+
+              <span id="detailEvidenceCount">
+                (0)
+              </span>
+            </button>
+
+
+            <button
+              class="quality-detail-tab"
+              type="button"
+              data-quality-detail-tab="activity"
+            >
+              Activity
+
+              <span id="detailActivityCount">
+                (0)
+              </span>
+            </button>
+
+
+            <button
+              class="quality-detail-tab"
+              type="button"
+              data-quality-detail-tab="notes"
+            >
+              Notes
+            </button>
+
+
+            <button
+              class="quality-detail-tab"
+              type="button"
+              data-quality-detail-tab="resolution"
+            >
+              Resolution
+            </button>
+
+
+          </div>
+
+
+          <!-- DEFAULT DETAILS CONTENT -->
+
+          <div
+            class="quality-detail-body"
+            id="qualityDetailTabContent"
+          >
+
+
+            <section class="quality-detail-section">
+
+              <h3>
+                Issue Description
+              </h3>
+
+              <p
+                class="quality-description"
+                id="detailDescription"
+              >
+                —
+              </p>
+
+            </section>
+
+
+            <div class="quality-detail-metrics">
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  Discovered At
+                </span>
+
+                <strong id="detailDiscoveredAt">
+                  —
+                </strong>
+
+              </div>
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  Priority
+                </span>
+
+                <strong id="detailPriority">
+                  —
+                </strong>
+
+              </div>
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  Expected Resolution
+                </span>
+
+                <strong id="detailResolutionType">
+                  —
+                </strong>
+
+              </div>
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  Carrier Reference
+                </span>
+
+                <strong id="detailCarrierReference">
+                  —
+                </strong>
+
+              </div>
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  Customer Reference
+                </span>
+
+                <strong id="detailCustomerReference">
+                  —
+                </strong>
+
+              </div>
+
+
+              <div class="quality-detail-metric">
+
+                <span>
+                  External Reference
+                </span>
+
+                <strong id="detailExternalReference">
+                  —
+                </strong>
+
+              </div>
+
+
+            </div>
+
+
+          </div>
+
+
+          <!-- PHOTOS -->
+
+          <section class="quality-photo-section">
+
+
+            <div class="quality-photo-head">
+
+              <h3>
+                Photos
+              </h3>
+
+              <button
+                class="quality-view-all"
+                id="btnViewAllQualityPhotos"
+                type="button"
+              >
+                View all
+              </button>
+
+            </div>
+
+
+            <div
+              class="quality-photos"
+              id="qualityPhotoGrid"
+            >
+
+
+              <div class="quality-photo">
+                <div class="quality-photo-empty">
+                  +
+                </div>
+              </div>
+
+
+              <div class="quality-photo">
+                <div class="quality-photo-empty">
+                  +
+                </div>
+              </div>
+
+
+              <div class="quality-photo">
+                <div class="quality-photo-empty">
+                  +
+                </div>
+              </div>
+
+
+              <div class="quality-photo">
+                <div class="quality-photo-empty">
+                  +
+                </div>
+              </div>
+
+
+            </div>
+
+
+          </section>
+
+
+          <!-- ACTIONS -->
+
+          <div class="quality-detail-actions">
+
+
+            <div class="quality-detail-actions-left">
+
+
+              <button
+                class="btn"
+                id="btnEditQualityCase"
+                type="button"
+              >
+                Edit Case
+              </button>
+
+
+              <button
+                class="btn"
+                id="btnAddQualityNote"
+                type="button"
+              >
+                Add Note
+              </button>
+
+
+              <button
+                class="btn"
+                id="btnUploadQualityEvidence"
+                type="button"
+              >
+                + Evidence
+              </button>
+
+
+            </div>
+
+
+            <div class="quality-detail-actions-right">
+
+              <button
+                class="btn btn-primary"
+                id="btnUpdateQualityStatus"
+                type="button"
+              >
+                Update Status
+              </button>
+
+            </div>
+
+
+          </div>
+
+
+        </div>
+
+
+      </aside>
+
+
+    </section>
+
+
+  </main>
+
+
+</div>
+
+
+<!-- =========================================================
+     NEW / EDIT QUALITY CASE MODAL
+     ========================================================= -->
+
+<div
+  class="quality-modal"
+  id="qualityCaseModal"
+>
+
+
+  <div class="quality-modal-card">
+
+
+    <div class="quality-modal-head">
+
+
+      <div>
+
+        <h2 id="qualityCaseModalTitle">
+          New Damage Case
+        </h2>
+
+        <p>
+          Link the case to an existing Veynor order
+          and register the issue.
+        </p>
+
+      </div>
+
+
+      <button
+        class="quality-modal-close"
+        id="btnCloseQualityCaseModal"
+        type="button"
+      >
+        ×
+      </button>
+
+
+    </div>
+
+
+    <div class="quality-modal-body">
+
+
+      <input
+        id="qualityCaseId"
+        type="hidden"
+      >
+
+
+      <div class="quality-form-grid">
+
+
+        <!-- ORDER -->
+
+        <div class="field span-2">
+
+          <label for="qualityOrderSelect">
+            Order
+          </label>
+
+          <select
+            id="qualityOrderSelect"
+            class="select"
+          >
+
+            <option value="">
+              Select delivered order
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <!-- ISSUE -->
+
+        <div class="field">
+
+          <label for="qualityIssueType">
+            Issue Type
+          </label>
+
+          <select
+            id="qualityIssueType"
+            class="select"
+          >
+
+            <option value="damaged_packaging">
+              Damaged Packaging
+            </option>
+
+            <option value="damaged_product">
+              Damaged Product
+            </option>
+
+            <option value="missing_item">
+              Missing Item
+            </option>
+
+            <option value="wrong_item">
+              Wrong Item
+            </option>
+
+            <option value="incomplete_delivery">
+              Incomplete Delivery
+            </option>
+
+            <option value="delivery_refused">
+              Delivery Refused
+            </option>
+
+            <option value="other">
+              Other
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <!-- PRIORITY -->
+
+        <div class="field">
+
+          <label for="qualityPriority">
+            Priority
+          </label>
+
+          <select
+            id="qualityPriority"
+            class="select"
+          >
+
+            <option value="low">
+              Low
+            </option>
+
+            <option
+              value="normal"
+              selected
+            >
+              Normal
+            </option>
+
+            <option value="high">
+              High
+            </option>
+
+            <option value="urgent">
+              Urgent
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <!-- RESPONSIBILITY -->
+
+        <div class="field">
+
+          <label for="qualityResponsibility">
+            Responsibility
+          </label>
+
+          <select
+            id="qualityResponsibility"
+            class="select"
+          >
+
+            <option
+              value="under_review"
+              selected
+            >
+              Under Review
+            </option>
+
+            <option value="s2u">
+              Sofa2U
+            </option>
+
+            <option value="carrier">
+              Carrier
+            </option>
+
+            <option value="product_owner">
+              Product Owner
+            </option>
+
+            <option value="retailer">
+              Retailer
+            </option>
+
+            <option value="customer">
+              Customer
+            </option>
+
+            <option value="unknown">
+              Unknown
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <!-- DISCOVERED AT -->
+
+        <div class="field">
+
+          <label for="qualityDiscoveredAt">
+            Discovered At
+          </label>
+
+          <input
+            id="qualityDiscoveredAt"
+            class="input"
+            type="text"
+            placeholder="e.g. At delivery"
+          >
+
+        </div>
+
+
+        <!-- DESCRIPTION -->
+
+        <div class="field span-2">
+
+          <label for="qualityDescription">
+            Description
+          </label>
+
+          <textarea
+            id="qualityDescription"
+            class="textarea"
+            placeholder="Describe the damage, missing item or delivery issue..."
+          ></textarea>
+
+        </div>
+
+
+        <!-- CLAIM VALUE -->
+
+        <div class="field">
+
+          <label for="qualityClaimValue">
+            Claim Value £
+          </label>
+
+          <input
+            id="qualityClaimValue"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+            value="0"
+          >
+
+        </div>
+
+
+        <!-- RESOLUTION -->
+
+        <div class="field">
+
+          <label for="qualityResolutionType">
+            Expected Resolution
+          </label>
+
+          <select
+            id="qualityResolutionType"
+            class="select"
+          >
+
+            <option value="">
+              Not decided yet
+            </option>
+
+            <option value="replacement">
+              Replacement
+            </option>
+
+            <option value="credit">
+              Credit
+            </option>
+
+            <option value="repair">
+              Repair
+            </option>
+
+            <option value="return">
+              Return
+            </option>
+
+            <option value="no_action">
+              No Action
+            </option>
+
+            <option value="other">
+              Other
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <!-- CARRIER REFERENCE -->
+
+        <div class="field">
+
+          <label for="qualityCarrierReference">
+            Carrier Claim Reference
+          </label>
+
+          <input
+            id="qualityCarrierReference"
+            class="input"
+            type="text"
+            placeholder="Optional"
+          >
+
+        </div>
+
+
+        <!-- CUSTOMER REFERENCE -->
+
+        <div class="field">
+
+          <label for="qualityCustomerReference">
+            Customer Reference
+          </label>
+
+          <input
+            id="qualityCustomerReference"
+            class="input"
+            type="text"
+            placeholder="Optional"
+          >
+
+        </div>
+
+
+      </div>
+
+
+    </div>
+
+
+    <div class="quality-modal-footer">
+
+
+      <button
+        class="btn"
+        id="btnCancelQualityCase"
+        type="button"
+      >
+        Cancel
+      </button>
+
+
+      <button
+        class="btn btn-primary"
+        id="btnSaveQualityCase"
+        type="button"
+      >
+        Create Case
+      </button>
+
+
+    </div>
+
+
+  </div>
+
+
+</div>
+
+
+</body>
+</html>

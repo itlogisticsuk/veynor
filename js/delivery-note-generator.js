@@ -209,9 +209,34 @@
     );
   }
 
-  function isServiceOrder(order) {
-    return getOrderLines(order).some(isServiceLine);
+function isServiceOrder(order) {
+  const orderNumber =
+    cleanText(
+      order?.order_number || ""
+    ).toUpperCase();
+
+  /*
+   * Quality / replacement service orders:
+   *
+   * SO-03551S
+   * SO-03551S2
+   * SO-03551S3
+   */
+  if (
+    /^SO-\d+S(?:\d+)?$/.test(
+      orderNumber
+    )
+  ) {
+    return true;
   }
+
+  /*
+   * Existing partial-package service logic
+   * remains supported.
+   */
+  return getOrderLines(order)
+    .some(isServiceLine);
+}
 
   function getServiceWarning(line, order) {
     if (!isServiceLine(line)) {
@@ -1761,6 +1786,204 @@
     );
   }
 
+function drawServiceOrderInstructionBox(
+  doc,
+  y,
+  order
+) {
+  if (!isServiceOrder(order)) {
+    return y;
+  }
+
+  const orderNumber =
+    getOrderNumber(order);
+
+  const supplierRef =
+    getSupplierReference(order);
+
+  const memo =
+    cleanText(
+      order?.memo || ""
+    );
+
+  /*
+   * Quality Case bijvoorbeeld DMG-00001
+   * uit de memo halen.
+   */
+  const qualityMatch =
+    memo.match(
+      /Quality Case\s+(DMG-[A-Z0-9-]+)/i
+    );
+
+  const qualityCase =
+    qualityMatch?.[1] || "";
+
+  /*
+   * Original order bijvoorbeeld SO-03551
+   * uit de memo halen.
+   */
+  const originalOrderMatch =
+    memo.match(
+      /Original order:\s*(SO-[A-Z0-9-]+)/i
+    );
+
+  const originalOrder =
+    originalOrderMatch?.[1] || "";
+
+  const referenceParts = [];
+
+  if (qualityCase) {
+    referenceParts.push(
+      `Quality Case ${qualityCase}`
+    );
+  }
+
+  if (originalOrder) {
+    referenceParts.push(
+      `Original Order ${originalOrder}`
+    );
+  }
+
+  if (supplierRef) {
+    referenceParts.push(
+      `Customer Ref ${supplierRef}`
+    );
+  }
+
+
+  const referenceText =
+    referenceParts.length
+      ? referenceParts.join(" | ")
+      : `Service Order ${orderNumber}`;
+
+
+ const instructionText =
+  "IMPORTANT: Check all replacement parts carefully before dispatch. Pack and protect all parts securely for transport. Check all parts again upon arrival at the delivery address before completing the delivery.";
+
+const referenceLines =
+  splitText(
+    doc,
+    referenceText,
+    165
+  );
+
+const instructionLines =
+  splitText(
+    doc,
+    instructionText,
+    165
+  );
+
+
+  const boxHeight =
+    Math.max(
+      20,
+      (
+        referenceLines.length +
+        instructionLines.length
+      ) * 3.7 + 13
+    );
+
+
+  doc.setFillColor(
+    239,
+    246,
+    255
+  );
+
+  doc.setDrawColor(
+    37,
+    99,
+    235
+  );
+
+  doc.roundedRect(
+    14,
+    y,
+    182,
+    boxHeight,
+    2,
+    2,
+    "FD"
+  );
+
+
+  // Title
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(
+    8.5
+  );
+
+  doc.setTextColor(
+    30,
+    64,
+    175
+  );
+
+  doc.text(
+    "SERVICE / REPLACEMENT ORDER",
+    18,
+    y + 6
+  );
+
+
+  // References
+  doc.setFontSize(
+    7.2
+  );
+
+  doc.setTextColor(
+    28,
+    36,
+    52
+  );
+
+  doc.text(
+    referenceLines,
+    18,
+    y + 11
+  );
+
+
+  const instructionY =
+    y +
+    11 +
+    referenceLines.length * 3.7 +
+    2;
+
+
+  // Important instruction
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(
+    7.2
+  );
+
+  doc.text(
+    instructionLines,
+    18,
+    instructionY
+  );
+
+
+  setDark(
+    doc
+  );
+
+  return (
+    y +
+    boxHeight +
+    5
+  );
+}
+
   function maybeAddPage(
     doc,
     y,
@@ -2038,10 +2261,28 @@
       }
     );
 
-    return (
-      y +
-      5
+if (isServiceOrder(order)) {
+  y =
+    maybeAddPage(
+      doc,
+      y + 3,
+      order,
+      ctx,
+      tenantLogoDataUrl
     );
+
+  y =
+    drawServiceOrderInstructionBox(
+      doc,
+      y,
+      order
+    );
+}
+
+return (
+  y +
+  5
+);
   }
 
   function drawTotalsAndSignature(

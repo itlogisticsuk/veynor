@@ -15,8 +15,9 @@
 
     "order-import": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
     "order-matching": SOFA2U_ROLES,
-    "operations-control-center": ALL_ROLES,
-    orders: SOFA2U_ROLES,
+"operations-control-center": ALL_ROLES,
+quality: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+orders: SOFA2U_ROLES,
 
 products: SOFA2U_ROLES,
 "inbound-containers": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],

@@ -2002,30 +2002,109 @@ exposeDeliveryGroupsToPlanner();
     return normalize(order.order_number || "");
   }
 
-  function sortOrders() {
-    const direction = sortState.direction === "desc" ? -1 : 1;
+function isServiceOrder(order) {
+  const orderNumber =
+    String(
+      order?.order_number || ""
+    )
+      .trim()
+      .toUpperCase();
 
-    filteredOrders.sort((a, b) => {
-      const av = sortValue(a, sortState.key);
-      const bv = sortValue(b, sortState.key);
+  return /^SO-\d+S(?:\d+)?$/.test(
+    orderNumber
+  );
+}
 
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * direction;
+function sortOrders() {
+  const direction =
+    sortState.direction === "desc"
+      ? -1
+      : 1;
 
-      return String(av).localeCompare(String(bv), "en", {
-        numeric: true,
-        sensitivity: "base"
-      }) * direction;
+  filteredOrders.sort(
+    (a, b) => {
+
+      /*
+       * Wanneer op ORDER wordt gesorteerd:
+       *
+       * Serviceorders staan altijd bovenaan.
+       * Binnen beide groepen blijft de gekozen
+       * ASC/DESC sorteervolgorde gewoon werken.
+       */
+      if (sortState.key === "order") {
+        const aService =
+          isServiceOrder(a);
+
+        const bService =
+          isServiceOrder(b);
+
+        if (
+          aService !== bService
+        ) {
+          return aService ? -1 : 1;
+        }
+      }
+
+
+      const av =
+        sortValue(
+          a,
+          sortState.key
+        );
+
+      const bv =
+        sortValue(
+          b,
+          sortState.key
+        );
+
+
+      if (
+        typeof av === "number" &&
+        typeof bv === "number"
+      ) {
+        return (
+          (av - bv) *
+          direction
+        );
+      }
+
+
+      return String(av)
+        .localeCompare(
+          String(bv),
+          "en",
+          {
+            numeric: true,
+            sensitivity: "base"
+          }
+        ) *
+        direction;
+    }
+  );
+}
+
+function updateSortIndicators() {
+  document
+    .querySelectorAll(
+      "[data-sort-indicator]"
+    )
+    .forEach(el => {
+      const key =
+        el.getAttribute(
+          "data-sort-indicator"
+        );
+
+      el.textContent =
+        key === sortState.key
+          ? (
+              sortState.direction === "asc"
+                ? "▲"
+                : "▼"
+            )
+          : "";
     });
-  }
-
-  function updateSortIndicators() {
-    document.querySelectorAll("[data-sort-indicator]").forEach(el => {
-      const key = el.getAttribute("data-sort-indicator");
-      el.textContent = key === sortState.key
-        ? (sortState.direction === "asc" ? "▲" : "▼")
-        : "";
-    });
-  }
+}	
 
 function getKpiBaseOrders() {
   /*
@@ -3885,9 +3964,10 @@ function renderDeliveryCell(order) {
   }
 
 if (isCollectionOrder(order)) {
-  const collectionDate =
-    getExpectedDeliveryDate(order) ||
-    getRequestedDeliveryDate(order);
+const collectionDate =
+  order.fds_collection_date ||
+  getExpectedDeliveryDate(order) ||
+  "";
 
   return `
     <div class="delivery-cell">
@@ -6902,6 +6982,70 @@ bindTableEvents();
 updateSelectionUi();
 setupOrdersTopScrollbar();  }
 
+function ensureQualityActionInOccMenu() {
+  const menu = byId("occRowActionMenu");
+
+  if (!menu) {
+    return;
+  }
+
+  /*
+   * Als de Quality-knop al bestaat,
+   * niets opnieuw toevoegen.
+   */
+  if (
+    menu.querySelector(
+      '[data-row-action="quality_case"]'
+    )
+  ) {
+    return;
+  }
+
+  /*
+   * Maak de knop met dezelfde basisopbouw
+   * als de bestaande OCC-menuacties.
+   */
+  const button =
+    document.createElement("button");
+
+  button.type = "button";
+
+  button.setAttribute(
+    "data-row-action",
+    "quality_case"
+  );
+
+  /*
+   * Neem indien mogelijk automatisch
+   * dezelfde class over als een bestaande
+   * actieknop in het menu.
+   */
+  const existingButton =
+    menu.querySelector(
+      "[data-row-action]"
+    );
+
+  if (existingButton?.className) {
+    button.className =
+      existingButton.className;
+  }
+
+  button.innerHTML = `
+    <span>
+      Quality / Damage
+    </span>
+
+    <span>
+      Create / Open
+    </span>
+  `;
+
+  /*
+   * Zet Quality onderaan in het bestaande menu.
+   */
+  menu.appendChild(button);
+}
+
 function closeOrderActionMenu() {
   const menu = byId("occRowActionMenu");
   if (!menu) return;
@@ -6920,30 +7064,113 @@ byId("occGenericActionModal")?.addEventListener("click", event => {
   }
 });
 
-function openOrderActionMenu(orderId, button) {
-  const menu = byId("occRowActionMenu");
+function openOrderActionMenu(
+  orderId,
+  button
+) {
+  /*
+   * Zorg eerst dat de Quality-optie
+   * in het bestaande menu aanwezig is.
+   */
+  ensureQualityActionInOccMenu();
+
+  const menu =
+    byId("occRowActionMenu");
 
   if (!menu) {
-    showToast("Order action menu not found in HTML.", "err");
+    showToast(
+      "Order action menu not found in HTML.",
+      "err"
+    );
+
     return;
   }
 
   if (!button) {
-    showToast("Order action button not found.", "err");
+    showToast(
+      "Order action button not found.",
+      "err"
+    );
+
     return;
   }
 
-  const rect = button.getBoundingClientRect();
+  const order =
+    getOrderById(orderId);
 
-  menu.dataset.orderId = orderId;
-  menu.style.position = "fixed";
-  menu.style.top = `${rect.bottom + 6}px`;
-  menu.style.left = `${Math.max(12, rect.right - 230)}px`;
+  if (!order) {
+    showToast(
+      "Order not found.",
+      "err"
+    );
 
-  menu.classList.add("open");
-  menu.setAttribute("aria-hidden", "false");
+    return;
+  }
 
-  console.log("Order action menu opened", { orderId });
+  const rect =
+    button.getBoundingClientRect();
+
+  menu.dataset.orderId =
+    String(orderId);
+
+  menu.style.position =
+    "fixed";
+
+  menu.style.top =
+    `${rect.bottom + 6}px`;
+
+  menu.style.left =
+    `${Math.max(
+      12,
+      rect.right - 230
+    )}px`;
+
+  menu.classList.add(
+    "open"
+  );
+
+  menu.setAttribute(
+    "aria-hidden",
+    "false"
+  );
+
+  /*
+   * Quality is vooral bedoeld voor
+   * geleverde/historische orders,
+   * maar we blokkeren hem hier bewust niet.
+   *
+   * Daardoor kun je indien nodig ook al
+   * tijdens een delivery issue een case maken.
+   */
+  const qualityButton =
+    menu.querySelector(
+      '[data-row-action="quality_case"]'
+    );
+
+  if (qualityButton) {
+    const existingLabel =
+      qualityButton.querySelector(
+        "span:last-child"
+      );
+
+    if (existingLabel) {
+      existingLabel.textContent =
+        normalize(
+          order.derived_lifecycle_status
+        ) === "delivered"
+          ? "Create / Open"
+          : "Create / Open";
+    }
+  }
+
+  console.log(
+    "Order action menu opened",
+    {
+      orderId,
+      orderNumber:
+        order.order_number
+    }
+  );
 }
 
 async function saveFdsActualDeliveryDate(orderId, date) {
@@ -10971,62 +11198,256 @@ function bindEvents() {
     closeOrderActionMenu();
   });
 
-  byId("occRowActionMenu")?.addEventListener("click", event => {
-    const button = event.target.closest("[data-row-action]");
-    if (!button) return;
+  byId("occRowActionMenu")?.addEventListener(
+  "click",
+  event => {
+    const button =
+      event.target.closest(
+        "[data-row-action]"
+      );
 
-    const action = button.getAttribute("data-row-action");
-    const orderId = byId("occRowActionMenu")?.dataset.orderId || "";
+    if (!button) {
+      return;
+    }
 
+    const action =
+      button.getAttribute(
+        "data-row-action"
+      );
+
+    const orderId =
+      byId(
+        "occRowActionMenu"
+      )?.dataset.orderId || "";
+
+    /*
+     * Eerst menu sluiten.
+     */
     closeOrderActionMenu();
 
-    if (action === "manual_pod") return openManualOpsModal(orderId);
-    if (action === "finance_tariffs") return openTariffModal(orderId);
+    if (!orderId) {
+      showToast(
+        "Order ID is missing.",
+        "err"
+      );
 
- if (action === "edit_order") {
-  if (window.OrderEditor?.open) return window.OrderEditor.open(orderId);
-  showToast("Order editor is not loaded.", "err");
-  return;
-}
-    if (action === "copy_order") {
-  if (window.CopyOrderTool?.open) return window.CopyOrderTool.open(orderId);
-  showToast("Copy Order Tool is not loaded.", "err");
-  return;
-}
-if (action === "credit_order") {
-  if (window.CreditOrderTool?.open) return window.CreditOrderTool.open(orderId);
-  showToast("Credit Order Tool is not loaded.", "err");
-  return;
-}
-if (action === "change_status") {
-  if (window.ChangeStatusTool?.open) return window.ChangeStatusTool.open(orderId);
-  showToast("Change Status Tool is not loaded.", "err");
-  return;
-}
-if (action === "view_activity") {
-  if (window.ActivityViewTool?.open) return window.ActivityViewTool.open(orderId);
-  showToast("Activity View Tool is not loaded.", "err");
-  return;
-}
-if (action === "warehouse_events") {
-  if (window.WarehouseEventsTool?.open) {
-    return window.WarehouseEventsTool.open(orderId);
+      return;
+    }
+
+
+    /* =====================================
+       QUALITY / DAMAGE
+       ===================================== */
+
+    if (
+      action ===
+      "quality_case"
+    ) {
+      window.location.href =
+        `/quality.html?order_id=${encodeURIComponent(
+          orderId
+        )}`;
+
+      return;
+    }
+
+
+    /* =====================================
+       BESTAANDE OCC-ACTIES
+       ===================================== */
+
+    if (
+      action ===
+      "manual_pod"
+    ) {
+      openManualOpsModal(
+        orderId
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "finance_tariffs"
+    ) {
+      openTariffModal(
+        orderId
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "edit_order"
+    ) {
+      if (
+        window.OrderEditor?.open
+      ) {
+        window.OrderEditor.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Order editor is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "copy_order"
+    ) {
+      if (
+        window.CopyOrderTool?.open
+      ) {
+        window.CopyOrderTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Copy Order Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "credit_order"
+    ) {
+      if (
+        window.CreditOrderTool?.open
+      ) {
+        window.CreditOrderTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Credit Order Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "change_status"
+    ) {
+      if (
+        window.ChangeStatusTool?.open
+      ) {
+        window.ChangeStatusTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Change Status Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "view_activity"
+    ) {
+      if (
+        window.ActivityViewTool?.open
+      ) {
+        window.ActivityViewTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Activity View Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "warehouse_events"
+    ) {
+      if (
+        window.WarehouseEventsTool?.open
+      ) {
+        window.WarehouseEventsTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Warehouse Events Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    if (
+      action ===
+      "portal_events"
+    ) {
+      if (
+        window.PortalEventsTool?.open
+      ) {
+        window.PortalEventsTool.open(
+          orderId
+        );
+
+        return;
+      }
+
+      showToast(
+        "Portal Events Tool is not loaded.",
+        "err"
+      );
+
+      return;
+    }
+
+
+    showToast(
+      `${action} is not connected yet.`,
+      "ok"
+    );
   }
+);
 
-  showToast("Warehouse Events Tool is not loaded.", "err");
-  return;
-}
-if (action === "portal_events") {
-  if (window.PortalEventsTool?.open) {
-    return window.PortalEventsTool.open(orderId);
-  }
-
-  showToast("Portal Events Tool is not loaded.", "err");
-  return;
-}
-
-    showToast(`${action} is not connected yet.`, "ok");
-  });
 
   byId("btnActiveOrdersView")?.addEventListener("click", () => {
     orderViewMode = "active";

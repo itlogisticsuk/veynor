@@ -383,6 +383,7 @@ function getPhysicalQuantity(line) {
         external_reference,
         purchase_order,
         retail_name,
+order_type,
         delivery_address_1,
         delivery_address_2,
         delivery_address_3,
@@ -1519,18 +1520,34 @@ labels.push({
       label.barcodeValue
     );
 
+const isServiceOrder =
+  clean(
+    order.order_type
+  ).toLowerCase() === "service";
+
 const baseProductDescription =
-  clean(
-    label.description ||
-    label.line?.products
-      ?.description ||
-    label.line?.products
-      ?.name ||
-    ""
-  ) ||
-  clean(
-    label.sku || "—"
-  );
+  isServiceOrder
+    ? (
+        clean(
+          label.line?.description
+        ) ||
+        clean(
+          label.sku || "—"
+        )
+      )
+    : (
+        clean(
+          label.description ||
+          label.line?.products
+            ?.description ||
+          label.line?.products
+            ?.name ||
+          ""
+        ) ||
+        clean(
+          label.sku || "—"
+        )
+      );
 
 const productDescription =
   label.oneOffAck

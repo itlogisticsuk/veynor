@@ -271,81 +271,9 @@
     </section>
 
     <section class="card import-card">
-      <div class="section-head">
-        <div>
-          <h2 class="section-title">Import Settings</h2>
-          <p class="section-sub">These settings apply to Excel, PDF and manual orders.</p>
-        </div>
-      </div>
-
-      <div class="field-grid">
-        <div class="field">
-          <label for="productOwnerName">Product Owner / Contract Customer</label>
-          <select id="productOwnerName" class="select">
-            <option value="">Loading product owners...</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="defaultCountry">Default Country</label>
-          <input id="defaultCountry" class="input" value="United Kingdom"/>
-        </div>
-
-        <div class="field">
-          <label for="defaultStatus">Status After Import</label>
-          <select id="defaultStatus" class="select">
-            <option value="imported">imported</option>
-            <option value="matching_review">matching_review</option>
-          </select>
-        </div>
-
-        <div class="field">
-          <label for="defaultSourceType">Default Source Type</label>
-          <input id="defaultSourceType" class="input" value="manual_import"/>
-        </div>
-      </div>
-
-      <div class="field-grid two">
-        <label class="checkbox-row">
-          <input type="checkbox" id="optCreateRetailCustomers" disabled/>
-          <span>Do not create retailers as Sofa2U customers. Retailers are stored on the order as delivery name and address.</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="optCreateProductOwner" checked/>
-          <span>Create or update the selected product owner as a contract customer if needed.</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="optCreateProducts" disabled/>
-          <span>Do not create missing products automatically. Missing SKUs are shown as warnings.</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="optSkipExisting" checked/>
-          <span>Skip existing order numbers by default.</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="optSkipZeroQtyPdfLines" checked/>
-          <span>For PDF packing slips, skip product lines where shipped quantity is 0.</span>
-        </label>
-
-        <label class="checkbox-row">
-          <input type="checkbox" id="optUsePdfTotalVolume" checked/>
-          <span>Use total volume from PDF when available.</span>
-        </label>
-      </div>
-
-      <div class="note-box">
-        Correct import model:
-        <strong>company_id = Sofa2U</strong>,
-        <strong>customer_id = product owner</strong>,
-        <strong>retail_name = retailer/shop</strong>,
-        <strong>delivery_* = retailer delivery address</strong>.
-      </div>
-    </section>
-
+  <div class="section-head">
+    <div>
+ 
     <section class="import-method-grid">
       <section class="card import-card">
         <div class="section-head">

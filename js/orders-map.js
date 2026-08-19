@@ -359,14 +359,27 @@ function getMarkerFillColor(row) {
     return "#111827"; // Black
   }
 
-  const status = normalize(row.status || row.transport_status || "");
-  const transport = normalize(row.transport_type || "");
+  const status = normalize(
+    row.status ||
+    row.transport_status ||
+    ""
+  );
+
+  const transport = normalize(
+    row.transport_type ||
+    ""
+  );
+
   const hasRoute = !!row.route_id;
 
+
   // Delivered
-  if (["delivered", "completed"].includes(status)) {
+  if (
+    ["delivered", "completed"].includes(status)
+  ) {
     return "#16a34a"; // Green
   }
+
 
   // Delivery issues
   if ([
@@ -378,6 +391,7 @@ function getMarkerFillColor(row) {
     return "#f59e0b"; // Orange
   }
 
+
   // Failed deliveries
   if ([
     "failed_delivery",
@@ -388,36 +402,53 @@ function getMarkerFillColor(row) {
     return "#dc2626"; // Red
   }
 
+
   // Collection from retailer
   if (isCollectionOrder(row)) {
-    return "#0891b2"; // Collection
+    return "#0891b2"; // Turquoise
   }
+
 
   // Warehouse pickup
   if (isWarehousePickupOrder(row)) {
     return "#eab308"; // Yellow
   }
 
-  // Minimum delivery approval required
-  if (row.belowMinimumVolume === true) {
-    return "#7c3aed"; // Purple
-  }
-  // Planned on own transport
-  if (hasRoute && transport === "own_transport") {
-    return "#16a34a"; // Green
-  }
 
-  // Planned on FDS / Carrier
-  if (hasRoute && transport === "charter") {
+  /*
+   * FDS / Carrier
+   *
+   * IMPORTANT:
+   * This must come BEFORE the minimum-volume
+   * check. Once an order is assigned to FDS,
+   * it should be orange regardless of volume.
+   */
+  if (isFdsOrder(row)) {
     return "#f97316"; // Orange
   }
 
-  // Assigned to FDS but not yet planned
-if (!hasRoute && transport === "charter") {
-    return "#f97316";
-}
 
-  // Default: open order
+  // Planned on own transport
+  if (
+    hasRoute &&
+    transport === "own_transport"
+  ) {
+    return "#16a34a"; // Green
+  }
+
+
+  /*
+   * Minimum delivery approval required.
+   *
+   * Only orders which have NOT yet been
+   * assigned to FDS reach this point.
+   */
+  if (row.belowMinimumVolume === true) {
+    return "#7c3aed"; // Purple
+  }
+
+
+  // Default: open / unassigned order
   return "#2563eb"; // Blue
 }
 
@@ -559,6 +590,27 @@ function isFdsOrder(order) {
     !!order.fds_collection_date ||
     !!order.fds_job_ref
   );
+}
+
+function getSelectedOrders() {
+  return getVisibleOrders().filter(order =>
+    selectedOrderIds.has(String(order.id))
+  );
+}
+
+function getSelectedFdsSummary() {
+  const selectedOrders = getSelectedOrders();
+
+  const alreadyFds = selectedOrders.filter(isFdsOrder);
+  const notAssigned = selectedOrders.filter(order => !isFdsOrder(order));
+
+  return {
+    selectedOrders,
+    alreadyFds,
+    notAssigned,
+    alreadyFdsCount: alreadyFds.length,
+    notAssignedCount: notAssigned.length
+  };
 }
 
 function isCollectionOrder(order) {
@@ -1697,6 +1749,44 @@ function renderDriverLocations() {
         gap:8px;
       }
 
+.orders-map-fds-selection-summary{
+  display:grid;
+  gap:7px;
+}
+
+.orders-map-fds-selection-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:9px 10px;
+  border:1px solid #e5e7eb;
+  border-radius:9px;
+  background:#fff;
+}
+
+.orders-map-fds-selection-row > div{
+  display:grid;
+  gap:2px;
+}
+
+.orders-map-fds-selection-row strong{
+  font-size:12px;
+  font-weight:900;
+  color:#111827;
+}
+
+.orders-map-fds-selection-row span{
+  font-size:9.5px;
+  color:#6b7280;
+}
+
+.orders-map-fds-selection-row .orders-map-btn{
+  flex:0 0 auto;
+  padding:6px 8px;
+  font-size:10.5px;
+}
+
       .orders-map-kv{
         border:1px solid #e5e7eb;
         border-radius:8px;
@@ -2374,10 +2464,11 @@ refreshSelectionPanel();
     `;
   }
 
-  function buildSelectionPanelHtml(preview) {
-    const vehicles = getActiveVehicles();
+function buildSelectionPanelHtml(preview) {
+  const vehicles = getActiveVehicles();
+  const fdsSummary = getSelectedFdsSummary();
 
-    const vehicleOptions = [
+  const vehicleOptions = [
       `<option value="">Best available vehicle</option>`,
       ...vehicles.map(vehicle => `
         <option value="${escapeHtml(vehicle.id)}" ${String(selectedVehicleId) === String(vehicle.id) ? "selected" : ""}>
@@ -2439,6 +2530,42 @@ refreshSelectionPanel();
       </div>
 
       <p class="orders-map-text">${escapeHtml(selectedCount)} selected order(s).</p>
+
+<div class="orders-map-fds-selection-summary">
+
+  <div class="orders-map-fds-selection-row">
+    <div>
+      <strong>${formatNumber(fdsSummary.notAssignedCount)} Not assigned</strong>
+      <span>Not yet assigned to FDS</span>
+    </div>
+
+    <button
+      id="mapSelectOnlyNotAssignedBtn"
+      class="orders-map-btn"
+      type="button"
+      ${fdsSummary.notAssignedCount ? "" : "disabled"}
+    >
+      Select only these
+    </button>
+  </div>
+
+  <div class="orders-map-fds-selection-row">
+    <div>
+      <strong>${formatNumber(fdsSummary.alreadyFdsCount)} Already FDS</strong>
+      <span>Already assigned to FDS / Carrier</span>
+    </div>
+
+    <button
+      id="mapDeselectFdsBtn"
+      class="orders-map-btn"
+      type="button"
+      ${fdsSummary.alreadyFdsCount ? "" : "disabled"}
+    >
+      Deselect these
+    </button>
+  </div>
+
+</div>
 
       <div class="orders-map-grid">
         <div class="orders-map-kv"><div class="orders-map-kv-label">Orders</div><div class="orders-map-kv-value">${formatNumber(sel.order_count || 0)}</div></div>
@@ -2599,38 +2726,99 @@ refreshSelectionPanel();
     }, 0);
   }
 
-  function bindSelectionPanelEvents() {
-    setTimeout(() => {
-      byId("mapTogglePanelBtn")?.addEventListener("click", () => {
-        panelMinimized = !panelMinimized;
+function bindSelectionPanelEvents() {
+  setTimeout(() => {
+
+    byId("mapTogglePanelBtn")?.addEventListener("click", () => {
+      panelMinimized = !panelMinimized;
+      refreshSelectionPanel();
+    });
+
+
+    const vehicleSelect = byId("mapVehicleSelect");
+
+    if (vehicleSelect) {
+      vehicleSelect.addEventListener("change", () => {
+        selectedVehicleId = vehicleSelect.value || "";
+        previewCache = null;
+
         refreshSelectionPanel();
+
+        window.dispatchEvent(
+          new CustomEvent(
+            "veynor:vehicle-selected",
+            {
+              detail: {
+                vehicleId: selectedVehicleId
+              }
+            }
+          )
+        );
+      });
+    }
+
+
+    /*
+     * Keep only selected orders
+     * that are NOT yet assigned to FDS.
+     */
+    byId("mapSelectOnlyNotAssignedBtn")
+      ?.addEventListener("click", () => {
+
+        const summary =
+          getSelectedFdsSummary();
+
+        selectedOrderIds.clear();
+
+        summary.notAssigned.forEach(order => {
+          selectedOrderIds.add(
+            String(order.id)
+          );
+        });
+
+        previewCache = null;
+
+        emitSelection();
+        reload();
       });
 
-      const vehicleSelect = byId("mapVehicleSelect");
 
-      if (vehicleSelect) {
-        vehicleSelect.addEventListener("change", () => {
-          selectedVehicleId = vehicleSelect.value || "";
-          previewCache = null;
-          refreshSelectionPanel();
+    /*
+     * Remove all orders from the current
+     * selection that are already assigned to FDS.
+     */
+    byId("mapDeselectFdsBtn")
+      ?.addEventListener("click", () => {
 
-          window.dispatchEvent(new CustomEvent("veynor:vehicle-selected", {
-            detail: {
-              vehicleId: selectedVehicleId
-            }
-          }));
+        const summary =
+          getSelectedFdsSummary();
+
+        summary.alreadyFds.forEach(order => {
+          selectedOrderIds.delete(
+            String(order.id)
+          );
         });
-      }
 
-      byId("mapPreviewSelectionBtn")?.addEventListener("click", async () => {
+        previewCache = null;
+
+        emitSelection();
+        reload();
+      });
+
+
+    byId("mapPreviewSelectionBtn")
+      ?.addEventListener("click", async () => {
         await previewSelection();
       });
 
-      byId("mapApplySelectionBtn")?.addEventListener("click", () => {
+
+    byId("mapApplySelectionBtn")
+      ?.addEventListener("click", () => {
         applySelectionToPlanner(true);
       });
-    }, 0);
-  }
+
+  }, 0);
+}
 
   function startMode(mode) {
     selectionMode = mode;

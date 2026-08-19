@@ -37,6 +37,15 @@
   group: "Planning",
   roles: TENANT_ROLES
 },
+
+{
+  href: "./quality.html",
+  label: "Quality / Damage",
+  icon: "quality",
+  group: "Planning",
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
+},
+
 { href: "./products.html", label: "Products", icon: "box", group: "Warehouse", roles: TENANT_ROLES },
 
 {
@@ -99,6 +108,15 @@ serviceJob: `
   <path d="M7 6h4"/>
 </svg>
 `,
+
+quality: `
+<svg viewBox="0 0 24 24">
+  <path d="M12 3 4 6v6c0 5 3.4 8 8 9 4.6-1 8-4 8-9V6z"/>
+  <path d="M9 9l6 6"/>
+  <path d="M15 9l-6 6"/>
+</svg>
+`,
+
     scanner: `<svg viewBox="0 0 24 24"><path d="M7 4h10a3 3 0 0 1 3 3v2H4V7a3 3 0 0 1 3-3z"/><path d="M8 9v8a4 4 0 0 0 8 0V9"/><path d="M10 13h4"/></svg>`,
     stock: `<svg viewBox="0 0 24 24"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><path d="M8 6v12"/></svg>`,
     paperPlane: `<svg viewBox="0 0 24 24"><path d="M21 4 3 11l7 3 3 7z"/><path d="M10 14 21 4"/></svg>`,

@@ -13,7 +13,7 @@ let retailerList = [];
 let productList = [];
 
   let selectedExcelFile = null;
-  let selectedPdfFile = null;
+  let selectedPdfFiles = [];
   let rawRows = [];
   let groupedOrders = [];
   let selectedOrderNo = null;
@@ -2000,9 +2000,9 @@ console.log(lines);
   }
 
  async function readPdfFile() {
-  if (!selectedPdfFile) {
+  if (!selectedPdfFiles.length) {
     showToast(
-      "Select or drop a PDF packing slip first.",
+      "Select or drop one or more PDF packing slips first.",
       "err"
     );
     return;
@@ -2018,21 +2018,104 @@ console.log(lines);
 
   currentSourceKind = "pdf";
 
-  setProgress(
-    true,
-    10,
-    "Reading PDF..."
+  const allOrders = [];
+  const allRawRows = [];
+  const extractedTexts = [];
+
+  for (let fileIndex = 0; fileIndex < selectedPdfFiles.length; fileIndex++) {
+    const pdfFile = selectedPdfFiles[fileIndex];
+
+    const startPct = Math.round(
+      (fileIndex / selectedPdfFiles.length) * 60
+    );
+
+    setProgress(
+      true,
+      Math.max(5, startPct),
+      `Reading PDF ${fileIndex + 1}/${selectedPdfFiles.length}: ${pdfFile.name}`
+    );
+
+    try {
+      /*
+       * De bestaande parser gebruikt deze global voor
+       * de positionele BILL TO / SHIP TO herkenning.
+       * Daarom zetten we hem per PDF opnieuw.
+       */
+      window.__lastPdfStructuredItems =
+        await extractPdfStructured(pdfFile);
+
+      const pdfText =
+        await extractPdfText(pdfFile);
+
+      extractedTexts.push(
+        `===== ${pdfFile.name} =====\n${pdfText}`
+      );
+
+      const pdfRows = pdfText
+        .split(/\r?\n/)
+        .filter(Boolean);
+
+      allRawRows.push(...pdfRows);
+
+      /*
+       * Zoy houdt zijn eigen parser.
+       * Bellstone gebruikt de bestaande packing slip parser.
+       */
+      const parsedOrders = isZoyOwner()
+        ? parseZoyPdfOrder(pdfText)
+        : parsePackingSlip(pdfText);
+
+      /*
+       * Cruciaal voor bulkimport:
+       * iedere order onthoudt uit welke PDF hij afkomstig is.
+       */
+      parsedOrders.forEach(order => {
+        order.sourcePdfFile = pdfFile;
+        order.sourcePdfName = pdfFile.name;
+
+        allOrders.push(order);
+      });
+
+    } catch (error) {
+      console.error(
+        `PDF parsing failed for ${pdfFile.name}`,
+        error
+      );
+
+      /*
+       * Eén fout PDF-bestand mag de andere PDF's
+       * niet blokkeren.
+       */
+      const failedOrder = {
+        ...buildEmptyOrder(),
+        sourceKind: "pdf",
+        sourceType: getPdfSourceType(),
+        orderNumber: `ERROR-${fileIndex + 1}`,
+        externalReference: `ERROR-${fileIndex + 1}`,
+        sourcePdfFile: pdfFile,
+        sourcePdfName: pdfFile.name,
+        failed: true,
+        notes: [
+          `Could not read ${pdfFile.name}: ${error.message || "Unknown PDF error"}`
+        ],
+        warnings: [],
+        lines: []
+      };
+
+      allOrders.push(failedOrder);
+    }
+  }
+
+  /*
+   * Pas nadat alle bestanden zijn gelezen vervangen we
+   * de preview. Zo komen alle PDF-orders samen in één overzicht.
+   */
+  groupedOrders = allOrders;
+  rawRows = allRawRows;
+
+  lastPdfText = extractedTexts.join(
+    "\n\n"
   );
-
-  window.__lastPdfStructuredItems =
-    await extractPdfStructured(
-      selectedPdfFile
-    );
-
-  lastPdfText =
-    await extractPdfText(
-      selectedPdfFile
-    );
 
   const textArea =
     byId("pdfExtractedText");
@@ -2043,32 +2126,14 @@ console.log(lines);
 
   setProgress(
     true,
-    45,
-    "Parsing PDF..."
-  );
-
-  rawRows = lastPdfText
-    .split(/\r?\n/)
-    .filter(Boolean);
-
-  /*
-   * Zoy gebruikt een eigen PDF-parser.
-   * Bellstone blijft de bestaande packing-slip-parser gebruiken.
-   */
-  groupedOrders = isZoyOwner()
-    ? parseZoyPdfOrder(lastPdfText)
-    : parsePackingSlip(lastPdfText);
-
-  /*
-   * Haal volume, gewicht, tarieven en packages al vóór
-   * de preview uit de productmaster.
-   */
-  setProgress(
-    true,
-    55,
+    65,
     "Loading product data..."
   );
 
+  /*
+   * Volume, gewicht, packages en tarieven voor alle
+   * geïmporteerde PDF-orders in één keer ophalen.
+   */
   await enrichPreviewOrdersWithProductData();
 
   selectedOrderNo =
@@ -2077,7 +2142,7 @@ console.log(lines);
 
   setProgress(
     true,
-    70,
+    78,
     "Checking existing orders..."
   );
 
@@ -2085,14 +2150,17 @@ console.log(lines);
 
   setProgress(
     true,
-    85,
+    90,
     "Checking product master..."
   );
 
   await markMissingProducts();
 
   renderAll();
-  setProgress(false);
+
+  setProgress(
+    false
+  );
 
   const missingCount =
     getAllMissingProductSkus().length;
@@ -2102,11 +2170,25 @@ console.log(lines);
       ? ` ${missingCount} SKU(s) are not in product master.`
       : "";
 
+  const failedCount =
+    groupedOrders.filter(order =>
+      order.failed ||
+      (order.notes || []).some(note =>
+        String(note).startsWith("Could not read ")
+      )
+    ).length;
+
+  const failedText =
+    failedCount
+      ? ` ${failedCount} PDF(s) could not be parsed correctly.`
+      : "";
+
   showToast(
-    `${groupedOrders.length} order(s) found from PDF ${selectedPdfFile.name}.${warningText}`,
-    missingCount ? "err" : "ok"
+    `${groupedOrders.length} order(s) found from ${selectedPdfFiles.length} PDF file(s).${warningText}${failedText}`,
+    missingCount || failedCount ? "err" : "ok"
   );
 }
+
 
 function getSalesOrderPrefix() {
   return settingsMap.get("sales_order_prefix") || "SO-";
@@ -3440,55 +3522,98 @@ return {
 };
   }
 
-  async function uploadSupplierPackingSlip(orderId, orderNumber, customerId = null) {
-    if (!selectedPdfFile || !orderId) return null;
-
-    const cid = await getCompanyId();
-
-    const safeOrder = String(orderNumber || orderId)
-      .replace(/[^a-zA-Z0-9_-]/g, "_");
-
-    const fileName = `supplier-packing-slip-${safeOrder}.pdf`;
-    const storagePath = `${cid}/${orderId}/${fileName}`;
-
-    const { error: uploadError } = await client.storage
-      .from("order-documents")
-      .upload(storagePath, selectedPdfFile, {
-        contentType: "application/pdf",
-        upsert: true
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data: publicData } = client.storage
-      .from("order-documents")
-      .getPublicUrl(storagePath);
-
-    const fileUrl = publicData?.publicUrl || "";
-
-    const documentPayload = {
-      company_id: cid,
-      customer_id: customerId,
-      order_id: orderId,
-      document_type: "supplier_packing_slip",
-      document_number: orderNumber || null,
-      document_status: "received",
-      file_url: fileUrl,
-      storage_path: storagePath,
-      customer_visible: false
-    };
-
-    const { error: docError } = await client
-      .from("order_documents")
-     .insert(documentPayload);
-
-    if (docError) throw docError;
-
-    return {
-      storagePath,
-      fileUrl
-    };
+ async function uploadSupplierPackingSlip(
+  orderId,
+  orderNumber,
+  customerId = null,
+  pdfFile = null
+) {
+  if (!pdfFile || !orderId) {
+    return null;
   }
+
+  const cid = await getCompanyId();
+
+  const safeOrder = String(
+    orderNumber || orderId
+  )
+    .replace(
+      /[^a-zA-Z0-9_-]/g,
+      "_"
+    );
+
+  const fileName =
+    `supplier-packing-slip-${safeOrder}.pdf`;
+
+  const storagePath =
+    `${cid}/${orderId}/${fileName}`;
+
+  const { error: uploadError } =
+    await client.storage
+      .from("order-documents")
+      .upload(
+        storagePath,
+        pdfFile,
+        {
+          contentType: "application/pdf",
+          upsert: true
+        }
+      );
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: publicData } =
+    client.storage
+      .from("order-documents")
+      .getPublicUrl(
+        storagePath
+      );
+
+  const fileUrl =
+    publicData?.publicUrl || "";
+
+  const documentPayload = {
+    company_id: cid,
+    customer_id: customerId,
+    order_id: orderId,
+
+    document_type:
+      "supplier_packing_slip",
+
+    document_number:
+      orderNumber || null,
+
+    document_status:
+      "received",
+
+    file_url:
+      fileUrl,
+
+    storage_path:
+      storagePath,
+
+    customer_visible:
+      false
+  };
+
+  const { error: docError } =
+    await client
+      .from("order_documents")
+      .insert(
+        documentPayload
+      );
+
+  if (docError) {
+    throw docError;
+  }
+
+  return {
+    storagePath,
+    fileUrl
+  };
+}
 
 async function createOrderImportedNotification(order, result, companyId) {
   try {
@@ -3523,150 +3648,281 @@ async function createOrderImportedNotification(order, result, companyId) {
   }
 }
 
-  async function importOrders() {
-    if (!groupedOrders.length) {
-      showToast("Read a file first.", "err");
-      return;
-    }
+ async function importOrders() {
+  if (!groupedOrders.length) {
+    showToast(
+      "Read a file first.",
+      "err"
+    );
+    return;
+  }
 
-    if (!getSelectedProductOwner()) {
-      showToast("Select a product owner first.", "err");
-      return;
-    }
+  if (!getSelectedProductOwner()) {
+    showToast(
+      "Select a product owner first.",
+      "err"
+    );
+    return;
+  }
 
-    const cid = await getCompanyId();
+  const cid =
+    await getCompanyId();
 
-    let imported = 0;
-    let skipped = 0;
-    let failed = 0;
-    let linesWritten = 0;
-    let supplierPackingSlipsLinked = 0;
-    const missingProductsAfterImport = new Set();
+  let imported = 0;
+  let skipped = 0;
+  let failed = 0;
+  let linesWritten = 0;
+  let supplierPackingSlipsLinked = 0;
 
-    setProgress(true, 0, "Starting import...");
+  const missingProductsAfterImport =
+    new Set();
 
-    for (let i = 0; i < groupedOrders.length; i++) {
-      const order = groupedOrders[i];
-      const pct = Math.round(((i + 1) / groupedOrders.length) * 100);
-
-      setProgress(true, pct, `Importing ${order.orderNumber} (${i + 1}/${groupedOrders.length})...`);
-
-      if (order.notes.length) {
-        order.importMessage = order.notes.join(" · ");
-        skipped++;
-        renderAll();
-        continue;
-      }
-
-      if (order.existing && getCheckbox("optSkipExisting", true) && !order.importAnyway) {
-        order.importMessage = "Skipped: order number already exists.";
-        skipped++;
-        renderAll();
-        continue;
-      }
-
-      try {
-        const result = await insertOrder(order, cid);
-await createOrderImportedNotification(order, result, cid);
-
-        if (order.sourceKind === "pdf") {
-          try {
-            await uploadSupplierPackingSlip(
-              result.orderId,
-              order.orderNumber,
-              result.customerId || null
-            );
-
-            supplierPackingSlipsLinked++;
-          } catch (pdfError) {
-            console.error("Supplier packing slip upload failed", pdfError);
-          }
-        }
-
-        order.imported = true;
-        order.failed = false;
-
-if (result.missingSkus?.length) {
-  result.missingSkus.forEach(
-    sku => missingProductsAfterImport.add(sku)
+  setProgress(
+    true,
+    0,
+    "Starting import..."
   );
 
-  order.importMessage =
-    `${result.lineCount} order line(s) written. ` +
-    `Missing product(s): ${result.missingSkus.join(", ")}.`;
-} else {
-  order.importMessage =
-    `${result.lineCount} order line(s) written.`;
-}
+  for (
+    let i = 0;
+    i < groupedOrders.length;
+    i++
+  ) {
+    const order =
+      groupedOrders[i];
 
-if (result.priorityCount > 0) {
-  order.importMessage +=
-    ` Stock priority set on ${result.priorityCount} ` +
-    `product line${result.priorityCount === 1 ? "" : "s"}.`;
-}
+    const pct =
+      Math.round(
+        ((i + 1) / groupedOrders.length) *
+        100
+      );
 
-        if (order.sourceKind === "pdf") {
-          order.importMessage += supplierPackingSlipsLinked
-            ? " Supplier packing slip linked."
-            : " Supplier packing slip upload checked.";
-        }
-
-        imported++;
-        linesWritten += result.lineCount;
-      } catch (error) {
-        console.error("FULL IMPORT ERROR", error);
-        order.failed = true;
-        order.imported = false;
-        order.importMessage = error.message || JSON.stringify(error);
-        failed++;
-      }
-
-      renderAll();
-    }
-
-    setProgress(false);
-
-    const missingList = [...missingProductsAfterImport].sort((a, b) => a.localeCompare(b));
-    const missingText = missingList.length ? ` Missing products: ${missingList.join(", ")}.` : "";
-    const pdfText = supplierPackingSlipsLinked ? ` Supplier packing slips linked: ${supplierPackingSlipsLinked}.` : "";
-
-    showToast(
-      `Import complete. Imported: ${imported}, lines written: ${linesWritten}, skipped: ${skipped}, failed: ${failed}.${pdfText}${missingText}`,
-      failed || missingList.length ? "err" : "ok"
+    setProgress(
+      true,
+      pct,
+      `Importing ${order.orderNumber} (${i + 1}/${groupedOrders.length})...`
     );
 
-    await markExistingOrders();
-    await markMissingProducts();
+    if (order.notes.length) {
+      order.importMessage =
+        order.notes.join(" · ");
+
+      skipped++;
+
+      renderAll();
+      continue;
+    }
+
+    if (
+      order.existing &&
+      getCheckbox(
+        "optSkipExisting",
+        true
+      ) &&
+      !order.importAnyway
+    ) {
+      order.importMessage =
+        "Skipped: order number already exists.";
+
+      skipped++;
+
+      renderAll();
+      continue;
+    }
+
+    try {
+      const result =
+        await insertOrder(
+          order,
+          cid
+        );
+
+      await createOrderImportedNotification(
+        order,
+        result,
+        cid
+      );
+
+      let packingSlipLinked =
+        false;
+
+      if (
+        order.sourceKind === "pdf" &&
+        order.sourcePdfFile
+      ) {
+        try {
+          await uploadSupplierPackingSlip(
+            result.orderId,
+            order.orderNumber,
+            result.customerId || null,
+            order.sourcePdfFile
+          );
+
+          supplierPackingSlipsLinked++;
+          packingSlipLinked = true;
+
+        } catch (pdfError) {
+          console.error(
+            `Supplier packing slip upload failed for ${order.orderNumber}`,
+            pdfError
+          );
+        }
+      }
+
+      order.imported = true;
+      order.failed = false;
+
+      if (
+        result.missingSkus?.length
+      ) {
+        result.missingSkus.forEach(
+          sku =>
+            missingProductsAfterImport.add(
+              sku
+            )
+        );
+
+        order.importMessage =
+          `${result.lineCount} order line(s) written. ` +
+          `Missing product(s): ${result.missingSkus.join(", ")}.`;
+
+      } else {
+        order.importMessage =
+          `${result.lineCount} order line(s) written.`;
+      }
+
+      if (
+        result.priorityCount > 0
+      ) {
+        order.importMessage +=
+          ` Stock priority set on ${result.priorityCount} ` +
+          `product line${result.priorityCount === 1 ? "" : "s"}.`;
+      }
+
+      if (
+        order.sourceKind === "pdf"
+      ) {
+        order.importMessage +=
+          packingSlipLinked
+            ? " Supplier packing slip linked."
+            : " Supplier packing slip upload checked.";
+      }
+
+      imported++;
+      linesWritten +=
+        result.lineCount;
+
+    } catch (error) {
+      console.error(
+        "FULL IMPORT ERROR",
+        error
+      );
+
+      order.failed = true;
+      order.imported = false;
+
+      order.importMessage =
+        error.message ||
+        JSON.stringify(error);
+
+      failed++;
+    }
+
     renderAll();
   }
 
-  function clearPreview() {
-    rawRows = [];
-    groupedOrders = [];
-    selectedOrderNo = null;
-    selectedExcelFile = null;
-    selectedPdfFile = null;
-    currentSourceKind = "";
-    lastPdfText = "";
+  setProgress(
+    false
+  );
 
-    const excelInput = byId("ordersImportFile");
-    if (excelInput) excelInput.value = "";
+  const missingList =
+    [
+      ...missingProductsAfterImport
+    ].sort(
+      (a, b) =>
+        a.localeCompare(b)
+    );
 
-    const pdfInput = byId("packingSlipPdfFile");
-    if (pdfInput) pdfInput.value = "";
+  const missingText =
+    missingList.length
+      ? ` Missing products: ${missingList.join(", ")}.`
+      : "";
 
-    setText("fileStatus", "No file selected.");
-    setText("excelFileStatus", "No Excel file selected.");
-    setText("pdfFileStatus", "No PDF file selected.");
+  const pdfText =
+    supplierPackingSlipsLinked
+      ? ` Supplier packing slips linked: ${supplierPackingSlipsLinked}.`
+      : "";
 
-    const textArea = byId("pdfExtractedText");
-    if (textArea) textArea.value = "";
+  showToast(
+    `Import complete. Imported: ${imported}, lines written: ${linesWritten}, skipped: ${skipped}, failed: ${failed}.${pdfText}${missingText}`,
+    failed || missingList.length
+      ? "err"
+      : "ok"
+  );
 
-    const panel = byId("pdfTextPanel");
-    if (panel) panel.style.display = "none";
+  await markExistingOrders();
+  await markMissingProducts();
 
-    renderAll();
+  renderAll();
+}
+
+function clearPreview() {
+  rawRows = [];
+  groupedOrders = [];
+  selectedOrderNo = null;
+
+  selectedExcelFile = null;
+  selectedPdfFiles = [];
+
+  currentSourceKind = "";
+  lastPdfText = "";
+
+  const excelInput =
+    byId("ordersImportFile");
+
+  if (excelInput) {
+    excelInput.value = "";
   }
+
+  const pdfInput =
+    byId("packingSlipPdfFile");
+
+  if (pdfInput) {
+    pdfInput.value = "";
+  }
+
+  setText(
+    "fileStatus",
+    "No file selected."
+  );
+
+  setText(
+    "excelFileStatus",
+    "No Excel file selected."
+  );
+
+  setText(
+    "pdfFileStatus",
+    "No PDF files selected."
+  );
+
+  const textArea =
+    byId("pdfExtractedText");
+
+  if (textArea) {
+    textArea.value = "";
+  }
+
+  const panel =
+    byId("pdfTextPanel");
+
+  if (panel) {
+    panel.style.display =
+      "none";
+  }
+
+  renderAll();
+}
 
   function togglePdfTextPanel() {
     const panel = byId("pdfTextPanel");
@@ -3677,72 +3933,200 @@ if (result.priorityCount > 0) {
     panel.style.display = panel.style.display === "none" || !panel.style.display ? "grid" : "none";
   }
 
-  function setSelectedPdfFile(file) {
-    if (!file) {
-      showToast("No PDF file detected.", "err");
-      return;
-    }
+ function setSelectedPdfFiles(files) {
+  const incoming =
+    Array.from(files || []);
 
-    const fileName = String(file.name || "").toLowerCase();
-    const fileType = String(file.type || "").toLowerCase();
-
-    if (!fileName.endsWith(".pdf") && fileType !== "application/pdf") {
-      showToast("Only PDF files are allowed for packing slip import.", "err");
-      return;
-    }
-
-    selectedPdfFile = file;
-    setText("pdfFileStatus", `${file.name} selected`);
-    showToast(`PDF selected: ${file.name}`, "ok");
+  if (!incoming.length) {
+    showToast(
+      "No PDF files detected.",
+      "err"
+    );
+    return;
   }
 
-  function bindPdfDropZone() {
-    const dropZone = byId("pdfDropZone");
-    const input = byId("packingSlipPdfFile");
+  const validFiles = [];
+  const invalidFiles = [];
 
-    if (!dropZone || !input) {
-      console.warn("PDF dropzone or file input not found.");
-      return;
+  incoming.forEach(file => {
+    const fileName =
+      String(
+        file?.name || ""
+      ).toLowerCase();
+
+    const fileType =
+      String(
+        file?.type || ""
+      ).toLowerCase();
+
+    const isPdf =
+      fileName.endsWith(".pdf") ||
+      fileType === "application/pdf";
+
+    if (isPdf) {
+      validFiles.push(file);
+    } else {
+      invalidFiles.push(file);
     }
+  });
 
-    function preventDefaults(event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+  if (!validFiles.length) {
+    showToast(
+      "Only PDF files are allowed for packing slip import.",
+      "err"
+    );
+    return;
+  }
 
-    ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
-      dropZone.addEventListener(eventName, preventDefaults, false);
-      document.body.addEventListener(eventName, preventDefaults, false);
-    });
+  /*
+   * De nieuwe selectie vervangt de vorige selectie.
+   * Daardoor weet je altijd exact welke batch je gaat lezen.
+   */
+  selectedPdfFiles =
+    validFiles;
 
-    ["dragenter", "dragover"].forEach(eventName => {
-      dropZone.addEventListener(eventName, () => {
-        dropZone.classList.add("drag-over");
-      }, false);
-    });
+  const names =
+    validFiles.map(
+      file => file.name
+    );
 
-    ["dragleave", "drop"].forEach(eventName => {
-      dropZone.addEventListener(eventName, () => {
-        dropZone.classList.remove("drag-over");
-      }, false);
-    });
+  const statusText =
+    validFiles.length === 1
+      ? `${names[0]} selected`
+      : `${validFiles.length} PDF files selected`;
 
-    dropZone.addEventListener("drop", event => {
-      const files = event.dataTransfer?.files;
+  setText(
+    "pdfFileStatus",
+    statusText
+  );
 
-      if (!files || !files.length) {
-        showToast("No file found in drop.", "err");
+  if (
+    invalidFiles.length
+  ) {
+    showToast(
+      `${validFiles.length} PDF file(s) selected. ${invalidFiles.length} non-PDF file(s) ignored.`,
+      "err"
+    );
+  } else {
+    showToast(
+      validFiles.length === 1
+        ? `PDF selected: ${names[0]}`
+        : `${validFiles.length} PDF files selected.`,
+      "ok"
+    );
+  }
+}
+
+function bindPdfDropZone() {
+  const dropZone =
+    byId("pdfDropZone");
+
+  const input =
+    byId("packingSlipPdfFile");
+
+  if (!dropZone || !input) {
+    console.warn(
+      "PDF dropzone or file input not found."
+    );
+    return;
+  }
+
+  /*
+   * Hierdoor werkt Choose File direct ook met meerdere
+   * bestanden, zelfs voordat we de HTML aanpassen.
+   */
+  input.multiple = true;
+
+  function preventDefaults(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  [
+    "dragenter",
+    "dragover",
+    "dragleave",
+    "drop"
+  ].forEach(eventName => {
+    dropZone.addEventListener(
+      eventName,
+      preventDefaults,
+      false
+    );
+
+    document.body.addEventListener(
+      eventName,
+      preventDefaults,
+      false
+    );
+  });
+
+  [
+    "dragenter",
+    "dragover"
+  ].forEach(eventName => {
+    dropZone.addEventListener(
+      eventName,
+      () => {
+        dropZone.classList.add(
+          "drag-over"
+        );
+      },
+      false
+    );
+  });
+
+  [
+    "dragleave",
+    "drop"
+  ].forEach(eventName => {
+    dropZone.addEventListener(
+      eventName,
+      () => {
+        dropZone.classList.remove(
+          "drag-over"
+        );
+      },
+      false
+    );
+  });
+
+  dropZone.addEventListener(
+    "drop",
+    event => {
+      const files =
+        event.dataTransfer?.files;
+
+      if (
+        !files ||
+        !files.length
+      ) {
+        showToast(
+          "No files found in drop.",
+          "err"
+        );
         return;
       }
 
-      setSelectedPdfFile(files[0]);
-    }, false);
+      setSelectedPdfFiles(
+        files
+      );
+    },
+    false
+  );
 
-    input.addEventListener("change", event => {
-      const file = event.target.files?.[0] || null;
-      setSelectedPdfFile(file);
-    });
-  }
+  input.addEventListener(
+    "change",
+    event => {
+      const files =
+        event.target.files;
+
+      setSelectedPdfFiles(
+        files
+      );
+    }
+  );
+}
 
   function hideDeprecatedOptions() {
     const createProducts = byId("optCreateProducts");

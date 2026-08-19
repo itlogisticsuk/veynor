@@ -5872,78 +5872,220 @@ async function generateFdsDeliveryLabels(vehicleId) {
   const button = document.querySelector(
     `[data-fds-labels="${CSS.escape(String(vehicleId))}"]`
   );
-  const oldText = button?.textContent || "Generate Labels";
+
+  const oldText =
+    button?.textContent ||
+    "Generate Labels";
 
   try {
     if (button) {
       button.disabled = true;
-      button.textContent = "Generating... ⏳";
+      button.textContent =
+        "Generating... ⏳";
     }
 
-    const vehicle = activeVehicles.find(v => String(v.id) === String(vehicleId));
-    if (!vehicle) throw new Error("Carrier not found.");
+    const vehicle =
+      activeVehicles.find(
+        row =>
+          String(row.id) ===
+          String(vehicleId)
+      );
 
-    const orders = getCarrierOrders(vehicle);
-    if (!orders.length) throw new Error("No FDS orders found.");
-
-    if (!window.DeliveryLabelGenerator?.generate) {
-      throw new Error("Delivery Label Generator is not loaded.");
+    if (!vehicle) {
+      throw new Error(
+        "Carrier not found."
+      );
     }
 
-    if (!window.PDFLib?.PDFDocument) {
-      throw new Error("pdf-lib is not loaded.");
+    /*
+     * Haal alle FDS-orders op.
+     */
+    const allFdsOrders =
+      getCarrierOrders(vehicle);
+
+    /*
+     * Collection-orders hebben GEEN
+     * delivery label nodig.
+     */
+    const orders =
+      allFdsOrders.filter(order =>
+        !isCollectionOrder(order)
+      );
+
+    if (!orders.length) {
+      throw new Error(
+        "No delivery labels required. Only collection orders found."
+      );
     }
 
-    showToast("Generating labels...", "ok");
+    if (
+      !window
+        .DeliveryLabelGenerator
+        ?.generate
+    ) {
+      throw new Error(
+        "Delivery Label Generator is not loaded."
+      );
+    }
+
+    if (
+      !window.PDFLib
+        ?.PDFDocument
+    ) {
+      throw new Error(
+        "pdf-lib is not loaded."
+      );
+    }
+
+    const skippedCollections =
+      allFdsOrders.length -
+      orders.length;
+
+    showToast(
+      skippedCollections > 0
+        ? `Generating labels for ${orders.length} order(s). ${skippedCollections} collection order(s) skipped.`
+        : `Generating labels for ${orders.length} order(s)...`,
+      "ok"
+    );
 
     const pdfUrls = [];
 
     for (const order of orders) {
       try {
-        const uploaded = await window.DeliveryLabelGenerator.generate(order.id);
-        if (uploaded?.fileUrl) pdfUrls.push(uploaded.fileUrl);
+        const uploaded =
+          await window
+            .DeliveryLabelGenerator
+            .generate(
+              order.id
+            );
+
+        if (
+          uploaded?.fileUrl
+        ) {
+          pdfUrls.push(
+            uploaded.fileUrl
+          );
+        }
       } catch (error) {
-        console.warn(`Labels skipped for ${order.order_number}:`, error.message);
+        console.warn(
+          `Labels skipped for ${order.order_number}:`,
+          error.message
+        );
       }
     }
 
-    if (!pdfUrls.length) throw new Error("No label PDFs were generated.");
-
-    showToast("Combining labels...", "ok");
-
-    const mergedPdf = await window.PDFLib.PDFDocument.create();
-
-    for (const url of pdfUrls) {
-      const response = await fetch(url);
-      if (!response.ok) continue;
-
-      const bytes = await response.arrayBuffer();
-      const pdf = await window.PDFLib.PDFDocument.load(bytes);
-      const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-      pages.forEach(page => mergedPdf.addPage(page));
+    if (!pdfUrls.length) {
+      throw new Error(
+        "No label PDFs were generated."
+      );
     }
 
-    const mergedBytes = await mergedPdf.save();
-    const blob = new Blob([mergedBytes], { type: "application/pdf" });
-    const blobUrl = URL.createObjectURL(blob);
-    const today = new Date().toISOString().slice(0, 10);
+    showToast(
+      "Combining labels...",
+      "ok"
+    );
 
-    const link = document.createElement("a");
+    const mergedPdf =
+      await window.PDFLib
+        .PDFDocument
+        .create();
+
+    for (const url of pdfUrls) {
+      const response =
+        await fetch(url);
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const bytes =
+        await response
+          .arrayBuffer();
+
+      const pdf =
+        await window.PDFLib
+          .PDFDocument
+          .load(bytes);
+
+      const pages =
+        await mergedPdf
+          .copyPages(
+            pdf,
+            pdf.getPageIndices()
+          );
+
+      pages.forEach(page =>
+        mergedPdf.addPage(page)
+      );
+    }
+
+    const mergedBytes =
+      await mergedPdf.save();
+
+    const blob =
+      new Blob(
+        [mergedBytes],
+        {
+          type:
+            "application/pdf"
+        }
+      );
+
+    const blobUrl =
+      URL.createObjectURL(
+        blob
+      );
+
+    const today =
+      new Date()
+        .toISOString()
+        .slice(0, 10);
+
+    const link =
+      document.createElement(
+        "a"
+      );
+
     link.href = blobUrl;
-    link.download = `FDS Delivery Labels ${today}.pdf`;
-    document.body.appendChild(link);
+
+    link.download =
+      `FDS Delivery Labels ${today}.pdf`;
+
+    document.body
+      .appendChild(link);
+
     link.click();
     link.remove();
 
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-    showToast("FDS labels downloaded.", "ok");
+    setTimeout(
+      () =>
+        URL.revokeObjectURL(
+          blobUrl
+        ),
+      30000
+    );
+
+    showToast(
+      skippedCollections > 0
+        ? `FDS labels downloaded. ${skippedCollections} collection order(s) skipped.`
+        : "FDS labels downloaded.",
+      "ok"
+    );
+
   } catch (error) {
     console.error(error);
-    showToast(error.message || "Could not generate labels.", "err");
+
+    showToast(
+      error.message ||
+      "Could not generate labels.",
+      "err"
+    );
+
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = oldText;
+      button.textContent =
+        oldText;
     }
   }
 }
