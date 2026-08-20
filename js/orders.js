@@ -2586,13 +2586,16 @@ async function assignSelectedToWarehousePickup(
   pickupDate = null
 ) {
   try {
-    const selectedIds = [...selectedOrderIds];
+    const selectedIds = [
+      ...selectedOrderIds
+    ];
 
     if (!selectedIds.length) {
       showToast(
         "Select at least one order first.",
         "err"
       );
+
       return;
     }
 
@@ -2601,10 +2604,12 @@ async function assignSelectedToWarehousePickup(
         "Select PICK UP WAREHOUSE first.",
         "err"
       );
+
       return;
     }
 
-    const vehicle = getSelectedVehicle();
+    const vehicle =
+      getSelectedVehicle();
 
     if (
       !vehicle ||
@@ -2614,126 +2619,248 @@ async function assignSelectedToWarehousePickup(
         "Selected resource is not PICK UP WAREHOUSE.",
         "err"
       );
+
       return;
     }
 
-const cid =
-  await getCompanyId();
+    const cid =
+      await getCompanyId();
 
-const now =
-  new Date().toISOString();
-
-/*
- * A date is optional.
- * No date means pickup date pending.
- */
-const date =
-  pickupDate || null;
-
-const selectedOrders =
-  selectedIds
-    .map(id =>
-      getOrderById(id)
-    )
-    .filter(Boolean);
-
-if (date) {
-  assertOrdersCanBePlannedOnDate(
-    selectedOrders,
-    date
-  );
-}
-
-const updatePayload = {
-  transport_type:
-    "charter",
-
-  status:
-    "export_for_charter",
-
-  transport_status:
-    "export_for_charter",
-
-  overall_status:
-    "export_for_charter",
-
-  route_id:
-    null,
-
-  carrier_vehicle_id:
-    selectedVehicleId,
-
-  /*
-   * FDS does not get a Veynor route date.
-   * The selected date is the FDS collection date.
-   */
-  planned_route_date:
-    null,
-
-  fds_collection_date:
-    date,
-
-  /*
-   * Actual delivery date is unknown
-   * until FDS planning is imported.
-   */
-  expected_delivery_date:
-    null,
-
-  confirmed_delivery_date:
-    null,
-
-  driver_user_id:
-    null,
-
-  driver_profile_id:
-    null,
-
-  driver_name:
-    null,
-
-  driver_email:
-    null,
-
-  delivery_eta_from:
-    null,
-
-  delivery_eta_to:
-    null,
-
-  delivery_eta_status:
-    "carrier",
-
-  last_activity_at:
-    now
-};
-
-    const { error } = await client
-      .from("orders")
-      .update(updatePayload)
-      .eq("company_id", cid)
-      .in("id", selectedIds);
-
-    if (error) throw error;
+    const now =
+      new Date().toISOString();
 
     /*
-     * Write an activity entry for every selected order.
+     * Pickup date is optional.
+     *
+     * When no date is selected the order
+     * remains Awaiting Pickup with the
+     * pickup date still pending.
      */
-    const activityRows = selectedIds.map(orderId => ({
-      company_id: cid,
-      order_id: orderId,
-      activity_type: "warehouse_pickup_assigned",
-      old_status: null,
-      new_status: "awaiting_pickup",
-      description: date
-        ? `Order assigned to warehouse pickup. Expected pickup date: ${date}.`
-        : "Order assigned to warehouse pickup. Pickup date pending.",
-      created_at: now
-    }));
+    const date =
+      pickupDate || null;
 
-    const { error: activityError } = await client
-      .from("order_activity_log")
-      .insert(activityRows);
+    const selectedOrders =
+      selectedIds
+        .map(id =>
+          getOrderById(id)
+        )
+        .filter(Boolean);
+
+    if (
+      selectedOrders.length !==
+      selectedIds.length
+    ) {
+      throw new Error(
+        "One or more selected orders could not be found."
+      );
+    }
+
+    /*
+     * Expected-stock orders may not be assigned
+     * before their earliest planning date.
+     */
+    if (date) {
+      assertOrdersCanBePlannedOnDate(
+        selectedOrders,
+        date
+      );
+    }
+
+    /*
+     * IMPORTANT:
+     *
+     * PICK UP WAREHOUSE is its own transport type.
+     *
+     * It must NOT be stored as:
+     *
+     * transport_type = charter
+     * status = export_for_charter
+     *
+     * because those values are reserved for FDS.
+     */
+    const updatePayload = {
+      transport_type:
+        "warehouse_pickup",
+
+      status:
+        "awaiting_pickup",
+
+      transport_status:
+        "awaiting_pickup",
+
+      overall_status:
+        "awaiting_pickup",
+
+      /*
+       * Warehouse pickup does not create
+       * a normal Veynor transport route.
+       */
+      route_id:
+        null,
+
+      /*
+       * Keep the selected virtual
+       * PICK UP WAREHOUSE vehicle/resource.
+       */
+      carrier_vehicle_id:
+        selectedVehicleId,
+
+      /*
+       * For warehouse pickup the selected
+       * date represents the expected
+       * pickup/collection date.
+       */
+      planned_route_date:
+        date,
+
+      expected_delivery_date:
+        date,
+
+      confirmed_delivery_date:
+        null,
+
+      /*
+       * CRITICAL:
+       *
+       * Clear all old FDS information.
+       * Otherwise OCC / Map could still
+       * recognise the order as FDS.
+       */
+      fds_collection_date:
+        null,
+
+      fds_collection_week:
+        null,
+
+      fds_job_ref:
+        null,
+
+      /*
+       * No driver is required for
+       * customer warehouse pickup.
+       */
+      driver_user_id:
+        null,
+
+      driver_profile_id:
+        null,
+
+      driver_name:
+        null,
+
+      driver_email:
+        null,
+
+      /*
+       * No delivery ETA applies.
+       */
+      delivery_eta_from:
+        null,
+
+      delivery_eta_to:
+        null,
+
+      delivery_eta_status:
+        date
+          ? "planned"
+          : "pending",
+
+      last_activity_at:
+        now
+    };
+
+    const {
+      data,
+      error
+    } =
+      await client
+        .from("orders")
+        .update(
+          updatePayload
+        )
+        .eq(
+          "company_id",
+          cid
+        )
+        .in(
+          "id",
+          selectedIds
+        )
+        .select(`
+          id,
+          order_number,
+          status,
+          transport_status,
+          overall_status,
+          transport_type,
+          carrier_vehicle_id,
+          planned_route_date,
+          expected_delivery_date,
+          confirmed_delivery_date,
+          fds_collection_date
+        `);
+
+    if (error) {
+      throw error;
+    }
+
+    if (
+      !Array.isArray(data) ||
+      data.length !==
+        selectedIds.length
+    ) {
+      throw new Error(
+        "Not all selected orders were assigned to warehouse pickup."
+      );
+    }
+
+    /*
+     * Add activity history.
+     */
+    const activityRows =
+      selectedIds.map(
+        orderId => ({
+          company_id:
+            cid,
+
+          order_id:
+            orderId,
+
+          activity_type:
+            "warehouse_pickup_assigned",
+
+          old_status:
+            null,
+
+          new_status:
+            "awaiting_pickup",
+
+          description:
+            date
+              ? (
+                  "Order assigned to PICK UP WAREHOUSE. " +
+                  `Expected pickup date: ${date}.`
+                )
+              : (
+                  "Order assigned to PICK UP WAREHOUSE. " +
+                  "Pickup date pending."
+                ),
+
+          created_at:
+            now
+        })
+      );
+
+    const {
+      error: activityError
+    } =
+      await client
+        .from(
+          "order_activity_log"
+        )
+        .insert(
+          activityRows
+        );
 
     if (activityError) {
       console.warn(
@@ -2742,17 +2869,29 @@ const updatePayload = {
       );
     }
 
+    /*
+     * Clear current selection.
+     */
     selectedOrderIds.clear();
-    selectedOrderId = null;
 
+    selectedOrderId =
+      null;
+
+    /*
+     * Reload directly from Supabase.
+     */
     await refreshAll();
 
     showToast(
-      `${selectedIds.length} order(s) assigned to PICK UP WAREHOUSE.`,
+      `${data.length} order(s) assigned to PICK UP WAREHOUSE.`,
       "ok"
     );
+
   } catch (error) {
-    console.error(error);
+    console.error(
+      "[orders.js] Warehouse pickup assignment failed:",
+      error
+    );
 
     showToast(
       error.message ||
@@ -2761,7 +2900,6 @@ const updatePayload = {
     );
   }
 }
-
 
 function getSelectedVehicle() {
   return activeVehicles.find(
