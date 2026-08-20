@@ -20,14 +20,22 @@
   let selectedImportFile = null;
   let productColumns = new Set();
 
-  let selectedLabelProduct = null;
-  let generatedLabelNodes = [];
+let selectedLabelProduct = null;
+let generatedLabelNodes = [];
+
+let selectedProductImageFile = null;
+let currentProductImageUrl = "";
+let removeCurrentProductImage = false;
+
+const PRODUCT_IMAGE_BUCKET = "product-images";
+const MAX_PRODUCT_IMAGE_SIZE = 5 * 1024 * 1024;
 
   const DEFAULT_OWNER_NAMES = ["bellstone", "zoy", "zoe"];
 
-  const OPTIONAL_FIELDS = [
-    "category",
-    "barcode_value",
+const OPTIONAL_FIELDS = [
+  "image_url",
+  "category",
+  "barcode_value",
     "qr_value",
     "length_cm",
     "width_cm",
@@ -742,6 +750,240 @@ importSelect.innerHTML =
     }
   }
 
+function resetProductImageState() {
+  selectedProductImageFile = null;
+  currentProductImageUrl = "";
+  removeCurrentProductImage = false;
+
+  const input = byId("productImageFile");
+
+  if (input) {
+    input.value = "";
+  }
+
+  const fileName = byId("productImageFileName");
+
+  if (fileName) {
+    fileName.textContent = "No image selected";
+  }
+
+  renderProductImagePreview();
+}
+
+
+function renderProductImagePreview(previewUrl = null) {
+  const image = byId("productImagePreviewImg");
+  const placeholder = byId("productImagePlaceholder");
+  const removeButton = byId("btnRemoveProductImage");
+
+  if (!image || !placeholder) {
+    return;
+  }
+
+  const url =
+    previewUrl ||
+    (!removeCurrentProductImage
+      ? currentProductImageUrl
+      : "");
+
+  if (url) {
+    image.src = url;
+    image.hidden = false;
+    placeholder.hidden = true;
+
+    if (removeButton) {
+      removeButton.disabled = false;
+    }
+  } else {
+    image.removeAttribute("src");
+    image.hidden = true;
+    placeholder.hidden = false;
+
+    if (removeButton) {
+      removeButton.disabled = true;
+    }
+  }
+}
+
+
+function handleProductImageSelection(event) {
+  const file =
+    event.target.files?.[0] ||
+    null;
+
+  if (!file) {
+    selectedProductImageFile = null;
+
+    renderProductImagePreview();
+    return;
+  }
+
+  const allowedTypes = [
+    "image/jpeg",
+    "image/png",
+    "image/webp"
+  ];
+
+  if (!allowedTypes.includes(file.type)) {
+    event.target.value = "";
+
+    throw new Error(
+      "Only JPG, PNG and WebP images are allowed."
+    );
+  }
+
+  if (file.size > MAX_PRODUCT_IMAGE_SIZE) {
+    event.target.value = "";
+
+    throw new Error(
+      "Product image may not be larger than 5 MB."
+    );
+  }
+
+  selectedProductImageFile = file;
+  removeCurrentProductImage = false;
+
+  const fileName =
+    byId("productImageFileName");
+
+  if (fileName) {
+    fileName.textContent = file.name;
+  }
+
+  const previewUrl =
+    URL.createObjectURL(file);
+
+  renderProductImagePreview(
+    previewUrl
+  );
+}
+
+
+function getProductImageExtension(file) {
+  if (file?.type === "image/webp") {
+    return "webp";
+  }
+
+  if (file?.type === "image/png") {
+    return "png";
+  }
+
+  return "jpg";
+}
+
+
+function safeStoragePart(value) {
+  return String(value || "product")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+
+async function uploadProductImage(
+  productId,
+  sku
+) {
+  if (!selectedProductImageFile) {
+    return currentProductImageUrl || "";
+  }
+
+  const db =
+    ensureClient();
+
+  const extension =
+    getProductImageExtension(
+      selectedProductImageFile
+    );
+
+  const filePath =
+    `${productId}/${safeStoragePart(
+      sku
+    )}.${extension}`;
+
+  const {
+    error: uploadError
+  } = await db.storage
+    .from(PRODUCT_IMAGE_BUCKET)
+    .upload(
+      filePath,
+      selectedProductImageFile,
+      {
+        cacheControl: "3600",
+        upsert: true,
+        contentType:
+          selectedProductImageFile.type
+      }
+    );
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const {
+    data
+  } = db.storage
+    .from(PRODUCT_IMAGE_BUCKET)
+    .getPublicUrl(filePath);
+
+  const publicUrl =
+    data?.publicUrl || "";
+
+  if (!publicUrl) {
+    throw new Error(
+      "Image uploaded but no public URL was returned."
+    );
+  }
+
+  return publicUrl;
+}
+
+
+async function removeStoredProductImage(imageUrl) {
+  if (!imageUrl) return;
+
+  try {
+    const marker =
+      `/storage/v1/object/public/${PRODUCT_IMAGE_BUCKET}/`;
+
+    const index =
+      imageUrl.indexOf(marker);
+
+    if (index === -1) {
+      return;
+    }
+
+    const path =
+      decodeURIComponent(
+        imageUrl.slice(
+          index + marker.length
+        )
+      );
+
+    if (!path) return;
+
+    const {
+      error
+    } = await ensureClient()
+      .storage
+      .from(PRODUCT_IMAGE_BUCKET)
+      .remove([path]);
+
+    if (error) {
+      console.warn(
+        "Image cleanup skipped:",
+        error.message
+      );
+    }
+  } catch (error) {
+    console.warn(
+      "Image cleanup skipped:",
+      error.message
+    );
+  }
+}
+
   function getFormData() {
     const package1 = toInteger(byId("package1Qty")?.value, 0);
     const package2 = toInteger(byId("package2Qty")?.value, 0);
@@ -835,36 +1077,152 @@ if (field === "total_s2u_fees") payload[field] = totalS2uFees;
     return payload;
   }
 
-  async function saveProduct() {
-    const db = ensureClient();
-    const cid = await getCompanyId();
-    const data = getFormData();
+ async function saveProduct() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+  const data = getFormData();
 
-    validateForm(data);
+  validateForm(data);
 
-    const payload = buildDbPayload(data, cid);
+  const payload =
+    buildDbPayload(
+      data,
+      cid
+    );
 
-    const { data: existing, error: existingError } = await db
-      .from("products")
-      .select("id")
-      .eq("company_id", cid)
-      .eq("sku_base", data.sku_base)
-      .maybeSingle();
+  const {
+    data: existing,
+    error: existingError
+  } = await db
+    .from("products")
+    .select(`
+      id,
+      image_url
+    `)
+    .eq("company_id", cid)
+    .eq("sku_base", data.sku_base)
+    .maybeSingle();
 
-    if (existingError) throw existingError;
+  if (existingError) {
+    throw existingError;
+  }
 
-    if (existing?.id) {
-      const { error } = await db.from("products").update(payload).eq("id", existing.id);
-      if (error) throw error;
-    } else {
-      const { error } = await db.from("products").insert(payload);
-      if (error) throw error;
+  let productId =
+    existing?.id || null;
+
+
+  /*
+   * BESTAAND PRODUCT
+   */
+  if (productId) {
+
+    if (
+      removeCurrentProductImage &&
+      existing?.image_url
+    ) {
+      await removeStoredProductImage(
+        existing.image_url
+      );
+
+      currentProductImageUrl = "";
     }
 
-    showToast("Product saved.", "ok");
-    clearForm();
-    await loadProducts();
+    if (selectedProductImageFile) {
+      const imageUrl =
+        await uploadProductImage(
+          productId,
+          data.sku_base
+        );
+
+      payload.image_url =
+        imageUrl || null;
+
+    } else if (
+      removeCurrentProductImage
+    ) {
+      payload.image_url = null;
+
+    } else {
+      /*
+       * Bestaande foto behouden.
+       */
+      payload.image_url =
+        existing?.image_url || null;
+    }
+
+    const {
+      error
+    } = await db
+      .from("products")
+      .update(payload)
+      .eq("id", productId);
+
+    if (error) {
+      throw error;
+    }
+
+  } else {
+
+    /*
+     * NIEUW PRODUCT:
+     * eerst product maken om UUID te krijgen.
+     */
+    const {
+      data: insertedProduct,
+      error: insertError
+    } = await db
+      .from("products")
+      .insert(payload)
+      .select(`
+        id,
+        sku_base
+      `)
+      .single();
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    productId =
+      insertedProduct?.id || null;
+
+    if (!productId) {
+      throw new Error(
+        "Product created but no product ID was returned."
+      );
+    }
+
+    if (selectedProductImageFile) {
+      const imageUrl =
+        await uploadProductImage(
+          productId,
+          data.sku_base
+        );
+
+      const {
+        error: imageError
+      } = await db
+        .from("products")
+        .update({
+          image_url: imageUrl
+        })
+        .eq("id", productId);
+
+      if (imageError) {
+        throw imageError;
+      }
+    }
   }
+
+  showToast(
+    "Product saved.",
+    "ok"
+  );
+
+  clearForm();
+
+  await loadProducts();
+}
 
   function fillForm(row) {
     if (!row) return;
@@ -890,38 +1248,106 @@ if (field === "total_s2u_fees") payload[field] = totalS2uFees;
     if (byId("package1Qty")) byId("package1Qty").value = getProductValue(row, "package_1_qty", "") ?? "";
     if (byId("package2Qty")) byId("package2Qty").value = getProductValue(row, "package_2_qty", "") ?? "";
     if (byId("package3Qty")) byId("package3Qty").value = getProductValue(row, "package_3_qty", "") ?? "";
+  if (byId("package1Qty")) {
+  byId("package1Qty").value =
+    getProductValue(
+      row,
+      "package_1_qty",
+      ""
+    ) ?? "";
+}
+
+if (byId("package2Qty")) {
+  byId("package2Qty").value =
+    getProductValue(
+      row,
+      "package_2_qty",
+      ""
+    ) ?? "";
+}
+
+if (byId("package3Qty")) {
+  byId("package3Qty").value =
+    getProductValue(
+      row,
+      "package_3_qty",
+      ""
+    ) ?? "";
+}
+
+
+/* =========================================
+ * PRODUCT IMAGE
+ * ======================================= */
+
+selectedProductImageFile = null;
+removeCurrentProductImage = false;
+
+currentProductImageUrl =
+  getProductValue(
+    row,
+    "image_url",
+    ""
+  ) || "";
+
+const imageInput =
+  byId("productImageFile");
+
+if (imageInput) {
+  imageInput.value = "";
+}
+
+const imageFileName =
+  byId("productImageFileName");
+
+if (imageFileName) {
+  imageFileName.textContent =
+    currentProductImageUrl
+      ? "Current image"
+      : "No image selected";
+}
+
+renderProductImagePreview();
+}
+
+function clearForm() {
+  [
+    "productSku",
+    "productName",
+    "productCategory",
+    "productBarcode",
+    "productQr",
+    "productDescription",
+    "productVolume",
+    "productNetWeight",
+    "productWeight",
+    "productLocationPrefix",
+    "tariffStorage",
+    "tariffAdmin",
+    "tariffTransport",
+    "tariffHandling",
+    "totalCustomerCharge",
+    "productPackagesPerUnit",
+    "package1Qty",
+    "package2Qty",
+    "package3Qty"
+  ].forEach(id => {
+    const el = byId(id);
+
+    if (el) {
+      el.value = "";
+    }
+  });
+
+  if (byId("productCustomer")) {
+    byId("productCustomer").value =
+      getDefaultOwnerCustomerId();
   }
 
-  function clearForm() {
-    [
-      "productSku",
-      "productName",
-      "productCategory",
-      "productBarcode",
-      "productQr",
-      "productDescription",
-      "productVolume",
-      "productNetWeight",
-      "productWeight",
-      "productLocationPrefix",
-      "tariffStorage",
-      "tariffAdmin",
-      "tariffTransport",
-      "tariffHandling",
-      "totalCustomerCharge",
-      "productPackagesPerUnit",
-      "package1Qty",
-      "package2Qty",
-      "package3Qty"
-    ].forEach(id => {
-      const el = byId(id);
-      if (el) el.value = "";
-    });
+  resetProductImageState();
+}
 
-    if (byId("productCustomer")) byId("productCustomer").value = getDefaultOwnerCustomerId();
-  }
-
-  function openStockLabelModal(row) {
+function openStockLabelModal(row) {
     selectedLabelProduct = row;
     generatedLabelNodes = [];
 
@@ -1795,21 +2221,108 @@ byId("productsImportOwner")?.addEventListener("change", () => {
       byId("productModal")?.classList.remove("open");
     });
 
-    byId("productModal")?.addEventListener("click", event => {
-      if (event.target?.id === "productModal") {
-        byId("productModal").classList.remove("open");
-      }
-    });
+ byId("productModal")?.addEventListener("click", event => {
+  if (event.target?.id === "productModal") {
+    byId("productModal").classList.remove("open");
+  }
+});
 
-    byId("btnSaveProduct")?.addEventListener("click", async () => {
-      try {
-        await saveProduct();
-        byId("productModal")?.classList.remove("open");
-      } catch (error) {
-        console.error(error);
-        showToast(error.message, "err");
-      }
-    });
+
+/* =========================================================
+ * PRODUCT IMAGE
+ * ======================================================= */
+
+/*
+ * Zodra je bij een product op "Choose Image" klikt
+ * en een JPG / PNG / WebP kiest, wordt deze functie uitgevoerd.
+ *
+ * De afbeelding wordt hier NOG NIET naar Supabase gestuurd.
+ * We bewaren hem alleen tijdelijk en tonen de preview.
+ *
+ * De echte upload gebeurt pas bij Save Product.
+ */
+byId("productImageFile")?.addEventListener(
+  "change",
+  event => {
+    try {
+      handleProductImageSelection(event);
+    } catch (error) {
+      console.error(
+        "Product image selection failed:",
+        error
+      );
+
+      showToast(
+        error.message ||
+        "Could not select image.",
+        "err"
+      );
+    }
+  }
+);
+
+
+/*
+ * Als je op "Remove Image" klikt:
+ *
+ * - verwijderen we de eventueel nieuw gekozen afbeelding;
+ * - onthouden we dat de bestaande afbeelding verwijderd moet worden;
+ * - maken we de file input leeg;
+ * - verdwijnt de afbeelding uit de preview.
+ *
+ * De foto wordt pas echt verwijderd wanneer je daarna
+ * op Save Product klikt.
+ */
+byId("btnRemoveProductImage")?.addEventListener(
+  "click",
+  () => {
+    selectedProductImageFile = null;
+
+    removeCurrentProductImage = true;
+
+    const input =
+      byId("productImageFile");
+
+    if (input) {
+      input.value = "";
+    }
+
+    const fileName =
+      byId("productImageFileName");
+
+    if (fileName) {
+      fileName.textContent =
+        "Image will be removed when saved";
+    }
+
+    renderProductImagePreview();
+  }
+);
+
+
+/* =========================================================
+ * SAVE PRODUCT
+ * ======================================================= */
+
+byId("btnSaveProduct")?.addEventListener(
+  "click",
+  async () => {
+    try {
+      await saveProduct();
+
+      byId("productModal")
+        ?.classList.remove("open");
+
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        error.message,
+        "err"
+      );
+    }
+  }
+);
 
     byId("btnClearProductForm")?.addEventListener("click", clearForm);
 

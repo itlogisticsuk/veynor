@@ -83,6 +83,78 @@
     font-weight:700;
 }
     .products-help-box{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:12px;padding:12px 14px;font-size:12.5px;font-weight:800;line-height:1.5}
+.product-image-editor{
+  grid-column:1/-1;
+  display:grid;
+  grid-template-columns:140px minmax(0,1fr);
+  gap:16px;
+  align-items:center;
+  padding:14px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:#f8fafc;
+}
+
+.product-image-preview{
+  width:140px;
+  height:140px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background:#fff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+}
+
+.product-image-preview img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  padding:6px;
+}
+
+.product-image-placeholder{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:800;
+  text-align:center;
+  padding:12px;
+}
+
+.product-image-controls{
+  display:grid;
+  gap:10px;
+}
+
+.product-image-controls input[type=file]{
+  display:none;
+}
+
+.product-image-file-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.product-image-file-name{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:700;
+}
+
+.product-image-help{
+  color:var(--muted);
+  font-size:11.5px;
+  line-height:1.45;
+}
+
+@media(max-width:700px){
+  .product-image-editor{
+    grid-template-columns:1fr;
+  }
+}
 
     .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.60);z-index:9999;display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:28px}
     .modal-backdrop.open{display:flex}
@@ -283,6 +355,88 @@
         <div class="field"><label for="productCustomer">Product Owner</label><select id="productCustomer" class="select"></select></div>
         <div class="field"><label for="productSku">SKU</label><input id="productSku" class="input"/></div>
         <div class="field"><label for="productName">Product Name</label><input id="productName" class="input"/></div>
+<div class="product-image-editor">
+
+  <div
+    id="productImagePreview"
+    class="product-image-preview"
+  >
+
+    <div
+      id="productImagePlaceholder"
+      class="product-image-placeholder"
+    >
+      No product image
+    </div>
+
+    <img
+      id="productImagePreviewImg"
+      src=""
+      alt="Product image"
+      hidden
+    />
+
+  </div>
+
+
+  <div class="product-image-controls">
+
+    <div class="field">
+
+      <label>
+        Product Image
+      </label>
+
+      <div class="product-image-file-row">
+
+        <input
+          id="productImageFile"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+        />
+
+        <label
+          for="productImageFile"
+          class="btn"
+          role="button"
+        >
+          Choose Image
+        </label>
+
+        <span
+          id="productImageFileName"
+          class="product-image-file-name"
+        >
+          No image selected
+        </span>
+
+      </div>
+
+    </div>
+
+
+    <div class="product-image-help">
+      JPG, PNG or WebP. Preferably square, at least 600 × 600 px.
+      The image will be uploaded when the product is saved.
+    </div>
+
+
+    <div class="actions-row">
+
+      <button
+        id="btnRemoveProductImage"
+        class="btn"
+        type="button"
+        disabled
+      >
+        Remove Image
+      </button>
+
+    </div>
+
+  </div>
+
+</div>
         <div class="field"><label for="productCategory">Brand / Range</label><input id="productCategory" class="input"/></div>
         <div class="field"><label for="productBarcode">Barcode</label><input id="productBarcode" class="input"/></div>
         <div class="field"><label for="productQr">QR Value</label><input id="productQr" class="input"/></div>

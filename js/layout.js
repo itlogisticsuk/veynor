@@ -56,10 +56,45 @@
   roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
 },
 
-{ href: "./scan.html", label: "Scan In / Out", icon: "scanner", group: "Warehouse", roles: TENANT_ROLES },
-    { href: "./stock.html", label: "Current Stock", icon: "stock", group: "Warehouse", roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] },
-    { href: "./outbound.html", label: "Outbound History", icon: "paperPlane", group: "Warehouse", roles: TENANT_ROLES },
-    { href: "./inventory.html", label: "Inventory Check", icon: "checkCircle", group: "Warehouse", roles: TENANT_ROLES },
+{ 
+  href: "./scan.html", 
+  label: "Scan In / Out", 
+  icon: "scanner", 
+  group: "Warehouse", 
+  roles: TENANT_ROLES 
+},
+
+{ 
+  href: "./stock.html", 
+  label: "Current Stock", 
+  icon: "stock", 
+  group: "Warehouse", 
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] 
+},
+
+{ 
+  href: "./stock-history.html", 
+  label: "Stock History", 
+  icon: "history", 
+  group: "Warehouse", 
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] 
+},
+
+{ 
+  href: "./outbound.html", 
+  label: "Outbound History", 
+  icon: "paperPlane", 
+  group: "Warehouse", 
+  roles: TENANT_ROLES 
+},
+
+{ 
+  href: "./inventory.html", 
+  label: "Inventory Check", 
+  icon: "checkCircle", 
+  group: "Warehouse", 
+  roles: TENANT_ROLES 
+},
 
     { href: "./billing.html", label: "Billing", icon: "pound", group: "Finance", roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] },
 
@@ -119,6 +154,14 @@ quality: `
 
     scanner: `<svg viewBox="0 0 24 24"><path d="M7 4h10a3 3 0 0 1 3 3v2H4V7a3 3 0 0 1 3-3z"/><path d="M8 9v8a4 4 0 0 0 8 0V9"/><path d="M10 13h4"/></svg>`,
     stock: `<svg viewBox="0 0 24 24"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><path d="M8 6v12"/></svg>`,
+history: `
+  <svg viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9"/>
+    <path d="M12 7v5l3 2"/>
+    <path d="M7 4 4 7"/>
+    <path d="M4 4v3h3"/>
+  </svg>
+`,
     paperPlane: `<svg viewBox="0 0 24 24"><path d="M21 4 3 11l7 3 3 7z"/><path d="M10 14 21 4"/></svg>`,
     checkCircle: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg>`,
     analytics: `<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M7 17V9"/><path d="M12 17V5"/><path d="M17 17v-7"/><path d="M5 5l4 4 4-5 6 6"/></svg>`,

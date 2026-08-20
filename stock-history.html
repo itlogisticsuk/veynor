@@ -1,0 +1,1800 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+
+  <title>Stock History · Veynor</title>
+
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="./assets/icons/veynor-logo.svg"
+  />
+
+  <link
+    rel="stylesheet"
+    href="/css/theme.css"
+  />
+
+  <!-- =======================================================
+       EXTERNAL LIBRARIES
+       ======================================================= -->
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <!-- PDF -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+  <!-- =======================================================
+       VEYNOR CORE
+       ======================================================= -->
+
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js?v=2" defer></script>
+  <script src="/js/layout.js" defer></script>
+
+  <!-- NEW PAGE SCRIPT -->
+  <script src="/js/stock-history.js" defer></script>
+
+
+  <style>
+
+    /* =======================================================
+       PAGE
+       ======================================================= */
+
+    .stock-history-page {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+
+    .stock-history-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stock-history-actions .btn {
+      min-width: 116px;
+    }
+
+    .export-btn-icon {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+
+    /* =======================================================
+       SUMMARY KPI
+       ======================================================= */
+
+    .history-kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .history-kpi {
+      min-height: 92px;
+      padding: 15px 16px;
+      display: grid;
+      align-content: center;
+    }
+
+    .history-kpi-label {
+      font-size: 10px;
+      line-height: 1.2;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: #64748b;
+    }
+
+    .history-kpi-value {
+      margin-top: 7px;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 950;
+      color: #07152f;
+    }
+
+    .history-kpi-sub {
+      margin-top: 6px;
+      font-size: 11.5px;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+
+
+    /* =======================================================
+       FILTER CARD
+       ======================================================= */
+
+    .history-filter-card {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .history-filters {
+      display: grid;
+      grid-template-columns:
+        minmax(260px, 1.7fr)
+        minmax(180px, .9fr)
+        minmax(180px, .9fr)
+        auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .history-filter-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 1px;
+    }
+
+
+    /* =======================================================
+       PRODUCT OVERVIEW
+       ======================================================= */
+
+    .history-overview-card {
+      overflow: hidden;
+    }
+
+    .history-overview-head {
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      background:
+        linear-gradient(
+          180deg,
+          #ffffff 0%,
+          #fbfdff 100%
+        );
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .history-overview-title {
+      display: grid;
+      gap: 3px;
+    }
+
+    .history-overview-title h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 950;
+      color: var(--text);
+    }
+
+    .history-overview-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .history-results-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+
+    /* =======================================================
+       PRODUCT TABLE
+       ======================================================= */
+
+    .product-history-table-wrap {
+      overflow-x: auto;
+    }
+
+    .product-history-table {
+      width: 100%;
+      min-width: 1080px;
+      border-collapse: collapse;
+    }
+
+    .product-history-table th,
+    .product-history-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      text-align: left;
+      font-size: 12.5px;
+    }
+
+    .product-history-table th {
+      background: #f8fafc;
+      color: #475569;
+      font-size: 10.5px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .045em;
+      white-space: nowrap;
+    }
+
+    .product-history-table tbody tr {
+      background: #fff;
+      transition:
+        background .14s ease,
+        box-shadow .14s ease;
+    }
+
+    .product-history-table tbody tr:hover {
+      background: #fafcff;
+    }
+
+    .product-history-table tbody tr.active {
+      background:
+        linear-gradient(
+          90deg,
+          rgba(18, 103, 255, .075),
+          rgba(255, 255, 255, .95) 28%
+        );
+    }
+
+    .product-history-table tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .product-cell {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 280px;
+    }
+
+    .product-thumbnail {
+      width: 58px;
+      height: 58px;
+      flex: 0 0 58px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border: 1px solid #dce5f2;
+      border-radius: 12px;
+      background:
+        linear-gradient(
+          145deg,
+          #fff,
+          #f6f8fb
+        );
+
+      overflow: hidden;
+      box-shadow: 0 5px 14px rgba(15, 23, 42, .05);
+    }
+
+    .product-thumbnail img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      padding: 4px;
+    }
+
+    .product-thumbnail-placeholder {
+      color: #94a3b8;
+      font-size: 22px;
+    }
+
+    .product-copy {
+      min-width: 0;
+    }
+
+    .product-sku {
+      display: block;
+      color: #1267ff;
+      font-size: 13px;
+      line-height: 1.2;
+      font-weight: 950;
+    }
+
+    .product-name {
+      display: block;
+      margin-top: 4px;
+      color: #07152f;
+      font-size: 12.5px;
+      line-height: 1.35;
+      font-weight: 850;
+
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 300px;
+    }
+
+    .product-owner {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .stock-number {
+      font-size: 14px;
+      font-weight: 950;
+      color: #07152f;
+    }
+
+    .stock-number.available {
+      color: #047857;
+    }
+
+    .stock-number.reserved {
+      color: #c2410c;
+    }
+
+    .stock-number.committed {
+      color: #6d28d9;
+    }
+
+    .last-movement {
+      display: grid;
+      gap: 2px;
+    }
+
+    .last-movement strong {
+      font-size: 12.5px;
+      color: var(--text);
+    }
+
+    .last-movement span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .history-view-btn {
+      min-width: 110px;
+    }
+
+
+    /* =======================================================
+       SELECTED PRODUCT HISTORY
+       ======================================================= */
+
+    .selected-history-card {
+      overflow: hidden;
+      scroll-margin-top: 16px;
+    }
+
+    .selected-history-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--border);
+
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+
+      background:
+        linear-gradient(
+          180deg,
+          #fff 0%,
+          #fbfdff 100%
+        );
+    }
+
+    .selected-product-main {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 260px;
+    }
+
+    .selected-product-image {
+      width: 82px;
+      height: 82px;
+      flex: 0 0 82px;
+
+      border-radius: 16px;
+      border: 1px solid var(--border);
+
+      background:
+        linear-gradient(
+          145deg,
+          #fff,
+          #f6f8fb
+        );
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      overflow: hidden;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, .07);
+    }
+
+    .selected-product-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      padding: 5px;
+    }
+
+    .selected-product-placeholder {
+      font-size: 30px;
+      color: #94a3b8;
+    }
+
+    .selected-product-copy {
+      min-width: 0;
+    }
+
+    .selected-product-eyebrow {
+      font-size: 10px;
+      font-weight: 950;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: .07em;
+    }
+
+    .selected-product-sku {
+      margin-top: 4px;
+      font-size: 21px;
+      line-height: 1.1;
+      font-weight: 950;
+      color: #1267ff;
+    }
+
+    .selected-product-name {
+      margin-top: 4px;
+      font-size: 14px;
+      line-height: 1.35;
+      font-weight: 850;
+      color: var(--text);
+    }
+
+    .selected-product-owner {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .selected-history-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+
+    /* =======================================================
+       SELECTED PRODUCT SUMMARY
+       ======================================================= */
+
+    .selected-stock-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      padding: 14px 18px;
+
+      border-bottom: 1px solid var(--border);
+      background: #fbfdff;
+    }
+
+    .selected-stock-stat {
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      background: #fff;
+      padding: 11px 13px;
+    }
+
+    .selected-stock-label {
+      color: #64748b;
+      font-size: 9.5px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .selected-stock-value {
+      margin-top: 5px;
+      font-size: 18px;
+      font-weight: 950;
+      color: #07152f;
+    }
+
+    .selected-stock-value.available {
+      color: #047857;
+    }
+
+    .selected-stock-value.reserved {
+      color: #c2410c;
+    }
+
+    .selected-stock-value.committed {
+      color: #6d28d9;
+    }
+
+
+    /* =======================================================
+       HISTORY FILTERS
+       ======================================================= */
+
+    .movement-toolbar {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+
+      display: grid;
+      grid-template-columns:
+        minmax(210px, 1.3fr)
+        minmax(150px, .75fr)
+        minmax(150px, .75fr)
+        minmax(170px, .85fr)
+        auto;
+      gap: 10px;
+      align-items: end;
+
+      background: #fff;
+    }
+
+    .movement-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+
+    /* =======================================================
+       MOVEMENT HISTORY TABLE
+       ======================================================= */
+
+    .movement-table-wrap {
+      overflow-x: auto;
+    }
+
+    .movement-history-table {
+      width: 100%;
+      min-width: 1280px;
+      border-collapse: collapse;
+    }
+
+    .movement-history-table th,
+    .movement-history-table td {
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      text-align: left;
+      font-size: 12.2px;
+    }
+
+    .movement-history-table th {
+      background: #f8fafc;
+      color: #475569;
+      font-size: 10px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .045em;
+      white-space: nowrap;
+    }
+
+    .movement-history-table tbody tr:hover {
+      background: #fafcff;
+    }
+
+    .movement-event {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+
+      font-size: 10.5px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .movement-event.receipt {
+      background: #ecfdf5;
+      color: #047857;
+      border-color: #bbf7d0;
+    }
+
+    .movement-event.reservation {
+      background: #fff7ed;
+      color: #c2410c;
+      border-color: #fed7aa;
+    }
+
+    .movement-event.release {
+      background: #eff6ff;
+      color: #1d4ed8;
+      border-color: #bfdbfe;
+    }
+
+    .movement-event.shipment {
+      background: #f5f3ff;
+      color: #6d28d9;
+      border-color: #ddd6fe;
+    }
+
+    .movement-event.adjustment {
+      background: #fef2f2;
+      color: #b91c1c;
+      border-color: #fecaca;
+    }
+
+    .movement-event.inventory {
+      background: #f1f5f9;
+      color: #475569;
+      border-color: #e2e8f0;
+    }
+
+    .movement-event.return {
+      background: #ecfeff;
+      color: #0e7490;
+      border-color: #a5f3fc;
+    }
+
+    .movement-event.location {
+      background: #eef2ff;
+      color: #4338ca;
+      border-color: #c7d2fe;
+    }
+
+    .movement-reference {
+      display: grid;
+      gap: 2px;
+    }
+
+    .movement-reference strong {
+      color: #1267ff;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .movement-reference span {
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+
+    .movement-location {
+      display: grid;
+      gap: 2px;
+    }
+
+    .movement-location strong {
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .movement-location span {
+      font-size: 10.5px;
+      color: var(--muted);
+    }
+
+    .qty {
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .qty.positive {
+      color: #047857;
+    }
+
+    .qty.negative {
+      color: #b91c1c;
+    }
+
+    .qty.neutral {
+      color: #64748b;
+    }
+
+    .balance-value {
+      font-size: 13px;
+      font-weight: 950;
+      color: #07152f;
+    }
+
+    .movement-user {
+      display: grid;
+      gap: 2px;
+    }
+
+    .movement-user strong {
+      font-size: 11.5px;
+    }
+
+    .movement-user span {
+      font-size: 10.5px;
+      color: var(--muted);
+    }
+
+    .movement-notes {
+      max-width: 300px;
+      color: #475569;
+      font-size: 11.5px;
+      line-height: 1.4;
+    }
+
+
+    /* =======================================================
+       EMPTY / LOADING STATES
+       ======================================================= */
+
+    .history-empty {
+      padding: 38px 20px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .history-empty-icon {
+      width: 54px;
+      height: 54px;
+      margin: 0 auto 10px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 18px;
+      background: #f1f5f9;
+      color: #64748b;
+      font-size: 22px;
+    }
+
+    .history-empty strong {
+      display: block;
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .history-empty span {
+      display: block;
+      margin-top: 5px;
+      font-size: 12px;
+    }
+
+    .loading-row {
+      padding: 30px 20px !important;
+      text-align: center !important;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+
+    /* =======================================================
+       FOOTER BAR
+       ======================================================= */
+
+    .history-footer {
+      padding: 12px 18px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+
+      border-top: 1px solid var(--border);
+      background: #fbfdff;
+    }
+
+    .history-footer-meta {
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
+    .history-pagination {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .history-page-label {
+      min-width: 82px;
+      text-align: center;
+      color: #475569;
+      font-size: 11.5px;
+      font-weight: 850;
+    }
+
+
+    /* =======================================================
+       RESPONSIVE
+       ======================================================= */
+
+    @media (max-width: 1400px) {
+
+      .history-kpis {
+        grid-template-columns:
+          repeat(3, minmax(0, 1fr));
+      }
+
+      .history-filters {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .movement-toolbar {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .movement-toolbar-actions {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 950px) {
+
+      .history-kpis,
+      .selected-stock-summary {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .selected-history-head {
+        flex-direction: column;
+      }
+
+      .selected-history-actions {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 700px) {
+
+      .history-kpis,
+      .history-filters,
+      .selected-stock-summary,
+      .movement-toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .history-filter-actions,
+      .movement-toolbar-actions {
+        width: 100%;
+      }
+
+      .history-filter-actions .btn,
+      .movement-toolbar-actions .btn {
+        flex: 1;
+      }
+
+      .stock-history-actions {
+        width: 100%;
+      }
+
+      .stock-history-actions .btn {
+        flex: 1;
+      }
+
+      .selected-product-main {
+        align-items: flex-start;
+      }
+
+      .selected-product-image {
+        width: 70px;
+        height: 70px;
+        flex-basis: 70px;
+      }
+    }
+
+  </style>
+</head>
+
+
+<body>
+
+<div class="app-shell">
+
+  <!-- =====================================================
+       GLOBAL VEYNOR SIDEBAR
+       layout.js vult deze automatisch.
+       ===================================================== -->
+
+  <aside
+    id="sidebarMount"
+    class="sidebar"
+  ></aside>
+
+
+  <!-- =====================================================
+       PAGE
+       ===================================================== -->
+
+  <main class="page stock-history-page">
+
+
+    <!-- ===================================================
+         TOP BAR
+         =================================================== -->
+
+    <section class="page-topbar">
+
+      <div class="page-title">
+
+        <h1>
+          Stock History
+        </h1>
+
+        <p>
+          Complete product stock history, receipts, reservations,
+          releases, shipments and warehouse adjustments.
+        </p>
+
+      </div>
+
+
+      <div class="stock-history-actions">
+
+        <button
+          class="btn"
+          id="btnRefreshStockHistory"
+          type="button"
+        >
+          Refresh
+        </button>
+
+
+        <button
+          class="btn"
+          id="btnExportHistoryExcel"
+          type="button"
+          title="Download current Stock History as Excel"
+        >
+          <span class="export-btn-icon">
+            ↓
+          </span>
+
+          Excel
+        </button>
+
+
+        <button
+          class="btn btn-primary"
+          id="btnExportHistoryPdf"
+          type="button"
+          title="Download current Stock History as PDF"
+        >
+          <span class="export-btn-icon">
+            ↓
+          </span>
+
+          PDF
+        </button>
+
+      </div>
+
+    </section>
+
+
+    <!-- ===================================================
+         TOAST
+         =================================================== -->
+
+    <div
+      id="toast"
+      class="notice"
+    ></div>
+
+
+    <!-- ===================================================
+         GLOBAL KPI CARDS
+         =================================================== -->
+
+    <section class="history-kpis">
+
+      <article class="card history-kpi">
+
+        <div class="history-kpi-label">
+          Products
+        </div>
+
+        <div
+          class="history-kpi-value"
+          id="kpiHistoryProducts"
+        >
+          0
+        </div>
+
+        <div class="history-kpi-sub">
+          Products with stock records
+        </div>
+
+      </article>
+
+
+      <article class="card history-kpi">
+
+        <div class="history-kpi-label">
+          Physical
+        </div>
+
+        <div
+          class="history-kpi-value"
+          id="kpiHistoryPhysical"
+        >
+          0
+        </div>
+
+        <div class="history-kpi-sub">
+          Physical packages currently held
+        </div>
+
+      </article>
+
+
+      <article class="card history-kpi">
+
+        <div class="history-kpi-label">
+          Available
+        </div>
+
+        <div
+          class="history-kpi-value"
+          id="kpiHistoryAvailable"
+        >
+          0
+        </div>
+
+        <div class="history-kpi-sub">
+          Available for allocation
+        </div>
+
+      </article>
+
+
+      <article class="card history-kpi">
+
+        <div class="history-kpi-label">
+          Reserved
+        </div>
+
+        <div
+          class="history-kpi-value"
+          id="kpiHistoryReserved"
+        >
+          0
+        </div>
+
+        <div class="history-kpi-sub">
+          Reserved against orders
+        </div>
+
+      </article>
+
+
+      <article class="card history-kpi">
+
+        <div class="history-kpi-label">
+          Committed
+        </div>
+
+        <div
+          class="history-kpi-value"
+          id="kpiHistoryCommitted"
+        >
+          0
+        </div>
+
+        <div class="history-kpi-sub">
+          Picked or loaded stock
+        </div>
+
+      </article>
+
+    </section>
+
+
+    <!-- ===================================================
+         FILTERS
+         =================================================== -->
+
+    <section class="card history-filter-card">
+
+      <div class="section-head">
+
+        <div>
+
+          <h2 class="section-title">
+            Product Search
+          </h2>
+
+          <p class="section-sub">
+            Search products and open the complete historical stock timeline.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <div class="history-filters">
+
+        <div class="field">
+
+          <label for="historySearch">
+            Search
+          </label>
+
+          <input
+            id="historySearch"
+            class="input"
+            type="search"
+            placeholder="SKU, product name, reference or product owner..."
+            autocomplete="off"
+          />
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="historyProductOwner">
+            Product Owner
+          </label>
+
+          <select
+            id="historyProductOwner"
+            class="select"
+          >
+
+            <option value="">
+              All Product Owners
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="historyStockStatus">
+            Stock Status
+          </label>
+
+          <select
+            id="historyStockStatus"
+            class="select"
+          >
+
+            <option value="">
+              All Stock
+            </option>
+
+            <option value="available">
+              Available
+            </option>
+
+            <option value="reserved">
+              Reserved
+            </option>
+
+            <option value="committed">
+              Committed
+            </option>
+
+            <option value="out_of_stock">
+              Out of Stock
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="history-filter-actions">
+
+          <button
+            class="btn"
+            id="btnClearHistoryFilters"
+            type="button"
+          >
+            Clear
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- ===================================================
+         PRODUCTS OVERVIEW
+         =================================================== -->
+
+    <section class="card history-overview-card">
+
+      <div class="history-overview-head">
+
+        <div class="history-overview-title">
+
+          <h2>
+            Products Overview
+          </h2>
+
+          <p>
+            Select a product to view all historical stock movements.
+          </p>
+
+        </div>
+
+
+        <div
+          class="history-results-meta"
+          id="historyResultsMeta"
+        >
+          Loading products...
+        </div>
+
+      </div>
+
+
+      <div class="product-history-table-wrap">
+
+        <table
+          class="product-history-table"
+          id="productHistoryTable"
+        >
+
+          <thead>
+
+            <tr>
+
+              <th>
+                Product
+              </th>
+
+              <th>
+                Physical
+              </th>
+
+              <th>
+                Available
+              </th>
+
+              <th>
+                Reserved
+              </th>
+
+              <th>
+                Committed
+              </th>
+
+              <th>
+                Last Movement
+              </th>
+
+              <th>
+                History
+              </th>
+
+            </tr>
+
+          </thead>
+
+
+          <tbody id="productHistoryBody">
+
+            <tr>
+
+              <td
+                colspan="7"
+                class="loading-row"
+              >
+                Loading stock history...
+              </td>
+
+            </tr>
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+
+      <div class="history-footer">
+
+        <div
+          class="history-footer-meta"
+          id="productHistoryFooterMeta"
+        >
+          Loading...
+        </div>
+
+
+        <div class="history-pagination">
+
+          <button
+            class="mini-btn"
+            id="btnHistoryPreviousPage"
+            type="button"
+          >
+            Previous
+          </button>
+
+
+          <span
+            class="history-page-label"
+            id="historyPageLabel"
+          >
+            Page 1
+          </span>
+
+
+          <button
+            class="mini-btn"
+            id="btnHistoryNextPage"
+            type="button"
+          >
+            Next
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- ===================================================
+         SELECTED PRODUCT HISTORY
+         =================================================== -->
+
+    <section
+      class="card selected-history-card"
+      id="selectedHistoryCard"
+    >
+
+
+      <!-- =================================================
+           SELECTED PRODUCT HEADER
+           ================================================= -->
+
+      <div class="selected-history-head">
+
+        <div class="selected-product-main">
+
+
+          <div
+            class="selected-product-image"
+            id="selectedProductImageWrap"
+          >
+
+            <div
+              class="selected-product-placeholder"
+              id="selectedProductPlaceholder"
+            >
+              📦
+            </div>
+
+
+            <img
+              id="selectedProductImage"
+              src=""
+              alt=""
+              hidden
+            />
+
+          </div>
+
+
+          <div class="selected-product-copy">
+
+            <div class="selected-product-eyebrow">
+              Selected Product
+            </div>
+
+
+            <div
+              class="selected-product-sku"
+              id="selectedProductSku"
+            >
+              Select a product
+            </div>
+
+
+            <div
+              class="selected-product-name"
+              id="selectedProductName"
+            >
+              Choose View History from the product overview.
+            </div>
+
+
+            <div
+              class="selected-product-owner"
+              id="selectedProductOwner"
+            >
+              —
+            </div>
+
+          </div>
+
+        </div>
+
+
+        <div class="selected-history-actions">
+
+
+          <button
+            class="btn"
+            id="btnSelectedHistoryExcel"
+            type="button"
+            disabled
+            title="Download selected product history as Excel"
+          >
+            <span class="export-btn-icon">
+              ↓
+            </span>
+
+            Excel
+          </button>
+
+
+          <button
+            class="btn btn-primary"
+            id="btnSelectedHistoryPdf"
+            type="button"
+            disabled
+            title="Download selected product history as PDF"
+          >
+            <span class="export-btn-icon">
+              ↓
+            </span>
+
+            PDF
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <!-- =================================================
+           SELECTED PRODUCT CURRENT STOCK
+           ================================================= -->
+
+      <div class="selected-stock-summary">
+
+        <div class="selected-stock-stat">
+
+          <div class="selected-stock-label">
+            Physical
+          </div>
+
+          <div
+            class="selected-stock-value"
+            id="selectedPhysical"
+          >
+            0
+          </div>
+
+        </div>
+
+
+        <div class="selected-stock-stat">
+
+          <div class="selected-stock-label">
+            Available
+          </div>
+
+          <div
+            class="selected-stock-value available"
+            id="selectedAvailable"
+          >
+            0
+          </div>
+
+        </div>
+
+
+        <div class="selected-stock-stat">
+
+          <div class="selected-stock-label">
+            Reserved
+          </div>
+
+          <div
+            class="selected-stock-value reserved"
+            id="selectedReserved"
+          >
+            0
+          </div>
+
+        </div>
+
+
+        <div class="selected-stock-stat">
+
+          <div class="selected-stock-label">
+            Committed
+          </div>
+
+          <div
+            class="selected-stock-value committed"
+            id="selectedCommitted"
+          >
+            0
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <!-- =================================================
+           MOVEMENT FILTERS
+           ================================================= -->
+
+      <div class="movement-toolbar">
+
+
+        <div class="field">
+
+          <label for="movementSearch">
+            Search History
+          </label>
+
+          <input
+            id="movementSearch"
+            class="input"
+            type="search"
+            placeholder="Reference, SO, ACK, location, notes..."
+            autocomplete="off"
+          />
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="movementTypeFilter">
+            Event
+          </label>
+
+          <select
+            id="movementTypeFilter"
+            class="select"
+          >
+
+            <option value="">
+              All Events
+            </option>
+
+            <option value="receipt">
+              Receipt
+            </option>
+
+            <option value="reservation">
+              Reservation
+            </option>
+
+            <option value="reservation_released">
+              Reservation Released
+            </option>
+
+            <option value="shipment">
+              Shipment
+            </option>
+
+            <option value="inventory_check">
+              Inventory Check
+            </option>
+
+            <option value="adjustment">
+              Adjustment
+            </option>
+
+            <option value="return">
+              Return
+            </option>
+
+            <option value="location_move">
+              Location Move
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="movementDateFrom">
+            From
+          </label>
+
+          <input
+            id="movementDateFrom"
+            class="input"
+            type="date"
+          />
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="movementDateTo">
+            To
+          </label>
+
+          <input
+            id="movementDateTo"
+            class="input"
+            type="date"
+          />
+
+        </div>
+
+
+        <div class="movement-toolbar-actions">
+
+          <button
+            class="btn"
+            id="btnClearMovementFilters"
+            type="button"
+          >
+            Clear
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <!-- =================================================
+           MOVEMENT HISTORY TABLE
+           ================================================= -->
+
+      <div class="movement-table-wrap">
+
+        <table
+          class="movement-history-table"
+          id="movementHistoryTable"
+        >
+
+          <thead>
+
+            <tr>
+
+              <th>
+                Date / Time
+              </th>
+
+              <th>
+                Event
+              </th>
+
+              <th>
+                Reference
+              </th>
+
+              <th>
+                Location
+              </th>
+
+              <th>
+                Quantity
+              </th>
+
+              <th>
+                Balance
+              </th>
+
+              <th>
+                User
+              </th>
+
+              <th>
+                Notes
+              </th>
+
+            </tr>
+
+          </thead>
+
+
+          <tbody id="movementHistoryBody">
+
+            <tr>
+
+              <td colspan="8">
+
+                <div class="history-empty">
+
+                  <div class="history-empty-icon">
+                    ↕
+                  </div>
+
+                  <strong>
+                    Select a product
+                  </strong>
+
+                  <span>
+                    The complete stock movement history will appear here.
+                  </span>
+
+                </div>
+
+              </td>
+
+            </tr>
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+
+      <!-- =================================================
+           MOVEMENT HISTORY FOOTER
+           ================================================= -->
+
+      <div class="history-footer">
+
+        <div
+          class="history-footer-meta"
+          id="movementHistoryMeta"
+        >
+          No product selected
+        </div>
+
+
+        <div class="history-pagination">
+
+          <button
+            class="mini-btn"
+            id="btnMovementPreviousPage"
+            type="button"
+            disabled
+          >
+            Previous
+          </button>
+
+
+          <span
+            class="history-page-label"
+            id="movementPageLabel"
+          >
+            Page 1
+          </span>
+
+
+          <button
+            class="mini-btn"
+            id="btnMovementNextPage"
+            type="button"
+            disabled
+          >
+            Next
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+  </main>
+
+</div>
+
+</body>
+</html>
