@@ -1539,6 +1539,1108 @@ const internalCellsHtml = "";
     return text;
   }
 
+function getBillingPdfPeriodText() {
+  const from =
+    byId("filterDateFrom")?.value || "";
+
+  const to =
+    byId("filterDateTo")?.value || "";
+
+  if (from && to) {
+    return (
+      `${formatDate(from)} - ${formatDate(to)}`
+    );
+  }
+
+  if (from) {
+    return `From ${formatDate(from)}`;
+  }
+
+  if (to) {
+    return `Up to ${formatDate(to)}`;
+  }
+
+  return "All visible invoice dates";
+}
+
+
+function safePdfFileName(value) {
+  return String(value || "billing")
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_");
+}
+
+
+function addBillingPdfHeader(
+  doc,
+  title,
+  subtitle = ""
+) {
+  doc.setTextColor(34, 34, 34);
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(16);
+
+  doc.text(
+    "Sofa2U Ltd",
+    14,
+    18
+  );
+
+  doc.setFontSize(14);
+
+  doc.text(
+    title,
+    196,
+    18,
+    {
+      align: "right"
+    }
+  );
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.setFontSize(7.5);
+
+  doc.text(
+    "860-862 Garratt Lane, London, SW17 0NB",
+    14,
+    25
+  );
+
+  doc.text(
+    "Phone +44 (0) 7894 469947   Email sales@sofa2u.co.uk",
+    14,
+    30
+  );
+
+  doc.text(
+    "VAT No GB 368 665 249",
+    14,
+    35
+  );
+
+  if (subtitle) {
+    doc.setFontSize(8);
+
+    doc.text(
+      subtitle,
+      196,
+      26,
+      {
+        align: "right"
+      }
+    );
+  }
+
+  doc.setDrawColor(
+    200,
+    200,
+    200
+  );
+
+  doc.line(
+    14,
+    41,
+    196,
+    41
+  );
+}
+
+
+function addBillingPdfFooter(doc) {
+  const pageCount =
+    doc.getNumberOfPages();
+
+  for (
+    let page = 1;
+    page <= pageCount;
+    page++
+  ) {
+    doc.setPage(page);
+
+    doc.setDrawColor(
+      190,
+      190,
+      190
+    );
+
+    doc.line(
+      14,
+      277,
+      196,
+      277
+    );
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(7);
+
+    doc.setTextColor(
+      90,
+      90,
+      90
+    );
+
+    doc.text(
+      "Sofa2U Ltd · 860-862 Garratt Lane, London, SW17 0NB",
+      105,
+      282,
+      {
+        align: "center"
+      }
+    );
+
+    doc.text(
+      `Page ${page} of ${pageCount}`,
+      196,
+      282,
+      {
+        align: "right"
+      }
+    );
+  }
+}
+
+
+function getBillingPdfTotals(invoices) {
+  let totals =
+    emptyTotals();
+
+  (invoices || [])
+    .forEach(invoice => {
+      totals =
+        addTotals(
+          totals,
+          invoice.totals
+        );
+    });
+
+  return getDisplayTotals(
+    totals
+  );
+}
+
+
+function addBillingOverviewBlock(
+  doc,
+  invoices,
+  y = 50
+) {
+  const totals =
+    getBillingPdfTotals(
+      invoices
+    );
+
+  doc.setFillColor(
+    248,
+    248,
+    248
+  );
+
+  doc.setDrawColor(
+    215,
+    215,
+    215
+  );
+
+  doc.roundedRect(
+    14,
+    y,
+    182,
+    41,
+    2,
+    2,
+    "FD"
+  );
+
+  doc.setTextColor(
+    34,
+    34,
+    34
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(9);
+
+  doc.text(
+    "Billing Overview",
+    18,
+    y + 7
+  );
+
+  const labelX = 110;
+  const valueX = 190;
+
+  let rowY =
+    y + 7;
+
+  doc.setFontSize(7.8);
+
+  doc.text(
+    "Invoices",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatNumber(
+      invoices.length
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  rowY += 6;
+
+  doc.text(
+    "Warehouse costs",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatMoney(
+      totals.warehouse
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  rowY += 6;
+
+  doc.text(
+    "Transport costs",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatMoney(
+      totals.transport
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  rowY += 6;
+
+  doc.text(
+    "Total excl. VAT",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatMoney(
+      totals.net
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  rowY += 6;
+
+  doc.text(
+    "VAT",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatMoney(
+      totals.vat
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  rowY += 6;
+
+  doc.text(
+    "Total incl. VAT",
+    labelX,
+    rowY
+  );
+
+  doc.text(
+    formatMoney(
+      totals.gross
+    ),
+    valueX,
+    rowY,
+    {
+      align: "right"
+    }
+  );
+
+  return y + 48;
+}
+
+function getInvoiceDueStatus(invoice) {
+  const status =
+    normalizeStatus(
+      invoice?.status || "generated"
+    );
+
+  if (status === "paid") {
+    return {
+      overdue: false,
+      days: 0,
+      label: "PAID"
+    };
+  }
+
+  const dueValue =
+    invoice?.due_date || "";
+
+  if (!dueValue) {
+    return {
+      overdue: false,
+      days: 0,
+      label: "Due date unknown"
+    };
+  }
+
+  const dueDate =
+    new Date(
+      `${String(dueValue).slice(0, 10)}T00:00:00`
+    );
+
+  const today =
+    new Date();
+
+  today.setHours(
+    0,
+    0,
+    0,
+    0
+  );
+
+  if (
+    Number.isNaN(
+      dueDate.getTime()
+    )
+  ) {
+    return {
+      overdue: false,
+      days: 0,
+      label: "Due date unknown"
+    };
+  }
+
+  const diffDays =
+    Math.floor(
+      (
+        today.getTime() -
+        dueDate.getTime()
+      ) /
+      86400000
+    );
+
+  if (diffDays > 0) {
+    return {
+      overdue: true,
+      days: diffDays,
+      label:
+        `OVERDUE · ${diffDays} ` +
+        `${diffDays === 1 ? "day" : "days"}`
+    };
+  }
+
+  if (diffDays === 0) {
+    return {
+      overdue: false,
+      days: 0,
+      label: "DUE TODAY"
+    };
+  }
+
+  return {
+    overdue: false,
+    days: 0,
+    label:
+      `Due in ${Math.abs(diffDays)} ` +
+      `${Math.abs(diffDays) === 1 ? "day" : "days"}`
+  };
+}
+
+function addInvoiceSpecificationTable(
+  doc,
+  invoices,
+  startY
+) {
+  const rows =
+    (invoices || [])
+      .map(invoice => {
+        const totals =
+          getDisplayTotals(
+            invoice.totals
+          );
+
+        const dueStatus =
+          getInvoiceDueStatus(
+            invoice
+          );
+
+        return [
+          invoice.invoice_number ||
+            "—",
+
+          formatDate(
+            invoice.invoice_date ||
+            invoice.created_at
+          ),
+
+          formatDate(
+            invoice.due_date
+          ),
+
+          dueStatus.label,
+
+          formatMoney(
+            totals.warehouse
+          ),
+
+          formatMoney(
+            totals.transport
+          ),
+
+          formatMoney(
+            totals.net
+          ),
+
+          formatMoney(
+            totals.vat
+          ),
+
+          formatMoney(
+            totals.gross
+          )
+        ];
+      });
+
+  doc.autoTable({
+    startY,
+
+    head: [[
+      "Invoice",
+      "Date",
+      "Due Date",
+      "Status",
+      "Warehouse",
+      "Transport",
+      "Excl. VAT",
+      "VAT",
+      "Incl. VAT"
+    ]],
+
+    body: rows,
+
+    theme: "plain",
+
+    styles: {
+      font: "helvetica",
+      fontSize: 6.2,
+      cellPadding: 2,
+      lineColor: [225, 225, 225],
+      lineWidth: 0.15,
+      textColor: [34, 34, 34]
+    },
+
+    headStyles: {
+      fillColor: [245, 245, 245],
+      textColor: [34, 34, 34],
+      fontStyle: "bold"
+    },
+
+    columnStyles: {
+      3: {
+        fontStyle: "bold"
+      },
+
+      4: {
+        halign: "right"
+      },
+
+      5: {
+        halign: "right"
+      },
+
+      6: {
+        halign: "right"
+      },
+
+      7: {
+        halign: "right"
+      },
+
+      8: {
+        halign: "right",
+        fontStyle: "bold"
+      }
+    },
+
+    didParseCell(data) {
+      if (
+        data.section === "body" &&
+        data.column.index === 3
+      ) {
+        const text =
+          String(
+            data.cell.raw || ""
+          );
+
+        if (
+          text.startsWith(
+            "OVERDUE"
+          )
+        ) {
+          data.cell.styles.textColor =
+            [185, 28, 28];
+
+          data.cell.styles.fillColor =
+            [254, 242, 242];
+
+          data.cell.styles.fontStyle =
+            "bold";
+        }
+      }
+    },
+
+    margin: {
+      left: 14,
+      right: 14,
+      bottom: 20
+    }
+  });
+
+  return (
+    doc.lastAutoTable
+      ?.finalY ||
+    startY
+  );
+}
+
+function getSelectedBillingCustomer() {
+  const customerId =
+    byId(
+      "filterCustomer"
+    )?.value || "";
+
+  if (!customerId) {
+    return null;
+  }
+
+  return customers.find(
+    customer =>
+      String(customer.id) ===
+      String(customerId)
+  ) || null;
+}
+
+
+function downloadCustomerBillingPdf() {
+  if (
+    !window.jspdf?.jsPDF
+  ) {
+    showToast(
+      "PDF library is not loaded.",
+      "err"
+    );
+
+    return;
+  }
+
+  const selectedCustomer =
+    getSelectedBillingCustomer();
+
+  if (!selectedCustomer) {
+    showToast(
+      "Select a customer first.",
+      "err"
+    );
+
+    return;
+  }
+
+  const customerInvoices =
+    filteredInvoices.filter(
+      invoice =>
+        String(
+          invoice.customer_id
+        ) ===
+        String(
+          selectedCustomer.id
+        )
+    );
+
+  if (
+    !customerInvoices.length
+  ) {
+    showToast(
+      "No invoices found for this customer in the current filters.",
+      "err"
+    );
+
+    return;
+  }
+
+  const {
+    jsPDF
+  } = window.jspdf;
+
+  const doc =
+    new jsPDF({
+      orientation:
+        "portrait",
+
+      unit:
+        "mm",
+
+      format:
+        "a4"
+    });
+
+  addBillingPdfHeader(
+    doc,
+    "Billing Overview",
+    selectedCustomer.name
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(8);
+
+  doc.text(
+    "Customer",
+    14,
+    50
+  );
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.text(
+    selectedCustomer.name ||
+      "—",
+    35,
+    50
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.text(
+    "Period",
+    14,
+    56
+  );
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.text(
+    getBillingPdfPeriodText(),
+    35,
+    56
+  );
+
+  let y =
+    addBillingOverviewBlock(
+      doc,
+      customerInvoices,
+      63
+    );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(9);
+
+  doc.text(
+    "Invoice Specification",
+    14,
+    y
+  );
+
+  y += 5;
+
+  addInvoiceSpecificationTable(
+    doc,
+    customerInvoices,
+    y
+  );
+
+  addBillingPdfFooter(
+    doc
+  );
+
+  const filename =
+    `Billing Overview - ` +
+    `${safePdfFileName(
+      selectedCustomer.name
+    )} - ` +
+    `${new Date()
+      .toISOString()
+      .slice(0, 10)}.pdf`;
+
+  doc.save(
+    filename
+  );
+}
+
+
+function groupVisibleInvoicesByCustomer() {
+  const groups =
+    new Map();
+
+  filteredInvoices
+    .forEach(invoice => {
+      const customerId =
+        String(
+          invoice.customer_id ||
+          "unknown"
+        );
+
+      if (
+        !groups.has(
+          customerId
+        )
+      ) {
+        groups.set(
+          customerId,
+          {
+            customerId,
+
+            customerName:
+              invoice.customer_name ||
+              "Unknown customer",
+
+            invoices:
+              []
+          }
+        );
+      }
+
+      groups
+        .get(customerId)
+        .invoices
+        .push(invoice);
+    });
+
+  return [
+    ...groups.values()
+  ].sort(
+    (a, b) =>
+      String(
+        a.customerName
+      ).localeCompare(
+        String(
+          b.customerName
+        )
+      )
+  );
+}
+
+
+function downloadTotalBillingPdf() {
+  if (
+    !window.jspdf?.jsPDF
+  ) {
+    showToast(
+      "PDF library is not loaded.",
+      "err"
+    );
+
+    return;
+  }
+
+  if (
+    !filteredInvoices.length
+  ) {
+    showToast(
+      "No invoices found in the current filters.",
+      "err"
+    );
+
+    return;
+  }
+
+  const {
+    jsPDF
+  } = window.jspdf;
+
+  const doc =
+    new jsPDF({
+      orientation:
+        "portrait",
+
+      unit:
+        "mm",
+
+      format:
+        "a4"
+    });
+
+  addBillingPdfHeader(
+    doc,
+    "Billing Overview",
+    "All visible customers"
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(8);
+
+  doc.text(
+    "Period",
+    14,
+    50
+  );
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.text(
+    getBillingPdfPeriodText(),
+    35,
+    50
+  );
+
+  let y =
+    addBillingOverviewBlock(
+      doc,
+      filteredInvoices,
+      57
+    );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(9);
+
+  doc.text(
+    "Customer Overview",
+    14,
+    y
+  );
+
+  y += 5;
+
+  const customerGroups =
+    groupVisibleInvoicesByCustomer();
+
+  const customerRows =
+    customerGroups.map(
+      group => {
+        const totals =
+          getBillingPdfTotals(
+            group.invoices
+          );
+
+        return [
+          group.customerName,
+
+          formatNumber(
+            group.invoices.length
+          ),
+
+          formatMoney(
+            totals.warehouse
+          ),
+
+          formatMoney(
+            totals.transport
+          ),
+
+          formatMoney(
+            totals.net
+          ),
+
+          formatMoney(
+            totals.vat
+          ),
+
+          formatMoney(
+            totals.gross
+          )
+        ];
+      });
+
+  doc.autoTable({
+    startY: y,
+
+    head: [[
+      "Customer",
+      "Invoices",
+      "Warehouse",
+      "Transport",
+      "Excl. VAT",
+      "VAT",
+      "Incl. VAT"
+    ]],
+
+    body:
+      customerRows,
+
+    theme:
+      "plain",
+
+    styles: {
+      font: "helvetica",
+      fontSize: 6.7,
+      cellPadding: 2.2,
+      lineColor: [225, 225, 225],
+      lineWidth: 0.15,
+      textColor: [34, 34, 34]
+    },
+
+    headStyles: {
+      fillColor: [245, 245, 245],
+      textColor: [34, 34, 34],
+      fontStyle: "bold"
+    },
+
+    columnStyles: {
+      1: {
+        halign: "right"
+      },
+
+      2: {
+        halign: "right"
+      },
+
+      3: {
+        halign: "right"
+      },
+
+      4: {
+        halign: "right"
+      },
+
+      5: {
+        halign: "right"
+      },
+
+      6: {
+        halign: "right",
+        fontStyle: "bold"
+      }
+    },
+
+    margin: {
+      left: 14,
+      right: 14,
+      bottom: 20
+    }
+  });
+
+  /*
+   * Daarna per klant een specificatiepagina.
+   */
+  customerGroups
+    .forEach(group => {
+      doc.addPage();
+
+      addBillingPdfHeader(
+        doc,
+        "Billing Specification",
+        group.customerName
+      );
+
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
+      doc.setFontSize(9);
+
+      doc.text(
+        group.customerName,
+        14,
+        51
+      );
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setFontSize(7.5);
+
+      doc.text(
+        getBillingPdfPeriodText(),
+        14,
+        57
+      );
+
+      addInvoiceSpecificationTable(
+        doc,
+        group.invoices,
+        64
+      );
+    });
+
+  addBillingPdfFooter(
+    doc
+  );
+
+  doc.save(
+    `Billing Overview - Total - ` +
+    `${new Date()
+      .toISOString()
+      .slice(0, 10)}.pdf`
+  );
+}
+
   function exportCsv() {
     if (!filteredInvoices.length) {
       showToast("No invoices to export.", "err");
@@ -1712,8 +2814,29 @@ const internalCellsHtml = "";
       }
     });
 
-    byId("btnResetFilters")?.addEventListener("click", resetFilters);
-    byId("btnExportCsv")?.addEventListener("click", exportCsv);
+byId("btnResetFilters")
+  ?.addEventListener(
+    "click",
+    resetFilters
+  );
+
+byId("btnDownloadCustomerPdf")
+  ?.addEventListener(
+    "click",
+    downloadCustomerBillingPdf
+  );
+
+byId("btnDownloadTotalPdf")
+  ?.addEventListener(
+    "click",
+    downloadTotalBillingPdf
+  );
+
+byId("btnExportCsv")
+  ?.addEventListener(
+    "click",
+    exportCsv
+  );
   }
 
   function renderAll() {

@@ -10,8 +10,12 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js" defer></script>
-  <script src="/js/layout.js" defer></script>
-  <script src="/js/billing.js" defer></script>
+<script src="/js/layout.js" defer></script>
+
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+
+<script src="/js/billing.js" defer></script>
 
   <style>
     .billing-page{display:grid;gap:14px}
@@ -195,9 +199,31 @@
           <button id="btnResetFilters" class="btn" type="button">Reset filters</button>
         </div>
 
-        <div class="actions-right">
-          <button id="btnExportCsv" class="btn" type="button">Export CSV</button>
-        </div>
+<div class="actions-right">
+  <button
+    id="btnDownloadCustomerPdf"
+    class="btn"
+    type="button"
+  >
+    Customer PDF
+  </button>
+
+  <button
+    id="btnDownloadTotalPdf"
+    class="btn"
+    type="button"
+  >
+    Total PDF
+  </button>
+
+  <button
+    id="btnExportCsv"
+    class="btn"
+    type="button"
+  >
+    Export CSV
+  </button>
+</div>
       </div>
     </section>
 

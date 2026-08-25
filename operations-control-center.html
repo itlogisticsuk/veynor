@@ -13,12 +13,14 @@
   <script src="/js/page-guard.js" defer></script>
   <script src="/js/layout.js" defer></script>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
- <script src="/js/pricing-engine.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" defer></script>
+
+<script src="/js/pricing-engine.js" defer></script>
 <script src="/js/acknowledgement-generator.js" defer></script>
 <script src="/js/invoice-generator.js?v=20260710-3" defer></script>
-<script src="/js/delivery-note-generator.js" defer></script>
-<script src="js/allocation-engine.js"></script>
+<script src="/js/delivery-note-generator.js" defer></script><script src="js/allocation-engine.js"></script>
 <script src="js/order-editor.js"></script>
 <script src="./js/occ-tools/change-status-tool.js"></script>
 <script src="./js/occ-tools/activity-view-tool.js"></script>
@@ -1227,7 +1229,7 @@
         <h2 class="occ-modal-title" id="genericActionTitle">Order action</h2>
         <p class="occ-modal-sub" id="genericActionSub">No order selected.</p>
       </div>
-      <button id="genericActionCloseBtn" class="occ-modal-close" type="button">×</button></styule
+      <button id="genericActionCloseBtn" class="occ-modal-close" type="button">×</button>
     </div>
 
     <input id="genericActionOrderId" type="hidden"/>

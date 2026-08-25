@@ -3659,12 +3659,6 @@ async function createPhysicalStockForReceiptLine(
     );
   }
 
-  if (!container.location_id) {
-    throw new Error(
-      "The container has no warehouse location selected."
-    );
-  }
-
   const db =
     getDb();
 
@@ -4579,13 +4573,6 @@ async function saveReceiveContainerCheck() {
   if (!container.warehouse_id) {
     throw new Error(
       "Select a warehouse before receiving this container."
-    );
-  }
-
-
-  if (!container.location_id) {
-    throw new Error(
-      "Select a warehouse location before receiving this container."
     );
   }
 

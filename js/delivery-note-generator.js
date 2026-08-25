@@ -29,6 +29,37 @@
     return normalize(order?.movement_type) === "collection";
   }
 
+function isWarehousePickupOrder(order) {
+  const transportType = normalize(
+    order?.transport_type ||
+    order?.transport_mode ||
+    ""
+  );
+
+  const vehicleText = [
+    order?.carrier_vehicle_name,
+    order?.vehicle_name,
+    order?.assigned_vehicle_name,
+    order?.vehicles?.name,
+    order?.carrier_vehicles?.name,
+    order?.carrier_vehicle?.name,
+    order?.vehicle_code,
+    order?.carrier_vehicle_code,
+    order?.charter_name
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    transportType === "warehouse_pickup" ||
+    transportType === "pickup_warehouse" ||
+    transportType === "pick_up_warehouse" ||
+    vehicleText.includes("pick up warehouse") ||
+    vehicleText.includes("pickup warehouse")
+  );
+}
+
   function toNumber(value, fallback = 0) {
     const num = Number(String(value ?? "").replace(",", "."));
     return Number.isFinite(num) ? num : fallback;
@@ -148,6 +179,28 @@
       order.delivery_phone || order.phone || ""
     ]);
   }
+
+function getWarehousePickupLines(ctx) {
+  const depot =
+    ctx?.depot ||
+    {};
+
+  return uniqueLines([
+    depot.name ||
+      "Sofa2U",
+
+    "Forge Farm - Warehouse",
+
+    depot.city ||
+      "Shrewsbury",
+
+    depot.postcode ||
+      "SY4 4UD",
+
+    depot.country ||
+      "United Kingdom"
+  ]);
+}
 
   function getOrderLines(order) {
     return Array.isArray(order?.order_lines)
@@ -911,136 +964,220 @@ function isServiceOrder(order) {
     }
   }
 
-  async function loadCompanySettings(
-    client,
-    companyId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from("settings")
-        .select(
-          "setting_key, setting_value"
-        )
-        .eq(
-          "company_id",
-          companyId
-        );
-
-    if (error) {
-      console.warn(
-        "Delivery note settings skipped:",
-        error.message
+ async function loadCompanySettings(
+  client,
+  companyId
+) {
+  const {
+    data,
+    error
+  } =
+    await client
+      .from("settings")
+      .select(
+        "setting_key, setting_value"
+      )
+      .eq(
+        "company_id",
+        companyId
       );
 
-      return {
-        company: {
-          ...FALLBACK_COMPANY
-        },
-        ownerProfiles: [],
-        damageNote:
-          DEFAULT_DAMAGE_NOTE
-      };
-    }
 
-    const map =
-      new Map(
-        (data || []).map(
-          row => [
-            row.setting_key,
-            row.setting_value ??
-            ""
-          ]
-        )
-      );
-
-    let ownerProfiles = [];
-
-    try {
-      ownerProfiles =
-        JSON.parse(
-          map.get(
-            "product_owner_profiles"
-          ) ||
-          "[]"
-        );
-
-      if (
-        !Array.isArray(
-          ownerProfiles
-        )
-      ) {
-        ownerProfiles = [];
-      }
-    } catch {
-      ownerProfiles = [];
-    }
+  if (error) {
+    console.warn(
+      "Delivery note settings skipped:",
+      error.message
+    );
 
     return {
       company: {
-        name:
-          map.get(
-            "main_company_name"
-          ) ||
-          FALLBACK_COMPANY.name,
-
-        displayName:
-          map.get(
-            "main_display_name"
-          ) ||
-          FALLBACK_COMPANY.displayName,
-
-        address:
-          map.get(
-            "main_address"
-          ) ||
-          FALLBACK_COMPANY.address,
-
-        phone:
-          map.get(
-            "main_phone"
-          ) ||
-          FALLBACK_COMPANY.phone,
-
-        email:
-          map.get(
-            "main_email"
-          ) ||
-          FALLBACK_COMPANY.email,
-
-        vat:
-          map.get(
-            "main_vat"
-          ) ||
-          FALLBACK_COMPANY.vat,
-
-        logoUrl:
-          map.get(
-            "main_logo_url"
-          ) ||
-          FALLBACK_COMPANY.logoUrl,
-
-        footerText:
-          map.get(
-            "document_footer_text"
-          ) ||
-          FALLBACK_COMPANY.footerText
+        ...FALLBACK_COMPANY
       },
 
-      ownerProfiles,
+      depot: {
+        name:
+          "Sofa2U",
+
+        city:
+          "Shrewsbury",
+
+        postcode:
+          "SY4 4UD",
+
+        country:
+          "United Kingdom",
+
+        latitude:
+          "52.698120",
+
+        longitude:
+          "-2.653040"
+      },
+
+      ownerProfiles: [],
 
       damageNote:
-        map.get(
-          "text_damage_reporting_note"
-        ) ||
-        map.get(
-          "doc_damage_note"
-        ) ||
         DEFAULT_DAMAGE_NOTE
     };
   }
+
+
+  const map =
+    new Map(
+      (data || []).map(
+        row => [
+          row.setting_key,
+          row.setting_value ??
+          ""
+        ]
+      )
+    );
+
+
+  let ownerProfiles =
+    [];
+
+
+  try {
+    ownerProfiles =
+      JSON.parse(
+        map.get(
+          "product_owner_profiles"
+        ) ||
+        "[]"
+      );
+
+
+    if (
+      !Array.isArray(
+        ownerProfiles
+      )
+    ) {
+      ownerProfiles =
+        [];
+    }
+
+  } catch {
+    ownerProfiles =
+      [];
+  }
+
+
+  return {
+
+    /* =====================================================
+     * SOFA2U COMPANY DETAILS
+     * =================================================== */
+
+    company: {
+      name:
+        map.get(
+          "main_company_name"
+        ) ||
+        FALLBACK_COMPANY.name,
+
+      displayName:
+        map.get(
+          "main_display_name"
+        ) ||
+        FALLBACK_COMPANY.displayName,
+
+      address:
+        map.get(
+          "main_address"
+        ) ||
+        FALLBACK_COMPANY.address,
+
+      phone:
+        map.get(
+          "main_phone"
+        ) ||
+        FALLBACK_COMPANY.phone,
+
+      email:
+        map.get(
+          "main_email"
+        ) ||
+        FALLBACK_COMPANY.email,
+
+      vat:
+        map.get(
+          "main_vat"
+        ) ||
+        FALLBACK_COMPANY.vat,
+
+      logoUrl:
+        map.get(
+          "main_logo_url"
+        ) ||
+        FALLBACK_COMPANY.logoUrl,
+
+      footerText:
+        map.get(
+          "document_footer_text"
+        ) ||
+        FALLBACK_COMPANY.footerText
+    },
+
+
+    /* =====================================================
+     * SOFA2U WAREHOUSE / HOME DEPOT
+     *
+     * Used for Pick Up Warehouse orders.
+     * =================================================== */
+
+    depot: {
+      name:
+        map.get(
+          "home_depot_name"
+        ) ||
+        "Sofa2U",
+
+      city:
+        map.get(
+          "home_depot_city"
+        ) ||
+        "Shrewsbury",
+
+      postcode:
+        map.get(
+          "home_depot_postcode"
+        ) ||
+        "SY4 4UD",
+
+      country:
+        map.get(
+          "home_depot_country"
+        ) ||
+        "United Kingdom",
+
+      latitude:
+        map.get(
+          "home_depot_lat"
+        ) ||
+        "52.698120",
+
+      longitude:
+        map.get(
+          "home_depot_lng"
+        ) ||
+        "-2.653040"
+    },
+
+
+    ownerProfiles,
+
+
+    damageNote:
+      map.get(
+        "text_damage_reporting_note"
+      ) ||
+      map.get(
+        "doc_damage_note"
+      ) ||
+      DEFAULT_DAMAGE_NOTE
+  };
+}
 
   async function loadProductOwnerProfile(
     client,
@@ -1552,58 +1689,120 @@ function isServiceOrder(order) {
     );
   }
 
-  function drawBillShip(
-    doc,
-    order,
-    ctx
+function drawBillShip(
+  doc,
+  order,
+  ctx
+) {
+  const owner =
+    ctx.productOwner;
+
+
+  /* =====================================================
+   * PRODUCT OWNER
+   * =================================================== */
+
+  const onBehalfOfLines =
+    uniqueLines([
+      owner.tradingName ||
+      owner.name,
+
+      owner.address1,
+      owner.address2,
+      owner.city,
+      owner.postcode,
+      owner.country,
+
+      owner.vat
+        ? `VAT No: ${owner.vat}`
+        : ""
+    ]);
+
+
+  /* =====================================================
+   * RIGHT-HAND ADDRESS BLOCK
+   * =================================================== */
+
+  let addressTitle =
+    "SHIP TO";
+
+  let addressLines =
+    getShipToLines(
+      order
+    );
+
+
+  /*
+   * PICK UP WAREHOUSE
+   *
+   * Customer collects the goods
+   * from the Sofa2U warehouse.
+   */
+  if (
+    isWarehousePickupOrder(
+      order
+    )
   ) {
-    const owner =
-      ctx.productOwner;
+    addressTitle =
+      "COLLECT FROM";
 
-    const onBehalfOfLines =
-      uniqueLines([
-        owner.tradingName ||
-        owner.name,
+    addressLines =
+      getWarehousePickupLines(
+        ctx
+      );
+  }
 
-        owner.address1,
-        owner.address2,
-        owner.city,
-        owner.postcode,
-        owner.country,
 
-        owner.vat
-          ? `VAT No: ${owner.vat}`
-          : ""
-      ]);
+  /*
+   * COLLECTION FROM RETAILER
+   *
+   * This is a different movement:
+   * Sofa2U collects goods from the retailer.
+   */
+  else if (
+    isCollectionOrder(
+      order
+    )
+  ) {
+    addressTitle =
+      "COLLECT FROM";
 
-    const shipToLines =
+    addressLines =
       getShipToLines(
         order
       );
-
-    drawAddressBlock(
-      doc,
-      "ON BEHALF OF",
-      onBehalfOfLines,
-      14,
-      72,
-      86,
-      47
-    );
-
-    drawAddressBlock(
-      doc,
-      isCollectionOrder(order)
-        ? "COLLECT FROM"
-        : "SHIP TO",
-      shipToLines,
-      110,
-      72,
-      86,
-      47
-    );
   }
 
+
+  /* =====================================================
+   * DRAW LEFT BLOCK
+   * =================================================== */
+
+  drawAddressBlock(
+    doc,
+    "ON BEHALF OF",
+    onBehalfOfLines,
+    14,
+    72,
+    86,
+    47
+  );
+
+
+  /* =====================================================
+   * DRAW RIGHT BLOCK
+   * =================================================== */
+
+  drawAddressBlock(
+    doc,
+    addressTitle,
+    addressLines,
+    110,
+    72,
+    86,
+    47
+  );
+}
   function drawTableHeader(
     doc,
     y,
@@ -2736,6 +2935,149 @@ return (
     );
   }
 
+async function appendWarehousePickupInstructions(
+  deliveryNoteBlob,
+  order
+) {
+  /*
+   * Alleen toevoegen bij:
+   * PICK UP WAREHOUSE
+   */
+  if (
+    !isWarehousePickupOrder(order)
+  ) {
+    return deliveryNoteBlob;
+  }
+
+
+  /*
+   * pdf-lib moet via de HTML geladen zijn.
+   */
+  if (
+    !window.PDFLib?.PDFDocument
+  ) {
+    throw new Error(
+      "pdf-lib is not loaded. Cannot add the Forge Farm pickup instructions."
+    );
+  }
+
+
+  const {
+    PDFDocument
+  } =
+    window.PDFLib;
+
+
+  /*
+   * =====================================================
+   * NORMALE DELIVERY NOTE OPENEN
+   * =====================================================
+   */
+
+  const deliveryNoteBytes =
+    await deliveryNoteBlob.arrayBuffer();
+
+
+  const finalPdf =
+    await PDFDocument.load(
+      deliveryNoteBytes
+    );
+
+
+  /*
+   * =====================================================
+   * FORGE FARM INSTRUCTIE PDF OPHALEN
+   *
+   * Deze staat in:
+   *
+   * /assets/forge-farm-pickup-instructions.pdf
+   * =====================================================
+   */
+
+  const instructionsUrl =
+    "/assets/forge-farm-pickup-instructions.pdf";
+
+
+  const response =
+    await fetch(
+      instructionsUrl,
+      {
+        cache:
+          "no-store"
+      }
+    );
+
+
+  if (!response.ok) {
+    throw new Error(
+      `Forge Farm pickup instructions could not be loaded. HTTP ${response.status}`
+    );
+  }
+
+
+  const instructionBytes =
+    await response.arrayBuffer();
+
+
+  /*
+   * =====================================================
+   * INSTRUCTIE PDF OPENEN
+   * =====================================================
+   */
+
+  const instructionPdf =
+    await PDFDocument.load(
+      instructionBytes
+    );
+
+
+  /*
+   * =====================================================
+   * ALLE PAGINA'S VAN DE INSTRUCTIE KOPIËREN
+   * =====================================================
+   */
+
+  const pageIndexes =
+    instructionPdf.getPageIndices();
+
+
+  const copiedPages =
+    await finalPdf.copyPages(
+      instructionPdf,
+      pageIndexes
+    );
+
+
+  copiedPages.forEach(
+    page => {
+      finalPdf.addPage(
+        page
+      );
+    }
+  );
+
+
+  /*
+   * =====================================================
+   * DEFINITIEVE PDF MAKEN
+   * =====================================================
+   */
+
+  const finalBytes =
+    await finalPdf.save();
+
+
+  return new Blob(
+    [
+      finalBytes
+    ],
+    {
+      type:
+        "application/pdf"
+    }
+  );
+}
+
   async function uploadPdf(
     client,
     companyId,
@@ -3067,103 +3409,161 @@ return (
   }
 
   async function generate(
-    order,
-    client,
-    companyId
-  ) {
-    if (!order?.id) {
-      throw new Error(
-        "Cannot generate delivery note: order is missing."
-      );
-    }
+  order,
+  client,
+  companyId
+) {
+  if (!order?.id) {
+    throw new Error(
+      "Cannot generate delivery note: order is missing."
+    );
+  }
 
-    if (!client) {
-      throw new Error(
-        "Cannot generate delivery note: Supabase client is missing."
-      );
-    }
 
-    if (!companyId) {
-      throw new Error(
-        "Cannot generate delivery note: companyId is missing."
-      );
-    }
+  if (!client) {
+    throw new Error(
+      "Cannot generate delivery note: Supabase client is missing."
+    );
+  }
 
-    const freshOrder =
-      await loadFreshOrderForDeliveryNote(
-        client,
-        companyId,
-        order.id
-      );
 
-    const workingOrder =
-      freshOrder ||
-      order;
+  if (!companyId) {
+    throw new Error(
+      "Cannot generate delivery note: companyId is missing."
+    );
+  }
 
-    const ctx =
-      await loadCompanySettings(
-        client,
-        companyId
-      );
 
-    ctx.productOwner =
-      await loadProductOwnerProfile(
-        client,
-        workingOrder,
-        ctx.ownerProfiles
-      );
+  /* =====================================================
+   * FRESH ORDER LOADEN
+   * ===================================================== */
 
-    const blob =
-      await createPdfBlob(
-        workingOrder,
-        ctx
-      );
-
-    const uploaded =
-      await uploadPdf(
-        client,
-        companyId,
-        workingOrder,
-        blob
-      );
-
-    if (
-      !uploaded.fileUrl ||
-      !uploaded.storagePath
-    ) {
-      throw new Error(
-        "Delivery note PDF was uploaded, but no file URL/storage path was returned."
-      );
-    }
-
-    await upsertDocumentRecord(
+  const freshOrder =
+    await loadFreshOrderForDeliveryNote(
       client,
       companyId,
-      workingOrder,
-      uploaded
+      order.id
     );
 
-    await createActivity(
+
+  const workingOrder =
+    freshOrder ||
+    order;
+
+
+  /* =====================================================
+   * SETTINGS
+   * ===================================================== */
+
+  const ctx =
+    await loadCompanySettings(
       client,
-      companyId,
+      companyId
+    );
+
+
+  ctx.productOwner =
+    await loadProductOwnerProfile(
+      client,
+      workingOrder,
+      ctx.ownerProfiles
+    );
+
+
+  /* =====================================================
+   * NORMALE DELIVERY NOTE GENEREREN
+   * ===================================================== */
+
+  const deliveryNoteBlob =
+    await createPdfBlob(
+      workingOrder,
+      ctx
+    );
+
+
+  /* =====================================================
+   * PICK UP WAREHOUSE INSTRUCTIES
+   *
+   * Normale order:
+   * deliveryNoteBlob blijft ongewijzigd.
+   *
+   * Pick Up Warehouse:
+   * Forge Farm PDF wordt erachter geplaatst.
+   * ===================================================== */
+
+  const finalBlob =
+    await appendWarehousePickupInstructions(
+      deliveryNoteBlob,
       workingOrder
     );
 
-    await client
-      .from(
-        "orders"
-      )
-      .update({
-        last_activity_at:
-          new Date().toISOString()
-      })
-      .eq(
-        "id",
-        workingOrder.id
-      );
 
-    return uploaded;
+  /* =====================================================
+   * DEFINITIEVE PDF UPLOADEN
+   * ===================================================== */
+
+  const uploaded =
+    await uploadPdf(
+      client,
+      companyId,
+      workingOrder,
+      finalBlob
+    );
+
+
+  if (
+    !uploaded.fileUrl ||
+    !uploaded.storagePath
+  ) {
+    throw new Error(
+      "Delivery note PDF was uploaded, but no file URL/storage path was returned."
+    );
   }
+
+
+  /* =====================================================
+   * DOCUMENT RECORD
+   * ===================================================== */
+
+  await upsertDocumentRecord(
+    client,
+    companyId,
+    workingOrder,
+    uploaded
+  );
+
+
+  /* =====================================================
+   * ACTIVITY
+   * ===================================================== */
+
+  await createActivity(
+    client,
+    companyId,
+    workingOrder
+  );
+
+
+  /* =====================================================
+   * LAST ACTIVITY
+   * ===================================================== */
+
+  await client
+    .from(
+      "orders"
+    )
+    .update({
+      last_activity_at:
+        new Date().toISOString()
+    })
+    .eq(
+      "id",
+      workingOrder.id
+    );
+
+
+  return uploaded;
+}
 
   window.DeliveryNoteGenerator = {
     generate
