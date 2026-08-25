@@ -1756,6 +1756,15 @@ function drawTotalsBlock(
   const manualCharges =
     getManualChargesTotal(order);
 
+const hasManualCharges =
+  manualCharges > 0;
+
+const hasStockLines =
+  getStockOrderLines(order).length > 0;
+
+const manualOnlyOrder =
+  hasManualCharges && !hasStockLines;
+
   doc.setDrawColor(
     90,
     90,
@@ -2021,21 +2030,24 @@ function drawTotalsBlock(
       )
     );
 
-  const transportCosts =
-    round2(
-      toNumber(
-        pricing.transport,
-        0
-      )
-    );
+const transportCosts =
+  manualOnlyOrder
+    ? 0
+    : round2(
+        toNumber(
+          pricing.transport,
+          0
+        )
+      );
 
-  const normalSubtotal =
-    regional.priceOnRequest
-      ? null
+const normalSubtotal =
+  regional.priceOnRequest
+    ? null
+    : manualOnlyOrder
+      ? round2(manualCharges)
       : round2(
           warehouseCosts +
-          transportCosts +
-          manualCharges
+          transportCosts
         );
 
   doc.setFont(
