@@ -882,14 +882,49 @@ function renderOrderPriorityBadge(order) {
 }
 
 function getLineRevenue(line) {
-  const direct = toNumber(line.total_customer_charge, 0);
+  const isManual =
+    normalize(line?.line_type) === "manual";
 
-  if (direct !== 0) return direct;
+  if (isManual) {
+    const storedAmount =
+      toNumber(
+        line.manual_amount_gbp,
+        0
+      );
 
-  const manualAmount = toNumber(line.manual_amount_gbp, 0);
-  if (manualAmount !== 0) return manualAmount;
+    if (storedAmount !== 0) {
+      return round2(storedAmount);
+    }
 
-  const qty = getLineRequiredQty(line) || 1;
+    const quantity =
+      toNumber(
+        line.manual_quantity,
+        0
+      );
+
+    const rate =
+      toNumber(
+        line.manual_rate_gbp,
+        0
+      );
+
+    return round2(
+      quantity * rate
+    );
+  }
+
+  const direct =
+    toNumber(
+      line.total_customer_charge,
+      0
+    );
+
+  if (direct !== 0) {
+    return round2(direct);
+  }
+
+  const qty =
+    getLineRequiredQty(line) || 1;
 
   const tariffTotal =
     toNumber(line.tariff_storage, 0) +
@@ -897,7 +932,9 @@ function getLineRevenue(line) {
     toNumber(line.tariff_handling, 0) +
     toNumber(line.tariff_transport, 0);
 
-  return tariffTotal * qty;
+  return round2(
+    tariffTotal * qty
+  );
 }
 
 function getOrderBaseRevenue(order) {
@@ -1914,6 +1951,9 @@ description,
 line_type,
 manual_description,
 manual_amount_gbp,
+manual_quantity,
+manual_unit,
+manual_rate_gbp,
 unit_volume_m3,
           total_volume_m3,
           total_line_volume_m3,
@@ -4614,34 +4654,97 @@ function renderProductLines(order) {
         `;
       }).join("");
 
-  const manualHtml = manualLines.map(line => `
-    <div class="detail-line">
-      <span class="detail-label">MANUAL</span>
+const manualHtml =
+  manualLines
+    .map(line => {
 
-      <span class="detail-value">
-        ${escapeHtml(
-          shortText(
-            line.manual_description ||
-            line.description ||
-            "Manual product",
-            54
-          )
-        )}
+      const description =
+        line.manual_description ||
+        line.description ||
+        "Manual charge";
 
-        <span class="subline">
-          ${
-            canSeeFinance()
-              ? formatMoney(
-                  line.total_customer_charge ||
-                  line.manual_amount_gbp ||
-                  0
+      const quantity =
+        toNumber(
+          line.manual_quantity,
+          0
+        );
+
+      const unit =
+        cleanText(
+          line.manual_unit || ""
+        );
+
+      const rate =
+        toNumber(
+          line.manual_rate_gbp,
+          0
+        );
+
+      const total =
+        getLineRevenue(line);
+
+      let calculation = "";
+
+      if (
+        quantity > 0 &&
+        rate > 0
+      ) {
+        calculation =
+          `${formatNumber(quantity, 2)} ` +
+          `${unit || "units"} × ` +
+          `${formatMoney(rate)}`;
+      }
+
+      return `
+        <div class="detail-line">
+
+          <span class="detail-label">
+            MANUAL
+          </span>
+
+          <span class="detail-value">
+
+            <strong>
+              ${escapeHtml(
+                shortText(
+                  description,
+                  54
                 )
-              : "Manual line"
-          }
-        </span>
-      </span>
-    </div>
-  `).join("");
+              )}
+            </strong>
+
+            ${
+              calculation
+                ? `
+                    <span class="subline">
+                      ${escapeHtml(calculation)}
+                    </span>
+                  `
+                : ""
+            }
+
+            ${
+              canSeeFinance()
+                ? `
+                    <span class="subline">
+                      Total:
+                      <strong>
+                        ${formatMoney(total)}
+                      </strong>
+                    </span>
+                  `
+                : `
+                    <span class="subline">
+                      Manual line
+                    </span>
+                  `
+            }
+
+          </span>
+        </div>
+      `;
+    })
+    .join("");
 
   return stockHtml + manualHtml;
 }

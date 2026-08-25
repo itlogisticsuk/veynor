@@ -315,13 +315,22 @@
     )
   );
 
-  const lineTransport = round2(
-    lines.reduce(
-      (sum, line) =>
-        sum + toNumber(line.tariff_transport, 0),
-      0
-    )
-  );
+const lineTransport = round2(
+  lines.reduce(
+    (sum, line) => {
+      const transport =
+        toNumber(line.tariff_transport, 0);
+
+      const manual =
+        normalize(line.line_type) === "manual"
+          ? toNumber(line.manual_amount_gbp, 0)
+          : 0;
+
+      return sum + transport + manual;
+    },
+    0
+  )
+);
 
   const pick =
     linePick !== 0
@@ -798,6 +807,12 @@ memo,
 order_lines (
   id,
   order_id,
+  line_type,
+  manual_description,
+  manual_quantity,
+  manual_unit,
+  manual_rate_gbp,
+  manual_amount_gbp,
   tariff_storage,
   tariff_admin,
   tariff_handling,

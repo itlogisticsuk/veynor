@@ -231,6 +231,82 @@ function getPhysicalQuantity(line) {
   return quantity;
 }
 
+function isManualLine(line) {
+  return normalize(line?.line_type) === "manual";
+}
+
+function getManualLineDescription(line) {
+  return makePdfSafeText(
+    line.manual_description ||
+    line.description ||
+    "Manual charge"
+  );
+}
+
+function getManualLineQuantity(line) {
+  return toNumber(
+    line.manual_quantity,
+    0
+  );
+}
+
+function getManualLineUnit(line) {
+  return cleanText(
+    line.manual_unit || ""
+  );
+}
+
+function getManualLineRate(line) {
+  return round2(
+    toNumber(
+      line.manual_rate_gbp,
+      0
+    )
+  );
+}
+
+function getManualLineTotal(line) {
+  const storedAmount =
+    toNumber(
+      line.manual_amount_gbp,
+      0
+    );
+
+  if (storedAmount !== 0) {
+    return round2(storedAmount);
+  }
+
+  return round2(
+    getManualLineQuantity(line) *
+    getManualLineRate(line)
+  );
+}
+
+function getStockOrderLines(order) {
+  return getOrderLines(order)
+    .filter(line => !isManualLine(line));
+}
+
+function getManualOrderLines(order) {
+  return getOrderLines(order)
+    .filter(isManualLine);
+}
+
+function getManualChargesTotal(order) {
+  if (!isChargeableOrder(order)) {
+    return 0;
+  }
+
+  return round2(
+    getManualOrderLines(order)
+      .reduce(
+        (sum, line) =>
+          sum + getManualLineTotal(line),
+        0
+      )
+  );
+}
+
   function getProductPackageCount(product) {
     const packageCount = toNumber(product?.package_count, 0);
     if (packageCount > 0) return Math.max(1, Math.round(packageCount));
@@ -326,13 +402,23 @@ function getServiceWarning(line, order) {
   return `SERVICE / PARTIAL ORDER: This acknowledgement relates to package ${label} only. Remaining packages are not part of this order.`;
 }
 
-  function getTotalProducts(order) {
-    return getOrderLines(order).reduce((sum, line) => sum + getLineQty(line), 0);
-  }
+function getTotalProducts(order) {
+  return getStockOrderLines(order)
+    .reduce(
+      (sum, line) =>
+        sum + getLineQty(line),
+      0
+    );
+}
 
-  function getTotalPackages(order) {
-    return getOrderLines(order).reduce((sum, line) => sum + getLinePackageCount(line), 0);
-  }
+function getTotalPackages(order) {
+  return getStockOrderLines(order)
+    .reduce(
+      (sum, line) =>
+        sum + getLinePackageCount(line),
+      0
+    );
+}
 
   function getSettingsObject(map) {
     const obj = {};
@@ -699,9 +785,15 @@ async function loadProductOwnerProfile(client, customerId, order, settings = {})
           requested_package_total,
           requested_package_label,
           product_id,
-          sku_base,
-          description,
-          unit_volume_m3,
+sku_base,
+description,
+line_type,
+manual_description,
+manual_quantity,
+manual_unit,
+manual_rate_gbp,
+manual_amount_gbp,
+unit_volume_m3,
           total_volume_m3,
           total_line_volume_m3,
           tariff_storage,
@@ -980,391 +1072,978 @@ function drawTableHeader(doc, y, order, ctx = {}) {
     return y + 14;
   }
 
-function drawLines(doc, order, ctx, logoDataUrl, pricing) {
+function drawLines(
+  doc,
+  order,
+  ctx,
+  logoDataUrl,
+  pricing
+) {
   let y =
     isCollectionOrder(order)
       ? 116
       : 108;
-    y = drawTableHeader(doc, y, order, ctx);
 
-    const lines = getOrderLines(order);
-    const regional = pricing.regional || {};
-
-    if (!lines.length) {
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(7.2);
-      doc.text("No product lines found for this order.", 14, y);
-      return { y: y + 7 };
-    }
-
-    lines.forEach(line => {
-      y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, true);
-
-      const sku = getLineSku(line);
-      const description = getLineDescription(line);
-      const qty = getLineQty(line);
-      const packageCount = getLinePackageCount(line);
-      const packageLabel = getPackageLabel(line);
-      const warning = getServiceWarning(line, order);
-
-const zoy =
-  isZoyOrder(
+  y = drawTableHeader(
+    doc,
+    y,
     order,
     ctx
   );
 
-const chargeable =
-  isChargeableOrder(
-    order
-  );
+  const lines =
+    getOrderLines(order);
 
-/*
- * Bij een gratis order moeten ook de bedragen
- * per productregel £0.00 tonen.
- *
- * Zonder deze controle zouden oude bedragen
- * uit order_lines nog op de ACK kunnen staan.
- */
-const warehouseCost =
-  chargeable
-    ? getLineWarehouseCost(
-        line
-      )
-    : 0;
+  const regional =
+    pricing.regional || {};
 
-const transportCost =
-  chargeable
-    ? (
-        /*
-         * Wanneer transport op orderniveau
-         * handmatig op £0.00 is gezet, mogen
-         * oude transportbedragen op order_lines
-         * niet opnieuw op de ACK verschijnen.
-         */
-        toNumber(
-          pricing.baseTransport,
-          0
-        ) <= 0
-          ? 0
-          : getLineTransportCost(
-              line,
-              regional
+  if (!lines.length) {
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(7.2);
+
+    doc.text(
+      "No product or charge lines found for this order.",
+      14,
+      y
+    );
+
+    return {
+      y: y + 7
+    };
+  }
+
+  lines.forEach(line => {
+
+    y = maybeAddNewPage(
+      doc,
+      y,
+      order,
+      ctx,
+      logoDataUrl,
+      true
+    );
+
+    /*
+     * ==========================================
+     * MANUAL CHARGE
+     * ==========================================
+     */
+    if (isManualLine(line)) {
+
+      const description =
+        getManualLineDescription(
+          line
+        );
+
+      const quantity =
+        getManualLineQuantity(
+          line
+        );
+
+      const unit =
+        getManualLineUnit(
+          line
+        );
+
+      const rate =
+        getManualLineRate(
+          line
+        );
+
+      const total =
+        isChargeableOrder(order)
+          ? getManualLineTotal(line)
+          : 0;
+
+      const descriptionLines =
+        splitText(
+          doc,
+          description,
+          56
+        ).slice(0, 3);
+
+      let calculationText = "";
+
+      if (
+        quantity > 0 &&
+        rate > 0
+      ) {
+        calculationText =
+          `${formatNumber(quantity, 2)} ` +
+          `${unit || "units"} × ` +
+          `${formatMoney(rate)}`;
+      }
+
+      const calculationLines =
+        calculationText
+          ? splitText(
+              doc,
+              calculationText,
+              42
             )
-      )
-    : 0;
+          : [];
 
-const unitPrice =
-  chargeable
-    ? round2(
-        toNumber(
-          line.total_customer_charge,
-          0
-        )
-      )
-    : 0;
-
-const lineTotal =
-  chargeable
-    ? round2(
-        unitPrice *
-        qty
-      )
-    : 0;
-
-const total =
-  chargeable
-    ? (
-        zoy
-          ? lineTotal
-          : round2(
-              warehouseCost +
-              toNumber(
-                transportCost,
-                0
-              )
-            )
-      )
-    : 0;
-
-      const descLines = splitText(doc, description, 56).slice(0, 3);
-      const packageWord = packageCount === 1 ? "package" : "packages";
-      const packageLines = splitText(doc, `${packageCount} ${packageWord}`, 24);
-      const labelLines = splitText(doc, packageLabel, 24).slice(0, 2);
-
-      const rowHeight = Math.max(
-        7,
-        descLines.length * 3.25,
-        (packageLines.length + labelLines.length) * 3.15
-      );
+      const rowHeight =
+        Math.max(
+          9,
+          descriptionLines.length * 3.25,
+          calculationLines.length * 3.15
+        );
 
       setDark(doc);
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.8);
 
-      doc.text(sku, 14, y);
-      doc.text(descLines, 33, y);
-      doc.text(formatNumber(qty, 0), 96, y, { align: "right" });
-
-      doc.setFont("helvetica", "bold");
-      doc.text(packageLines, 110, y);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.1);
-      doc.text(labelLines, 110, y + 3.4);
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
 
       doc.setFontSize(6.8);
-if (zoy) {
 
-  doc.text(formatMoney(unitPrice), 166, y, {
-    align: "right"
-  });
+      doc.text(
+        "MANUAL",
+        14,
+        y
+      );
 
-  doc.text(formatMoney(lineTotal), 194, y, {
-    align: "right"
-  });
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
 
-} else {
+      doc.text(
+        descriptionLines,
+        33,
+        y
+      );
 
-  doc.text(formatMoney(warehouseCost), 146, y, {
-    align: "right"
-  });
+      /*
+       * Calculation in het midden van de regel.
+       */
+      if (calculationLines.length) {
+        doc.setFontSize(6.3);
 
-  doc.text(
-    regional.priceOnRequest
-      ? "POR"
-      : formatMoney(transportCost),
-    166,
-    y,
-    {
-      align: "right"
-    }
-  );
+        doc.text(
+          calculationLines,
+          110,
+          y
+        );
+      } else {
+        doc.text(
+          "Fixed charge",
+          110,
+          y
+        );
+      }
 
-  doc.text(
-    regional.priceOnRequest
-      ? "POR"
-      : formatMoney(total),
-    194,
-    y,
-    {
-      align: "right"
-    }
-  );
+      /*
+       * Manual lines hebben geen warehouse /
+       * transport split.
+       *
+       * Daarom tonen we alleen het totaal rechts.
+       */
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
 
-}
+      doc.setFontSize(6.8);
+
+      doc.text(
+        formatMoney(total),
+        194,
+        y,
+        {
+          align: "right"
+        }
+      );
 
       y += rowHeight + 1;
 
-      if (warning) {
-        y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
-        y = drawServiceWarningBox(doc, y, warning);
-      }
-    });
-
-    if (regional.priceOnRequest) {
-      y = drawPriceOnRequestBox(doc, y + 2, ctx, order, logoDataUrl);
+      return;
     }
 
-    return { y: y + 3 };
-  }
 
-  function drawPricingNoteBox(doc, y, ctx, order, logoDataUrl) {
-    const note = cleanText(ctx.productOwner?.pricing_ack_note || ctx.pricingAckNote || "");
-    if (!note) return y;
+    /*
+     * ==========================================
+     * NORMALE PRODUCTREGEL
+     * ==========================================
+     */
 
-    y = maybeAddNewPage(doc, y + 2, order, ctx, logoDataUrl, false);
+    const sku =
+      getLineSku(line);
 
-    const lines = splitText(doc, note, 172);
-    const boxHeight = Math.max(10, lines.length * 3.4 + 5);
+    const description =
+      getLineDescription(line);
 
-    doc.setFillColor(239, 246, 255);
-    doc.setDrawColor(191, 219, 254);
-    doc.roundedRect(14, y - 4, 182, boxHeight, 1.8, 1.8, "FD");
+    const qty =
+      getLineQty(line);
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.9);
-    doc.setTextColor(29, 78, 216);
-    doc.text(lines.slice(0, 3), 17, y + 1);
+    const packageCount =
+      getLinePackageCount(line);
+
+    const packageLabel =
+      getPackageLabel(line);
+
+    const warning =
+      getServiceWarning(
+        line,
+        order
+      );
+
+    const zoy =
+      isZoyOrder(
+        order,
+        ctx
+      );
+
+    const chargeable =
+      isChargeableOrder(
+        order
+      );
+
+    const warehouseCost =
+      chargeable
+        ? getLineWarehouseCost(
+            line
+          )
+        : 0;
+
+    const transportCost =
+      chargeable
+        ? (
+            toNumber(
+              pricing.baseTransport,
+              0
+            ) <= 0
+              ? 0
+              : getLineTransportCost(
+                  line,
+                  regional
+                )
+          )
+        : 0;
+
+    const unitPrice =
+      chargeable
+        ? round2(
+            toNumber(
+              line.total_customer_charge,
+              0
+            )
+          )
+        : 0;
+
+    const lineTotal =
+      chargeable
+        ? round2(
+            unitPrice * qty
+          )
+        : 0;
+
+    const total =
+      chargeable
+        ? (
+            zoy
+              ? lineTotal
+              : round2(
+                  warehouseCost +
+                  toNumber(
+                    transportCost,
+                    0
+                  )
+                )
+          )
+        : 0;
+
+    const descLines =
+      splitText(
+        doc,
+        description,
+        56
+      ).slice(0, 3);
+
+    const packageWord =
+      packageCount === 1
+        ? "package"
+        : "packages";
+
+    const packageLines =
+      splitText(
+        doc,
+        `${packageCount} ${packageWord}`,
+        24
+      );
+
+    const labelLines =
+      splitText(
+        doc,
+        packageLabel,
+        24
+      ).slice(0, 2);
+
+    const rowHeight =
+      Math.max(
+        7,
+        descLines.length * 3.25,
+        (
+          packageLines.length +
+          labelLines.length
+        ) * 3.15
+      );
 
     setDark(doc);
 
-    return y + boxHeight + 3;
-  }
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
 
-  function drawRegionalNote(doc, y, pricing, ctx, order, logoDataUrl) {
-    const regional = pricing.regional || {};
-    const note = cleanText(regional.note || "");
-
-    if (!note || regional.priceOnRequest) return y;
-
-    y = maybeAddNewPage(doc, y + 2, order, ctx, logoDataUrl, false);
-
-    const lines = splitText(doc, note, 172);
-    const boxHeight = Math.max(9, lines.length * 3.3 + 5);
-
-    doc.setFillColor(245, 243, 255);
-    doc.setDrawColor(221, 214, 254);
-    doc.roundedRect(14, y - 4, 182, boxHeight, 1.8, 1.8, "FD");
-
-    doc.setFont("helvetica", "bold");
     doc.setFontSize(6.8);
-    doc.setTextColor(109, 40, 217);
-    doc.text(lines.slice(0, 3), 17, y + 1);
 
-    setDark(doc);
+    doc.text(
+      sku,
+      14,
+      y
+    );
 
-    return y + boxHeight + 3;
+    doc.text(
+      descLines,
+      33,
+      y
+    );
+
+    doc.text(
+      formatNumber(qty, 0),
+      96,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.text(
+      packageLines,
+      110,
+      y
+    );
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(6.1);
+
+    doc.text(
+      labelLines,
+      110,
+      y + 3.4
+    );
+
+    doc.setFontSize(6.8);
+
+    if (zoy) {
+
+      doc.text(
+        formatMoney(unitPrice),
+        166,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+      doc.text(
+        formatMoney(lineTotal),
+        194,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+    } else {
+
+      doc.text(
+        formatMoney(warehouseCost),
+        146,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+      doc.text(
+        regional.priceOnRequest
+          ? "POR"
+          : formatMoney(
+              transportCost
+            ),
+        166,
+        y,
+        {
+          align: "right"
+        }
+      );
+
+      doc.text(
+        regional.priceOnRequest
+          ? "POR"
+          : formatMoney(total),
+        194,
+        y,
+        {
+          align: "right"
+        }
+      );
+    }
+
+    y += rowHeight + 1;
+
+    if (warning) {
+      y = maybeAddNewPage(
+        doc,
+        y + 1,
+        order,
+        ctx,
+        logoDataUrl,
+        false
+      );
+
+      y = drawServiceWarningBox(
+        doc,
+        y,
+        warning
+      );
+    }
+  });
+
+
+  if (
+    regional.priceOnRequest
+  ) {
+    y = drawPriceOnRequestBox(
+      doc,
+      y + 2,
+      ctx,
+      order,
+      logoDataUrl
+    );
   }
 
-function drawTotalsBlock(doc, y, pricing, ctx, order, logoDataUrl) {
-  y = maybeAddNewPage(doc, y, order, ctx, logoDataUrl, false);
+  return {
+    y: y + 3
+  };
+}
 
-  const zoy = isZoyOrder(order, ctx);
-  const regional = pricing.regional || {};
+function drawTotalsBlock(
+  doc,
+  y,
+  pricing,
+  ctx,
+  order,
+  logoDataUrl
+) {
+  y = maybeAddNewPage(
+    doc,
+    y,
+    order,
+    ctx,
+    logoDataUrl,
+    false
+  );
 
-  const totalProducts = getTotalProducts(order);
-  const totalPackages = getTotalPackages(order);
+  const zoy =
+    isZoyOrder(
+      order,
+      ctx
+    );
 
-  doc.setDrawColor(90, 90, 90);
-  doc.line(14, y, 196, y);
+  const regional =
+    pricing.regional || {};
+
+  const totalProducts =
+    getTotalProducts(order);
+
+  const totalPackages =
+    getTotalPackages(order);
+
+  const manualCharges =
+    getManualChargesTotal(order);
+
+  doc.setDrawColor(
+    90,
+    90,
+    90
+  );
+
+  doc.line(
+    14,
+    y,
+    196,
+    y
+  );
 
   y += 7;
 
   const labelX = 118;
   const valueX = 194;
 
-  doc.setFont("helvetica", "bold");
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
   doc.setFontSize(8);
 
-  doc.text("Total Products", labelX, y);
-  doc.text(formatNumber(totalProducts, 0), valueX, y, { align: "right" });
+  doc.text(
+    "Total Products",
+    labelX,
+    y
+  );
+
+  doc.text(
+    formatNumber(
+      totalProducts,
+      0
+    ),
+    valueX,
+    y,
+    {
+      align: "right"
+    }
+  );
 
   y += 5;
 
-  doc.text("Total Packages", labelX, y);
-  doc.text(formatNumber(totalPackages, 0), valueX, y, { align: "right" });
+  doc.text(
+    "Total Packages",
+    labelX,
+    y
+  );
+
+  doc.text(
+    formatNumber(
+      totalPackages,
+      0
+    ),
+    valueX,
+    y,
+    {
+      align: "right"
+    }
+  );
 
   y += 7;
 
+
+  /*
+   * =========================================
+   * ZOY
+   * =========================================
+   */
   if (zoy) {
-const subtotal =
-  isChargeableOrder(order)
-    ? round2(
-        getOrderLines(order)
-          .reduce(
-            (sum, line) => {
-              const qty =
-                getLineQty(line);
 
-              const unitPrice =
-                toNumber(
-                  line.total_customer_charge,
-                  0
-                );
+    const productSubtotal =
+      isChargeableOrder(order)
+        ? round2(
+            getStockOrderLines(order)
+              .reduce(
+                (sum, line) => {
 
-              return (
-                sum +
-                qty *
-                unitPrice
-              );
-            },
-            0
+                  const qty =
+                    getLineQty(line);
+
+                  const unitPrice =
+                    toNumber(
+                      line.total_customer_charge,
+                      0
+                    );
+
+                  return (
+                    sum +
+                    qty * unitPrice
+                  );
+                },
+                0
+              )
           )
-      )
-    : 0;
+        : 0;
 
-    const regionalSurcharge = round2(toNumber(pricing.regionalSurcharge, 0));
-    const total = round2(subtotal + regionalSurcharge);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.2);
-    doc.text("Order Total", labelX, y);
-
-    y += 6;
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7.6);
-
-    doc.text("Subtotal", labelX, y);
-    doc.text(formatMoney(subtotal), valueX, y, { align: "right" });
-
-    if (!regional.priceOnRequest && regionalSurcharge > 0) {
-      y += 5.2;
-
-      doc.text(
-        `Transport surcharge (${regional.label} ${formatNumber(regional.percent, 0)}%)`,
-        labelX,
-        y
+    const regionalSurcharge =
+      round2(
+        toNumber(
+          pricing.regionalSurcharge,
+          0
+        )
       );
 
-      doc.text(formatMoney(regionalSurcharge), valueX, y, { align: "right" });
-    }
+    const subtotal =
+      round2(
+        productSubtotal +
+        manualCharges
+      );
 
-    y += 5.8;
+    const total =
+      round2(
+        subtotal +
+        regionalSurcharge
+      );
 
-    doc.setFont("helvetica", "bold");
-    doc.text("Subtotal excl. VAT", labelX, y);
-    doc.text(formatMoney(total), valueX, y, { align: "right" });
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
 
-    y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
-
-    return y + 2;
-  }
-
-  const subtotal = regional.priceOnRequest
-    ? null
-    : round2(pricing.warehouse + pricing.transport);
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8.2);
-  doc.text("Order Total", labelX, y);
-
-  y += 6;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7.6);
-
-  doc.text("Warehouse Costs", labelX, y);
-  doc.text(formatMoney(pricing.warehouse), valueX, y, { align: "right" });
-
-  y += 5.2;
-
-  doc.text("Transport Costs", labelX, y);
-  doc.text(
-    regional.priceOnRequest ? "Price on Request" : formatMoney(pricing.transport),
-    valueX,
-    y,
-    { align: "right" }
-  );
-
-  if (!regional.priceOnRequest && pricing.regionalSurcharge > 0) {
-    y += 5.2;
+    doc.setFontSize(8.2);
 
     doc.text(
-      `Transport surcharge (${regional.label} ${formatNumber(regional.percent, 0)}%)`,
+      "Order Total",
       labelX,
       y
     );
 
-    doc.text(formatMoney(pricing.regionalSurcharge), valueX, y, { align: "right" });
+    y += 6;
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(7.6);
+
+    doc.text(
+      "Products / Services",
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(
+        productSubtotal
+      ),
+      valueX,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+
+    /*
+     * Manual charges alleen tonen
+     * wanneer ze daadwerkelijk bestaan.
+     */
+    if (manualCharges > 0) {
+
+      y += 5.2;
+
+      doc.text(
+        "Manual Charges",
+        labelX,
+        y
+      );
+
+      doc.text(
+        formatMoney(
+          manualCharges
+        ),
+        valueX,
+        y,
+        {
+          align: "right"
+        }
+      );
+    }
+
+
+    if (
+      !regional.priceOnRequest &&
+      regionalSurcharge > 0
+    ) {
+
+      y += 5.2;
+
+      doc.text(
+        `Transport surcharge (` +
+        `${regional.label} ` +
+        `${formatNumber(
+          regional.percent,
+          0
+        )}%)`,
+        labelX,
+        y
+      );
+
+      doc.text(
+        formatMoney(
+          regionalSurcharge
+        ),
+        valueX,
+        y,
+        {
+          align: "right"
+        }
+      );
+    }
+
+    y += 5.8;
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.text(
+      "Subtotal excl. VAT",
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(total),
+      valueX,
+      y,
+      {
+        align: "right"
+      }
+    );
+
+    y = drawRegionalNote(
+      doc,
+      y + 7,
+      pricing,
+      ctx,
+      order,
+      logoDataUrl
+    );
+
+    return y + 2;
   }
 
-  y += 5.8;
 
-  doc.setFont("helvetica", "bold");
-  doc.text("Subtotal excl. VAT", labelX, y);
-  doc.text(
-    regional.priceOnRequest ? "Price on Request" : formatMoney(subtotal),
-    valueX,
-    y,
-    { align: "right" }
+  /*
+   * =========================================
+   * NORMALE ORDERS
+   * =========================================
+   */
+
+  const warehouseCosts =
+    round2(
+      toNumber(
+        pricing.warehouse,
+        0
+      )
+    );
+
+  const transportCosts =
+    round2(
+      toNumber(
+        pricing.transport,
+        0
+      )
+    );
+
+  const normalSubtotal =
+    regional.priceOnRequest
+      ? null
+      : round2(
+          warehouseCosts +
+          transportCosts +
+          manualCharges
+        );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
   );
 
-  y = drawRegionalNote(doc, y + 7, pricing, ctx, order, logoDataUrl);
-  y = drawPricingNoteBox(doc, y, ctx, order, logoDataUrl);
+  doc.setFontSize(8.2);
+
+  doc.text(
+    "Order Total",
+    labelX,
+    y
+  );
+
+  y += 6;
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.setFontSize(7.6);
+
+
+  /*
+   * Warehouse
+   */
+  doc.text(
+    "Warehouse Costs",
+    labelX,
+    y
+  );
+
+  doc.text(
+    formatMoney(
+      warehouseCosts
+    ),
+    valueX,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+
+  /*
+   * Transport
+   */
+  y += 5.2;
+
+  doc.text(
+    "Transport Costs",
+    labelX,
+    y
+  );
+
+  doc.text(
+    regional.priceOnRequest
+      ? "Price on Request"
+      : formatMoney(
+          transportCosts
+        ),
+    valueX,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+
+  /*
+   * Manual charges
+   */
+  if (manualCharges > 0) {
+
+    y += 5.2;
+
+    doc.text(
+      "Manual Charges",
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(
+        manualCharges
+      ),
+      valueX,
+      y,
+      {
+        align: "right"
+      }
+    );
+  }
+
+
+  /*
+   * Regionale transporttoeslag
+   */
+  if (
+    !regional.priceOnRequest &&
+    toNumber(
+      pricing.regionalSurcharge,
+      0
+    ) > 0
+  ) {
+
+    y += 5.2;
+
+    doc.text(
+      `Transport surcharge (` +
+      `${regional.label} ` +
+      `${formatNumber(
+        regional.percent,
+        0
+      )}%)`,
+      labelX,
+      y
+    );
+
+    doc.text(
+      formatMoney(
+        pricing.regionalSurcharge
+      ),
+      valueX,
+      y,
+      {
+        align: "right"
+      }
+    );
+  }
+
+
+  /*
+   * Eindtotaal
+   */
+  y += 5.8;
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.text(
+    "Subtotal excl. VAT",
+    labelX,
+    y
+  );
+
+  doc.text(
+    regional.priceOnRequest
+      ? "Price on Request"
+      : formatMoney(
+          normalSubtotal
+        ),
+    valueX,
+    y,
+    {
+      align: "right"
+    }
+  );
+
+
+  y = drawRegionalNote(
+    doc,
+    y + 7,
+    pricing,
+    ctx,
+    order,
+    logoDataUrl
+  );
+
+  y = drawPricingNoteBox(
+    doc,
+    y,
+    ctx,
+    order,
+    logoDataUrl
+  );
 
   return y + 2;
 }
+
 function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
   y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
 
