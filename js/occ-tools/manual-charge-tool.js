@@ -195,132 +195,715 @@
     };
   }
 
+function getManualChargeLineConfig(type) {
+  const value = String(type || "").toLowerCase();
+
+  if (value === "mileage") {
+    return {
+      description: "Mileage",
+      quantityLabel: "Miles",
+      rateLabel: "Rate per mile",
+      unit: "miles",
+      calculated: true
+    };
+  }
+
+  if (value === "labour") {
+    return {
+      description: "Man hours",
+      quantityLabel: "Hours",
+      rateLabel: "Rate per hour",
+      unit: "hours",
+      calculated: true
+    };
+  }
+
+  if (value === "waste") {
+    return {
+      description: "Waste disposal",
+      unit: "fixed",
+      calculated: false
+    };
+  }
+
+  return {
+    description: "",
+    unit: "fixed",
+    calculated: false
+  };
+}
+
+
+function createManualChargeLineRow(type = "mileage") {
+  const row = document.createElement("div");
+
+  row.className = "manual-charge-line";
+  row.style.cssText = `
+    border:1px solid #dce5f2;
+    border-radius:12px;
+    padding:12px;
+    margin-bottom:10px;
+    background:#fff;
+  `;
+
+  row.innerHTML = `
+    <div style="
+      display:grid;
+      grid-template-columns:150px 1fr auto;
+      gap:10px;
+      align-items:end;
+      margin-bottom:10px;
+    ">
+      <div class="field" style="margin:0;">
+        <label>Type</label>
+
+        <select class="select" data-manual-line-type>
+          <option value="mileage">Mileage</option>
+          <option value="labour">Labour</option>
+          <option value="waste">Waste</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div class="field" style="margin:0;">
+        <label>Description</label>
+
+        <input
+          class="input"
+          data-manual-line-description
+          placeholder="Description"
+        />
+      </div>
+
+      <button
+        type="button"
+        class="btn"
+        data-remove-manual-line
+        style="height:40px;"
+      >
+        Remove
+      </button>
+    </div>
+
+    <div
+      data-calculated-fields
+      style="
+        display:grid;
+        grid-template-columns:1fr 1fr 150px;
+        gap:10px;
+        align-items:end;
+      "
+    >
+      <div class="field" style="margin:0;">
+        <label data-manual-quantity-label>Quantity</label>
+
+        <input
+          class="input"
+          type="number"
+          min="0"
+          step="0.01"
+          data-manual-line-quantity
+          placeholder="0"
+        />
+      </div>
+
+      <div class="field" style="margin:0;">
+        <label data-manual-rate-label>Rate</label>
+
+        <input
+          class="input"
+          type="number"
+          min="0"
+          step="0.01"
+          data-manual-line-rate
+          placeholder="0.00"
+        />
+      </div>
+
+      <div class="quick-action" style="
+        cursor:default;
+        background:#f8fafc;
+        min-height:40px;
+      ">
+        <span>Total</span>
+        <strong data-manual-line-total>£0.00</strong>
+      </div>
+    </div>
+
+    <div
+      data-fixed-fields
+      style="
+        display:none;
+        grid-template-columns:1fr 150px;
+        gap:10px;
+        align-items:end;
+      "
+    >
+      <div class="field" style="margin:0;">
+        <label>Amount ex VAT</label>
+
+        <input
+          class="input"
+          type="number"
+          min="0"
+          step="0.01"
+          data-manual-line-fixed
+          placeholder="0.00"
+        />
+      </div>
+
+      <div class="quick-action" style="
+        cursor:default;
+        background:#f8fafc;
+        min-height:40px;
+      ">
+        <span>Total</span>
+        <strong data-manual-line-total-fixed>£0.00</strong>
+      </div>
+    </div>
+  `;
+
+  row.querySelector("[data-manual-line-type]").value = type;
+
+  updateManualChargeLineType(row);
+
+  return row;
+}
+
+
+function updateManualChargeLineType(row) {
+  const type =
+    row.querySelector("[data-manual-line-type]")?.value ||
+    "other";
+
+  const config =
+    getManualChargeLineConfig(type);
+
+  const description =
+    row.querySelector("[data-manual-line-description]");
+
+  const calculatedFields =
+    row.querySelector("[data-calculated-fields]");
+
+  const fixedFields =
+    row.querySelector("[data-fixed-fields]");
+
+  if (
+    description &&
+    (
+      !description.value ||
+      [
+        "Mileage",
+        "Man hours",
+        "Waste disposal"
+      ].includes(description.value)
+    )
+  ) {
+    description.value =
+      config.description;
+  }
+
+  if (config.calculated) {
+    calculatedFields.style.display = "grid";
+    fixedFields.style.display = "none";
+
+    row.querySelector(
+      "[data-manual-quantity-label]"
+    ).textContent =
+      config.quantityLabel;
+
+    row.querySelector(
+      "[data-manual-rate-label]"
+    ).textContent =
+      config.rateLabel;
+  } else {
+    calculatedFields.style.display = "none";
+    fixedFields.style.display = "grid";
+  }
+
+  refreshPreview();
+}
+
+
+function getManualChargeLines() {
+  const rows = Array.from(
+    document.querySelectorAll(
+      "#manualChargeLines .manual-charge-line"
+    )
+  );
+
+  return rows
+    .map(row => {
+      const type =
+        row.querySelector(
+          "[data-manual-line-type]"
+        )?.value || "other";
+
+      const config =
+        getManualChargeLineConfig(type);
+
+      const description =
+        cleanText(
+          row.querySelector(
+            "[data-manual-line-description]"
+          )?.value || ""
+        );
+
+      if (config.calculated) {
+        const quantity =
+          round2(
+            toNumber(
+              row.querySelector(
+                "[data-manual-line-quantity]"
+              )?.value,
+              0
+            )
+          );
+
+        const rate =
+          round2(
+            toNumber(
+              row.querySelector(
+                "[data-manual-line-rate]"
+              )?.value,
+              0
+            )
+          );
+
+        return {
+          type,
+          description,
+          quantity,
+          unit: config.unit,
+          rate,
+          amount: round2(
+            quantity * rate
+          )
+        };
+      }
+
+      const amount =
+        round2(
+          toNumber(
+            row.querySelector(
+              "[data-manual-line-fixed]"
+            )?.value,
+            0
+          )
+        );
+
+      return {
+        type,
+        description,
+        quantity: null,
+        unit: "fixed",
+        rate: null,
+        amount
+      };
+    })
+    .filter(line =>
+      line.description ||
+      line.amount > 0
+    );
+}
+
+
+function addManualChargeLine(type = "mileage") {
+  const container =
+    byId("manualChargeLines");
+
+  if (!container) return;
+
+  container.appendChild(
+    createManualChargeLineRow(type)
+  );
+
+  refreshPreview();
+}
+
   function ensureModal() {
-    if (byId("manualChargeModal")) return;
+  if (byId("manualChargeModal")) return;
 
-    const modal = document.createElement("div");
-    modal.id = "manualChargeModal";
-    modal.className = "occ-modal tenant-only";
-    modal.setAttribute("aria-hidden", "true");
+  const modal =
+    document.createElement("div");
 
-    modal.innerHTML = `
-      <div class="occ-modal-card" style="width:min(860px,96vw);">
-        <div class="occ-modal-head">
-          <div>
-            <h2 class="occ-modal-title">Manual Charge</h2>
-            <p class="occ-modal-sub">
-              Create a manual charge order with optional fuel surcharge, ACK generation and combined invoice support.
-            </p>
-          </div>
-          <button id="manualChargeCloseBtn" class="occ-modal-close" type="button">×</button>
+  modal.id = "manualChargeModal";
+  modal.className =
+    "occ-modal tenant-only";
+
+  modal.setAttribute(
+    "aria-hidden",
+    "true"
+  );
+
+  modal.innerHTML = `
+    <div
+      class="occ-modal-card"
+      style="
+        width:min(1100px,96vw);
+        max-height:92vh;
+        overflow:auto;
+      "
+    >
+      <div class="occ-modal-head">
+        <div>
+          <h2 class="occ-modal-title">
+            Manual Charge
+          </h2>
+
+          <p class="occ-modal-sub">
+            Create a manual charge order with multiple
+            charge lines and combined invoice support.
+          </p>
         </div>
 
-        <div class="occ-modal-grid">
-          <section class="occ-modal-section">
-            <h3>Order details</h3>
+        <button
+          id="manualChargeCloseBtn"
+          class="occ-modal-close"
+          type="button"
+        >
+          ×
+        </button>
+      </div>
 
-            <div class="field">
-              <label for="manualChargeOwner">Product Owner</label>
-              <select id="manualChargeOwner" class="select">
-                <option value="">Loading...</option>
-              </select>
-            </div>
+      <div
+        style="
+          display:grid;
+          grid-template-columns:340px 1fr;
+          gap:16px;
+        "
+      >
 
-            <div class="field">
-              <label for="manualChargeRetailer">Retailer</label>
-              <input id="manualChargeRetailer" class="input" placeholder="Retailer name"/>
-            </div>
+        <section class="occ-modal-section">
 
-            <div class="field">
-              <label for="manualChargePostcode">Postcode</label>
-              <input id="manualChargePostcode" class="input" placeholder="Optional postcode"/>
-            </div>
+          <h3>Order details</h3>
 
-            <div class="field">
-              <label for="manualChargeReference">Reference / ACK ref</label>
-              <input id="manualChargeReference" class="input" placeholder="Optional reference"/>
-            </div>
+          <div class="field">
+            <label for="manualChargeOwner">
+              Product Owner
+            </label>
 
-            <div class="field">
-              <label for="manualChargePo">PO</label>
-              <input id="manualChargePo" class="input" placeholder="Optional PO"/>
-            </div>
-          </section>
+            <select
+              id="manualChargeOwner"
+              class="select"
+            >
+              <option value="">
+                Loading...
+              </option>
+            </select>
+          </div>
 
-          <section class="occ-modal-section">
-            <h3>Charge line</h3>
+          <div class="field">
+            <label for="manualChargeRetailer">
+              Retailer
+            </label>
 
-            <div class="field">
-              <label for="manualChargeDescription">Description</label>
-              <textarea id="manualChargeDescription" class="input" placeholder="Example: Additional handling charge"></textarea>
-            </div>
+            <input
+              id="manualChargeRetailer"
+              class="input"
+              placeholder="Retailer name"
+            />
+          </div>
 
-            <div class="field">
-              <label for="manualChargeAmount">Base amount ex VAT</label>
-              <input id="manualChargeAmount" class="input" type="number" step="0.01" min="0" placeholder="0.00"/>
-            </div>
+          <div class="field">
+            <label for="manualChargePostcode">
+              Postcode
+            </label>
 
-            <label style="display:flex;gap:8px;align-items:center;font-size:12px;font-weight:900;">
-              <input id="manualChargeFuelEnabled" type="checkbox"/>
+            <input
+              id="manualChargePostcode"
+              class="input"
+              placeholder="Optional postcode"
+            />
+          </div>
+
+          <div class="field">
+            <label for="manualChargeReference">
+              Reference / ACK ref
+            </label>
+
+            <input
+              id="manualChargeReference"
+              class="input"
+              placeholder="Optional reference"
+            />
+          </div>
+
+          <div class="field">
+            <label for="manualChargePo">
+              PO
+            </label>
+
+            <input
+              id="manualChargePo"
+              class="input"
+              placeholder="Optional PO"
+            />
+          </div>
+
+          <div class="field">
+            <label for="manualChargeStatus">
+              Order status
+            </label>
+
+            <select
+              id="manualChargeStatus"
+              class="select"
+            >
+              <option value="order_received">
+                Order received
+              </option>
+
+              <option
+                value="stock_complete"
+                selected
+              >
+                Stock complete
+              </option>
+
+              <option value="planned">
+                On planning
+              </option>
+
+              <option value="delivered">
+                Delivered
+              </option>
+            </select>
+          </div>
+
+        </section>
+
+
+        <section class="occ-modal-section">
+
+          <div style="
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            gap:12px;
+            margin-bottom:10px;
+          ">
+            <h3 style="margin:0;">
+              Charge lines
+            </h3>
+
+            <button
+              id="manualChargeAddLineBtn"
+              class="btn"
+              type="button"
+            >
+              + Add line
+            </button>
+          </div>
+
+
+          <div id="manualChargeLines"></div>
+
+
+          <div style="
+            border-top:1px solid #dce5f2;
+            padding-top:12px;
+            margin-top:14px;
+          ">
+
+            <label style="
+              display:flex;
+              gap:8px;
+              align-items:center;
+              font-size:12px;
+              font-weight:900;
+            ">
+              <input
+                id="manualChargeFuelEnabled"
+                type="checkbox"
+              />
+
               Add fuel surcharge
             </label>
 
-            <div class="field">
-              <label for="manualChargeFuelPercentage">Fuel surcharge %</label>
-              <input id="manualChargeFuelPercentage" class="input" type="number" step="0.1" min="0" value="${DEFAULT_FUEL_PERCENTAGE}"/>
+            <div
+              class="field"
+              style="margin-top:10px;"
+            >
+              <label
+                for="manualChargeFuelPercentage"
+              >
+                Fuel surcharge %
+              </label>
+
+              <input
+                id="manualChargeFuelPercentage"
+                class="input"
+                type="number"
+                step="0.1"
+                min="0"
+                value="${DEFAULT_FUEL_PERCENTAGE}"
+              />
             </div>
 
-            <div class="field">
-              <label for="manualChargeStatus">Order status</label>
-              <select id="manualChargeStatus" class="select">
-                <option value="order_received">Order received</option>
-                <option value="stock_complete" selected>Stock complete</option>
-                <option value="planned">On planning</option>
-                <option value="delivered">Delivered</option>
-              </select>
+            <div
+              class="quick-action"
+              style="
+                cursor:default;
+                background:#f8fafc;
+                margin-top:12px;
+              "
+            >
+              <span>
+                Total charge ex VAT
+              </span>
+
+              <strong
+                id="manualChargeTotalPreview"
+              >
+                £0.00
+              </strong>
             </div>
 
-            <div class="quick-action" style="cursor:default;background:#f8fafc;">
-              <span>Total charge ex VAT</span>
-              <span id="manualChargeTotalPreview">£0.00</span>
-            </div>
-          </section>
-        </div>
+          </div>
 
-        <div class="occ-modal-actions">
-          <button id="manualChargeCancelBtn" class="btn" type="button">Cancel</button>
-          <button id="manualChargeCreateBtn" class="btn btn-primary" type="button">Create Manual Charge</button>
-        </div>
+        </section>
+
       </div>
-    `;
 
-    document.body.appendChild(modal);
 
-    byId("manualChargeCloseBtn")?.addEventListener("click", close);
-    byId("manualChargeCancelBtn")?.addEventListener("click", close);
+      <div class="occ-modal-actions">
+        <button
+          id="manualChargeCancelBtn"
+          class="btn"
+          type="button"
+        >
+          Cancel
+        </button>
 
-    modal.addEventListener("click", event => {
-      if (event.target === modal) close();
-    });
+        <button
+          id="manualChargeCreateBtn"
+          class="btn btn-primary"
+          type="button"
+        >
+          Create Manual Charge
+        </button>
+      </div>
 
-    [
-      "manualChargeAmount",
-      "manualChargeFuelEnabled",
-      "manualChargeFuelPercentage"
-    ].forEach(id => {
-      byId(id)?.addEventListener("input", refreshPreview);
-      byId(id)?.addEventListener("change", refreshPreview);
-    });
+    </div>
+  `;
 
-    byId("manualChargeCreateBtn")?.addEventListener("click", async () => {
-      try {
-        await createManualCharge();
-      } catch (error) {
-        console.error(error);
-        alert(error.message || "Could not create manual charge.");
+  document.body.appendChild(modal);
+
+
+  byId("manualChargeCloseBtn")
+    ?.addEventListener(
+      "click",
+      close
+    );
+
+  byId("manualChargeCancelBtn")
+    ?.addEventListener(
+      "click",
+      close
+    );
+
+
+  byId("manualChargeAddLineBtn")
+    ?.addEventListener(
+      "click",
+      () => {
+        addManualChargeLine("other");
       }
-    });
-  }
+    );
+
+
+  modal.addEventListener(
+    "click",
+    event => {
+      if (event.target === modal) {
+        close();
+      }
+
+      const removeButton =
+        event.target.closest(
+          "[data-remove-manual-line]"
+        );
+
+      if (removeButton) {
+        const row =
+          removeButton.closest(
+            ".manual-charge-line"
+          );
+
+        row?.remove();
+
+        refreshPreview();
+      }
+    }
+  );
+
+
+  modal.addEventListener(
+    "change",
+    event => {
+
+      if (
+        event.target.matches(
+          "[data-manual-line-type]"
+        )
+      ) {
+        updateManualChargeLineType(
+          event.target.closest(
+            ".manual-charge-line"
+          )
+        );
+      }
+
+      refreshPreview();
+    }
+  );
+
+
+  modal.addEventListener(
+    "input",
+    event => {
+
+      if (
+        event.target.matches(
+          [
+            "[data-manual-line-quantity]",
+            "[data-manual-line-rate]",
+            "[data-manual-line-fixed]",
+            "#manualChargeFuelPercentage"
+          ].join(",")
+        )
+      ) {
+        refreshPreview();
+      }
+    }
+  );
+
+
+  byId("manualChargeFuelEnabled")
+    ?.addEventListener(
+      "change",
+      refreshPreview
+    );
+
+
+  byId("manualChargeCreateBtn")
+    ?.addEventListener(
+      "click",
+      async () => {
+        try {
+          await createManualCharge();
+        } catch (error) {
+          console.error(error);
+
+          alert(
+            error.message ||
+            "Could not create manual charge."
+          );
+        }
+      }
+    );
+}
 
   async function populateOwners() {
     const owners = await loadProductOwners();
@@ -337,187 +920,685 @@
     if (bellstone) select.value = bellstone.id;
   }
 
-  function getAmounts() {
-    const base = round2(toNumber(byId("manualChargeAmount")?.value, 0));
-    const fuelEnabled = !!byId("manualChargeFuelEnabled")?.checked;
-    const fuelPct = round2(toNumber(byId("manualChargeFuelPercentage")?.value, DEFAULT_FUEL_PERCENTAGE));
-    const fuelAmount = fuelEnabled ? round2(base * (fuelPct / 100)) : 0;
-    const total = round2(base + fuelAmount);
+function getAmounts() {
+  const lines =
+    getManualChargeLines();
 
-    return { base, fuelEnabled, fuelPct, fuelAmount, total };
-  }
+  const base =
+    round2(
+      lines.reduce(
+        (sum, line) =>
+          sum +
+          toNumber(
+            line.amount,
+            0
+          ),
+        0
+      )
+    );
 
-  function refreshPreview() {
-    const { total } = getAmounts();
-    const el = byId("manualChargeTotalPreview");
-    if (el) el.textContent = formatMoney(total);
-  }
+  const fuelEnabled =
+    !!byId(
+      "manualChargeFuelEnabled"
+    )?.checked;
 
-  async function open() {
-    ensureModal();
-    await populateOwners();
+  const fuelPct =
+    round2(
+      toNumber(
+        byId(
+          "manualChargeFuelPercentage"
+        )?.value,
+        DEFAULT_FUEL_PERCENTAGE
+      )
+    );
 
-    byId("manualChargeRetailer").value = "";
-    byId("manualChargePostcode").value = "";
-    byId("manualChargeReference").value = "";
-    byId("manualChargePo").value = "";
-    byId("manualChargeDescription").value = "";
-    byId("manualChargeAmount").value = "";
-    byId("manualChargeFuelEnabled").checked = false;
-    byId("manualChargeFuelPercentage").value = DEFAULT_FUEL_PERCENTAGE;
-    byId("manualChargeStatus").value = "stock_complete";
+  const fuelAmount =
+    fuelEnabled
+      ? round2(
+          base *
+          (
+            fuelPct /
+            100
+          )
+        )
+      : 0;
 
-    refreshPreview();
+  const total =
+    round2(
+      base +
+      fuelAmount
+    );
 
-    byId("manualChargeModal")?.classList.add("open");
-    byId("manualChargeModal")?.setAttribute("aria-hidden", "false");
-  }
+  return {
+    lines,
+    base,
+    fuelEnabled,
+    fuelPct,
+    fuelAmount,
+    total
+  };
+}
 
-  function close() {
-    byId("manualChargeModal")?.classList.remove("open");
-    byId("manualChargeModal")?.setAttribute("aria-hidden", "true");
-  }
 
-  async function createManualCharge() {
-    const cid = await getCompanyId();
-    const { orderNumber, nextNo } = await getNextSoNumber();
+function refreshPreview() {
+  const {
+    lines,
+    total
+  } = getAmounts();
 
-    const ownerId = byId("manualChargeOwner")?.value || "";
-    const owner = productOwners.find(row => String(row.id) === String(ownerId));
+  document
+    .querySelectorAll(
+      "#manualChargeLines .manual-charge-line"
+    )
+    .forEach((row, index) => {
 
-    if (!owner?.id) throw new Error("Select a product owner.");
+      const line =
+        lines[index];
 
-    const retailer = cleanText(byId("manualChargeRetailer")?.value || "");
-    const postcode = cleanText(byId("manualChargePostcode")?.value || "");
-    const reference = cleanText(byId("manualChargeReference")?.value || "");
-    const po = cleanText(byId("manualChargePo")?.value || "");
-    const description = cleanText(byId("manualChargeDescription")?.value || "");
-    const selectedStatus = byId("manualChargeStatus")?.value || "stock_complete";
-    const amounts = getAmounts();
+      const type =
+        row.querySelector(
+          "[data-manual-line-type]"
+        )?.value;
 
-    if (!retailer) throw new Error("Enter a retailer name.");
-    if (!description) throw new Error("Enter a charge description.");
-    if (amounts.base <= 0) throw new Error("Enter an amount higher than 0.");
+      const config =
+        getManualChargeLineConfig(
+          type
+        );
 
-    const orderId = crypto.randomUUID();
-    const statusFields = statusPayload(selectedStatus);
+      const amount =
+        config.calculated
+          ? round2(
+              toNumber(
+                row.querySelector(
+                  "[data-manual-line-quantity]"
+                )?.value,
+                0
+              ) *
+              toNumber(
+                row.querySelector(
+                  "[data-manual-line-rate]"
+                )?.value,
+                0
+              )
+            )
+          : round2(
+              toNumber(
+                row.querySelector(
+                  "[data-manual-line-fixed]"
+                )?.value,
+                0
+              )
+            );
 
-    const orderPayload = {
-      id: orderId,
-      company_id: cid,
-      customer_id: owner.id,
-      order_number: orderNumber,
-      order_type: "manual_charge",
-      source_type: "manual_charge",
-      external_reference: reference || null,
-      purchase_order: po || null,
-      order_date: todayIso(),
-      requested_delivery_date: todayIso(),
-      finance_status: "not_invoiced",
-      planning_release: false,
-      planning_colli: 0,
-      planning_volume_m3: 0,
-      total_order_colli: 0,
-      total_order_volume_m3: 0,
-      total_customer_charge: amounts.total,
-      customer_charge_gbp: amounts.total,
-      estimated_revenue_gbp: amounts.total,
-      retail_name: retailer,
-      retailer_code: makeRetailerCode(postcode, retailer),
-      delivery_postcode: postcode || null,
-      delivery_country: "United Kingdom",
-      memo: [
-        "Manual charge created in OCC.",
-        `Description: ${description}.`,
-        amounts.fuelEnabled
-          ? `Fuel surcharge ${amounts.fuelPct}% added: ${formatMoney(amounts.fuelAmount)}.`
-          : "No fuel surcharge added."
-      ].join(" "),
-      notes: `Manual charge base ${formatMoney(amounts.base)}. Total ex VAT ${formatMoney(amounts.total)}.`,
-      created_at: nowIso(),
-      last_activity_at: nowIso(),
-      ...statusFields
-    };
+      const calculatedTotal =
+        row.querySelector(
+          "[data-manual-line-total]"
+        );
 
-    const { error: orderError } = await db()
-      .from("orders")
-      .insert(orderPayload);
+      const fixedTotal =
+        row.querySelector(
+          "[data-manual-line-total-fixed]"
+        );
 
-    if (orderError) throw orderError;
-
-    const lines = [
-      {
-        company_id: cid,
-        order_id: orderId,
-        line_number: 1,
-        sku_base: "MANUAL",
-        description,
-        quantity_ordered: 1,
-        quantity_allocated: 0,
-        quantity_shipped: selectedStatus === "delivered" ? 1 : 0,
-        line_type: "manual",
-        manual_description: description,
-        manual_amount_gbp: amounts.base,
-        tariff_transport: amounts.base,
-        tariff_storage: 0,
-        tariff_admin: 0,
-        tariff_handling: 0,
-        total_customer_charge: amounts.base,
-        created_at: nowIso()
+      if (calculatedTotal) {
+        calculatedTotal.textContent =
+          formatMoney(amount);
       }
-    ];
 
-    if (amounts.fuelEnabled && amounts.fuelAmount > 0) {
-      lines.push({
-        company_id: cid,
-        order_id: orderId,
-        line_number: 2,
-        sku_base: "FUEL",
-        description: `Fuel surcharge ${amounts.fuelPct}%`,
-        quantity_ordered: 1,
-        quantity_allocated: 0,
-        quantity_shipped: selectedStatus === "delivered" ? 1 : 0,
-        line_type: "manual",
-        manual_description: `Fuel surcharge ${amounts.fuelPct}%`,
-        manual_amount_gbp: amounts.fuelAmount,
-        tariff_transport: amounts.fuelAmount,
-        tariff_storage: 0,
-        tariff_admin: 0,
-        tariff_handling: 0,
-        total_customer_charge: amounts.fuelAmount,
-        created_at: nowIso()
-      });
-    }
+      if (fixedTotal) {
+        fixedTotal.textContent =
+          formatMoney(amount);
+      }
+    });
 
-    const { error: lineError } = await db()
-      .from("order_lines")
-      .insert(lines);
 
-    if (lineError) throw lineError;
+  const el =
+    byId(
+      "manualChargeTotalPreview"
+    );
 
-    await db()
-      .from("order_activity_log")
-      .insert({
-        company_id: cid,
-        customer_id: owner.id,
-        order_id: orderId,
-        activity_type: "manual_charge_created",
-        new_status: selectedStatus,
-        description: `Manual charge created. ${orderNumber} · ${description} · ${formatMoney(amounts.total)}.`,
-        created_by: "manual",
-        created_at: nowIso()
-      });
-
-    await incrementSoNumber(nextNo);
-
-    close();
-
-    if (window.OCCReloadOrders) {
-      await window.OCCReloadOrders();
-    }
-
-    alert(`Manual charge created: ${orderNumber}`);
+  if (el) {
+    el.textContent =
+      formatMoney(total);
   }
+}
+
+async function open() {
+  ensureModal();
+
+  await populateOwners();
+
+  byId("manualChargeRetailer").value = "";
+  byId("manualChargePostcode").value = "";
+  byId("manualChargeReference").value = "";
+  byId("manualChargePo").value = "";
+
+  byId(
+    "manualChargeFuelEnabled"
+  ).checked = false;
+
+  byId(
+    "manualChargeFuelPercentage"
+  ).value =
+    DEFAULT_FUEL_PERCENTAGE;
+
+  byId(
+    "manualChargeStatus"
+  ).value =
+    "stock_complete";
+
+
+  const linesContainer =
+    byId(
+      "manualChargeLines"
+    );
+
+  if (linesContainer) {
+    linesContainer.innerHTML = "";
+
+    addManualChargeLine(
+      "mileage"
+    );
+
+    addManualChargeLine(
+      "labour"
+    );
+
+    addManualChargeLine(
+      "waste"
+    );
+  }
+
+
+  refreshPreview();
+
+
+  byId("manualChargeModal")
+    ?.classList.add(
+      "open"
+    );
+
+  byId("manualChargeModal")
+    ?.setAttribute(
+      "aria-hidden",
+      "false"
+    );
+}
+
+async function createManualCharge() {
+  const cid =
+    await getCompanyId();
+
+  const {
+    orderNumber,
+    nextNo
+  } =
+    await getNextSoNumber();
+
+
+  const ownerId =
+    byId(
+      "manualChargeOwner"
+    )?.value || "";
+
+  const owner =
+    productOwners.find(
+      row =>
+        String(row.id) ===
+        String(ownerId)
+    );
+
+
+  if (!owner?.id) {
+    throw new Error(
+      "Select a product owner."
+    );
+  }
+
+
+  const retailer =
+    cleanText(
+      byId(
+        "manualChargeRetailer"
+      )?.value || ""
+    );
+
+  const postcode =
+    cleanText(
+      byId(
+        "manualChargePostcode"
+      )?.value || ""
+    );
+
+  const reference =
+    cleanText(
+      byId(
+        "manualChargeReference"
+      )?.value || ""
+    );
+
+  const po =
+    cleanText(
+      byId(
+        "manualChargePo"
+      )?.value || ""
+    );
+
+  const selectedStatus =
+    byId(
+      "manualChargeStatus"
+    )?.value ||
+    "stock_complete";
+
+  const amounts =
+    getAmounts();
+
+
+  if (!retailer) {
+    throw new Error(
+      "Enter a retailer name."
+    );
+  }
+
+
+  if (!amounts.lines.length) {
+    throw new Error(
+      "Add at least one charge line."
+    );
+  }
+
+
+  const invalidLine =
+    amounts.lines.find(
+      line =>
+        !line.description ||
+        line.amount <= 0
+    );
+
+  if (invalidLine) {
+    throw new Error(
+      "Every charge line needs a description and an amount above £0.00."
+    );
+  }
+
+
+  if (amounts.total <= 0) {
+    throw new Error(
+      "Total charge must be higher than £0.00."
+    );
+  }
+
+
+  const orderId =
+    crypto.randomUUID();
+
+  const statusFields =
+    statusPayload(
+      selectedStatus
+    );
+
+
+  const orderPayload = {
+    id: orderId,
+
+    company_id: cid,
+
+    customer_id:
+      owner.id,
+
+    order_number:
+      orderNumber,
+
+    order_type:
+      "manual_charge",
+
+    source_type:
+      "manual_charge",
+
+    external_reference:
+      reference || null,
+
+    purchase_order:
+      po || null,
+
+    order_date:
+      todayIso(),
+
+    requested_delivery_date:
+      todayIso(),
+
+    finance_status:
+      "not_invoiced",
+
+    planning_release:
+      false,
+
+    planning_colli:
+      0,
+
+    planning_volume_m3:
+      0,
+
+    total_order_colli:
+      0,
+
+    total_order_volume_m3:
+      0,
+
+
+    /*
+     * Alle manual charges worden financieel
+     * als transport behandeld.
+     */
+    total_storage_tariff:
+      0,
+
+    total_admin_tariff:
+      0,
+
+    total_handling_tariff:
+      0,
+
+    total_transport_tariff:
+      amounts.total,
+
+    total_s2u_fees:
+      0,
+
+    total_customer_charge:
+      amounts.total,
+
+    is_chargeable:
+      true,
+
+    original_chargeable:
+      true,
+
+    copy_chargeable:
+      true,
+
+
+    retail_name:
+      retailer,
+
+    retailer_code:
+      makeRetailerCode(
+        postcode,
+        retailer
+      ),
+
+    delivery_postcode:
+      postcode || null,
+
+    delivery_country:
+      "United Kingdom",
+
+
+    memo:
+      amounts.lines
+        .map(line =>
+          `${line.description}: ${formatMoney(line.amount)}`
+        )
+        .join(" · ") +
+      (
+        amounts.fuelEnabled
+          ? ` · Fuel surcharge ${amounts.fuelPct}%: ${formatMoney(amounts.fuelAmount)}`
+          : ""
+      ),
+
+    notes:
+      `Manual charge total ex VAT ${formatMoney(amounts.total)}.`,
+
+    created_at:
+      nowIso(),
+
+    last_activity_at:
+      nowIso(),
+
+    ...statusFields
+  };
+
+
+  const {
+    error: orderError
+  } =
+    await db()
+      .from("orders")
+      .insert(
+        orderPayload
+      );
+
+
+  if (orderError) {
+    throw orderError;
+  }
+
+
+  const lines =
+    amounts.lines.map(
+      (line, index) => {
+
+        const sku =
+          line.type === "mileage"
+            ? "MILEAGE"
+            : line.type === "labour"
+              ? "LABOUR"
+              : line.type === "waste"
+                ? "WASTE"
+                : "MANUAL";
+
+        return {
+          company_id:
+            cid,
+
+          order_id:
+            orderId,
+
+          line_number:
+            index + 1,
+
+          sku_base:
+            sku,
+
+          description:
+            line.description,
+
+          quantity_ordered:
+            1,
+
+          quantity_allocated:
+            0,
+
+          quantity_shipped:
+            selectedStatus ===
+              "delivered"
+              ? 1
+              : 0,
+
+          line_type:
+            "manual",
+
+          manual_description:
+            line.description,
+
+          manual_quantity:
+            line.quantity,
+
+          manual_unit:
+            line.unit,
+
+          manual_rate_gbp:
+            line.rate,
+
+          manual_amount_gbp:
+            line.amount,
+
+
+          /*
+           * Voor Billing telt alles als Transport.
+           */
+          tariff_transport:
+            line.amount,
+
+          tariff_storage:
+            0,
+
+          tariff_admin:
+            0,
+
+          tariff_handling:
+            0,
+
+          total_customer_charge:
+            line.amount,
+
+          created_at:
+            nowIso()
+        };
+      }
+    );
+
+
+  if (
+    amounts.fuelEnabled &&
+    amounts.fuelAmount > 0
+  ) {
+    lines.push({
+      company_id:
+        cid,
+
+      order_id:
+        orderId,
+
+      line_number:
+        lines.length + 1,
+
+      sku_base:
+        "FUEL",
+
+      description:
+        `Fuel surcharge ${amounts.fuelPct}%`,
+
+      quantity_ordered:
+        1,
+
+      quantity_allocated:
+        0,
+
+      quantity_shipped:
+        selectedStatus ===
+          "delivered"
+          ? 1
+          : 0,
+
+      line_type:
+        "manual",
+
+      manual_description:
+        `Fuel surcharge ${amounts.fuelPct}%`,
+
+      manual_quantity:
+        null,
+
+      manual_unit:
+        "fixed",
+
+      manual_rate_gbp:
+        null,
+
+      manual_amount_gbp:
+        amounts.fuelAmount,
+
+      tariff_transport:
+        amounts.fuelAmount,
+
+      tariff_storage:
+        0,
+
+      tariff_admin:
+        0,
+
+      tariff_handling:
+        0,
+
+      total_customer_charge:
+        amounts.fuelAmount,
+
+      created_at:
+        nowIso()
+    });
+  }
+
+
+  const {
+    error: lineError
+  } =
+    await db()
+      .from("order_lines")
+      .insert(
+        lines
+      );
+
+
+  if (lineError) {
+    throw lineError;
+  }
+
+
+  await db()
+    .from(
+      "order_activity_log"
+    )
+    .insert({
+      company_id:
+        cid,
+
+      customer_id:
+        owner.id,
+
+      order_id:
+        orderId,
+
+      activity_type:
+        "manual_charge_created",
+
+      new_status:
+        selectedStatus,
+
+      description:
+        `Manual charge created. ` +
+        `${orderNumber} · ` +
+        `${lines.length} charge line(s) · ` +
+        `${formatMoney(amounts.total)}.`,
+
+      created_by:
+        "manual",
+
+      created_at:
+        nowIso()
+    });
+
+
+  await incrementSoNumber(
+    nextNo
+  );
+
+
+  close();
+
+
+  if (
+    window.OCCReloadOrders
+  ) {
+    await window
+      .OCCReloadOrders();
+  }
+
+
+  alert(
+    `Manual charge created: ${orderNumber}`
+  );
+}
 
   window.ManualChargeTool = {
     open
