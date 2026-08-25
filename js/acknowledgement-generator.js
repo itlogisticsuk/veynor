@@ -1545,6 +1545,182 @@ function drawLines(
   };
 }
 
+function drawPricingNoteBox(
+  doc,
+  y,
+  ctx,
+  order,
+  logoDataUrl
+) {
+  const note =
+    cleanText(
+      ctx.pricingAckNote || ""
+    );
+
+  if (!note) {
+    return y;
+  }
+
+  y = maybeAddNewPage(
+    doc,
+    y + 2,
+    order,
+    ctx,
+    logoDataUrl,
+    false
+  );
+
+  const lines =
+    splitText(
+      doc,
+      note,
+      172
+    );
+
+  const boxHeight =
+    Math.max(
+      10,
+      lines.length * 3.4 + 5
+    );
+
+  doc.setFillColor(
+    239,
+    246,
+    255
+  );
+
+  doc.setDrawColor(
+    191,
+    219,
+    254
+  );
+
+  doc.roundedRect(
+    14,
+    y - 4,
+    182,
+    boxHeight,
+    1.8,
+    1.8,
+    "FD"
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(6.9);
+
+  doc.setTextColor(
+    29,
+    78,
+    216
+  );
+
+  doc.text(
+    lines.slice(0, 3),
+    17,
+    y + 1
+  );
+
+  setDark(doc);
+
+  return y + boxHeight + 3;
+}
+
+
+function drawRegionalNote(
+  doc,
+  y,
+  pricing,
+  ctx,
+  order,
+  logoDataUrl
+) {
+  const regional =
+    pricing.regional || {};
+
+  const note =
+    cleanText(
+      regional.note || ""
+    );
+
+  if (
+    !note ||
+    regional.priceOnRequest
+  ) {
+    return y;
+  }
+
+  y = maybeAddNewPage(
+    doc,
+    y + 2,
+    order,
+    ctx,
+    logoDataUrl,
+    false
+  );
+
+  const lines =
+    splitText(
+      doc,
+      note,
+      172
+    );
+
+  const boxHeight =
+    Math.max(
+      9,
+      lines.length * 3.3 + 5
+    );
+
+  doc.setFillColor(
+    245,
+    243,
+    255
+  );
+
+  doc.setDrawColor(
+    221,
+    214,
+    254
+  );
+
+  doc.roundedRect(
+    14,
+    y - 4,
+    182,
+    boxHeight,
+    1.8,
+    1.8,
+    "FD"
+  );
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(6.8);
+
+  doc.setTextColor(
+    109,
+    40,
+    217
+  );
+
+  doc.text(
+    lines.slice(0, 3),
+    17,
+    y + 1
+  );
+
+  setDark(doc);
+
+  return y + boxHeight + 3;
+}
+
 function drawTotalsBlock(
   doc,
   y,
