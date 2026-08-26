@@ -1,0 +1,2298 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+
+<head>
+
+  <meta charset="utf-8" />
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
+
+  <title>Route Tracking · Veynor</title>
+
+
+  <!-- ======================================================
+       VEYNOR THEME
+  ======================================================= -->
+
+  <link
+    rel="stylesheet"
+    href="/css/theme.css"
+  />
+
+
+  <!-- ======================================================
+       LEAFLET
+  ======================================================= -->
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    crossorigin=""
+  />
+
+
+  <!-- ======================================================
+       SUPABASE
+  ======================================================= -->
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
+  ></script>
+
+  <script
+    src="/js/supabase.js"
+  ></script>
+
+
+  <!-- ======================================================
+       VEYNOR AUTH / LAYOUT
+  ======================================================= -->
+
+  <script
+    src="/js/page-guard.js"
+    defer
+  ></script>
+
+  <script
+    src="/js/layout.js"
+    defer
+  ></script>
+
+
+  <!-- ======================================================
+       LEAFLET
+  ======================================================= -->
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    crossorigin=""
+  ></script>
+
+
+  <!-- ======================================================
+       ROUTE TRACKING
+  ======================================================= -->
+
+  <script
+    src="/js/route-tracking.js?v=5"
+    defer
+  ></script>
+
+
+  <style>
+
+    /* ======================================================
+       PAGE
+    ======================================================= */
+
+    .route-tracking-shell {
+      display: grid;
+      gap: 16px;
+      padding-bottom: 28px;
+    }
+
+
+    /* ======================================================
+       HEADER
+    ======================================================= */
+
+    .route-page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+
+    .route-page-header-main {
+      display: grid;
+      gap: 4px;
+    }
+
+
+    .route-page-header .eyebrow {
+      font-size: 11px;
+      font-weight: 900;
+      color: #64748b;
+
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+
+    .route-page-header h1 {
+      margin: 0;
+
+      font-size: 24px;
+      line-height: 1.2;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-page-header p {
+      margin: 4px 0 0;
+
+      max-width: 980px;
+
+      font-size: 13px;
+      line-height: 1.5;
+
+      color: var(--muted);
+    }
+
+
+    .route-header-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+
+    /* ======================================================
+       BUTTONS
+    ======================================================= */
+
+    .route-control-btn {
+      min-height: 40px;
+
+      padding: 9px 13px;
+
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+
+      border: 1px solid var(--border);
+      border-radius: 9px;
+
+      background: #fff;
+      color: #111827;
+
+      font-size: 12.5px;
+      font-weight: 850;
+
+      cursor: pointer;
+    }
+
+
+    .route-control-btn:hover {
+      background: #f8fafc;
+    }
+
+
+    .route-control-btn.active {
+      border-color: #1267ff;
+
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+
+    .route-control-btn.primary {
+      border-color: #1267ff;
+
+      background: #1267ff;
+      color: #fff;
+    }
+
+
+    /* ======================================================
+       LIVE LOCATION NOTICE
+    ======================================================= */
+
+    .tracking-visibility-notice {
+      min-height: 40px;
+
+      width: max-content;
+      max-width: 100%;
+
+      padding: 9px 12px;
+
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+
+      border: 1px solid #bfdbfe;
+      border-radius: 9px;
+
+      background: #eff6ff;
+      color: #1e40af;
+
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+
+    .tracking-visibility-notice.warning {
+      border-color: #fde68a;
+
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+
+    /* ======================================================
+       FILTER BAR
+    ======================================================= */
+
+    .route-filter-bar {
+      padding: 12px 14px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: #fff;
+    }
+
+
+    .route-filter-left,
+    .route-filter-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+
+    .route-checkbox-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+
+      font-size: 12.5px;
+      font-weight: 850;
+
+      color: #334155;
+
+      cursor: pointer;
+    }
+
+
+    .route-checkbox-label input {
+      width: 15px;
+      height: 15px;
+
+      accent-color: #1267ff;
+    }
+
+
+    /* ======================================================
+       SECTION HEADER
+    ======================================================= */
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+
+    .section-header > div {
+      display: grid;
+      gap: 3px;
+    }
+
+
+    .section-header h2 {
+      margin: 0;
+
+      font-size: 16px;
+      line-height: 1.25;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .section-header span {
+      font-size: 11.5px;
+      font-weight: 750;
+
+      color: var(--muted);
+    }
+
+
+    /* ======================================================
+       ROUTE CARDS
+    ======================================================= */
+
+    .future-routes-section {
+      display: grid;
+      gap: 10px;
+    }
+
+
+    .route-card-grid {
+      display: grid;
+
+      grid-template-columns:
+        repeat(
+          auto-fit,
+          minmax(300px, 1fr)
+        );
+
+      gap: 12px;
+    }
+
+
+    .route-card {
+      position: relative;
+
+      min-height: 190px;
+
+      padding: 15px 16px;
+
+      display: grid;
+
+      grid-template-rows:
+        auto
+        auto
+        1fr
+        auto;
+
+      gap: 11px;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: #fff;
+
+      cursor: pointer;
+
+      transition:
+        transform .14s ease,
+        border-color .14s ease,
+        box-shadow .14s ease;
+    }
+
+
+    .route-card:hover {
+      transform: translateY(-1px);
+
+      box-shadow:
+        0 8px 20px
+        rgba(15,23,42,.07);
+    }
+
+
+    .route-card.selected {
+      border-color: #1267ff;
+
+      box-shadow:
+        0 0 0 2px
+        rgba(18,103,255,.10);
+    }
+
+
+    .route-card.today {
+      border-color: #60a5fa;
+    }
+
+
+    .route-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+
+    .route-card-check {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+
+    .route-card-check input {
+      width: 15px;
+      height: 15px;
+
+      margin-top: 2px;
+
+      accent-color: #1267ff;
+
+      cursor: pointer;
+    }
+
+
+    .route-card-date {
+      display: grid;
+      gap: 3px;
+    }
+
+
+    .route-card-date strong {
+      font-size: 14px;
+      line-height: 1.25;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-card-date span {
+      font-size: 11px;
+
+      color: #64748b;
+    }
+
+
+    .route-code {
+      margin-top: 3px;
+
+      width: max-content;
+
+      display: inline-flex;
+
+      font-size: 12px;
+      font-weight: 900;
+
+      color: #1267ff;
+    }
+
+
+    .route-card-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+
+      gap: 9px 14px;
+    }
+
+
+    .route-card-meta-item {
+      display: grid;
+      gap: 2px;
+    }
+
+
+    .route-card-meta-item span {
+      font-size: 9.5px;
+      font-weight: 800;
+
+      color: #94a3b8;
+
+      text-transform: uppercase;
+    }
+
+
+    .route-card-meta-item strong {
+      font-size: 12px;
+      font-weight: 850;
+
+      color: #1f2937;
+    }
+
+
+    .route-card-kpis {
+      align-self: end;
+
+      padding-top: 11px;
+
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+
+      border-top: 1px solid #eef2f7;
+    }
+
+
+    .route-card-kpi {
+      display: grid;
+      gap: 2px;
+
+      text-align: center;
+    }
+
+
+    .route-card-kpi strong {
+      font-size: 14px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-card-kpi span {
+      font-size: 10px;
+      font-weight: 700;
+
+      color: #64748b;
+    }
+
+
+    .route-card-footer {
+      padding-top: 9px;
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+
+      border-top: 1px solid #f1f5f9;
+
+      font-size: 10.5px;
+
+      color: #64748b;
+    }
+
+
+    /* ======================================================
+       STATUS PILLS
+    ======================================================= */
+
+    .route-status-pill {
+      width: max-content;
+
+      padding: 5px 9px;
+
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+
+      border-radius: 999px;
+
+      font-size: 10px;
+      font-weight: 900;
+
+      text-transform: capitalize;
+      white-space: nowrap;
+    }
+
+
+    .route-status-pill.planned {
+      border: 1px solid #fed7aa;
+
+      background: #fff7ed;
+      color: #c2410c;
+    }
+
+
+    .route-status-pill.sent_to_driver,
+    .route-status-pill.out_for_delivery,
+    .route-status-pill.loaded,
+    .route-status-pill.dispatched,
+    .route-status-pill.on_transport {
+      border: 1px solid #ddd6fe;
+
+      background: #f5f3ff;
+      color: #6d28d9;
+    }
+
+
+    .route-status-pill.delivered,
+    .route-status-pill.signed {
+      border: 1px solid #bbf7d0;
+
+      background: #f0fdf4;
+      color: #15803d;
+    }
+
+
+    .route-status-pill.delivery_issue,
+    .route-status-pill.failed_delivery,
+    .route-status-pill.failed,
+    .route-status-pill.refused {
+      border: 1px solid #fecaca;
+
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+
+
+    .route-status-pill.partial,
+    .route-status-pill.damaged {
+      border: 1px solid #fde68a;
+
+      background: #fffbeb;
+      color: #a16207;
+    }
+
+
+    /* ======================================================
+       MAIN TRACKING AREA
+    ======================================================= */
+
+    .route-tracking-main-panel {
+      overflow: hidden;
+
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1fr)
+        330px;
+
+      min-height: 600px;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: #fff;
+    }
+
+
+    /* ======================================================
+       MAP
+    ======================================================= */
+
+.route-map-column {
+  position: relative;
+
+  min-width: 0;
+  height: 600px;
+
+  align-self: start;
+
+  border-right: 1px solid var(--border);
+
+  background: #f8fafc;
+}
+
+
+    #routeTrackingMap {
+      width: 100%;
+      height: 600px;
+      min-height: 600px;
+    }
+
+
+    .route-map-legend {
+      position: absolute;
+
+      z-index: 700;
+
+      left: 12px;
+      bottom: 12px;
+
+      padding: 9px 10px;
+
+      display: grid;
+      gap: 5px;
+
+      border: 1px solid #dbe2ea;
+      border-radius: 8px;
+
+      background:
+        rgba(255,255,255,.96);
+
+      box-shadow:
+        0 6px 18px
+        rgba(15,23,42,.10);
+
+      font-size: 10px;
+    }
+
+
+    .route-map-legend-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      font-weight: 800;
+
+      color: #475569;
+    }
+
+
+    .route-map-dot {
+      width: 8px;
+      height: 8px;
+
+      border-radius: 999px;
+    }
+
+
+    .route-map-dot.completed {
+      background: #16a34a;
+    }
+
+
+    .route-map-dot.active {
+      background: #1267ff;
+    }
+
+
+    .route-map-dot.remaining {
+      background: #94a3b8;
+    }
+
+
+    /* ======================================================
+       SUMMARY COLUMN
+    ======================================================= */
+
+.route-summary-column {
+  height: 600px;
+  box-sizing: border-box;
+
+  padding: 12px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+
+  overflow: visible;
+
+  background: #fff;
+}
+
+
+.route-summary-top {
+  display: grid;
+  gap: 3px;
+}
+
+
+    .route-summary-top-label {
+      font-size: 9.5px;
+      font-weight: 900;
+
+      color: #64748b;
+
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+
+    .route-summary-top h2 {
+      margin: 0;
+
+      font-size: 16px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-summary-top p {
+      margin: 0;
+
+      font-size: 11px;
+      line-height: 1.4;
+
+      color: #64748b;
+    }
+
+
+    .route-summary-divider {
+      height: 1px;
+
+      background: #e5e7eb;
+    }
+
+
+.route-summary-section {
+  display: grid;
+  gap: 3px;
+}
+
+
+.route-summary-section h3 {
+  margin: 0;
+
+  font-size: 11px;
+  font-weight: 900;
+
+  color: #111827;
+}
+
+
+.summary-row {
+  min-height: 15px;
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+
+  font-size: 9.5px;
+
+  color: #475569;
+}
+
+
+    .summary-row strong {
+      font-weight: 900;
+      text-align: right;
+
+      color: #111827;
+    }
+
+
+.route-summary-live {
+  padding: 7px 9px;
+
+  display: grid;
+  gap: 2px;
+
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+
+  background: #eff6ff;
+}
+
+
+    .route-summary-live span {
+      font-size: 9.5px;
+      font-weight: 800;
+
+      color: #64748b;
+    }
+
+
+    .route-summary-live strong {
+      font-size: 13px;
+      font-weight: 900;
+
+      color: #1d4ed8;
+    }
+
+
+    .route-report-btn {
+      min-height: 38px;
+
+      width: 100%;
+
+      padding: 8px 10px;
+
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+
+      background: #eff6ff;
+      color: #1d4ed8;
+
+      font-size: 10.5px;
+      font-weight: 900;
+
+      cursor: pointer;
+    }
+
+/* Compact sidebar: detailed data is available in popup */
+.route-summary-compact-hidden {
+  display: none !important;
+}
+
+.route-report-btn {
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+
+    /* ======================================================
+       CURRENT / NEXT ROUTE ORDERS
+    ======================================================= */
+
+    .route-orders-panel {
+      overflow: hidden;
+
+      border: 1px solid var(--border);
+      border-radius: 10px;
+
+      background: #fff;
+    }
+
+
+    .route-orders-header {
+      padding: 15px 16px;
+
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+
+      border-bottom: 1px solid var(--border);
+    }
+
+
+    .route-orders-header > div {
+      display: grid;
+      gap: 3px;
+    }
+
+
+    .route-orders-eyebrow {
+      font-size: 9.5px;
+      font-weight: 900;
+
+      color: #64748b;
+
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+
+    .route-orders-header h2 {
+      margin: 0;
+
+      font-size: 16px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-orders-header p {
+      margin: 0;
+
+      font-size: 11px;
+
+      color: #64748b;
+    }
+
+
+    .route-orders-table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+
+.route-orders-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.route-orders-table .col-stop {
+  width: 65px;
+}
+
+.route-orders-table .col-customer {
+  width: 27%;
+}
+
+.route-orders-table .col-so {
+  width: 12%;
+}
+
+.route-orders-table .col-ack {
+  width: 12%;
+}
+
+.route-orders-table .col-eta {
+  width: 11%;
+}
+
+.route-orders-table .col-actual {
+  width: 10%;
+}
+
+.route-orders-table .col-status {
+  width: 14%;
+}
+
+.route-orders-table .col-colli {
+  width: 70px;
+}
+
+.route-orders-table .col-volume {
+  width: 90px;
+}
+
+.route-orders-table .col-expand {
+  width: 40px;
+}
+
+
+    .route-orders-table th {
+      padding: 10px 11px;
+
+      border-bottom: 1px solid var(--border);
+
+      background: #f8fafc;
+
+      font-size: 9px;
+      font-weight: 900;
+
+      color: #64748b;
+
+      text-align: left;
+      text-transform: uppercase;
+
+      white-space: nowrap;
+    }
+
+
+    .route-orders-table td {
+      padding: 11px;
+
+      border-bottom: 1px solid #eef2f7;
+
+      color: #334155;
+
+      vertical-align: middle;
+    }
+
+
+    .route-orders-table tbody tr[data-stop-row] {
+      cursor: pointer;
+    }
+
+
+    .route-orders-table tbody tr[data-stop-row]:hover {
+      background: #f8fbff;
+    }
+
+
+    .stop-number {
+      width: 26px;
+      height: 26px;
+
+      display: inline-grid;
+      place-items: center;
+
+      border-radius: 999px;
+
+      background: #eff6ff;
+      color: #1d4ed8;
+
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+
+    .stop-customer,
+    .stop-order-ref {
+      display: grid;
+      gap: 2px;
+    }
+
+
+    .stop-customer strong,
+    .stop-order-ref strong {
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .stop-customer span,
+    .stop-order-ref span {
+      font-size: 10px;
+
+      color: #64748b;
+    }
+
+
+    .route-stop-detail-row {
+      display: none;
+    }
+
+
+    .route-stop-detail-row.open {
+      display: table-row;
+    }
+
+
+    .route-stop-detail-row > td {
+      padding: 0;
+    }
+
+
+    .route-stop-detail {
+      padding: 14px 18px;
+
+      display: grid;
+      grid-template-columns:
+        repeat(5, minmax(100px, 1fr))
+        auto;
+
+      gap: 14px;
+
+      border-bottom: 1px solid #e5e7eb;
+
+      background: #f8fafc;
+    }
+
+
+    .route-stop-detail-stat {
+      display: grid;
+      gap: 3px;
+    }
+
+
+    .route-stop-detail-stat span {
+      font-size: 9px;
+      font-weight: 800;
+
+      color: #64748b;
+
+      text-transform: uppercase;
+    }
+
+
+    .route-stop-detail-stat strong {
+      font-size: 11px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .current-stop {
+      background: #eff6ff;
+    }
+
+
+    .delivery-issue {
+      background: #fffbeb;
+    }
+
+
+    .failed-delivery {
+      background: #fef2f2;
+    }
+
+
+    .time-early {
+      color: #15803d !important;
+      font-weight: 900;
+    }
+
+
+    .time-current {
+      color: #1d4ed8 !important;
+      font-weight: 900;
+    }
+
+
+    .time-late {
+      color: #b91c1c !important;
+      font-weight: 900;
+    }
+
+
+    /* ======================================================
+       FOOTER
+    ======================================================= */
+
+    .route-tracking-footer-info {
+      padding: 12px 14px;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+
+      border: 1px solid #dbeafe;
+      border-radius: 9px;
+
+      background: #f8fbff;
+    }
+
+
+    .route-tracking-footer-message {
+      display: grid;
+      gap: 2px;
+    }
+
+
+    .route-tracking-footer-message strong {
+      font-size: 11.5px;
+      font-weight: 900;
+
+      color: #1e40af;
+    }
+
+
+    .route-tracking-footer-message span {
+      font-size: 10.5px;
+
+      color: #475569;
+    }
+
+
+    .route-tracking-footer-range {
+      font-size: 10.5px;
+      font-weight: 850;
+
+      color: #1e40af;
+    }
+
+
+    /* ======================================================
+       EMPTY / LOADING
+    ======================================================= */
+
+    .route-empty-state {
+      padding: 28px 18px;
+
+      display: grid;
+      place-items: center;
+      gap: 7px;
+
+      border: 1px dashed #cbd5e1;
+      border-radius: 9px;
+
+      background: #f8fafc;
+
+      color: #64748b;
+
+      text-align: center;
+    }
+
+
+    .route-empty-state strong {
+      font-size: 12.5px;
+      font-weight: 900;
+
+      color: #334155;
+    }
+
+
+    .route-loading {
+      min-height: 140px;
+
+      display: grid;
+      place-items: center;
+
+      font-size: 11.5px;
+      font-weight: 800;
+
+      color: #64748b;
+    }
+
+
+    /* ======================================================
+       ROUTE MODAL
+    ======================================================= */
+
+    body.route-modal-open {
+      overflow: hidden;
+    }
+
+
+    .route-modal {
+      position: fixed;
+
+      inset: 0;
+
+      z-index: 5000;
+
+      display: none;
+      align-items: center;
+      justify-content: center;
+
+      padding: 30px;
+
+      background:
+        rgba(15,23,42,.48);
+    }
+
+
+    .route-modal.open {
+      display: flex;
+    }
+
+
+    .route-modal-dialog {
+      width:
+        min(
+          1180px,
+          calc(100vw - 60px)
+        );
+
+      max-height:
+        calc(100vh - 60px);
+
+      overflow: auto;
+
+      border: 1px solid var(--border);
+      border-radius: 12px;
+
+      background: #fff;
+
+      box-shadow:
+        0 24px 70px
+        rgba(15,23,42,.28);
+    }
+
+
+    .route-modal-header {
+      position: sticky;
+
+      top: 0;
+
+      z-index: 4;
+
+      padding: 16px 18px;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+
+      border-bottom: 1px solid var(--border);
+
+      background: #fff;
+    }
+
+
+    .route-modal-eyebrow {
+      margin-bottom: 4px;
+
+      font-size: 11px;
+      font-weight: 900;
+
+      color: #64748b;
+
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+
+    .route-modal-header h2 {
+      margin: 0;
+
+      font-size: 21px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    .route-modal-meta {
+      margin-top: 8px;
+
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+
+      font-size: 12px;
+
+      color: #475569;
+    }
+
+
+    .route-modal-close {
+      width: 38px;
+      height: 38px;
+
+      display: grid;
+      place-items: center;
+
+      flex: 0 0 auto;
+
+      border: 1px solid var(--border);
+      border-radius: 8px;
+
+      background: #fff;
+      color: #475569;
+
+      font-size: 25px;
+      line-height: 1;
+
+      cursor: pointer;
+    }
+
+
+    .route-modal-close:hover {
+      background: #f8fafc;
+    }
+
+
+    /* ======================================================
+       MODAL KPI
+    ======================================================= */
+
+    .route-modal-kpis {
+      display: grid;
+
+      grid-template-columns:
+        repeat(
+          5,
+          minmax(120px, 1fr)
+        );
+
+      border-bottom: 1px solid var(--border);
+    }
+
+
+    .route-modal-kpis > div {
+      padding: 14px 16px;
+
+      display: grid;
+      gap: 3px;
+
+      border-right: 1px solid var(--border);
+    }
+
+
+    .route-modal-kpis > div:last-child {
+      border-right: 0;
+    }
+
+
+    .route-modal-kpis span {
+      font-size: 10px;
+      font-weight: 800;
+
+      color: #64748b;
+    }
+
+
+    .route-modal-kpis strong {
+      font-size: 16px;
+      font-weight: 900;
+
+      color: #111827;
+    }
+
+
+    /* ======================================================
+       MODAL ORDER TABLE
+    ======================================================= */
+
+    .route-modal-table-wrap {
+      overflow-x: auto;
+    }
+
+
+    .route-modal-table {
+      width: 100%;
+
+      border-collapse: collapse;
+
+      font-size: 12px;
+    }
+
+
+    .route-modal-table th {
+      padding: 11px;
+
+      border-bottom: 1px solid var(--border);
+
+      background: #f8fafc;
+
+      font-size: 9.5px;
+      font-weight: 900;
+
+      color: #64748b;
+
+      text-align: left;
+      text-transform: uppercase;
+
+      white-space: nowrap;
+    }
+
+
+    .route-modal-table td {
+      padding: 12px 11px;
+
+      border-bottom: 1px solid #eef2f7;
+
+      color: #334155;
+
+      vertical-align: top;
+    }
+
+
+    .route-modal-table tbody tr:hover {
+      background: #f8fbff;
+    }
+
+
+    .route-modal-address {
+      margin-top: 3px;
+
+      font-size: 10.5px;
+
+      color: #64748b;
+    }
+
+
+    /* ======================================================
+       ROLE VISIBILITY
+    ======================================================= */
+
+    body.role-product_owner_admin
+      .internal-only,
+    body.role-product_owner_user
+      .internal-only,
+    body.role-retailer_user
+      .internal-only {
+      display: none !important;
+    }
+
+
+    /* ======================================================
+       RESPONSIVE
+    ======================================================= */
+
+    @media (max-width: 1350px) {
+
+      .route-tracking-main-panel {
+        grid-template-columns:
+          minmax(0, 1fr)
+          290px;
+      }
+
+    }
+
+
+@media (max-width: 1050px) {
+
+  .route-tracking-main-panel {
+    grid-template-columns:
+      1fr;
+  }
+
+  .route-map-column {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .route-summary-column {
+    height: auto;
+    overflow: visible;
+  }
+
+  #routeTrackingMap,
+  .route-map-column {
+    min-height: 500px;
+    height: 500px;
+  }
+
+}
+
+      .route-map-column {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+
+      .route-summary-column {
+        grid-template-columns:
+          1fr 1fr;
+      }
+
+
+      .route-summary-top {
+        grid-column:
+          1 / -1;
+      }
+
+
+      #routeTrackingMap,
+      .route-map-column {
+        min-height: 500px;
+        height: 500px;
+      }
+
+    }
+
+
+    @media (max-width: 800px) {
+
+      .route-modal {
+        padding: 12px;
+      }
+
+
+      .route-modal-dialog {
+        width:
+          calc(100vw - 24px);
+
+        max-height:
+          calc(100vh - 24px);
+      }
+
+
+      .route-modal-kpis {
+        grid-template-columns:
+          repeat(2, 1fr);
+      }
+
+
+      .route-modal-table {
+        min-width: 850px;
+      }
+
+    }
+
+
+    @media (max-width: 760px) {
+
+      .route-page-header {
+        display: grid;
+      }
+
+
+      .route-header-actions {
+        justify-content: flex-start;
+      }
+
+
+      .route-card-grid {
+        grid-template-columns:
+          1fr;
+      }
+
+
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+  <div class="app-shell">
+
+
+    <!-- ====================================================
+         SIDEBAR
+    ===================================================== -->
+
+    <aside
+      id="sidebarMount"
+      class="sidebar"
+    ></aside>
+
+
+    <!-- ====================================================
+         MAIN PAGE
+    ===================================================== -->
+
+    <main
+      class="page route-tracking-shell"
+    >
+
+
+      <!-- ==================================================
+           HEADER
+      =================================================== -->
+
+      <header
+        class="route-page-header page-topbar"
+      >
+
+        <div class="route-page-header-main">
+
+          <div class="eyebrow">
+            Planning
+          </div>
+
+
+          <h1>
+            Route Tracking
+          </h1>
+
+
+          <p>
+            Live and planned route overview with route progress,
+            customer stops, ETA performance and completed deliveries.
+          </p>
+
+        </div>
+
+
+        <div class="route-header-actions">
+
+          <button
+            id="btnPreviousTrackingDay"
+            class="route-control-btn"
+            type="button"
+            title="Previous day"
+          >
+            ‹
+          </button>
+
+
+          <button
+            id="btnTrackingToday"
+            class="route-control-btn active"
+            type="button"
+          >
+            Today
+          </button>
+
+
+          <button
+            id="btnNextTrackingDay"
+            class="route-control-btn"
+            type="button"
+            title="Next day"
+          >
+            ›
+          </button>
+
+
+          <button
+            id="btnRefreshTracking"
+            class="route-control-btn"
+            type="button"
+          >
+            Refresh
+          </button>
+
+
+          <button
+            id="btnTrackingFilters"
+            class="route-control-btn"
+            type="button"
+          >
+            Filters
+          </button>
+
+        </div>
+
+      </header>
+
+
+      <!-- ==================================================
+           LIVE LOCATION STATUS
+      =================================================== -->
+
+      <div
+        id="liveLocationVisibilityNotice"
+        class="tracking-visibility-notice"
+      >
+
+        <span>
+          ⓘ
+        </span>
+
+
+        <span
+          id="liveLocationVisibilityText"
+        >
+          Live vehicle location is visible between 06:00 and 18:00.
+        </span>
+
+      </div>
+
+
+      <!-- ==================================================
+           FILTER BAR
+      =================================================== -->
+
+      <div class="route-filter-bar">
+
+        <div class="route-filter-left">
+
+          <label class="route-checkbox-label">
+
+            <input
+              id="selectAllTrackingRoutes"
+              type="checkbox"
+              checked
+            />
+
+
+            <span>
+              Select all routes
+            </span>
+
+          </label>
+
+
+          <button
+            id="btnActiveTrackingRoutes"
+            class="route-control-btn"
+            type="button"
+          >
+            Active routes only
+          </button>
+
+
+          <button
+            id="btnFutureTrackingRoutes"
+            class="route-control-btn"
+            type="button"
+          >
+            Future routes only
+          </button>
+
+        </div>
+
+
+        <div
+          id="routeColourLegend"
+          class="route-filter-right"
+        ></div>
+
+      </div>
+
+
+      <!-- ==================================================
+           ROUTE CARDS
+      =================================================== -->
+
+      <section class="future-routes-section">
+
+        <div class="section-header">
+
+          <div>
+
+            <h2>
+              Planned & Active Routes
+            </h2>
+
+
+            <span>
+              Tick routes to display them on the map.
+              Click a route card to view all orders and stop details.
+            </span>
+
+          </div>
+
+
+          <span
+            id="futureRoutesMeta"
+          >
+            Loading routes...
+          </span>
+
+        </div>
+
+
+        <div
+          id="routeCardsGrid"
+          class="route-card-grid"
+        >
+
+          <div class="route-loading">
+            Loading planned routes...
+          </div>
+
+        </div>
+
+      </section>
+
+
+      <!-- ==================================================
+           MAIN MAP + ROUTE DATA
+      =================================================== -->
+
+      <section class="route-tracking-main-panel">
+
+
+        <!-- ================================================
+             MAP
+        ================================================= -->
+
+        <div class="route-map-column">
+
+          <div
+            id="routeTrackingMap"
+          ></div>
+
+
+          <div class="route-map-legend">
+
+            <div class="route-map-legend-row">
+
+              <span
+                class="route-map-dot completed"
+              ></span>
+
+              Completed
+
+            </div>
+
+
+            <div class="route-map-legend-row">
+
+              <span
+                class="route-map-dot active"
+              ></span>
+
+              In progress
+
+            </div>
+
+
+            <div class="route-map-legend-row">
+
+              <span
+                class="route-map-dot remaining"
+              ></span>
+
+              Remaining
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        <!-- ================================================
+             ROUTE SUMMARY / PERFORMANCE
+        ================================================= -->
+
+ <aside class="route-summary-column">
+
+  <div class="route-summary-top">
+
+    <span class="route-summary-top-label">
+      Selected Route
+    </span>
+
+    <h2 id="selectedRouteTitle">
+      Today's Route
+    </h2>
+
+    <p>
+      <span id="selectedRouteDriver">
+        Driver: —
+      </span>
+
+      ·
+
+      <span id="selectedRouteVehicle">
+        Vehicle: —
+      </span>
+    </p>
+
+    <span
+      id="selectedRouteStatus"
+      class="route-status-pill planned"
+    >
+      Planned
+    </span>
+
+  </div>
+
+
+<div class="route-summary-divider internal-only"></div>
+
+
+<section class="route-summary-section internal-only">
+
+    <h3>
+      Route Summary
+    </h3>
+
+    <div class="summary-row">
+      <span>Start</span>
+      <strong id="routeSummaryStart">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>Completed</span>
+      <strong id="routeSummaryCompleted">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>In Progress</span>
+      <strong id="routeSummaryInProgress">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>Remaining</span>
+      <strong id="routeSummaryRemaining">—</strong>
+    </div>
+
+  </section>
+
+<div class="route-summary-divider internal-only"></div>
+
+
+<section class="route-summary-section internal-only">
+
+  <h3>
+    Route Data
+  </h3>
+
+    <div class="summary-row">
+      <span>Planned Distance</span>
+      <strong id="routePlannedDistance">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>Total Time</span>
+      <strong id="routeTotalTime">—</strong>
+    </div>
+
+  </section>
+
+
+  <div class="route-summary-divider"></div>
+
+
+  <section class="route-summary-section">
+
+    <h3>
+      Progress
+    </h3>
+
+    <div class="summary-row">
+      <span>Route Progress</span>
+      <strong id="routeProgressText">0%</strong>
+    </div>
+
+    <div
+      style="
+        width:100%;
+        height:6px;
+        overflow:hidden;
+        border-radius:999px;
+        background:#e5e7eb;
+      "
+    >
+      <div
+        id="routeProgressFill"
+        style="
+          width:0%;
+          height:100%;
+          border-radius:999px;
+          background:#1267ff;
+        "
+      ></div>
+    </div>
+
+    <div class="summary-row">
+      <span>Completed Stops</span>
+      <strong id="routeProgressStops">
+        0 / 0
+      </strong>
+    </div>
+
+    <div class="route-summary-live">
+
+      <span>
+        Next Stop
+      </span>
+
+      <strong id="routeNextStop">
+        —
+      </strong>
+
+      <span id="routeNextEta">
+        ETA —
+      </span>
+
+    </div>
+
+  </section>
+
+
+<div class="route-summary-divider internal-only"></div>
+
+
+<section class="route-summary-section internal-only">
+
+  <h3>
+    Performance
+  </h3>
+
+    <div class="summary-row">
+      <span>On Time</span>
+      <strong id="routePerformanceOnTime">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>Early</span>
+      <strong id="routePerformanceEarly">—</strong>
+    </div>
+
+    <div class="summary-row">
+      <span>Late</span>
+      <strong id="routePerformanceLate">—</strong>
+    </div>
+
+  </section>
+
+
+<button
+  id="btnRouteFullReport"
+  class="route-report-btn internal-only"
+  type="button"
+>
+  View Full Route Data
+</button>
+
+
+  <!-- Hidden values still required by the existing JS -->
+
+  <div hidden>
+
+    <strong id="routeSummaryFirstMovement">—</strong>
+    <strong id="routeSummaryLastMovement">—</strong>
+
+    <strong id="routeActualDistance">—</strong>
+    <strong id="routeDrivingTime">—</strong>
+    <strong id="routeStopTime">—</strong>
+    <strong id="routeAverageSpeed">—</strong>
+
+    <strong id="routePerformanceDistance">—</strong>
+    <strong id="routePerformanceAverageSpeed">—</strong>
+    <strong id="routePerformanceMaxSpeed">—</strong>
+    <strong id="routePerformanceLongestStop">—</strong>
+    <strong id="routePerformanceUnplannedStops">—</strong>
+    <strong id="routePerformanceIdleTime">—</strong>
+    <strong id="routePerformanceGpsGaps">—</strong>
+
+  </div>
+
+
+  <div id="selectedRouteContent" hidden></div>
+  <div id="selectedRoutePanel" hidden></div>
+
+</aside>
+
+      </section>
+
+      <!-- ==================================================
+           CURRENT / NEXT ROUTE ORDERS
+      =================================================== -->
+
+      <section
+        id="routeOrdersPanel"
+        class="route-orders-panel"
+      >
+
+        <div class="route-orders-header">
+
+          <div>
+
+            <span class="route-orders-eyebrow">
+              Route Orders
+            </span>
+
+            <h2 id="routeOrdersTitle">
+              Today's Route Orders
+            </h2>
+
+            <p id="routeOrdersMeta">
+              Loading route orders...
+            </p>
+
+          </div>
+
+        </div>
+
+
+        <div class="route-orders-table-wrap">
+
+<table class="route-orders-table">
+
+  <colgroup>
+    <col class="col-stop">
+    <col class="col-customer">
+    <col class="col-so">
+    <col class="col-ack">
+    <col class="col-eta">
+    <col class="col-actual">
+    <col class="col-status">
+    <col class="col-colli">
+    <col class="col-volume">
+    <col class="col-expand">
+  </colgroup>
+
+  <thead>
+    <tr>
+      <th>Stop</th>
+      <th>Customer</th>
+      <th>SO Number</th>
+      <th>ACK Number</th>
+      <th>Planned ETA</th>
+      <th>Actual</th>
+      <th>Status</th>
+      <th>Colli</th>
+      <th>Volume</th>
+      <th></th>
+    </tr>
+  </thead>
+
+  <tbody id="selectedRouteStopsBody">
+
+    <tr>
+      <td colspan="10">
+        Loading route orders...
+      </td>
+    </tr>
+
+  </tbody>
+
+</table>
+
+        </div>
+
+      </section>
+
+      <!-- ==================================================
+           FOOTER INFO
+      =================================================== -->
+
+      <div class="route-tracking-footer-info">
+
+        <div class="route-tracking-footer-message">
+
+          <strong>
+            Today's route remains visible until 23:00.
+          </strong>
+
+
+          <span>
+            After 23:00 only future planned routes are shown.
+          </span>
+
+        </div>
+
+
+        <div
+          id="routeTrackingDateRange"
+          class="route-tracking-footer-range"
+        >
+          Showing upcoming routes
+        </div>
+
+      </div>
+
+
+      <!-- ==================================================
+           TOAST
+      =================================================== -->
+
+      <div
+        id="toast"
+        class="notice"
+      ></div>
+
+    </main>
+
+  </div>
+
+
+  <!-- ======================================================
+       ROUTE DETAIL MODAL
+  ======================================================= -->
+
+  <div
+    id="routeDetailModal"
+    class="route-modal"
+    aria-hidden="true"
+  >
+
+    <div
+      id="routeDetailModalBody"
+      class="route-modal-dialog"
+    >
+    </div>
+
+  </div>
+
+
+</body>
+
+</html>

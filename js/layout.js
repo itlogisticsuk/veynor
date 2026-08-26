@@ -29,7 +29,22 @@
     { href: "./order-matching.html", label: "Order Matching", icon: "match", group: "Orders", roles: TENANT_ROLES },
     { href: "./operations-control-center.html", label: "Operations Control", icon: "control", group: "Orders", roles: ALL_ROLES },
 
-    { href: "./orders.html", label: "Orders & Route Planner", icon: "truckRoute", group: "Planning", roles: TENANT_ROLES },
+{
+  href: "./orders.html",
+  label: "Orders & Route Planner",
+  icon: "truckRoute",
+  group: "Planning",
+  roles: TENANT_ROLES
+},
+
+{
+  href: "./route-tracking.html",
+  label: "Route Tracking",
+  icon: "routeTracking",
+  group: "Planning",
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
+},
+
 {
   href: "./service-jobs.html",
   label: "Service Jobs",
@@ -39,8 +54,7 @@
 },
 
 {
-  href: "./quality.html",
-  label: "Quality / Damage",
+  href: "./quality.html",  label: "Quality / Damage",
   icon: "quality",
   group: "Planning",
   roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
@@ -108,18 +122,42 @@
   ];
 
   const icons = {
+
     dashboard: `<svg viewBox="0 0 24 24"><path d="M4 4h7v7H4z"/><path d="M13 4h7v7h-7z"/><path d="M4 13h7v7H4z"/><path d="M13 13h7v7h-7z"/></svg>`,
+
     upload: `<svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M5 18v2h14v-2"/></svg>`,
+
     match: `<svg viewBox="0 0 24 24"><path d="M8 7h3a4 4 0 0 1 0 8H8"/><path d="M16 17h-3a4 4 0 0 1 0-8h3"/><path d="M7 12h10"/></svg>`,
+
     control: `<svg viewBox="0 0 24 24"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg>`,
-    truckRoute: `<svg viewBox="0 0 24 24"><path d="M3 8h11v8H3z"/><path d="M14 11h4l3 3v2h-7z"/><circle cx="7" cy="17" r="2"/><circle cx="18" cy="17" r="2"/></svg>`,
-box: `
-  <svg viewBox="0 0 24 24">
-    <path d="M12 3 4 7l8 4 8-4z"/>
-    <path d="M4 7v10l8 4 8-4V7"/>
-    <path d="M12 11v10"/>
-  </svg>
-`,
+
+    truckRoute: `
+      <svg viewBox="0 0 24 24">
+        <path d="M3 8h11v8H3z"/>
+        <path d="M14 11h4l3 3v2h-7z"/>
+        <circle cx="7" cy="17" r="2"/>
+        <circle cx="18" cy="17" r="2"/>
+      </svg>
+    `,
+
+    routeTracking: `
+      <svg viewBox="0 0 24 24">
+        <path d="M5 19c0-3 2-5 5-5h4c3 0 5-2 5-5"/>
+        <circle cx="5" cy="19" r="2"/>
+        <circle cx="10" cy="14" r="2"/>
+        <circle cx="19" cy="9" r="2"/>
+        <path d="M4 5h7v5H4z"/>
+        <path d="M11 7h3l2 2v1h-5z"/>
+      </svg>
+    `,
+
+    box: `
+      <svg viewBox="0 0 24 24">
+        <path d="M12 3 4 7l8 4 8-4z"/>
+        <path d="M4 7v10l8 4 8-4V7"/>
+        <path d="M12 11v10"/>
+      </svg>
+    `,
 
 container: `
   <svg viewBox="0 0 24 24">
