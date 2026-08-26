@@ -30,7 +30,7 @@
 
       <form id="loginForm" class="login-card">
         <h1>Driver Login</h1>
-        <p>Access your routes, deliveries and POD tools.</p>
+        <p>Access your routes, deliveries, POD and volume tools.</p>
 
         <label>Email</label>
         <input id="loginEmail" class="input" type="email" autocomplete="email" required/>
@@ -191,6 +191,99 @@
           </section>
         </section>
 
+        <section id="tab-volume" class="tab-panel">
+          <section class="volume-card">
+            <div class="section-title">
+              <div>
+                <h2>Volume Scanner MVP</h2>
+                <p>Capture photos, enter dimensions and calculate loading volume.</p>
+              </div>
+            </div>
+
+            <label>Product / SKU
+              <input id="volumeSku" class="input" placeholder="SKU or product name"/>
+            </label>
+
+            <div class="scan-guide">
+              <div class="guide-step"><strong>1</strong><span>Front</span></div>
+              <div class="guide-step"><strong>2</strong><span>Back</span></div>
+              <div class="guide-step"><strong>3</strong><span>Left</span></div>
+              <div class="guide-step"><strong>4</strong><span>Right</span></div>
+              <div class="guide-step"><strong>5</strong><span>Top</span></div>
+              <div class="guide-step"><strong>6</strong><span>Angle</span></div>
+            </div>
+
+            <div class="photo-capture-grid">
+              <label>Front photo
+                <input id="photoFront" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Back photo
+                <input id="photoBack" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Left photo
+                <input id="photoLeft" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Right photo
+                <input id="photoRight" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Top photo
+                <input id="photoTop" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+              <label>Angle photo
+                <input id="photoAngle" class="input volume-photo" type="file" accept="image/*" capture="environment"/>
+              </label>
+            </div>
+
+            <div id="volumePhotoPreview" class="volume-preview-grid"></div>
+
+            <div class="grid3">
+              <label>Length cm
+                <input id="lengthCm" class="input" type="number" step="0.1" placeholder="e.g. 210"/>
+              </label>
+
+              <label>Width / depth cm
+                <input id="widthCm" class="input" type="number" step="0.1" placeholder="e.g. 95"/>
+              </label>
+
+              <label>Height cm
+                <input id="heightCm" class="input" type="number" step="0.1" placeholder="e.g. 85"/>
+              </label>
+            </div>
+
+            <div class="grid2">
+              <label>Shape correction
+                <select id="shapeCorrection" class="input">
+                  <option value="1">Box / full cube - 100%</option>
+                  <option value="0.90">Sofa / armchair - 90%</option>
+                  <option value="0.80">Chair / open shape - 80%</option>
+                  <option value="0.70">Irregular / lots of air - 70%</option>
+                </select>
+              </label>
+
+              <label>Confidence
+                <select id="volumeConfidence" class="input">
+                  <option value="manual">Manual measurement</option>
+                  <option value="estimated">Estimated from photos</option>
+                  <option value="needs_review">Needs review</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="result-box">
+              <span>Calculated loading volume</span>
+              <strong id="volumeResult">0.000 m³</strong>
+              <small id="volumeFormula">Length × width × height × correction</small>
+            </div>
+
+            <div class="actions-row">
+              <button id="estimateFromPhotosBtn" class="btn" type="button">Estimate from photos</button>
+              <button id="clearVolumeBtn" class="btn" type="button">Clear</button>
+              <button id="saveVolumeBtn" class="btn primary" type="button">Save Volume Scan</button>
+            </div>
+
+            <div id="volumeMessage" class="notice"></div>
+          </section>
+        </section>
 
         <section id="tab-profile" class="tab-panel">
           <section class="profile-card">
@@ -236,6 +329,10 @@
         <button class="bottom-tab" data-tab="pod" type="button">
           <span>✎</span>
           POD
+        </button>
+        <button class="bottom-tab" data-tab="volume" type="button">
+          <span>▣</span>
+          Volume
         </button>
       </nav>
 

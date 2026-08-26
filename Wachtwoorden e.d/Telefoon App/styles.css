@@ -296,6 +296,7 @@ button{cursor:pointer}
 
 .card,
 .pod-card,
+.volume-card,
 .profile-card{
   background:var(--surface);
   border:1px solid var(--border);
@@ -578,6 +579,103 @@ label{
   background:var(--orange);
 }
 
+/* VOLUME */
+
+.scan-guide{
+  display:grid;
+  grid-template-columns:repeat(6,1fr);
+  gap:8px;
+  margin:14px 0;
+}
+
+.guide-step{
+  border:1px solid var(--border);
+  border-radius:16px;
+  background:#f8fbff;
+  padding:10px 6px;
+  display:grid;
+  justify-items:center;
+  gap:5px;
+  text-align:center;
+}
+
+.guide-step strong{
+  width:30px;
+  height:30px;
+  border-radius:999px;
+  background:linear-gradient(135deg,var(--blue),var(--blue2));
+  color:#fff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:13px;
+}
+
+.guide-step span{
+  font-size:11px;
+  font-weight:950;
+  color:#243552;
+}
+
+.photo-capture-grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:10px;
+}
+
+.volume-preview-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px;
+  margin-top:12px;
+}
+
+.photo-preview-item,
+.volume-preview{
+  border:1px solid var(--border);
+  border-radius:16px;
+  overflow:hidden;
+  background:#fff;
+  padding:10px;
+  display:grid;
+  gap:5px;
+}
+
+.result-box{
+  margin-top:14px;
+  border:1px solid var(--border);
+  border-radius:22px;
+  background:
+    radial-gradient(circle at 100% 0,rgba(18,103,255,.12),transparent 32%),
+    #fbfdff;
+  padding:16px;
+  display:grid;
+  gap:6px;
+}
+
+.result-box span{
+  font-size:11px;
+  text-transform:uppercase;
+  color:var(--muted);
+  font-weight:950;
+}
+
+.result-box strong{
+  font-size:32px;
+  letter-spacing:-.05em;
+}
+
+.result-box small{
+  color:var(--muted);
+}
+
+.actions-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:14px;
+}
+
 /* PROFILE */
 
 .profile-grid{
@@ -640,7 +738,7 @@ label{
   bottom:12px;
   min-height:70px;
   display:grid;
-  grid-template-columns:repeat(4,1fr);
+  grid-template-columns:repeat(5,1fr);
   gap:6px;
   padding:8px;
   border:1px solid rgba(220,229,242,.9);
@@ -755,11 +853,17 @@ label{
     padding:14px;
   }
 
-.grid2,
-.grid3,
-.pod-grid{
-  grid-template-columns:1fr;
-}
+  .grid2,
+  .grid3,
+  .pod-grid,
+  .photo-capture-grid,
+  .volume-preview-grid{
+    grid-template-columns:1fr;
+  }
+
+  .scan-guide{
+    grid-template-columns:repeat(3,1fr);
+  }
 
   .stop-actions{
     grid-template-columns:1fr;

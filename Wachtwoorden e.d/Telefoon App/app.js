@@ -1,4 +1,4 @@
-/* Veynor Driver PWA - Routes, Delivered, Issues and POD */
+/* Veynor Driver PWA - Routes, Delivered, Issues, POD and Volume */
 (function () {
   "use strict";
 
@@ -1870,7 +1870,76 @@ const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
     $("clearSignatureBtn")?.addEventListener("click", clear);
   }
 
-   function switchTab(tabName) {
+  function calcVolume() {
+    const l = num($("lengthCm")?.value);
+    const w = num($("widthCm")?.value);
+    const h = num($("heightCm")?.value);
+    const correction = num($("shapeCorrection")?.value, 1) || 1;
+
+    const m3 = l > 0 && w > 0 && h > 0 ? (l * w * h / 1000000) * correction : 0;
+
+    if ($("volumeResult")) $("volumeResult").textContent = `${m3.toFixed(3)} m³`;
+    if ($("volumeM3")) $("volumeM3").value = m3.toFixed(3);
+
+    return m3;
+  }
+
+  function getVolumePhotoInputs() {
+    return [
+      ["front", $("photoFront")],
+      ["back", $("photoBack")],
+      ["left", $("photoLeft")],
+      ["right", $("photoRight")],
+      ["top", $("photoTop")],
+      ["angle", $("photoAngle")],
+      ["label", $("photoLabel")]
+    ].filter(([, input]) => input);
+  }
+
+  function renderVolumePhotoPreview() {
+    const mount = $("volumePhotoPreview");
+    if (!mount) return;
+
+    const files = getVolumePhotoInputs()
+      .map(([label, input]) => [label, input.files?.[0]])
+      .filter(([, file]) => file);
+
+    if (!files.length) {
+      mount.innerHTML = "";
+      return;
+    }
+
+    mount.innerHTML = files.map(([label, file]) => `
+      <div class="photo-preview-item">
+        <strong>${esc(label)}</strong>
+        <span>${esc(file.name)}</span>
+      </div>
+    `).join("");
+  }
+
+  function clearVolumeScan() {
+    ["lengthCm", "widthCm", "heightCm", "volumeM3"].forEach(id => {
+      if ($(id)) $(id).value = "";
+    });
+
+    getVolumePhotoInputs().forEach(([, input]) => {
+      input.value = "";
+    });
+
+    if ($("shapeCorrection")) $("shapeCorrection").value = "1";
+    if ($("volumeResult")) $("volumeResult").textContent = "0.000 m³";
+    if ($("volumePhotoPreview")) $("volumePhotoPreview").innerHTML = "";
+
+    clearNotice($("volumeMessage"));
+  }
+
+  async function saveVolumeScan() {
+    const m3 = calcVolume();
+    if (m3 <= 0) throw new Error("Enter length, width and height first.");
+    show($("volumeMessage"), `Volume saved locally: ${m3.toFixed(3)} m³`, "ok");
+  }
+
+  function switchTab(tabName) {
     document.querySelectorAll(".bottom-tab").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.tab === tabName);
     });
@@ -1940,75 +2009,99 @@ const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
   }
 
   function bind() {
-  $("loginForm")?.addEventListener("submit", async event => {
-    event.preventDefault();
+    $("loginForm")?.addEventListener("submit", async event => {
+      event.preventDefault();
+
+      try {
+        clearNotice($("loginMessage"));
+        await login($("loginEmail").value.trim(), $("loginPassword").value);
+      } catch (err) {
+        show($("loginMessage"), err.message, "err");
+      }
+    });
+
+    $("logoutBtn")?.addEventListener("click", () => logout().catch(err => alert(err.message)));
+
+    bindNavigation();
+    bindRefreshButtons();
+    bindFilters();
+
+    ["lengthCm", "widthCm", "heightCm"].forEach(id => {
+      $(id)?.addEventListener("input", calcVolume);
+    });
+
+    $("shapeCorrection")?.addEventListener("change", calcVolume);
+
+    $("estimateFromPhotosBtn")?.addEventListener("click", () => {
+      show($("volumeMessage"), "Photo estimation is not automated yet. Fill dimensions manually after visual check.", "ok");
+    });
+
+    $("clearVolumeBtn")?.addEventListener("click", clearVolumeScan);
+
+    getVolumePhotoInputs().forEach(([, input]) => {
+      input?.addEventListener("change", renderVolumePhotoPreview);
+    });
+
+    $("savePodBtn")?.addEventListener("click", async () => {
+      const btn = $("savePodBtn");
+
+      try {
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Processing POD...";
+        }
+
+        show($("podMessage"), "Saving POD and generating signed delivery note...", "ok");
+
+        await savePod();
+
+        alert("POD successfully processed. The order has been updated and the signed delivery note has been generated.");
+
+        switchTab("routes");
+      } catch (err) {
+        show($("podMessage"), "POD failed: " + err.message, "err");
+        alert("POD failed: " + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "Save POD";
+        }
+      }
+    });
+
+    $("saveVolumeBtn")?.addEventListener("click", async () => {
+      try {
+        show($("volumeMessage"), "Saving volume scan...", "ok");
+        await saveVolumeScan();
+      } catch (err) {
+        show($("volumeMessage"), err.message, "err");
+      }
+    });
+  }
+
+  window.VeynorDriverApp = {
+    refresh: loadStops,
+    getStops: () => stops,
+    statusOf,
+    isDelivered,
+    isOpenForDriver
+  };
+
+  if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations().then(registrations => {
+    registrations.forEach(registration => registration.unregister());
+  });
+}
+
+  document.addEventListener("DOMContentLoaded", async () => {
+    bind();
+    setupSignature();
+    calcVolume();
 
     try {
-      clearNotice($("loginMessage"));
-      await login(
-        $("loginEmail").value.trim(),
-        $("loginPassword").value
-      );
+      await initAuth();
     } catch (err) {
       show($("loginMessage"), err.message, "err");
     }
   });
-
-  $("logoutBtn")?.addEventListener(
-    "click",
-    () => logout().catch(err => alert(err.message))
-  );
-
-  bindNavigation();
-  bindRefreshButtons();
-  bindFilters();
-
-  $("savePodBtn")?.addEventListener("click", async () => {
-    const btn = $("savePodBtn");
-
-    try {
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = "Processing POD...";
-      }
-
-      show(
-        $("podMessage"),
-        "Saving POD and generating signed delivery note...",
-        "ok"
-      );
-
-      await savePod();
-
-      alert(
-        "POD successfully processed. The order has been updated and the signed delivery note has been generated."
-      );
-
-      switchTab("routes");
-    } catch (err) {
-      show(
-        $("podMessage"),
-        "POD failed: " + err.message,
-        "err"
-      );
-
-      alert("POD failed: " + err.message);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "Save POD";
-      }
-    }
-  });
-}
-
-document.addEventListener("DOMContentLoaded", async () => {
-  bind();
-  setupSignature();
-
-  try {
-    await initAuth();
-  } catch (err) {
-    show($("loginMessage"), err.message, "err");
-  }
-});
+})();

@@ -549,10 +549,30 @@ function getTotals(
    * Wanneer alle orders gratis zijn, is transport
    * automatisch £0.00 en dus ook fuel £0.00.
    */
-  const fuelSurchargeBase =
-    round2(
-      transport
-    );
+const fuelSurchargeBase =
+  round2(
+    normalOrders.reduce(
+      (sum, order) => {
+
+        /*
+         * Manual charge orders zijn uitgesloten
+         * van de fuel surcharge.
+         */
+        if (
+          normalize(order.order_type) === "manual_charge" ||
+          normalize(order.source_type) === "manual_charge"
+        ) {
+          return sum;
+        }
+
+        return (
+          sum +
+          getOrderTransportTotal(order)
+        );
+      },
+      0
+    )
+  );
 
   const usedFuelPercent =
     toNumber(
