@@ -49,6 +49,7 @@ const POD_PHOTO_QUALITY = 0.72;
   let selectedStop = null;
   let selectedPodLines = [];
   let signaturePad = null;
+let pendingPodPhotos = [];
 
 let locationWatchId = null;
 let lastLocationSentAt = 0;
@@ -1373,6 +1374,69 @@ if (openStops.length > 0) {
     });
   }
 
+function updatePodPhotoUi() {
+  const count = pendingPodPhotos.length;
+  const status = $("podPhotoStatus");
+  const actions = $("podPhotoActions");
+  const takeAnotherBtn = $("takeAnotherPhotoBtn");
+
+  if (status) {
+    status.textContent =
+      count === 0
+        ? "No photos added"
+        : `${count} of ${MAX_POD_PHOTOS} photos added`;
+  }
+
+  if (actions) {
+    actions.classList.toggle("hidden", count === 0);
+  }
+
+  if (takeAnotherBtn) {
+    takeAnotherBtn.classList.toggle(
+      "hidden",
+      count >= MAX_POD_PHOTOS
+    );
+  }
+}
+
+function addPodPhotos(files) {
+  const incoming = Array.from(files || []);
+
+  for (const file of incoming) {
+    if (pendingPodPhotos.length >= MAX_POD_PHOTOS) break;
+    pendingPodPhotos.push(file);
+  }
+
+  updatePodPhotoUi();
+}
+
+function setupPodPhotos() {
+  const picker = $("podPhotos");
+  const camera = $("podCameraInput");
+
+  picker?.addEventListener("change", () => {
+    addPodPhotos(picker.files);
+    picker.value = "";
+  });
+
+  camera?.addEventListener("change", () => {
+    addPodPhotos(camera.files);
+    camera.value = "";
+  });
+
+  $("takeAnotherPhotoBtn")?.addEventListener("click", () => {
+    if (pendingPodPhotos.length >= MAX_POD_PHOTOS) return;
+
+    camera?.click();
+  });
+
+  $("finishPhotosBtn")?.addEventListener("click", () => {
+    $("podPhotoActions")?.classList.add("hidden");
+  });
+
+  updatePodPhotoUi();
+}
+
   function safeFilePart(value) {
     return String(value || "").trim().replace(/[^a-zA-Z0-9-_]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "") || "file";
   }
@@ -1663,7 +1727,7 @@ if (openStops.length > 0) {
 const deliveredTo = $("deliveredTo")?.value.trim() || "";
 const notes = $("podNotes")?.value.trim() || "";
 const sigDataUrl = signaturePad?.toDataUrl() || null;
-const photoFiles = Array.from($("podPhotos")?.files || []);
+const photoFiles = [...pendingPodPhotos];
 
 const existingPhotos = Array.isArray(stop.delivery_photos)
   ? stop.delivery_photos.filter(Boolean)
@@ -1775,7 +1839,17 @@ const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
     selectedPodLines = [];
 
     if ($("podSelectedStop")) $("podSelectedStop").textContent = "Select a stop from Routes first.";
-    if ($("podPhotos")) $("podPhotos").value = "";
+pendingPodPhotos = [];
+
+pendingPodPhotos = [];
+
+if ($("podPhotos")) $("podPhotos").value = "";
+if ($("podCameraInput")) $("podCameraInput").value = "";
+
+updatePodPhotoUi();
+if ($("podCameraInput")) $("podCameraInput").value = "";
+
+updatePodPhotoUi();
     if ($("deliveredTo")) $("deliveredTo").value = "";
     if ($("podNotes")) $("podNotes").value = "";
     signaturePad?.clear();
@@ -2005,6 +2079,7 @@ const allPhotos = [...existingPhotos, ...photoUrls].slice(0, MAX_POD_PHOTOS);
 document.addEventListener("DOMContentLoaded", async () => {
   bind();
   setupSignature();
+  setupPodPhotos();
 
   try {
     await initAuth();
@@ -2012,3 +2087,5 @@ document.addEventListener("DOMContentLoaded", async () => {
     show($("loginMessage"), err.message, "err");
   }
 });
+
+})();

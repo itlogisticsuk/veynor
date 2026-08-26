@@ -165,7 +165,7 @@
 <label>
   Delivery photos
   <span style="font-size:11px;font-weight:700;color:#64748b;">
-    Minimum 3 photos required · maximum 5
+    3–5 photos required
   </span>
 
   <input
@@ -173,8 +173,35 @@
     class="input"
     type="file"
     accept="image/*"
-    capture="environment"
     multiple
+  />
+
+  <div id="podPhotoStatus" class="stop-sub">
+    No photos added
+  </div>
+
+  <div id="podPhotoActions" class="stop-actions hidden">
+    <button
+      id="takeAnotherPhotoBtn"
+      class="btn primary"
+      type="button">
+      Take another photo
+    </button>
+
+    <button
+      id="finishPhotosBtn"
+      class="btn"
+      type="button">
+      Done adding photos
+    </button>
+  </div>
+
+  <input
+    id="podCameraInput"
+    type="file"
+    accept="image/*"
+    capture="environment"
+    hidden
   />
 </label>
 
