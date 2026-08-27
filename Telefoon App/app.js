@@ -162,6 +162,65 @@ const MAX_POD_PHOTOS = 5;
     return navigator.onLine !== false;
   }
 
+async function hasRealConnection() {
+  if (!isOnline()) {
+    return false;
+  }
+
+  if (!cfg.SUPABASE_URL) {
+    return false;
+  }
+
+  const controller =
+    new AbortController();
+
+  const timeoutId =
+    setTimeout(
+      () => {
+        controller.abort();
+      },
+      4000
+    );
+
+  try {
+    /*
+     * navigator.onLine is not always reliable
+     * on iPhone / mobile networks.
+     *
+     * This checks whether Supabase can actually
+     * be reached before trying to upload a POD.
+     */
+    await fetch(
+      cfg.SUPABASE_URL,
+      {
+        method: "HEAD",
+        cache: "no-store",
+        signal:
+          controller.signal
+      }
+    );
+
+    clearTimeout(
+      timeoutId
+    );
+
+    return true;
+
+  } catch (error) {
+
+    clearTimeout(
+      timeoutId
+    );
+
+    console.log(
+      "[driver app] No real Supabase connection:",
+      error?.message || error
+    );
+
+    return false;
+  }
+}
+
   /* =========================================================
      INDEXED DB
      Offline POD + GPS storage
@@ -697,19 +756,6 @@ const MAX_POD_PHOTOS = 5;
   renderAuth();
   clearRouteUi();
 }
-
-    user = null;
-    profile = null;
-    companyId = null;
-
-    stops = [];
-    selectedStop = null;
-    selectedPodLines = [];
-    pendingPodPhotos = [];
-
-    renderAuth();
-    clearRouteUi();
-  }
 
   /* =========================================================
      ROUTE HELPERS
@@ -5576,57 +5622,88 @@ function clearNativeTracking() {
      SAVE POD BUTTON
   ========================================================= */
 
-  async function savePod() {
-    const payload =
-      await makeOfflinePodPayload();
+async function savePod() {
+  const payload =
+    await makeOfflinePodPayload();
 
-    payload.completed_at =
-      nowIso();
+  payload.completed_at =
+    nowIso();
 
-    if (!isOnline()) {
-      await queuePodOffline(
-        payload
-      );
 
-      resetPodForm();
+  /*
+   * Check the actual connection before
+   * trying photos, signature and POD uploads.
+   */
+  const reallyOnline =
+    await hasRealConnection();
 
-      return {
-        offline:
-          true
-      };
-    }
 
-    try {
-      await processPodPayload(
-        payload
-      );
+  /*
+   * No real connection:
+   * save immediately in IndexedDB.
+   */
+  if (!reallyOnline) {
 
-      resetPodForm();
+    console.log(
+      "[driver app] No real connection. Saving POD offline."
+    );
 
-      await loadStops();
+    await queuePodOffline(
+      payload
+    );
 
-      return {
-        offline:
-          false
-      };
-    } catch (error) {
-      console.warn(
-        "[driver app] Online POD failed. Saving locally:",
-        error.message
-      );
+    resetPodForm();
 
-      await queuePodOffline(
-        payload
-      );
-
-      resetPodForm();
-
-      return {
-        offline:
-          true
-      };
-    }
+    return {
+      offline:
+        true
+    };
   }
+
+
+  /*
+   * Real connection available:
+   * process normally.
+   */
+  try {
+
+    await processPodPayload(
+      payload
+    );
+
+    resetPodForm();
+
+    await loadStops();
+
+    return {
+      offline:
+        false
+    };
+
+  } catch (error) {
+
+    console.warn(
+      "[driver app] Online POD failed. Saving locally:",
+      error.message
+    );
+
+
+    /*
+     * If an upload or Supabase operation fails,
+     * keep the complete POD on the phone.
+     */
+    await queuePodOffline(
+      payload
+    );
+
+    resetPodForm();
+
+    return {
+      offline:
+        true
+    };
+  }
+}
 
   function resetPodForm() {
     selectedStop =

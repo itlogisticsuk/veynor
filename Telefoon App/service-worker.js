@@ -1,4 +1,4 @@
-const CACHE_NAME = "veynor-driver-pwa-v15";
+const CACHE_NAME = "veynor-driver-pwa-v16";
 const CORE_ASSETS = [
   "/",
   "/index.html",
