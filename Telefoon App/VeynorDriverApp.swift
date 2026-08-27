@@ -230,22 +230,45 @@ struct VeynorDriverRootView: View {
         // CONFIGURE NATIVE SUPABASE
         // =====================================================
 
-        .task {
+.task {
 
-            locationManager
-                .configureSupabase(
+    // =====================================================
+    // CONFIGURE SUPABASE
+    // =====================================================
 
-                    url:
-                        VeynorDriverConfig
-                            .supabaseURL,
+    locationManager
+        .configureSupabase(
 
-                    anonKey:
-                        VeynorDriverConfig
-                            .supabaseAnonKey,
+            url:
+                VeynorDriverConfig
+                    .supabaseURL,
 
-                    accessToken:
-                        ""
-                )
+            anonKey:
+                VeynorDriverConfig
+                    .supabaseAnonKey,
+
+            accessToken:
+                ""
+        )
+
+
+    // =====================================================
+    // REQUEST LOCATION PERMISSION
+    // =====================================================
+
+    /*
+     * Ask for location access as soon as the native
+     * Veynor Driver app starts.
+     *
+     * DriverLocationManager will first request
+     * "While Using the App" and then upgrade
+     * to "Always" for background route tracking.
+     */
+
+    locationManager
+        .requestLocationPermission()
+}
+
         }
     }
 }

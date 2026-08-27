@@ -591,53 +591,54 @@ final class DriverLocationManager:
 
     func requestLocationPermission() {
 
-        let status =
-            locationManager
-                .authorizationStatus
+    let status =
+        locationManager.authorizationStatus
+
+    authorizationStatus =
+        status
+
+    switch status {
+
+    case .notDetermined:
+
+        /*
+         * First request normal foreground permission.
+         * iOS handles the upgrade to Always afterwards.
+         */
+        locationManager
+            .requestWhenInUseAuthorization()
 
 
-        authorizationStatus =
-            status
+    case .authorizedWhenInUse:
+
+        /*
+         * Upgrade permission so route tracking can
+         * continue while Veynor is in the background.
+         */
+        locationManager
+            .requestAlwaysAuthorization()
 
 
-        switch status {
+    case .authorizedAlways:
 
-        case .notDetermined:
-
-            /*
-             * Ask for Always access because this app needs
-             * route tracking while backgrounded.
-             */
-            locationManager
-                .requestAlwaysAuthorization()
+        /*
+         * Permission already complete.
+         */
+        break
 
 
-        case .authorizedWhenInUse:
+    case .denied,
+         .restricted:
 
-            /*
-             * Upgrade existing When In Use permission.
-             */
-            locationManager
-                .requestAlwaysAuthorization()
+        lastError =
+            "Location permission is not available. Please enable Location Services for Veynor Driver in iPhone Settings."
 
 
-        case .authorizedAlways:
+    @unknown default:
 
-            break
-
-
-        case .denied,
-             .restricted:
-
-            lastError =
-                "Location permission is not available."
-
-
-        @unknown default:
-
-            break
-        }
+        break
     }
+}
 
 
     // ========================================================
@@ -738,29 +739,53 @@ final class DriverLocationManager:
     // ========================================================
 
     func locationManagerDidChangeAuthorization(
-        _ manager:
-            CLLocationManager
-    ) {
+    _ manager: CLLocationManager
+) {
 
-        authorizationStatus =
+    authorizationStatus =
+        manager.authorizationStatus
+
+    switch authorizationStatus {
+
+    case .authorizedWhenInUse:
+
+        /*
+         * Foreground permission has been granted.
+         * Now request background / Always permission.
+         */
+        manager
+            .requestAlwaysAuthorization()
+
+
+    case .authorizedAlways:
+
+        /*
+         * We can now continue tracking in the background.
+         */
+        if isTracking {
+
             manager
-                .authorizationStatus
-
-
-        if
-            authorizationStatus ==
-                .authorizedAlways ||
-            authorizationStatus ==
-                .authorizedWhenInUse
-        {
-
-            if isTracking {
-
-                manager
-                    .startUpdatingLocation()
-            }
+                .startUpdatingLocation()
         }
+
+
+    case .denied,
+         .restricted:
+
+        lastError =
+            "Location permission denied. Enable Always Location access for Veynor Driver in iPhone Settings."
+
+
+    case .notDetermined:
+
+        break
+
+
+    @unknown default:
+
+        break
     }
+}
 
 
     func locationManager(

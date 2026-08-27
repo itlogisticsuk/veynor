@@ -1090,91 +1090,179 @@ async function hasRealConnection() {
     ).slice(0, 10);
   }
 
+function routeStartSortValue(route) {
+  return String(
+    route?.planned_start_time ||
+    route?.start_time ||
+    route?.route_start_time ||
+    route?.created_at ||
+    route?.route_code ||
+    route?.id ||
+    ""
+  );
+}
+
   function selectNextDriverRoute(routes) {
-    const todayDate =
-      today();
+  const todayDate =
+    today();
 
-    const candidates =
-      (routes || [])
-        .filter(route => {
-          const status =
-            norm(
-              route?.route_status ||
-              route?.status ||
-              ""
-            );
-
-          if (
-            HIDDEN_STATUSES
-              .has(status)
-          ) {
-            return false;
-          }
-
-          if (
-            [
-              "delivered",
-              "completed",
-              "closed"
-            ].includes(status)
-          ) {
-            return false;
-          }
-
-          const routeDate =
-            routeDateValue(route);
-
-          if (!routeDate) {
-            return false;
-          }
-
-          if (
-            routeDate < todayDate
-          ) {
-            return false;
-          }
-
-          return true;
-        })
-        .sort((a, b) => {
-          const dateA =
-            routeDateValue(a);
-
-          const dateB =
-            routeDateValue(b);
-
-          if (dateA !== dateB) {
-            return dateA.localeCompare(
-              dateB
-            );
-          }
-
-          return String(
-            a.route_code ||
-            a.id ||
+  const candidates =
+    (routes || [])
+      .filter(route => {
+        const status =
+          norm(
+            route?.route_status ||
+            route?.status ||
             ""
-          ).localeCompare(
-            String(
-              b.route_code ||
-              b.id ||
-              ""
-            )
           );
-        });
 
-    return candidates[0] || null;
-  }
+        const routeDate =
+          routeDateValue(route);
 
-  function getCurrentDriverRoute() {
-    const stop =
-      stops.find(
+        if (!routeDate) {
+          return false;
+        }
+
+        if (
+          HIDDEN_STATUSES.has(status)
+        ) {
+          return false;
+        }
+
+        /*
+         * GPS may only follow today or a future route.
+         */
+        if (
+          routeDate < todayDate
+        ) {
+          return false;
+        }
+
+        /*
+         * Finished routes remain visible,
+         * but never become the active GPS route.
+         */
+        if (
+          [
+            "delivered",
+            "completed",
+            "closed",
+            "delivery_issue",
+            "failed_delivery"
+          ].includes(status)
+        ) {
+          return false;
+        }
+
+        return ACTIVE_ROUTE_STATUSES
+          .has(status);
+      })
+      .sort((a, b) => {
+        const dateA =
+          routeDateValue(a);
+
+        const dateB =
+          routeDateValue(b);
+
+        if (
+          dateA !== dateB
+        ) {
+          return dateA.localeCompare(
+            dateB
+          );
+        }
+
+        const startA =
+          routeStartSortValue(a);
+
+        const startB =
+          routeStartSortValue(b);
+
+        return startA.localeCompare(
+          startB
+        );
+      });
+
+  return candidates[0] || null;
+}
+
+function getCurrentDriverRoute() {
+  const openStops =
+    stops
+      .filter(
         isOpenForDriver
-      ) ||
-      stops[0] ||
-      null;
+      )
+      .filter(stop => {
+        const route =
+          stop?.routes;
 
-    return stop?.routes || null;
-  }
+        const status =
+          norm(
+            route?.route_status ||
+            route?.status ||
+            ""
+          );
+
+        return ACTIVE_ROUTE_STATUSES
+          .has(status);
+      })
+      .sort((a, b) => {
+        const dateA =
+          routeDateValue(
+            a.routes
+          );
+
+        const dateB =
+          routeDateValue(
+            b.routes
+          );
+
+        if (
+          dateA !== dateB
+        ) {
+          return dateA.localeCompare(
+            dateB
+          );
+        }
+
+        const startA =
+          routeStartSortValue(
+            a.routes
+          );
+
+        const startB =
+          routeStartSortValue(
+            b.routes
+          );
+
+        if (
+          startA !== startB
+        ) {
+          return startA.localeCompare(
+            startB
+          );
+        }
+
+        return (
+          num(
+            a.stop_number ||
+            a.stop_sequence,
+            9999
+          ) -
+          num(
+            b.stop_number ||
+            b.stop_sequence,
+            9999
+          )
+        );
+      });
+
+  return (
+    openStops[0]
+      ?.routes ||
+    null
+  );
+}
 
   function getCurrentDriverRouteId() {
     return (
@@ -2146,93 +2234,326 @@ function clearNativeTracking() {
   ========================================================= */
 
   async function loadStops() {
-    const cid =
-      await getCompanyId();
+  const cid =
+    await getCompanyId();
 
-    const currentEmail =
-      norm(
-        user?.email ||
-        profile?.email ||
-        ""
+  const currentEmail =
+    norm(
+      user?.email ||
+      profile?.email ||
+      ""
+    );
+
+  const todayDate =
+    today();
+
+
+  /*
+   * Load all routes for this driver/company.
+   *
+   * We filter afterwards because we need:
+   *
+   * - all active routes for the selected working day
+   * - completed routes from today
+   */
+  let routeQuery =
+    ensureDb()
+      .from("routes")
+      .select("*")
+      .eq(
+        "company_id",
+        cid
       );
 
-    let routeQuery =
-      ensureDb()
-        .from("routes")
-        .select("*")
-        .eq(
-          "company_id",
-          cid
-        )
-        .in(
-          "route_status",
-          Array.from(
+
+  if (
+    !isAdminOrTenantUser() &&
+    currentEmail
+  ) {
+    routeQuery =
+      routeQuery.eq(
+        "driver_email",
+        currentEmail
+      );
+  }
+
+
+  const {
+    data: allRoutes,
+    error: routeError
+  } = await routeQuery;
+
+
+  if (routeError) {
+    throw routeError;
+  }
+
+
+  /*
+   * Remove hidden / unusable routes.
+   */
+  const availableRoutes =
+    (allRoutes || [])
+      .filter(route => {
+        const status =
+          norm(
+            route?.route_status ||
+            route?.status ||
+            ""
+          );
+
+        const routeDate =
+          routeDateValue(route);
+
+
+        if (!routeDate) {
+          return false;
+        }
+
+
+        if (
+          HIDDEN_STATUSES.has(status)
+        ) {
+          return false;
+        }
+
+
+        return true;
+      });
+
+
+  /*
+   * First determine whether today has routes.
+   *
+   * Today's routes take priority.
+   *
+   * This also keeps delivered routes visible
+   * until the day changes.
+   */
+  const todaysRoutes =
+    availableRoutes
+      .filter(route => {
+        const routeDate =
+          routeDateValue(route);
+
+        const status =
+          norm(
+            route?.route_status ||
+            route?.status ||
+            ""
+          );
+
+
+        if (
+          routeDate !== todayDate
+        ) {
+          return false;
+        }
+
+
+        return (
+          ACTIVE_ROUTE_STATUSES
+            .has(status) ||
+
+          [
+            "delivered",
+            "completed",
+            "closed",
+            "delivery_issue",
+            "failed_delivery"
+          ].includes(status)
+        );
+      });
+
+
+  /*
+   * If there are no routes today,
+   * find the next available active route date.
+   *
+   * Example:
+   * driver logs in Thursday evening,
+   * both Friday routes can already be visible.
+   */
+  let workingDate =
+    todayDate;
+
+
+  if (
+    !todaysRoutes.length
+  ) {
+
+    const futureDates =
+      availableRoutes
+        .filter(route => {
+          const routeDate =
+            routeDateValue(route);
+
+          const status =
+            norm(
+              route?.route_status ||
+              route?.status ||
+              ""
+            );
+
+          return (
+            routeDate >
+              todayDate &&
             ACTIVE_ROUTE_STATUSES
+              .has(status)
+          );
+        })
+        .map(
+          route =>
+            routeDateValue(route)
+        )
+        .sort();
+
+
+    workingDate =
+      futureDates[0] ||
+      todayDate;
+  }
+
+
+  /*
+   * Keep ALL routes for the selected working day.
+   *
+   * This is the part that allows:
+   *
+   * Route 1
+   * Route 2
+   * Route 3
+   *
+   * to appear simultaneously.
+   */
+  const routeRows =
+    availableRoutes
+      .filter(route => {
+        const routeDate =
+          routeDateValue(route);
+
+        const status =
+          norm(
+            route?.route_status ||
+            route?.status ||
+            ""
+          );
+
+
+        if (
+          routeDate !==
+          workingDate
+        ) {
+          return false;
+        }
+
+
+        if (
+          ACTIVE_ROUTE_STATUSES
+            .has(status)
+        ) {
+          return true;
+        }
+
+
+        /*
+         * Completed routes are only retained
+         * for TODAY.
+         */
+        if (
+          workingDate ===
+            todayDate &&
+          [
+            "delivered",
+            "completed",
+            "closed",
+            "delivery_issue",
+            "failed_delivery"
+          ].includes(status)
+        ) {
+          return true;
+        }
+
+
+        return false;
+      })
+      .sort((a, b) => {
+        const startA =
+          routeStartSortValue(a);
+
+        const startB =
+          routeStartSortValue(b);
+
+        if (
+          startA !== startB
+        ) {
+          return startA.localeCompare(
+            startB
+          );
+        }
+
+
+        return String(
+          a.route_code ||
+          a.id ||
+          ""
+        ).localeCompare(
+          String(
+            b.route_code ||
+            b.id ||
+            ""
           )
         );
+      });
 
-    if (
-      !isAdminOrTenantUser() &&
-      currentEmail
-    ) {
-      routeQuery =
-        routeQuery.eq(
-          "driver_email",
-          currentEmail
-        );
-    }
 
-    const {
-      data: activeRoutes,
-      error: routeError
-    } = await routeQuery;
+  const routeIds =
+    routeRows
+      .map(
+        route =>
+          route.id
+      )
+      .filter(Boolean);
 
-    if (routeError) {
-      throw routeError;
-    }
 
-    const nextRoute =
-      selectNextDriverRoute(
-        activeRoutes || []
-      );
+  if (
+    !routeIds.length
+  ) {
+    stops = [];
 
-    const routeRows =
-      nextRoute
-        ? [nextRoute]
-        : [];
+    renderAll();
 
-    const routeIds =
-      routeRows
-        .map(
-          route => route.id
-        )
-        .filter(Boolean);
+    await stopLocationTracking();
 
-    if (!routeIds.length) {
-      stops = [];
+    return;
+  }
 
-      renderAll();
 
-      await stopLocationTracking();
+  const routesById =
+    new Map(
+      routeRows.map(
+        route => [
+          String(
+            route.id
+          ),
+          route
+        ]
+      )
+    );
 
-      return;
-    }
 
-    const routesById =
-      new Map(
-        routeRows.map(
-          route => [
-            String(route.id),
-            route
-          ]
-        )
-      );
-
-    const {
-      data: rawStops,
-      error
-    } = await ensureDb()
-      .from("route_stops")
+  /*
+   * Load ALL stops for ALL routes
+   * of the working day.
+   */
+  const {
+    data: rawStops,
+    error
+  } =
+    await ensureDb()
+      .from(
+        "route_stops"
+      )
       .select("*")
       .eq(
         "company_id",
@@ -2245,158 +2566,174 @@ function clearNativeTracking() {
       .order(
         "route_id",
         {
-          ascending: true
+          ascending:
+            true
         }
       )
       .order(
         "stop_number",
         {
-          ascending: true,
-          nullsFirst: false
+          ascending:
+            true,
+
+          nullsFirst:
+            false
         }
       );
 
-    if (error) {
-      throw error;
-    }
 
-    const stopRows =
-      rawStops || [];
-
-    const orderIds = [
-      ...new Set(
-        stopRows
-          .map(
-            stop =>
-              stop.order_id
-          )
-          .filter(Boolean)
-      )
-    ];
-
-    const ordersById =
-      await fetchOrdersMap(
-        orderIds
-      );
-
-    const lineCounts =
-      await fetchLineCounts(
-        orderIds
-      );
-
-    stops =
-      stopRows
-        .map(stop => ({
-          ...stop,
-
-          orders:
-            ordersById.get(
-              String(
-                stop.order_id
-              )
-            ) ||
-            {},
-
-          routes:
-            routesById.get(
-              String(
-                stop.route_id
-              )
-            ) ||
-            {},
-
-          __line_count:
-            lineCounts.get(
-              String(
-                stop.order_id
-              )
-            ) ||
-            0
-        }))
-        .filter(
-          isStopForCurrentDriver
-        )
-        .filter(
-          isStopVisibleInDriverApp
-        )
-        .sort(
-          (a, b) => {
-            const dateA =
-              String(
-                a.routes
-                  ?.planned_delivery_date ||
-                a.routes
-                  ?.route_date ||
-                ""
-              );
-
-            const dateB =
-              String(
-                b.routes
-                  ?.planned_delivery_date ||
-                b.routes
-                  ?.route_date ||
-                ""
-              );
-
-            if (
-              dateA !==
-              dateB
-            ) {
-              return dateA
-                .localeCompare(
-                  dateB
-                );
-            }
-
-            const ra =
-              String(
-                getRouteCode(a)
-              );
-
-            const rb =
-              String(
-                getRouteCode(b)
-              );
-
-            if (
-              ra !== rb
-            ) {
-              return ra.localeCompare(
-                rb
-              );
-            }
-
-            return (
-              num(
-                a.stop_number ||
-                a.stop_sequence,
-                9999
-              ) -
-              num(
-                b.stop_number ||
-                b.stop_sequence,
-                9999
-              )
-            );
-          }
-        );
-
-    renderAll();
-
-    const openStops =
-      stops.filter(
-        isOpenForDriver
-      );
-
-    if (
-      openStops.length > 0
-    ) {
-      startLocationTracking();
-    } else {
-      await stopLocationTracking();
-    }
+  if (error) {
+    throw error;
   }
+
+
+  const stopRows =
+    rawStops || [];
+
+
+  const orderIds = [
+    ...new Set(
+      stopRows
+        .map(
+          stop =>
+            stop.order_id
+        )
+        .filter(Boolean)
+    )
+  ];
+
+
+  const ordersById =
+    await fetchOrdersMap(
+      orderIds
+    );
+
+
+  const lineCounts =
+    await fetchLineCounts(
+      orderIds
+    );
+
+
+  stops =
+    stopRows
+      .map(stop => ({
+        ...stop,
+
+        orders:
+          ordersById.get(
+            String(
+              stop.order_id
+            )
+          ) ||
+          {},
+
+        routes:
+          routesById.get(
+            String(
+              stop.route_id
+            )
+          ) ||
+          {},
+
+        __line_count:
+          lineCounts.get(
+            String(
+              stop.order_id
+            )
+          ) ||
+          0
+      }))
+
+      .filter(
+        isStopForCurrentDriver
+      )
+
+      .filter(
+        isStopVisibleInDriverApp
+      )
+
+      .sort((a, b) => {
+
+        /*
+         * Route order first.
+         */
+        const routeA =
+          a.routes ||
+          {};
+
+        const routeB =
+          b.routes ||
+          {};
+
+
+        const startA =
+          routeStartSortValue(
+            routeA
+          );
+
+        const startB =
+          routeStartSortValue(
+            routeB
+          );
+
+
+        if (
+          startA !== startB
+        ) {
+          return startA.localeCompare(
+            startB
+          );
+        }
+
+
+        /*
+         * Then stop number inside the route.
+         */
+        return (
+          num(
+            a.stop_number ||
+            a.stop_sequence,
+            9999
+          ) -
+          num(
+            b.stop_number ||
+            b.stop_sequence,
+            9999
+          )
+        );
+      });
+
+
+  renderAll();
+
+
+  /*
+   * Only start tracking when there is
+   * an active/open route for TODAY.
+   *
+   * Future routes may be visible in advance,
+   * but should not start GPS tracking yet.
+   */
+  const currentRoute =
+    getCurrentDriverRoute();
+
+
+  if (
+    currentRoute &&
+    routeDateValue(
+      currentRoute
+    ) ===
+      todayDate
+  ) {
+
+    startLocationTracking();
+
+  } else {
+
+    await stopLocationTracking();
+  }
+}
 
   async function fetchOrdersMap(
     orderIds
