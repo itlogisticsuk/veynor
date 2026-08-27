@@ -8,8 +8,8 @@
 
   const POD_BUCKET = "pod-assets";
 
-  const MIN_POD_PHOTOS = 3;
-  const MAX_POD_PHOTOS = 5;
+const MIN_POD_PHOTOS = 1;
+const MAX_POD_PHOTOS = 5;
 
   const POD_PHOTO_MAX_SIZE = 1280;
   const POD_PHOTO_QUALITY = 0.72;
@@ -676,12 +676,27 @@
       );
   }
 
-  async function logout() {
-    await stopLocationTracking();
+ async function logout() {
+  await stopLocationTracking();
 
-    await ensureDb()
-      .auth
-      .signOut();
+  clearNativeTracking();
+
+  await ensureDb()
+    .auth
+    .signOut();
+
+  user = null;
+  profile = null;
+  companyId = null;
+
+  stops = [];
+  selectedStop = null;
+  selectedPodLines = [];
+  pendingPodPhotos = [];
+
+  renderAuth();
+  clearRouteUi();
+}
 
     user = null;
     profile = null;
@@ -1144,6 +1159,204 @@
       ""
     );
   }
+
+/* =========================================================
+   NATIVE IPHONE BRIDGE
+========================================================= */
+
+function hasNativeBridge() {
+  return !!(
+    window.VEYNOR_NATIVE_APP &&
+    window.VeynorNative &&
+    typeof window.VeynorNative.post === "function"
+  );
+}
+
+async function sendNativeAccessToken() {
+  if (!hasNativeBridge()) {
+    return;
+  }
+
+  try {
+    const { data, error } =
+      await ensureDb()
+        .auth
+        .getSession();
+
+    if (error) {
+      throw error;
+    }
+
+    const accessToken =
+      data?.session?.access_token ||
+      "";
+
+    if (!accessToken) {
+      console.warn(
+        "[native bridge] No Supabase access token available."
+      );
+
+      return;
+    }
+
+    window.VeynorNative
+      .updateAccessToken(
+        accessToken
+      );
+
+    console.log(
+      "[native bridge] Supabase access token sent."
+    );
+  } catch (error) {
+    console.warn(
+      "[native bridge] Access token failed:",
+      error.message
+    );
+  }
+}
+
+function makeNativeStopPayload(stop) {
+  const order =
+    getOrder(stop);
+
+  const coords =
+    getStopCoordinates(stop);
+
+  if (!coords) {
+    return null;
+  }
+
+  return {
+    id:
+      String(stop.id),
+
+    order_id:
+      getOrderId(stop),
+
+    stop_number:
+      num(
+        stop.stop_number ||
+        stop.stop_sequence,
+        0
+      ),
+
+    customer_name:
+      getRetailerName(
+        order,
+        stop
+      ),
+
+    latitude:
+      coords.latitude,
+
+    longitude:
+      coords.longitude
+  };
+}
+
+async function syncNativeTrackingContext() {
+  if (!hasNativeBridge()) {
+    return;
+  }
+
+  if (
+    !user?.id ||
+    !companyId
+  ) {
+    return;
+  }
+
+  const route =
+    getCurrentDriverRoute();
+
+  const routeId =
+    getCurrentDriverRouteId();
+
+  if (
+    !route ||
+    !routeId
+  ) {
+    window.VeynorNative
+      .clearTrackingContext();
+
+    return;
+  }
+
+  const routeStops =
+    stops
+      .filter(stop =>
+        String(
+          getRouteId(stop)
+        ) ===
+        String(routeId)
+      )
+      .filter(
+        isOpenForDriver
+      )
+      .map(
+        makeNativeStopPayload
+      )
+      .filter(Boolean);
+
+  const payload = {
+    driver_user_id:
+      user.id,
+
+    company_id:
+      companyId,
+
+    route_id:
+      routeId,
+
+    vehicle_id:
+      getCurrentVehicleId(),
+
+    driver_name:
+      profile?.full_name ||
+      route?.driver_name ||
+      user?.email ||
+      "Driver",
+
+    vehicle_name:
+      getCurrentVehicleName() ||
+      null,
+
+    stops:
+      routeStops
+  };
+
+  await sendNativeAccessToken();
+
+  window.VeynorNative
+    .setTrackingContext(
+      payload
+    );
+
+  console.log(
+    "[native bridge] Tracking context sent:",
+    routeId,
+    routeStops.length,
+    "stops"
+  );
+}
+
+function stopNativeTracking() {
+  if (!hasNativeBridge()) {
+    return;
+  }
+
+  window.VeynorNative
+    .stopTracking();
+}
+
+function clearNativeTracking() {
+  if (!hasNativeBridge()) {
+    return;
+  }
+
+  window.VeynorNative
+    .clearTrackingContext();
+}
 
   /* =========================================================
      GPS DISTANCE
@@ -1729,120 +1942,158 @@
     }
   }
 
-  function startLocationTracking() {
-    console.log(
-      "[driver app] startLocationTracking() called"
+ function startLocationTracking() {
+  console.log(
+    "[driver app] startLocationTracking() called"
+  );
+
+  /*
+   * Native iPhone app:
+   *
+   * GPS is handled by DriverLocationManager.swift.
+   * Do NOT also start navigator.geolocation here,
+   * otherwise we'd have two GPS trackers writing
+   * history simultaneously.
+   */
+  if (hasNativeBridge()) {
+    syncNativeTrackingContext()
+      .catch(error =>
+        console.warn(
+          "[native bridge] Unable to start native tracking:",
+          error
+        )
+      );
+
+    return;
+  }
+
+  /*
+   * Normal PWA / Android / browser:
+   *
+   * Keep existing browser GPS tracking.
+   */
+  if (!navigator.geolocation) {
+    console.error(
+      "[driver app] Geolocation is not supported."
     );
 
-    if (
-      !navigator.geolocation
-    ) {
-      console.error(
-        "[driver app] Geolocation is not supported."
-      );
+    alert(
+      "Location services are not supported by this device or browser."
+    );
 
-      alert(
-        "Location services are not supported by this device or browser."
-      );
-
-      return;
-    }
-
-    if (
-      locationWatchId !== null
-    ) {
-      return;
-    }
-
-    locationWatchId =
-      navigator.geolocation
-        .watchPosition(
-          position => {
-            console.log(
-              "[driver app] GPS:",
-              position.coords.latitude,
-              position.coords.longitude,
-              "speed:",
-              position.coords.speed
-            );
-
-            saveDriverLocation(
-              position
-            ).catch(error =>
-              console.warn(
-                "[driver app] Location handling failed:",
-                error
-              )
-            );
-          },
-
-          error => {
-            console.error(
-              "[driver app] GPS error:",
-              error.code,
-              error.message
-            );
-
-            if (
-              error.code === 1
-            ) {
-              alert(
-                "Location access is blocked. Please allow location access for Veynor in your phone settings."
-              );
-            }
-          },
-
-          {
-            enableHighAccuracy:
-              true,
-
-            maximumAge:
-              5000,
-
-            timeout:
-              20000
-          }
-        );
+    return;
   }
 
-  async function stopLocationTracking() {
-    if (
-      locationWatchId !== null
-    ) {
-      navigator.geolocation
-        .clearWatch(
-          locationWatchId
-        );
+  if (
+    locationWatchId !== null
+  ) {
+    return;
+  }
 
-      locationWatchId =
-        null;
-    }
+  locationWatchId =
+    navigator.geolocation
+      .watchPosition(
+        position => {
+          console.log(
+            "[driver app] GPS:",
+            position.coords.latitude,
+            position.coords.longitude,
+            "speed:",
+            position.coords.speed
+          );
 
+          saveDriverLocation(
+            position
+          ).catch(error =>
+            console.warn(
+              "[driver app] Location handling failed:",
+              error
+            )
+          );
+        },
+
+        error => {
+          console.error(
+            "[driver app] GPS error:",
+            error.code,
+            error.message
+          );
+
+          if (
+            error.code === 1
+          ) {
+            alert(
+              "Location access is blocked. Please allow location access for Veynor in your phone settings."
+            );
+          }
+        },
+
+        {
+          enableHighAccuracy:
+            true,
+
+          maximumAge:
+            5000,
+
+          timeout:
+            20000
+        }
+      );
+}
+
+ async function stopLocationTracking() {
+
+  /*
+   * Native iPhone app.
+   */
+  if (hasNativeBridge()) {
     stopPresence.clear();
 
-    if (
-      !user?.id ||
-      !isOnline()
-    ) {
-      return;
-    }
+    stopNativeTracking();
 
-    await ensureDb()
-      .from(
-        "driver_live_locations"
-      )
-      .update({
-        tracking_active:
-          false,
-
-        updated_at:
-          nowIso()
-      })
-      .eq(
-        "driver_user_id",
-        user.id
-      );
+    return;
   }
+
+  /*
+   * Normal PWA / Android / browser.
+   */
+  if (
+    locationWatchId !== null
+  ) {
+    navigator.geolocation
+      .clearWatch(
+        locationWatchId
+      );
+
+    locationWatchId =
+      null;
+  }
+
+  stopPresence.clear();
+
+  if (
+    !user?.id ||
+    !isOnline()
+  ) {
+    return;
+  }
+
+  await ensureDb()
+    .from(
+      "driver_live_locations"
+    )
+    .update({
+      tracking_active:
+        false,
+
+      updated_at:
+        nowIso()
+    })
+    .eq(
+      "driver_user_id",
+      user.id
+    );
+}
 
   /* =========================================================
      LOAD ROUTES / STOPS

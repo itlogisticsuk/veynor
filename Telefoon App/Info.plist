@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC
+  "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+
+<plist version="1.0">
+
+<dict>
+
+    <!-- =====================================================
+         APP INFORMATION
+    ====================================================== -->
+
+    <key>CFBundleDisplayName</key>
+    <string>Veynor Driver</string>
+
+    <key>CFBundleName</key>
+    <string>Veynor Driver</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+
+
+    <!-- =====================================================
+         LOCATION PERMISSIONS
+    ====================================================== -->
+
+    <!--
+        Shown when Veynor first asks permission
+        to use the driver's location.
+    -->
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+
+    <string>
+        Veynor uses your location while you are completing delivery routes to provide live route tracking and delivery progress.
+    </string>
+
+
+    <!--
+        Required for background location tracking.
+
+        This allows route tracking to continue when:
+        - another app is open
+        - Veynor is in the background
+        - the iPhone screen is locked
+    -->
+
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+
+    <string>
+        Veynor uses your location during an active delivery route, including while the app is in the background, to record route progress, arrival times and delivery activity.
+    </string>
+
+
+    <!-- =====================================================
+         BACKGROUND LOCATION
+    ====================================================== -->
+
+    <key>UIBackgroundModes</key>
+
+    <array>
+
+        <string>location</string>
+
+    </array>
+
+
+    <!-- =====================================================
+         CAMERA
+    ====================================================== -->
+
+    <!--
+        Required because the Driver App uses the camera
+        for POD / delivery photographs.
+    -->
+
+    <key>NSCameraUsageDescription</key>
+
+    <string>
+        Veynor uses the camera to capture delivery and Proof of Delivery photos.
+    </string>
+
+
+    <!-- =====================================================
+         PHOTO LIBRARY
+    ====================================================== -->
+
+    <!--
+        Allows existing photos to be selected
+        for a POD.
+    -->
+
+    <key>NSPhotoLibraryUsageDescription</key>
+
+    <string>
+        Veynor allows you to select delivery photos for Proof of Delivery.
+    </string>
+
+
+    <!-- =====================================================
+         NETWORK
+    ====================================================== -->
+
+    <!--
+        Veynor and Supabase both use HTTPS.
+        No insecure HTTP exceptions are enabled.
+    -->
+
+    <key>NSAppTransportSecurity</key>
+
+    <dict>
+
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+
+    </dict>
+
+
+    <!-- =====================================================
+         STATUS BAR
+    ====================================================== -->
+
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
+
+
+    <!-- =====================================================
+         DEVICE ORIENTATION
+    ====================================================== -->
+
+    <key>UISupportedInterfaceOrientations</key>
+
+    <array>
+
+        <string>UIInterfaceOrientationPortrait</string>
+
+    </array>
+
+
+    <!-- =====================================================
+         IPAD ORIENTATION
+    ====================================================== -->
+
+    <key>UISupportedInterfaceOrientations~ipad</key>
+
+    <array>
+
+        <string>UIInterfaceOrientationPortrait</string>
+
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+
+        <string>UIInterfaceOrientationLandscapeRight</string>
+
+    </array>
+
+</dict>
+
+</plist>
