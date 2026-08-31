@@ -78,20 +78,28 @@
   roles: TENANT_ROLES 
 },
 
-{ 
-  href: "./stock.html", 
-  label: "Current Stock", 
-  icon: "stock", 
-  group: "Warehouse", 
-  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] 
+{
+  href: "./stock.html",
+  label: "Current Stock",
+  icon: "stock",
+  group: "Warehouse",
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
 },
 
-{ 
-  href: "./stock-history.html", 
-  label: "Stock History", 
-  icon: "history", 
-  group: "Warehouse", 
-  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES] 
+{
+  href: "./storage-invoicing.html",
+  label: "Storage Invoicing",
+  icon: "pound",
+  group: "Warehouse",
+  roles: TENANT_ROLES
+},
+
+{
+  href: "./stock-history.html",
+  label: "Stock History",
+  icon: "history",
+  group: "Warehouse",
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
 },
 
 { 

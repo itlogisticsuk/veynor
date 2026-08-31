@@ -426,226 +426,532 @@ async function fetchOrders(
   return data || [];
 }
 
-  async function fetchAvailableItemSets(
+async function fetchAvailableItemSets(
   client,
   companyId,
   productIds = []
 ) {
-  const wantedProductIds = unique(
-    (productIds || [])
-      .map(value => String(value || "").trim())
-      .filter(Boolean)
-  );
+  const wantedProductIds =
+    unique(
+      (productIds || [])
+        .map(value =>
+          String(
+            value ||
+            ""
+          ).trim()
+        )
+        .filter(Boolean)
+    );
 
-  if (!wantedProductIds.length) {
+  if (
+    !wantedProductIds.length
+  ) {
     return [];
   }
 
-  /*
-   * Alleen voorraad ophalen voor producten die daadwerkelijk
-   * in de geselecteerde orders voorkomen.
-   *
-   * Dit voorkomt dat recente voorraad buiten de Supabase
-   * row limit valt doordat eerst alle voorraadproducten
-   * van de volledige warehouse worden geladen.
-   */
-  const pageSize = 1000;
-  let from = 0;
-  let allItems = [];
+
+  const pageSize =
+    1000;
+
+  let from =
+    0;
+
+  let allItems =
+    [];
+
 
   while (true) {
-    const to = from + pageSize - 1;
+    const to =
+      from +
+      pageSize -
+      1;
 
-    const { data, error } = await client
-      .from("items")
-      .select(`
-        id,
-        company_id,
-        product_id,
-        warehouse_id,
-        location_id,
-        sku_unique,
-        storage_mutation_id,
-        status,
-        volume_m3,
-        weight_kg,
-        package_no,
-        package_total,
-        package_label,
-        physical_product_id,
-        stock_set_id,
-        inbound_reference,
-        created_at,
-products (
-  id,
-  sku_base,
-  name,
-  description,
-  volume_m3,
-  weight_kg,
-  net_weight_kg,
-  package_count,
-  package_1_qty,
-  package_2_qty,
-  package_3_qty,
-  packages_per_unit,
-  sales_units_per_package
-)
-      `)
-      .eq("company_id", companyId)
-      .eq("status", "in_stock")
-      .not("physical_product_id", "is", null)
-      .in("product_id", wantedProductIds)
-      .order("created_at", {
-        ascending: true
-      })
-      .range(from, to);
+
+    const {
+      data,
+      error
+    } =
+      await client
+        .from("items")
+        .select(`
+          id,
+          company_id,
+          product_id,
+          warehouse_id,
+          location_id,
+
+          sku_unique,
+          storage_mutation_id,
+
+          status,
+
+          volume_m3,
+          weight_kg,
+
+          package_no,
+          package_total,
+          package_label,
+
+          physical_product_id,
+          stock_set_id,
+
+          inbound_reference,
+          inbound_date,
+          created_at,
+
+          package_condition,
+          condition_notes,
+
+          is_match_blocked,
+          match_block_reason,
+
+          products (
+            id,
+            sku_base,
+            name,
+            description,
+            volume_m3,
+            weight_kg,
+            net_weight_kg,
+            package_count,
+            package_1_qty,
+            package_2_qty,
+            package_3_qty,
+            packages_per_unit,
+            sales_units_per_package
+          )
+        `)
+        .eq(
+          "company_id",
+          companyId
+        )
+        .eq(
+          "status",
+          "in_stock"
+        )
+        .eq(
+          "is_match_blocked",
+          false
+        )
+        .not(
+          "physical_product_id",
+          "is",
+          null
+        )
+        .in(
+          "product_id",
+          wantedProductIds
+        )
+        .order(
+          "created_at",
+          {
+            ascending: true
+          }
+        )
+        .range(
+          from,
+          to
+        );
+
 
     if (error) {
       throw error;
     }
 
-    const rows = data || [];
 
-    allItems.push(...rows);
+    const rows =
+      data || [];
 
-    if (rows.length < pageSize) {
+
+    /*
+     * Alleen physically present én matchable packages.
+     *
+     * complete       => toegestaan
+     * open_complete  => toegestaan
+     * open_incomplete => NIET toegestaan
+     * damaged         => NIET toegestaan
+     * missing         => NIET toegestaan
+     */
+    const matchableRows =
+      rows.filter(item => {
+        const condition =
+          normalize(
+            item.package_condition ||
+            "complete"
+          );
+
+        return (
+          condition ===
+            "complete" ||
+          condition ===
+            "open_complete"
+        );
+      });
+
+
+    allItems.push(
+      ...matchableRows
+    );
+
+
+    if (
+      rows.length <
+      pageSize
+    ) {
       break;
     }
 
-    from += pageSize;
+
+    from +=
+      pageSize;
   }
 
-  const groups = new Map();
+
+  /*
+   * Groepeer fysieke packages per physical_product_id.
+   *
+   * Alleen als ALLE vereiste packages aanwezig en matchable zijn,
+   * wordt de fysieke set aangeboden aan de allocation engine.
+   */
+  const groups =
+    new Map();
+
 
   allItems.forEach(item => {
-    if (!item.product_id) return;
-    if (!item.physical_product_id) return;
-    if (normalize(item.status) !== "in_stock") return;
-    if (isOutboundStatus(item.status)) return;
-
-    const key = String(
-      item.physical_product_id
-    );
-
-    if (!groups.has(key)) {
-      groups.set(key, []);
+    if (
+      !item.product_id
+    ) {
+      return;
     }
 
-    groups.get(key).push(item);
+    if (
+      !item.physical_product_id
+    ) {
+      return;
+    }
+
+    if (
+      normalize(
+        item.status
+      ) !==
+      "in_stock"
+    ) {
+      return;
+    }
+
+    if (
+      isOutboundStatus(
+        item.status
+      )
+    ) {
+      return;
+    }
+
+    if (
+      item.is_match_blocked ===
+      true
+    ) {
+      return;
+    }
+
+
+    const condition =
+      normalize(
+        item.package_condition ||
+        "complete"
+      );
+
+
+    if (
+      ![
+        "complete",
+        "open_complete"
+      ].includes(
+        condition
+      )
+    ) {
+      return;
+    }
+
+
+    const key =
+      String(
+        item.physical_product_id
+      );
+
+
+    if (
+      !groups.has(
+        key
+      )
+    ) {
+      groups.set(
+        key,
+        []
+      );
+    }
+
+
+    groups
+      .get(key)
+      .push(item);
   });
 
-  const sets = [];
+
+  const sets =
+    [];
+
 
   for (
-    const [physicalProductId, items]
+    const [
+      physicalProductId,
+      items
+    ]
     of groups.entries()
   ) {
-    if (!items.length) continue;
-
-    const packageTotal = Math.max(
-      1,
-      ...items.map(item =>
-        toNumber(item.package_total, 1)
-      )
-    );
-
-    const present = new Set(
-      items.map(item =>
-        toNumber(item.package_no, 1)
-      )
-    );
-
-    const complete = Array.from(
-      {
-        length: packageTotal
-      },
-      (_, index) => index + 1
-    ).every(packageNo =>
-      present.has(packageNo)
-    );
-
-    if (!complete) {
+    if (
+      !items.length
+    ) {
       continue;
     }
 
-    const sortedItems = [...items].sort(
-      (a, b) => {
-        const packageA = toNumber(
-          a.package_no,
-          1
+
+    const packageTotal =
+      Math.max(
+        1,
+        ...items.map(item =>
+          toNumber(
+            item.package_total,
+            1
+          )
+        )
+      );
+
+
+    /*
+     * Controleer expliciet of elk vereiste package aanwezig is.
+     *
+     * Voor een 2-delige set moeten dus zowel 1/2 als 2/2
+     * in deze matchable groep voorkomen.
+     */
+    const present =
+      new Set(
+        items.map(item =>
+          Math.max(
+            1,
+            Math.round(
+              toNumber(
+                item.package_no,
+                1
+              )
+            )
+          )
+        )
+      );
+
+
+    const complete =
+      Array.from(
+        {
+          length:
+            packageTotal
+        },
+        (
+          _,
+          index
+        ) =>
+          index + 1
+      ).every(
+        packageNo =>
+          present.has(
+            packageNo
+          )
+      );
+
+
+    if (!complete) {
+      /*
+       * Bijvoorbeeld:
+       *
+       * 1/2 = complete
+       * 2/2 = blocked
+       *
+       * Dan zit 2/2 niet in allItems en wordt
+       * de hele fysieke set hier afgekeurd.
+       */
+      continue;
+    }
+
+
+    const sortedItems =
+      [...items]
+        .sort(
+          (a, b) => {
+            const packageA =
+              toNumber(
+                a.package_no,
+                1
+              );
+
+            const packageB =
+              toNumber(
+                b.package_no,
+                1
+              );
+
+            return (
+              packageA -
+              packageB
+            );
+          }
         );
 
-        const packageB = toNumber(
-          b.package_no,
-          1
+
+    /*
+     * Extra veiligheid:
+     * precies één matchable package-record per package number
+     * gebruiken voor deze physical set.
+     */
+    const uniquePackageItems =
+      [];
+
+
+    const seenPackageNos =
+      new Set();
+
+
+    sortedItems.forEach(item => {
+      const packageNo =
+        Math.max(
+          1,
+          Math.round(
+            toNumber(
+              item.package_no,
+              1
+            )
+          )
         );
 
-        return packageA - packageB;
+
+      if (
+        seenPackageNos.has(
+          packageNo
+        )
+      ) {
+        return;
       }
-    );
 
-    const firstItem = sortedItems[0];
+
+      seenPackageNos.add(
+        packageNo
+      );
+
+
+      uniquePackageItems.push(
+        item
+      );
+    });
+
+
+    if (
+      uniquePackageItems.length <
+      packageTotal
+    ) {
+      continue;
+    }
+
+
+    const firstItem =
+      uniquePackageItems[0];
+
+
     const product =
-      firstItem.products || {};
+      firstItem.products ||
+      {};
+
 
     sets.push({
-      id: `physical:${physicalProductId}`,
+      id:
+        `physical:${physicalProductId}`,
 
-      company_id: companyId,
-      product_id: firstItem.product_id,
+      company_id:
+        companyId,
+
+      product_id:
+        firstItem.product_id,
 
       physical_product_id:
         physicalProductId,
 
       stock_set_id:
-        firstItem.stock_set_id || null,
+        firstItem.stock_set_id ||
+        null,
 
       set_code:
         physicalProductId,
 
-      status: "complete",
+      status:
+        "complete",
 
       package_total:
         packageTotal,
 
       package_count:
-        sortedItems.length,
+        uniquePackageItems.length,
 
       volume_m3:
-        productVolume(product),
+        productVolume(
+          product
+        ),
 
       weight_kg:
-        productWeight(product),
+        productWeight(
+          product
+        ),
 
       warehouse_id:
-        firstItem.warehouse_id || null,
+        firstItem.warehouse_id ||
+        null,
 
       location_id:
-        firstItem.location_id || null,
+        firstItem.location_id ||
+        null,
 
       created_at:
-        firstItem.created_at || null,
+        firstItem.inbound_date ||
+        firstItem.created_at ||
+        null,
 
       products:
         product,
 
       items:
-        sortedItems
+        uniquePackageItems
     });
   }
 
-  return sets.sort((a, b) => {
-    const dateA = new Date(
-      a.created_at || 0
-    ).getTime();
 
-    const dateB = new Date(
-      b.created_at || 0
-    ).getTime();
+  return sets.sort(
+    (a, b) => {
+      const dateA =
+        new Date(
+          a.created_at ||
+          0
+        ).getTime();
 
-    return dateA - dateB;
-  });
+      const dateB =
+        new Date(
+          b.created_at ||
+          0
+        ).getTime();
+
+
+      return (
+        dateA -
+        dateB
+      );
+    }
+  );
 }
 
 async function fetchExpectedStock(

@@ -9180,23 +9180,38 @@ async function saveTariffModal(orderId) {
 
 async function moveDeliveredOrderStockToOutbound(orderId) {
   if (!orderId) {
-    throw new Error("Order ID missing.");
+    throw new Error(
+      "Order ID missing."
+    );
   }
 
-  const db = ensureClient();
-  const cid = await getCompanyId();
-  const shippedAt = new Date().toISOString();
+  const db =
+    ensureClient();
 
-  /*
-   * Stap 1: haal de orderregels op.
-   */
+  const cid =
+    await getCompanyId();
+
+  const shippedAt =
+    new Date()
+      .toISOString();
+
+
+  // ==========================================================
+  // 1. ORDER LINES
+  // ==========================================================
+
   const {
     data: orderLines,
     error: orderLinesError
-  } = await db
-    .from("order_lines")
-    .select("id")
-    .eq("order_id", orderId);
+  } =
+    await db
+      .from("order_lines")
+      .select("id")
+      .eq(
+        "order_id",
+        orderId
+      );
+
 
   if (orderLinesError) {
     throw new Error(
@@ -9204,123 +9219,263 @@ async function moveDeliveredOrderStockToOutbound(orderId) {
     );
   }
 
-  const orderLineIds = (orderLines || [])
-    .map(row => row.id)
-    .filter(Boolean);
 
-  console.log("OUTBOUND order lines:", orderLineIds);
+  const orderLineIds =
+    (orderLines || [])
+      .map(row =>
+        row.id
+      )
+      .filter(Boolean);
 
-  if (!orderLineIds.length) {
-    return {
-      allocationsUpdated: 0,
-      itemsUpdated: 0
-    };
+
+  // ==========================================================
+  // 2. ALLOCATIONS
+  // ==========================================================
+
+  let allocations = [];
+
+
+  if (orderLineIds.length) {
+    const {
+      data,
+      error
+    } =
+      await db
+        .from("order_allocations")
+        .select(`
+          id,
+          item_id,
+          stock_set_id,
+          allocation_status
+        `)
+        .in(
+          "order_line_id",
+          orderLineIds
+        )
+        .neq(
+          "allocation_status",
+          "cancelled"
+        );
+
+
+    if (error) {
+      throw new Error(
+        `Allocations could not be loaded: ${error.message}`
+      );
+    }
+
+
+    allocations =
+      data || [];
   }
 
-  /*
-   * Stap 2: haal de allocations rechtstreeks op.
-   */
-  const {
-    data: allocations,
-    error: allocationsError
-  } = await db
-    .from("order_allocations")
-    .select(`
-      id,
-      item_id,
-      stock_set_id,
-      allocation_status
-    `)
-    .in("order_line_id", orderLineIds)
-    .neq("allocation_status", "cancelled");
 
-  if (allocationsError) {
+  const allocationIds =
+    [
+      ...new Set(
+        allocations
+          .map(row =>
+            row.id
+          )
+          .filter(Boolean)
+      )
+    ];
+
+
+  const allocationItemIds =
+    [
+      ...new Set(
+        allocations
+          .map(row =>
+            row.item_id
+          )
+          .filter(Boolean)
+      )
+    ];
+
+
+  const stockSetIds =
+    [
+      ...new Set(
+        allocations
+          .map(row =>
+            row.stock_set_id
+          )
+          .filter(Boolean)
+      )
+    ];
+
+
+  // ==========================================================
+  // 3. DIRECTLY LINKED ITEMS
+  //
+  // Dit is de belangrijke reparatie.
+  //
+  // Ook packages zonder order_allocation moeten
+  // worden afgeboekt wanneer linked_order_id naar
+  // deze delivered order verwijst.
+  // ==========================================================
+
+  const {
+    data: linkedItems,
+    error: linkedItemsError
+  } =
+    await db
+      .from("items")
+      .select(`
+        id,
+        status,
+        linked_order_id,
+        physical_product_id,
+        stock_set_id,
+        package_no,
+        package_total
+      `)
+      .eq(
+        "company_id",
+        cid
+      )
+      .eq(
+        "linked_order_id",
+        orderId
+      )
+      .in(
+        "status",
+        [
+          "in_stock",
+          "reserved",
+          "picked",
+          "loaded"
+        ]
+      );
+
+
+  if (linkedItemsError) {
     throw new Error(
-      `Allocations could not be loaded: ${allocationsError.message}`
+      `Linked stock items could not be loaded: ${linkedItemsError.message}`
     );
   }
 
-  console.log("OUTBOUND allocations:", allocations);
 
-  const allocationRows = allocations || [];
+  const linkedItemIds =
+    (linkedItems || [])
+      .map(row =>
+        row.id
+      )
+      .filter(Boolean);
 
-  const allocationIds = [
-    ...new Set(
-      allocationRows
-        .map(row => row.id)
-        .filter(Boolean)
-    )
-  ];
 
-  const itemIds = [
-    ...new Set(
-      allocationRows
-        .map(row => row.item_id)
-        .filter(Boolean)
-    )
-  ];
+  // ==========================================================
+  // 4. COMBINE DIRECT ITEM IDs
+  // ==========================================================
 
-  const stockSetIds = [
-    ...new Set(
-      allocationRows
-        .map(row => row.stock_set_id)
-        .filter(Boolean)
-    )
-  ];
+  const directItemIds =
+    [
+      ...new Set([
+        ...allocationItemIds,
+        ...linkedItemIds
+      ])
+    ];
+
 
   let updatedItemIds = [];
 
-  /*
-   * Stap 3: rechtstreeks gekoppelde items uitboeken.
-   */
-if (itemIds.length) {
-  const {
-    data: updatedItems,
-    error: itemUpdateError
-  } = await db
-    .from("items")
-    .update({
-      status: "shipped",
-      shipped_at: shippedAt
-    })
-    .in("id", itemIds)
-    .select("id, status, shipped_at");
 
-  if (itemUpdateError) {
-    throw new Error(
-      `Items could not be marked shipped: ${itemUpdateError.message}`
+  // ==========================================================
+  // 5. SHIP DIRECT ITEMS
+  // ==========================================================
+
+  if (directItemIds.length) {
+    const {
+      data: updatedItems,
+      error: itemUpdateError
+    } =
+      await db
+        .from("items")
+        .update({
+          status:
+            "shipped",
+
+          shipped_at:
+            shippedAt,
+
+          reserved_at:
+            null
+        })
+        .eq(
+          "company_id",
+          cid
+        )
+        .in(
+          "id",
+          directItemIds
+        )
+        .select(`
+          id,
+          status,
+          shipped_at
+        `);
+
+
+    if (itemUpdateError) {
+      throw new Error(
+        `Items could not be marked shipped: ${itemUpdateError.message}`
+      );
+    }
+
+
+    updatedItemIds.push(
+      ...(updatedItems || [])
+        .map(row =>
+          row.id
+        )
     );
   }
 
-  if (!updatedItems?.length) {
-    throw new Error(
-      `No stock items were updated. ` +
-      `Check the items RLS update policy. Item IDs: ${itemIds.join(", ")}`
-    );
-  }
 
-  updatedItemIds.push(
-    ...updatedItems.map(row => row.id)
-  );
-}
+  // ==========================================================
+  // 6. STOCK SET ITEMS
+  //
+  // Allocations die via stock_set_id lopen blijven ook
+  // ondersteund.
+  // ==========================================================
 
-  /*
-   * Stap 4: alle packages van gekoppelde stocksets uitboeken.
-   */
   if (stockSetIds.length) {
     const {
       data: updatedStockSetItems,
       error: stockSetItemsError
-    } = await db
-      .from("items")
-      .update({
-        status: "shipped",
-        shipped_at: shippedAt
-      })
-      .eq("company_id", cid)
-      .in("stock_set_id", stockSetIds)
-      .neq("status", "shipped")
-      .select("id");
+    } =
+      await db
+        .from("items")
+        .update({
+          status:
+            "shipped",
+
+          shipped_at:
+            shippedAt,
+
+          reserved_at:
+            null
+        })
+        .eq(
+          "company_id",
+          cid
+        )
+        .in(
+          "stock_set_id",
+          stockSetIds
+        )
+        .in(
+          "status",
+          [
+            "in_stock",
+            "reserved",
+            "picked",
+            "loaded"
+          ]
+        )
+        .select("id");
+
 
     if (stockSetItemsError) {
       throw new Error(
@@ -9328,60 +9483,76 @@ if (itemIds.length) {
       );
     }
 
+
     updatedItemIds.push(
-      ...(updatedStockSetItems || []).map(row => row.id)
-    );
-
-    /*
-     * Alleen uitvoeren wanneer stock_sets deze status toestaat.
-     * Een fout hier blokkeert het uitboeken van de items niet.
-     */
-  }
-
-  /*
-   * Stap 5: allocations afsluiten.
-   */
-if (allocationIds.length) {
-  const {
-    data: updatedAllocations,
-    error: allocationUpdateError
-  } = await db
-    .from("order_allocations")
-    .update({
-      allocation_status: "shipped"
-    })
-    .in("id", allocationIds)
-    .select("id, allocation_status");
-
-  if (allocationUpdateError) {
-    throw new Error(
-      `Allocations could not be marked shipped: ${allocationUpdateError.message}`
+      ...(updatedStockSetItems || [])
+        .map(row =>
+          row.id
+        )
     );
   }
 
-  if (!updatedAllocations?.length) {
-    throw new Error(
-      `No allocations were updated. ` +
-      `Check the order_allocations RLS update policy.`
-    );
+
+  // ==========================================================
+  // 7. COMPLETE ALLOCATIONS
+  // ==========================================================
+
+  if (allocationIds.length) {
+    const {
+      error: allocationUpdateError
+    } =
+      await db
+        .from("order_allocations")
+        .update({
+          allocation_status:
+            "shipped"
+        })
+        .in(
+          "id",
+          allocationIds
+        );
+
+
+    if (allocationUpdateError) {
+      throw new Error(
+        `Allocations could not be marked shipped: ${allocationUpdateError.message}`
+      );
+    }
   }
-}
 
-  updatedItemIds = [
-    ...new Set(updatedItemIds)
-  ];
 
-  console.log("OUTBOUND completed:", {
-    orderId,
-    allocationIds,
-    itemIds,
-    stockSetIds,
-    updatedItemIds
-  });
+  updatedItemIds =
+    [
+      ...new Set(
+        updatedItemIds
+      )
+    ];
+
+
+  console.log(
+    "OUTBOUND completed:",
+    {
+      orderId,
+
+      allocationIds,
+
+      allocationItemIds,
+
+      linkedItemIds,
+
+      stockSetIds,
+
+      updatedItemIds
+    }
+  );
+
 
   return {
-    allocationsUpdated: allocationIds.length,
-    itemsUpdated: updatedItemIds.length
+    allocationsUpdated:
+      allocationIds.length,
+
+    itemsUpdated:
+      updatedItemIds.length
   };
 }
 

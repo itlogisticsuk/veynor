@@ -1,0 +1,1453 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+
+  <title>Storage Invoicing · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <!-- =======================================================
+       CORE LIBRARIES
+       ======================================================= -->
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+
+  <!-- =======================================================
+       VEYNOR CORE
+       ======================================================= -->
+
+  <script src="/js/supabase.js"></script>
+
+  <script
+    src="/js/page-guard.js?v=2"
+    defer
+  ></script>
+
+  <script
+    src="/js/layout.js"
+    defer
+  ></script>
+
+  <!-- =======================================================
+       STORAGE INVOICING MODULES
+       Generator eerst laden.
+       ======================================================= -->
+
+  <script
+    src="/js/storage-invoice-generator.js"
+    defer
+  ></script>
+
+  <script
+    src="/js/storage-invoicing.js"
+    defer
+  ></script>
+
+
+  <style>
+    /* =======================================================
+       STORAGE INVOICING
+       Alleen pagina-specifieke styling.
+       ======================================================= */
+
+    .storage-page {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .storage-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+
+    /* =======================================================
+       FILTERS
+       ======================================================= */
+
+    .storage-filter-card {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .storage-filter-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(220px, 1fr)
+        minmax(220px, 1fr)
+        minmax(160px, .7fr)
+        minmax(170px, .7fr);
+      gap: 12px;
+      align-items: end;
+    }
+
+
+    /* =======================================================
+       KPI
+       ======================================================= */
+
+    .storage-kpis {
+      display: grid;
+      grid-template-columns:
+        repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .storage-kpi-card {
+      padding: 15px 16px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .storage-kpi-card.highlight {
+      background:
+        linear-gradient(
+          135deg,
+          #ffffff 0%,
+          #f4f8ff 100%
+        );
+    }
+
+    .storage-kpi-label {
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #64748b;
+      letter-spacing: .04em;
+    }
+
+    .storage-kpi-value {
+      margin-top: 6px;
+      font-size: 23px;
+      font-weight: 950;
+      color: #0f172a;
+      letter-spacing: -.025em;
+    }
+
+    .storage-kpi-value.money {
+      color: var(--primary);
+    }
+
+    .storage-kpi-note {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+
+    /* =======================================================
+       CURRENT INVOICE SUMMARY
+       ======================================================= */
+
+    .storage-summary-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1.1fr)
+        minmax(320px, .9fr);
+      gap: 14px;
+      padding: 16px;
+    }
+
+    .storage-summary-box {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .storage-summary-row {
+      min-height: 44px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--border);
+
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+
+      font-size: 12.5px;
+    }
+
+    .storage-summary-row:last-child {
+      border-bottom: 0;
+    }
+
+    .storage-summary-row.total {
+      min-height: 54px;
+      background: var(--blue-bg);
+      font-weight: 950;
+    }
+
+    .storage-summary-row.total strong {
+      color: var(--primary);
+      font-size: 20px;
+    }
+
+    .storage-rules {
+      padding: 15px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #f8fafc;
+    }
+
+    .storage-rules h3 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .storage-rules ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 11.5px;
+      line-height: 1.55;
+    }
+
+
+    /* =======================================================
+       FORECAST
+       ======================================================= */
+
+    .forecast-body {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .forecast-note {
+      padding: 11px 13px;
+      border: 1px solid var(--orange-bd);
+      border-radius: 12px;
+      background: var(--orange-bg);
+      color: var(--orange-tx);
+      font-size: 11.5px;
+      line-height: 1.45;
+      font-weight: 750;
+    }
+
+    .forecast-grid {
+      display: grid;
+      grid-template-columns:
+        repeat(8, minmax(130px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 3px;
+    }
+
+    .forecast-week {
+      min-width: 130px;
+      padding: 13px;
+
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #fff;
+
+      cursor: pointer;
+
+      transition:
+        transform .14s ease,
+        border-color .14s ease,
+        box-shadow .14s ease,
+        background .14s ease;
+    }
+
+    .forecast-week:hover {
+      transform: translateY(-1px);
+      border-color: rgba(18, 103, 255, .35);
+      box-shadow:
+        0 8px 18px rgba(15, 23, 42, .07);
+    }
+
+    .forecast-week.active {
+      border-color: var(--primary);
+      background: var(--blue-bg);
+    }
+
+    .forecast-week-label {
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+
+    .forecast-week-date {
+      margin-top: 3px;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .forecast-week-total {
+      margin-top: 10px;
+      font-size: 19px;
+      font-weight: 950;
+    }
+
+    .forecast-week-change {
+      margin-top: 5px;
+      color: var(--green-tx);
+      font-size: 10.5px;
+      font-weight: 900;
+    }
+
+
+    /* =======================================================
+       TABS
+       ======================================================= */
+
+    .storage-tabs-wrap {
+      padding: 16px 16px 0;
+    }
+
+    .storage-tabs-content {
+      padding: 0 16px 16px;
+    }
+
+    .storage-tab-panel {
+      display: none;
+    }
+
+    .storage-tab-panel.active {
+      display: block;
+    }
+
+
+    /* =======================================================
+       TABLES
+       ======================================================= */
+
+    .storage-table {
+      width: 100%;
+      min-width: 1100px;
+      border-collapse: collapse;
+    }
+
+    .storage-table th,
+    .storage-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: middle;
+      font-size: 12px;
+    }
+
+    .storage-table th {
+      background: #f8fafc;
+      color: #334155;
+      font-size: 10px;
+      font-weight: 950;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      white-space: nowrap;
+    }
+
+    .storage-table tbody tr:hover {
+      background: #fafcff;
+    }
+
+    .storage-table tbody tr[data-storage-line-index] {
+      cursor: pointer;
+    }
+
+    .storage-number {
+      text-align: right !important;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .storage-money {
+      text-align: right !important;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .storage-sku {
+      color: var(--primary);
+      font-weight: 950;
+    }
+
+
+    /* =======================================================
+       DETAIL PANELS
+       ======================================================= */
+
+    .storage-detail-panel {
+      display: none;
+      margin-top: 14px;
+
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .storage-detail-panel.visible {
+      display: block;
+    }
+
+    .storage-detail-head {
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .storage-detail-head strong {
+      font-size: 12.5px;
+    }
+
+    .storage-empty {
+      padding: 38px 20px !important;
+      text-align: center !important;
+      color: var(--muted);
+    }
+
+
+    /* =======================================================
+       RESPONSIVE
+       ======================================================= */
+
+    @media(max-width:1400px) {
+
+      .storage-kpis {
+        grid-template-columns:
+          repeat(3, minmax(0, 1fr));
+      }
+
+      .storage-filter-grid {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media(max-width:950px) {
+
+      .storage-summary-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media(max-width:760px) {
+
+      .storage-filter-grid,
+      .storage-kpis {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+
+<body>
+
+<div class="app-shell">
+
+
+  <!-- =======================================================
+       SIDEBAR
+       ======================================================= -->
+
+  <aside
+    id="sidebarMount"
+    class="sidebar"
+  ></aside>
+
+
+  <!-- =======================================================
+       PAGE
+       ======================================================= -->
+
+  <main class="page storage-page">
+
+
+    <!-- =====================================================
+         TOPBAR
+         ===================================================== -->
+
+    <section class="page-topbar">
+
+      <div class="page-title">
+
+        <h1>
+          Storage Invoicing
+        </h1>
+
+        <p>
+          Calculate and invoice storage charges for free stock
+          held beyond the four-month grace period.
+        </p>
+
+      </div>
+
+
+      <div class="storage-actions topbar-actions">
+
+        <button
+          class="btn"
+          id="storageRefreshBtn"
+          type="button"
+        >
+          Refresh
+        </button>
+
+
+        <button
+          class="btn"
+          id="storageExportBtn"
+          type="button"
+        >
+          Export
+        </button>
+
+
+        <button
+          class="btn btn-primary"
+          id="storageGenerateInvoiceBtn"
+          type="button"
+          disabled
+        >
+          Generate Storage Invoice
+        </button>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         NOTICE
+         ===================================================== -->
+
+    <div
+      id="storageNotice"
+      class="notice"
+    ></div>
+
+
+    <!-- =====================================================
+         CALCULATION FILTERS
+         ===================================================== -->
+
+    <section class="card storage-filter-card">
+
+      <div class="section-head">
+
+        <div>
+
+          <h2 class="section-title">
+            Storage Calculation
+          </h2>
+
+          <p class="section-sub">
+            Select the Product Owner and review the stock used
+            for the storage charge calculation.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <div class="storage-filter-grid">
+
+
+        <div class="field">
+
+          <label for="storageCustomerFilter">
+            Product Owner
+          </label>
+
+          <select
+            id="storageCustomerFilter"
+            class="select"
+          >
+            <option value="">
+              All Product Owners
+            </option>
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="storageSkuFilter">
+            SKU / Product
+          </label>
+
+          <input
+            id="storageSkuFilter"
+            class="input"
+            type="search"
+            placeholder="Search SKU or product..."
+          />
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="storageBarnFilter">
+            Barn
+          </label>
+
+          <select
+            id="storageBarnFilter"
+            class="select"
+          >
+            <option value="">
+              All Barns
+            </option>
+          </select>
+
+        </div>
+
+
+        <div class="field">
+
+          <label for="storageViewDate">
+            Calculate as at
+          </label>
+
+          <input
+            id="storageViewDate"
+            class="input"
+            type="date"
+          />
+
+        </div>
+
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         KPI
+         ===================================================== -->
+
+    <section class="storage-kpis">
+
+
+      <article class="storage-kpi-card">
+
+        <div class="storage-kpi-label">
+          Chargeable Volume
+        </div>
+
+        <div
+          class="storage-kpi-value"
+          id="kpiChargeableVolume"
+        >
+          0.000 m³
+        </div>
+
+        <div class="storage-kpi-note">
+          Free stock currently beyond 4 months
+        </div>
+
+      </article>
+
+
+      <article class="storage-kpi-card">
+
+        <div class="storage-kpi-label">
+          Chargeable Packages
+        </div>
+
+        <div
+          class="storage-kpi-value"
+          id="kpiChargeablePackages"
+        >
+          0
+        </div>
+
+        <div class="storage-kpi-note">
+          Physical packages currently included
+        </div>
+
+      </article>
+
+
+      <article class="storage-kpi-card">
+
+        <div class="storage-kpi-label">
+          Current Weekly Charge
+        </div>
+
+        <div
+          class="storage-kpi-value money"
+          id="kpiWeeklyCharge"
+        >
+          £0.00
+        </div>
+
+        <div class="storage-kpi-note">
+          Current free stock × £1.20/m³
+        </div>
+
+      </article>
+
+
+      <article class="storage-kpi-card highlight">
+
+        <div class="storage-kpi-label">
+          Amount To Invoice
+        </div>
+
+        <div
+          class="storage-kpi-value money"
+          id="kpiAmountDue"
+        >
+          £0.00
+        </div>
+
+        <div class="storage-kpi-note">
+          All completed storage weeks not yet invoiced
+        </div>
+
+      </article>
+
+
+      <article class="storage-kpi-card">
+
+        <div class="storage-kpi-label">
+          Next Increase
+        </div>
+
+        <div
+          class="storage-kpi-value"
+          id="kpiNextIncrease"
+        >
+          —
+        </div>
+
+        <div
+          class="storage-kpi-note"
+          id="kpiNextIncreaseNote"
+        >
+          No upcoming increase
+        </div>
+
+      </article>
+
+
+    </section>
+
+
+    <!-- =====================================================
+         CURRENT STORAGE INVOICE
+         ===================================================== -->
+
+    <section class="card">
+
+      <div class="card-head">
+
+        <div>
+
+          <h2>
+            Current Storage Invoice
+          </h2>
+
+          <p class="section-sub">
+            Shows the complete amount currently available to invoice,
+            including all historic completed weeks that have not
+            previously been invoiced.
+          </p>
+
+        </div>
+
+
+        <span
+          id="storageInvoiceStatusBadge"
+          class="soft-pill green"
+        >
+          Ready
+        </span>
+
+      </div>
+
+
+      <div class="storage-summary-grid">
+
+
+        <div class="storage-summary-box">
+
+
+          <div class="storage-summary-row">
+
+            <span>
+              Storage charge excl. VAT
+            </span>
+
+            <strong id="summarySubtotal">
+              £0.00
+            </strong>
+
+          </div>
+
+
+          <div class="storage-summary-row">
+
+            <span id="summaryVatLabel">
+              VAT 20%
+            </span>
+
+            <strong id="summaryVat">
+              £0.00
+            </strong>
+
+          </div>
+
+
+          <div class="storage-summary-row total">
+
+            <span>
+              Invoice total
+            </span>
+
+            <strong id="summaryTotal">
+              £0.00
+            </strong>
+
+          </div>
+
+
+        </div>
+
+
+        <div class="storage-rules">
+
+          <h3>
+            Storage charging rules
+          </h3>
+
+          <ul>
+
+            <li>
+              Four calendar months of storage are free.
+            </li>
+
+            <li>
+              After the grace period, storage is charged at
+              £1.20 per m³ per completed week.
+            </li>
+
+            <li>
+              Only free physical stock is chargeable.
+            </li>
+
+            <li>
+              Once an item is matched or reserved,
+              future storage charges stop.
+            </li>
+
+            <li>
+              Previously invoiced storage weeks are excluded.
+            </li>
+
+          </ul>
+
+        </div>
+
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         8 WEEK FORECAST
+         ===================================================== -->
+
+    <section class="card">
+
+      <div class="card-head">
+
+        <div>
+
+          <h2>
+            8 Week Forecast
+          </h2>
+
+          <p class="section-sub">
+            Forecast of the weekly storage charge if the current
+            free stock situation remains unchanged.
+          </p>
+
+        </div>
+
+
+        <span class="soft-pill orange">
+          Forecast
+        </span>
+
+      </div>
+
+
+      <div class="forecast-body">
+
+
+        <div class="forecast-note">
+
+          Forecast assumption:
+          all stock that is free today remains physically in stock
+          and unreserved during the next 8 weeks.
+
+          Future inbound deliveries and future order matching are
+          not predicted.
+
+        </div>
+
+
+        <div
+          id="storageForecastWeeks"
+          class="forecast-grid"
+        >
+          <!-- JS renders 8 forecast weeks -->
+        </div>
+
+
+        <!-- =================================================
+             FORECAST DETAIL
+             ================================================= -->
+
+        <div
+          id="forecastDetailPanel"
+          class="storage-detail-panel"
+        >
+
+          <div class="storage-detail-head">
+
+            <strong id="forecastDetailTitle">
+              Forecast Week Detail
+            </strong>
+
+
+            <button
+              id="forecastDetailCloseBtn"
+              class="btn"
+              type="button"
+            >
+              Close
+            </button>
+
+          </div>
+
+
+          <div class="table-wrap">
+
+            <table class="storage-table">
+
+              <thead>
+
+                <tr>
+
+                  <th>
+                    SKU
+                  </th>
+
+                  <th>
+                    Product
+                  </th>
+
+                  <th>
+                    Inbound
+                  </th>
+
+                  <th>
+                    Grace Ends
+                  </th>
+
+                  <th>
+                    First Charge
+                  </th>
+
+                  <th class="storage-number">
+                    Packages
+                  </th>
+
+                  <th class="storage-number">
+                    Volume
+                  </th>
+
+                  <th class="storage-money">
+                    £ / Week
+                  </th>
+
+                </tr>
+
+              </thead>
+
+
+              <tbody id="forecastDetailBody">
+
+                <tr>
+
+                  <td
+                    colspan="8"
+                    class="storage-empty"
+                  >
+                    Select a forecast week to view its SKUs,
+                    quantities and projected weekly charge.
+                  </td>
+
+                </tr>
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+
+        </div>
+
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         STORAGE DETAILS
+         ===================================================== -->
+
+    <section class="card">
+
+      <div class="card-head">
+
+        <div>
+
+          <h2>
+            Storage Charge Details
+          </h2>
+
+          <p class="section-sub">
+            Review the current invoice calculation,
+            charge schedule and previously generated storage invoices.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <!-- ===================================================
+           TABS
+           =================================================== -->
+
+      <div class="storage-tabs-wrap">
+
+        <div class="page-tabs">
+
+
+          <button
+            class="page-tab active"
+            type="button"
+            data-storage-tab="toInvoice"
+          >
+            To Invoice
+          </button>
+
+
+          <button
+            class="page-tab"
+            type="button"
+            data-storage-tab="upcoming"
+          >
+            Charge Schedule
+          </button>
+
+
+          <button
+            class="page-tab"
+            type="button"
+            data-storage-tab="history"
+          >
+            Invoiced History
+          </button>
+
+
+        </div>
+
+      </div>
+
+
+      <div class="storage-tabs-content">
+
+
+        <!-- =================================================
+             TO INVOICE
+             ================================================= -->
+
+        <div
+          id="storageTabToInvoice"
+          class="storage-tab-panel active"
+        >
+
+
+          <div class="table-wrap">
+
+
+            <table class="storage-table">
+
+              <thead>
+
+                <tr>
+
+                  <th>
+                    SKU
+                  </th>
+
+                  <th>
+                    Product
+                  </th>
+
+                  <th>
+                    Inbound
+                  </th>
+
+                  <th>
+                    Grace Ends
+                  </th>
+
+                  <th>
+                    Chargeable Since
+                  </th>
+
+                  <th class="storage-number">
+                    Full Weeks
+                  </th>
+
+                  <th class="storage-number">
+                    Packages
+                  </th>
+
+                  <th class="storage-number">
+                    Volume m³
+                  </th>
+
+                  <th class="storage-money">
+                    £ / Week
+                  </th>
+
+                  <th class="storage-money">
+                    To Invoice
+                  </th>
+
+                  <th>
+                    Status
+                  </th>
+
+                </tr>
+
+              </thead>
+
+
+              <tbody id="storageInvoiceTableBody">
+
+                <tr>
+
+                  <td
+                    colspan="11"
+                    class="storage-empty"
+                  >
+                    Loading storage charges...
+                  </td>
+
+                </tr>
+
+              </tbody>
+
+            </table>
+
+
+          </div>
+
+
+          <!-- ===============================================
+               CURRENT LINE DETAIL
+               =============================================== -->
+
+          <div
+            id="storageInvoiceDetailPanel"
+            class="storage-detail-panel"
+          >
+
+            <div class="storage-detail-head">
+
+              <strong id="storageInvoiceDetailTitle">
+                Storage Charge Detail
+              </strong>
+
+
+              <button
+                id="storageInvoiceDetailCloseBtn"
+                class="btn"
+                type="button"
+              >
+                Close
+              </button>
+
+            </div>
+
+
+            <div class="table-wrap">
+
+              <table class="storage-table">
+
+                <thead>
+
+                  <tr>
+
+                    <th>
+                      SKU / Package
+                    </th>
+
+                    <th>
+                      Item ID
+                    </th>
+
+                    <th>
+                      Barn
+                    </th>
+
+                    <th>
+                      Location
+                    </th>
+
+                    <th>
+                      Inbound
+                    </th>
+
+                    <th>
+                      Period
+                    </th>
+
+                    <th class="storage-number">
+                      Volume m³
+                    </th>
+
+                    <th class="storage-money">
+                      Charge
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+
+                <tbody id="storageInvoiceDetailBody">
+
+                  <tr>
+
+                    <td
+                      colspan="8"
+                      class="storage-empty"
+                    >
+                      Select a storage charge line to view the
+                      underlying physical stock and charge periods.
+                    </td>
+
+                  </tr>
+
+                </tbody>
+
+              </table>
+
+
+            </div>
+
+
+          </div>
+
+
+        </div>
+
+
+        <!-- =================================================
+             CHARGE SCHEDULE
+             ================================================= -->
+
+        <div
+          id="storageTabUpcoming"
+          class="storage-tab-panel"
+        >
+
+
+          <div class="table-wrap">
+
+
+            <table class="storage-table">
+
+              <thead>
+
+                <tr>
+
+                  <th>
+                    First Charge Date
+                  </th>
+
+                  <th class="storage-number">
+                    SKUs
+                  </th>
+
+                  <th class="storage-number">
+                    Packages
+                  </th>
+
+                  <th class="storage-number">
+                    Volume m³
+                  </th>
+
+                  <th class="storage-money">
+                    Additional £ / Week
+                  </th>
+
+                  <th class="storage-money">
+                    Forecast Weekly Total
+                  </th>
+
+                </tr>
+
+              </thead>
+
+
+              <tbody id="storageUpcomingTableBody">
+
+                <tr>
+
+                  <td
+                    colspan="6"
+                    class="storage-empty"
+                  >
+                    No upcoming storage charges loaded.
+                  </td>
+
+                </tr>
+
+              </tbody>
+
+            </table>
+
+
+          </div>
+
+
+        </div>
+
+
+        <!-- =================================================
+             INVOICED HISTORY
+             ================================================= -->
+
+        <div
+          id="storageTabHistory"
+          class="storage-tab-panel"
+        >
+
+
+          <div class="table-wrap">
+
+
+            <table class="storage-table">
+
+              <thead>
+
+                <tr>
+
+                  <th>
+                    Invoice
+                  </th>
+
+                  <th>
+                    Invoice Date
+                  </th>
+
+                  <th>
+                    Product Owner
+                  </th>
+
+                  <th class="storage-number">
+                    Packages
+                  </th>
+
+                  <th class="storage-number">
+                    Volume m³
+                  </th>
+
+                  <th class="storage-money">
+                    Ex VAT
+                  </th>
+
+                  <th class="storage-money">
+                    VAT
+                  </th>
+
+                  <th class="storage-money">
+                    Total
+                  </th>
+
+                  <th>
+                    Status
+                  </th>
+
+                </tr>
+
+              </thead>
+
+
+              <tbody id="storageHistoryTableBody">
+
+                <tr>
+
+                  <td
+                    colspan="9"
+                    class="storage-empty"
+                  >
+                    No storage invoices found.
+                  </td>
+
+                </tr>
+
+              </tbody>
+
+            </table>
+
+
+          </div>
+
+
+        </div>
+
+
+      </div>
+
+
+    </section>
+
+
+  </main>
+
+
+</div>
+
+</body>
+</html>

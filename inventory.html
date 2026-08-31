@@ -1,0 +1,967 @@
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Inventory Check · Veynor</title>
+
+  <link rel="stylesheet" href="/css/theme.css"/>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
+  <script src="/js/page-guard.js?v=2" defer></script>
+  <script src="/js/event-log.js"></script>
+  <script src="/js/layout.js" defer></script>
+  <script src="/js/inventory.js" defer></script>
+
+  <style>
+    .inventory-page{
+      display:grid;
+      gap:16px;
+      align-content:start;
+    }
+
+    .inventory-actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .inventory-search-card{
+      padding:18px;
+      display:grid;
+      gap:14px;
+    }
+
+    .inventory-search-row{
+      display:grid;
+      grid-template-columns:minmax(260px,1fr) auto;
+      gap:10px;
+      align-items:end;
+    }
+
+    .inventory-search-row .btn{
+      min-width:140px;
+    }
+
+    .inventory-kpis{
+      display:grid;
+      grid-template-columns:repeat(6,minmax(0,1fr));
+      gap:12px;
+    }
+
+    .inventory-kpi{
+      padding:14px 16px;
+      min-height:88px;
+      display:grid;
+      align-content:center;
+    }
+
+    .inventory-kpi-label{
+      font-size:10px;
+      font-weight:950;
+      text-transform:uppercase;
+      letter-spacing:.05em;
+      color:#64748b;
+    }
+
+    .inventory-kpi-value{
+      margin-top:7px;
+      font-size:24px;
+      font-weight:950;
+      line-height:1;
+      color:#07152f;
+    }
+
+    .inventory-kpi-sub{
+      margin-top:5px;
+      font-size:11px;
+      color:var(--muted);
+    }
+
+    .inventory-product-card{
+      overflow:hidden;
+    }
+
+    .inventory-product-head{
+      padding:18px;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      flex-wrap:wrap;
+      background:linear-gradient(180deg,#fff,#fbfdff);
+    }
+
+    .inventory-product-main{
+      display:flex;
+      gap:13px;
+      align-items:center;
+      min-width:0;
+    }
+
+    .inventory-product-image{
+      width:72px;
+      height:72px;
+      flex:0 0 72px;
+      border:1px solid var(--border);
+      border-radius:14px;
+      background:#f8fafc;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      color:#94a3b8;
+      font-size:25px;
+    }
+
+    .inventory-product-image img{
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      padding:4px;
+    }
+
+    .inventory-product-copy{
+      min-width:0;
+    }
+
+    .inventory-product-sku{
+      font-size:21px;
+      font-weight:950;
+      color:var(--primary);
+    }
+
+    .inventory-product-name{
+      margin-top:4px;
+      font-size:14px;
+      font-weight:900;
+      color:var(--text);
+    }
+
+    .inventory-product-owner{
+      margin-top:4px;
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .inventory-help{
+      padding:12px 18px;
+      border-bottom:1px solid var(--border);
+      background:#fbfdff;
+      color:#475569;
+      font-size:12px;
+      line-height:1.5;
+    }
+
+    .inventory-barns{
+      display:grid;
+      gap:14px;
+      padding:16px;
+    }
+
+    .barn-card{
+      border:1px solid var(--border);
+      border-radius:15px;
+      background:#fff;
+      overflow:hidden;
+    }
+
+    .barn-head{
+      padding:13px 15px;
+      background:#f8fafc;
+      border-bottom:1px solid var(--border);
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .barn-title{
+      font-size:14px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .barn-meta{
+      display:flex;
+      gap:7px;
+      flex-wrap:wrap;
+    }
+
+    .inventory-table-wrap{
+      overflow-x:auto;
+    }
+
+    .inventory-table{
+      width:100%;
+      min-width:1150px;
+      border-collapse:collapse;
+    }
+
+    .inventory-table th,
+    .inventory-table td{
+      padding:10px 12px;
+      border-bottom:1px solid var(--border);
+      font-size:12px;
+      text-align:left;
+      vertical-align:middle;
+    }
+
+    .inventory-table th{
+      background:#fbfdff;
+      color:#475569;
+      font-size:10px;
+      font-weight:950;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+      white-space:nowrap;
+    }
+
+    .inventory-table tr:last-child td{
+      border-bottom:0;
+    }
+
+    .inventory-count-input{
+      width:90px;
+      min-height:36px;
+      border:1px solid #cbd5e1;
+      border-radius:9px;
+      padding:7px 9px;
+      background:#fff;
+      color:#0f172a;
+      font-weight:900;
+    }
+
+    .inventory-date-input{
+      min-height:36px;
+      border:1px solid #cbd5e1;
+      border-radius:9px;
+      padding:7px 9px;
+      background:#fff;
+      color:#0f172a;
+    }
+
+    .inventory-select{
+      min-height:36px;
+      border:1px solid #cbd5e1;
+      border-radius:9px;
+      padding:7px 9px;
+      background:#fff;
+      color:#0f172a;
+    }
+
+    .diff{
+      font-weight:950;
+    }
+
+    .diff.pos{
+      color:#047857;
+    }
+
+    .diff.neg{
+      color:#b91c1c;
+    }
+
+    .diff.zero{
+      color:#64748b;
+    }
+
+    .inventory-footer{
+      padding:15px 18px;
+      border-top:1px solid var(--border);
+      background:#fbfdff;
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+
+    .inventory-footer-note{
+      font-size:11.5px;
+      color:var(--muted);
+      max-width:680px;
+      line-height:1.45;
+    }
+
+    .inventory-empty{
+      padding:42px 20px;
+      text-align:center;
+      color:var(--muted);
+    }
+
+    .inventory-empty strong{
+      display:block;
+      color:var(--text);
+      font-size:14px;
+    }
+
+    .inventory-empty span{
+      display:block;
+      margin-top:6px;
+      font-size:12px;
+    }
+
+    .inventory-proposed{
+      padding:14px 18px;
+      border-top:1px solid var(--border);
+      display:none;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:10px;
+      background:#fff;
+    }
+
+    .inventory-proposed.open{
+      display:grid;
+    }
+
+    .proposed-box{
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:11px;
+      background:#fbfdff;
+    }
+
+    .proposed-label{
+      font-size:9.5px;
+      font-weight:950;
+      text-transform:uppercase;
+      color:#64748b;
+    }
+
+    .proposed-value{
+      margin-top:5px;
+      font-size:17px;
+      font-weight:950;
+      color:#07152f;
+    }
+
+    .warning-box{
+      border:1px solid #fed7aa;
+      background:#fff7ed;
+      color:#9a3412;
+      border-radius:12px;
+      padding:11px 13px;
+      font-size:11.5px;
+      line-height:1.45;
+    }
+
+    @media(max-width:1250px){
+      .inventory-kpis{
+        grid-template-columns:repeat(3,minmax(0,1fr));
+      }
+
+      .inventory-proposed{
+        grid-template-columns:repeat(2,minmax(0,1fr));
+      }
+    }
+
+    @media(max-width:760px){
+      .inventory-search-row,
+      .inventory-kpis,
+      .inventory-proposed{
+        grid-template-columns:1fr;
+      }
+
+      .inventory-search-row .btn{
+        width:100%;
+      }
+
+      .inventory-product-image{
+        width:60px;
+        height:60px;
+        flex-basis:60px;
+      }
+
+      .inventory-footer .btn{
+        flex:1;
+      }
+    }
+
+/* =========================================================
+   INVENTORY SPLIT BATCH MODAL
+========================================================= */
+
+.occ-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+
+  display: none;
+  align-items: center;
+  justify-content: center;
+
+  padding: 24px;
+
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(2px);
+}
+
+.occ-modal.open {
+  display: flex;
+}
+
+.occ-modal-card {
+  width: min(650px, 95vw);
+  max-height: 90vh;
+  overflow-y: auto;
+
+  background: #ffffff;
+
+  border: 1px solid #dbe3ef;
+  border-radius: 18px;
+
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.20);
+
+  animation: inventoryModalIn 0.16s ease-out;
+}
+
+.occ-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  gap: 16px;
+
+  padding: 20px 22px;
+
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.occ-modal-title {
+  margin: 0;
+
+  font-size: 18px;
+  font-weight: 950;
+
+  color: #07152f;
+}
+
+.occ-modal-sub {
+  margin: 5px 0 0;
+
+  font-size: 12px;
+  line-height: 1.45;
+
+  color: #64748b;
+}
+
+.occ-modal-close {
+  width: 38px;
+  height: 38px;
+
+  flex: 0 0 38px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+
+  background: #ffffff;
+  color: #475569;
+
+  font-size: 22px;
+  line-height: 1;
+
+  cursor: pointer;
+}
+
+.occ-modal-close:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.occ-modal-section {
+  padding: 20px 22px;
+}
+
+.occ-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+
+  gap: 9px;
+
+  padding: 15px 22px;
+
+  border-top: 1px solid #e2e8f0;
+
+  background: #f8fafc;
+}
+
+@keyframes inventoryModalIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 700px) {
+
+  .occ-modal {
+    padding: 12px;
+  }
+
+  .occ-modal-section > div {
+    grid-template-columns: 1fr !important;
+  }
+
+  .occ-modal-actions {
+    flex-wrap: wrap;
+  }
+
+  .occ-modal-actions .btn {
+    flex: 1;
+  }
+}
+  </style>
+</head>
+
+<body>
+
+<div class="app-shell">
+
+  <aside
+    id="sidebarMount"
+    class="sidebar">
+  </aside>
+
+  <main class="page inventory-page">
+
+    <!-- =====================================================
+         PAGE HEADER
+    ====================================================== -->
+
+    <section class="page-topbar">
+
+      <div class="page-title">
+
+        <h1>
+          Inventory Check
+        </h1>
+
+        <p>
+          Compare physical warehouse stock with Veynor
+          by SKU, package and Barn.
+        </p>
+
+      </div>
+
+      <div class="inventory-actions">
+
+        <button
+          class="btn"
+          id="btnInventoryRefresh"
+          type="button">
+          Refresh
+        </button>
+
+        <a
+          class="btn"
+          href="/stock.html">
+          Current Stock
+        </a>
+
+        <a
+          class="btn"
+          href="/stock-history.html">
+          Stock History
+        </a>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         TOAST
+    ====================================================== -->
+
+    <div
+      id="toast"
+      class="notice">
+    </div>
+
+
+    <!-- =====================================================
+         PRODUCT SEARCH
+    ====================================================== -->
+
+    <section class="card inventory-search-card">
+
+      <div class="section-head">
+
+        <div>
+
+          <h2 class="section-title">
+            Find Product
+          </h2>
+
+          <p class="section-sub">
+            Enter a SKU or product name.
+            Veynor will show the current physical stock
+            and the Barn where each package is registered.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      <div class="inventory-search-row">
+
+        <div class="field">
+
+          <label for="inventorySearch">
+            SKU / Product
+          </label>
+
+          <input
+            id="inventorySearch"
+            class="input"
+            type="search"
+            list="inventoryProductSuggestions"
+            placeholder="Example: CRO805"
+            autocomplete="off"
+          />
+
+          <datalist
+            id="inventoryProductSuggestions">
+          </datalist>
+
+        </div>
+
+
+        <button
+          class="btn btn-primary"
+          id="btnInventorySearch"
+          type="button">
+          Check Stock
+        </button>
+
+      </div>
+
+    </section>
+
+
+    <!-- =====================================================
+         KPI CARDS
+    ====================================================== -->
+
+    <section class="inventory-kpis">
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Physical Packages
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invPhysical">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Packages currently held
+        </div>
+
+      </article>
+
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Complete Products
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invComplete">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Complete package sets
+        </div>
+
+      </article>
+
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Available
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invAvailable">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Available complete sets
+        </div>
+
+      </article>
+
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Reserved
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invReserved">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Packages linked to orders
+        </div>
+
+      </article>
+
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Blocked
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invBlocked">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Unavailable / exception stock
+        </div>
+
+      </article>
+
+
+      <article class="card inventory-kpi">
+
+        <div class="inventory-kpi-label">
+          Barns
+        </div>
+
+        <div
+          class="inventory-kpi-value"
+          id="invBarns">
+          0
+        </div>
+
+        <div class="inventory-kpi-sub">
+          Barns containing this SKU
+        </div>
+
+      </article>
+
+    </section>
+
+
+    <!-- =====================================================
+         PRODUCT / INVENTORY CHECK
+    ====================================================== -->
+
+    <section class="card inventory-product-card">
+
+
+      <!-- PRODUCT HEADER -->
+
+      <div
+        id="inventoryProductHeader"
+        class="inventory-product-head">
+
+        <div class="inventory-product-main">
+
+          <div class="inventory-product-image">
+            📦
+          </div>
+
+          <div class="inventory-product-copy">
+
+            <div class="inventory-product-sku">
+              No product selected
+            </div>
+
+            <div class="inventory-product-name">
+              Search for a SKU to start an inventory check.
+            </div>
+
+            <div class="inventory-product-owner">
+              —
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <!-- HELP -->
+
+      <div class="inventory-help">
+
+        Enter the actual count for each package type in each Barn.
+        The proposed result is calculated immediately.
+
+        Saving an Inventory Check records the comparison
+        without changing stock.
+
+        Stock override is intentionally separated from the count
+        so a discrepancy can be reviewed first.
+
+      </div>
+
+
+      <!-- BARNS -->
+
+      <div
+        id="inventoryBarns"
+        class="inventory-barns">
+
+        <div class="inventory-empty">
+
+          <strong>
+            No product selected
+          </strong>
+
+          <span>
+            Search by SKU above to load the current warehouse stock.
+          </span>
+
+        </div>
+
+      </div>
+
+
+      <!-- PROPOSED RESULT -->
+
+      <div
+        id="inventoryProposed"
+        class="inventory-proposed">
+
+        <div class="proposed-box">
+
+          <div class="proposed-label">
+            System Packages
+          </div>
+
+          <div
+            class="proposed-value"
+            id="proposalSystem">
+            0
+          </div>
+
+        </div>
+
+
+        <div class="proposed-box">
+
+          <div class="proposed-label">
+            Counted Packages
+          </div>
+
+          <div
+            class="proposed-value"
+            id="proposalCounted">
+            0
+          </div>
+
+        </div>
+
+
+        <div class="proposed-box">
+
+          <div class="proposed-label">
+            Difference
+          </div>
+
+          <div
+            class="proposed-value"
+            id="proposalDifference">
+            0
+          </div>
+
+        </div>
+
+
+        <div class="proposed-box">
+
+          <div class="proposed-label">
+            Proposed Complete
+          </div>
+
+          <div
+            class="proposed-value"
+            id="proposalComplete">
+            0
+          </div>
+
+        </div>
+
+      </div>
+
+
+      <!-- FOOTER -->
+
+      <div class="inventory-footer">
+
+        <div
+          class="inventory-footer-note"
+          id="inventoryFooterNote">
+          Select a SKU to begin.
+        </div>
+
+
+        <div class="inventory-actions">
+
+          <button
+            class="btn"
+            id="btnSaveInventoryCheck"
+            type="button"
+            disabled>
+            Save Check Only
+          </button>
+
+
+          <button
+            class="btn btn-primary"
+            id="btnApplyInventory"
+            type="button"
+            disabled>
+            Apply Stock Adjustment
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+  </main>
+
+</div>
+
+</body>
+</html>
