@@ -529,10 +529,9 @@ async function fetchAvailableItemSets(
           "status",
           "in_stock"
         )
-        .eq(
-          "is_match_blocked",
-          false
-        )
+.or(
+  "is_match_blocked.eq.false,is_match_blocked.is.null"
+)
         .not(
           "physical_product_id",
           "is",
