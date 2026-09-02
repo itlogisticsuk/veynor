@@ -305,9 +305,14 @@ vehicle_cost_per_hour_gbp: toNumber(
     return getLat(row) !== null && getLng(row) !== null;
   }
 
-  function getOrderVolume(order) {
-    return toNumber(order?.planning_volume_m3 ?? order?.volume_m3, 0);
-  }
+function getOrderVolume(order) {
+  return toNumber(
+    order?.total_order_volume_m3 ??
+    order?.volume_m3 ??
+    order?.planning_volume_m3,
+    0
+  );
+}
 
   function getOrderColli(order) {
     return toNumber(order?.planning_colli, 0);

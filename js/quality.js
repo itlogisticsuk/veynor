@@ -965,45 +965,65 @@ const PAGE_SIZE = 10;
   );
 }
 
-  function populateOrderSelect() {
-    const select =
-      byId("qualityOrderSelect");
+function populateOrderSelect() {
+  const select =
+    byId("qualityOrderSelect");
 
-    if (!select) return;
+  if (!select) return;
 
-    select.innerHTML = `
-      <option value="">
-        Select delivered order
-      </option>
-    `;
 
-    allOrders.forEach(order => {
-      const option =
-        document.createElement(
-          "option"
-        );
+  select.innerHTML = `
+    <option value="">
+      Select delivered order
+    </option>
 
-      option.value = order.id;
+    <option value="__legacy__">
+      Legacy / order not in Veynor
+    </option>
+  `;
 
-      const retailer =
-        getRetailerName(order);
 
-      const reference =
-        cleanText(
-          order.external_reference || ""
-        );
+  allOrders.forEach(order => {
+    const option =
+      document.createElement(
+        "option"
+      );
 
-      option.textContent = [
-        order.order_number || "Order",
+    option.value =
+      order.id;
+
+
+    const retailer =
+      getRetailerName(
+        order
+      );
+
+
+    const reference =
+      cleanText(
+        order.external_reference ||
+        ""
+      );
+
+
+    option.textContent =
+      [
+        order.order_number ||
+          "Order",
+
         retailer,
+
         reference
       ]
         .filter(Boolean)
         .join(" · ");
 
-      select.appendChild(option);
-    });
-  }
+
+    select.appendChild(
+      option
+    );
+  });
+}
 
   function populateDynamicFilters() {
     const customerSelect =
@@ -3443,6 +3463,183 @@ external_reference:
   }
 }
 
+async function createClaimInvoice() {
+  const caseRow =
+    getSelectedCase();
+
+  if (!caseRow) {
+    showToast(
+      "No Quality Case selected.",
+      "err"
+    );
+    return;
+  }
+
+  if (
+    normalize(caseRow.responsibility) !==
+    "carrier"
+  ) {
+    showToast(
+      "The responsible party must be Carrier before a claim invoice can be created.",
+      "err"
+    );
+    return;
+  }
+
+  const claimAmount =
+    toNumber(
+      caseRow.claim_value_gbp,
+      0
+    );
+
+  if (claimAmount <= 0) {
+    showToast(
+      "Enter a claim value before creating the invoice.",
+      "err"
+    );
+    return;
+  }
+
+  if (caseRow.claim_invoice_id) {
+    showToast(
+      "A claim invoice already exists for this Quality Case.",
+      "err"
+    );
+    return;
+  }
+
+  if (
+    !window.InvoiceGenerator
+      ?.generateClaimInvoice
+  ) {
+    showToast(
+      "Invoice generator is not available.",
+      "err"
+    );
+    return;
+  }
+
+  const confirmed =
+    window.confirm(
+      `Create a claim invoice for ${formatMoney(
+        claimAmount
+      )} for ${
+        caseRow.case_number ||
+        "this Quality Case"
+      }?`
+    );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    // Alle evidence uit dezelfde casus ophalen.
+    const evidence =
+      await getCaseEvidence(
+        caseRow
+      );
+
+    // Alleen afbeeldingen naar de invoice sturen.
+    const photos =
+      evidence
+        .filter(
+          item =>
+            isImageEvidence(item) &&
+            item.url
+        )
+        .map(item => ({
+          url: item.url,
+          fileName:
+            item.fileName ||
+            "Evidence photo",
+          type:
+            item.type ||
+            "quality"
+        }));
+
+    const result =
+      await window.InvoiceGenerator
+        .generateClaimInvoice(
+          {
+            qualityCaseId:
+              caseRow.id,
+
+            caseNumber:
+              caseRow.case_number,
+
+            orderNumber:
+              caseRow.order_number,
+
+            externalReference:
+              caseRow.external_reference,
+
+            carrierReference:
+              caseRow
+                .carrier_claim_reference,
+
+            amount:
+              claimAmount,
+
+            description:
+              caseRow.description ||
+              `Damage claim ${
+                caseRow.case_number || ""
+              }`,
+
+            photos
+          },
+          client,
+          companyId
+        );
+
+    await addActivity(
+      caseRow.id,
+      "claim_invoice_created",
+      `Claim invoice ${result.invoiceNumber} created for ${formatMoney(
+        claimAmount
+      )}.`,
+      null,
+      null,
+      {
+        invoice_id:
+          result.invoiceId,
+        invoice_number:
+          result.invoiceNumber,
+        amount:
+          claimAmount
+      }
+    );
+
+    selectedCaseId =
+      caseRow.id;
+
+    await loadCases();
+
+    activeDetailTab =
+      "resolution";
+
+    await renderSelectedCase();
+
+    showToast(
+      `Claim invoice ${result.invoiceNumber} created.`,
+      "ok"
+    );
+
+  } catch (error) {
+    console.error(
+      "[Quality] claim invoice creation failed:",
+      error
+    );
+
+    showToast(
+      error.message ||
+      "Claim invoice could not be created.",
+      "err"
+    );
+  }
+}
+
 async function renderDetailTab() {
   const caseRow =
     getSelectedCase();
@@ -4342,93 +4539,265 @@ container
   // RESOLUTION
   // =========================================================
 
-  if (
-    activeDetailTab ===
-    "resolution"
-  ) {
-    container.innerHTML = `
-      <section class="quality-detail-section">
+if (
+  activeDetailTab ===
+  "resolution"
+) {
+  container.innerHTML = `
+    <section class="quality-detail-section">
 
-        <h3>
-          Resolution
+      <h3>
+        Resolution
+      </h3>
+
+      <div class="quality-detail-metrics">
+
+        <div class="quality-detail-metric">
+          <span>
+            Resolution Type
+          </span>
+
+          <strong>
+            ${escapeHtml(
+              RESOLUTION_LABELS[
+                caseRow.resolution_type
+              ] ||
+              "Not decided yet"
+            )}
+          </strong>
+        </div>
+
+        <div class="quality-detail-metric">
+          <span>
+            Status
+          </span>
+
+          <strong>
+            ${escapeHtml(
+              STATUS_LABELS[
+                caseRow.status
+              ] ||
+              caseRow.status ||
+              "—"
+            )}
+          </strong>
+        </div>
+
+        <div class="quality-detail-metric">
+          <span>
+            Resolved At
+          </span>
+
+          <strong>
+            ${escapeHtml(
+              formatDateTime(
+                caseRow.resolved_at
+              )
+            )}
+          </strong>
+        </div>
+
+      </div>
+
+      <p
+        class="quality-description"
+        style="margin-top:14px;"
+      >
+        ${escapeHtml(
+          caseRow.resolution_notes ||
+          "No resolution notes recorded."
+        )}
+      </p>
+
+
+      <div
+        style="
+          margin-top:18px;
+          padding-top:16px;
+          border-top:1px solid #e2e8f0;
+        "
+      >
+        <h3 style="margin-bottom:12px;">
+          Claim Recovery
         </h3>
-
 
         <div class="quality-detail-metrics">
 
-
           <div class="quality-detail-metric">
-
             <span>
-              Resolution Type
+              Responsible Party
             </span>
 
             <strong>
               ${escapeHtml(
-                RESOLUTION_LABELS[
-                  caseRow.resolution_type
+                RESPONSIBILITY_LABELS[
+                  caseRow.responsibility
                 ] ||
-                "Not decided yet"
-              )}
-            </strong>
-
-          </div>
-
-
-          <div class="quality-detail-metric">
-
-            <span>
-              Status
-            </span>
-
-            <strong>
-              ${escapeHtml(
-                STATUS_LABELS[
-                  caseRow.status
-                ] ||
-                caseRow.status ||
+                caseRow.responsibility ||
                 "—"
               )}
             </strong>
-
           </div>
 
-
           <div class="quality-detail-metric">
-
             <span>
-              Resolved At
+              Carrier
             </span>
 
             <strong>
               ${escapeHtml(
-                formatDateTime(
-                  caseRow.resolved_at
-                )
+                caseRow.carrier_name ||
+                "—"
               )}
             </strong>
+          </div>
 
+          <div class="quality-detail-metric">
+            <span>
+              Claim Value
+            </span>
+
+            <strong>
+              ${formatMoney(
+                caseRow.claim_value_gbp
+              )}
+            </strong>
+          </div>
+
+          <div class="quality-detail-metric">
+            <span>
+              Invoice Status
+            </span>
+
+            <strong>
+              ${
+                caseRow.claim_invoice_id
+                  ? "INVOICED"
+                  : "NOT INVOICED"
+              }
+            </strong>
           </div>
 
         </div>
 
-
-        <p
-          class="quality-description"
-          style="margin-top:14px;"
+        <div
+          style="
+            margin-top:14px;
+            display:flex;
+            gap:10px;
+            flex-wrap:wrap;
+            align-items:center;
+          "
         >
-          ${escapeHtml(
-            caseRow.resolution_notes ||
-            "No resolution notes recorded."
-          )}
-        </p>
 
-      </section>
-    `;
+          ${
+            !caseRow.claim_invoice_id &&
+            normalize(
+              caseRow.responsibility
+            ) === "carrier" &&
+            toNumber(
+              caseRow.claim_value_gbp,
+              0
+            ) > 0
+              ? `
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  data-quality-create-claim-invoice
+                >
+                  Create Claim Invoice
+                </button>
+              `
+              : ""
+          }
 
-    return;
-  }
+          ${
+            caseRow.claim_invoice_id
+              ? `
+                <span
+                  style="
+                    padding:7px 10px;
+                    border-radius:999px;
+                    background:#ecfdf5;
+                    border:1px solid #bbf7d0;
+                    color:#047857;
+                    font-size:10px;
+                    font-weight:950;
+                  "
+                >
+                  CLAIM INVOICED
+                </span>
+              `
+              : ""
+          }
 
+        </div>
+
+        ${
+          caseRow.claim_invoiced_at
+            ? `
+              <div
+                style="
+                  margin-top:8px;
+                  color:#64748b;
+                  font-size:10px;
+                "
+              >
+                Invoice created:
+                ${escapeHtml(
+                  formatDateTime(
+                    caseRow.claim_invoiced_at
+                  )
+                )}
+              </div>
+            `
+            : ""
+        }
+
+      </div>
+
+    </section>
+  `;
+
+
+  container
+    .querySelector(
+      "[data-quality-create-claim-invoice]"
+    )
+    ?.addEventListener(
+      "click",
+      async event => {
+
+        const button =
+          event.currentTarget;
+
+        const originalText =
+          button.textContent;
+
+        button.disabled = true;
+
+        button.textContent =
+          "Creating invoice...";
+
+        try {
+          await createClaimInvoice();
+        } finally {
+          if (
+            document.body.contains(
+              button
+            )
+          ) {
+            button.disabled = false;
+            button.textContent =
+              originalText;
+          }
+        }
+      }
+    );
+
+
+  return;
+}
 
   // =========================================================
   // EVIDENCE
@@ -4769,100 +5138,269 @@ container
   // MODAL
   // =========================================================
 
-  function openCaseModal(
-    caseRow = null
-  ) {
-    const modal =
-      byId(
-        "qualityCaseModal"
-      );
-
-    if (!modal) return;
-
-    modal.classList.add("open");
-
+ function openCaseModal(
+  caseRow = null
+) {
+  const modal =
     byId(
-      "qualityCaseId"
-    ).value =
-      caseRow?.id || "";
+      "qualityCaseModal"
+    );
 
-    byId(
-      "qualityCaseModalTitle"
-    ).textContent =
-      caseRow
-        ? "Edit Damage Case"
-        : "New Damage Case";
+  if (!modal) return;
 
-    byId(
-      "btnSaveQualityCase"
-    ).textContent =
-      caseRow
-        ? "Save Changes"
-        : "Create Case";
 
+  modal.classList.add(
+    "open"
+  );
+
+
+  byId(
+    "qualityCaseId"
+  ).value =
+    caseRow?.id || "";
+
+
+  byId(
+    "qualityCaseModalTitle"
+  ).textContent =
+    caseRow
+      ? "Edit Damage Case"
+      : "New Damage Case";
+
+
+  byId(
+    "btnSaveQualityCase"
+  ).textContent =
+    caseRow
+      ? "Save Changes"
+      : "Create Case";
+
+
+  // =========================================================
+  // ORDER / LEGACY
+  // =========================================================
+
+  const isLegacy =
+    Boolean(
+      caseRow &&
+      !caseRow.order_id
+    );
+
+
+  const orderSelect =
     byId(
       "qualityOrderSelect"
-    ).value =
-      caseRow?.order_id || "";
+    );
 
-    byId(
-      "qualityIssueType"
-    ).value =
-      caseRow?.issue_type ||
-      "damaged_packaging";
 
-    byId(
-      "qualityPriority"
-    ).value =
-      caseRow?.priority ||
-      "normal";
-
-    byId(
-      "qualityResponsibility"
-    ).value =
-      caseRow?.responsibility ||
-      "under_review";
-
-    byId(
-      "qualityDiscoveredAt"
-    ).value =
-      caseRow?.discovered_at ||
-      "";
-
-    byId(
-      "qualityDescription"
-    ).value =
-      caseRow?.description ||
-      "";
-
-    byId(
-      "qualityClaimValue"
-    ).value =
-      toNumber(
-        caseRow?.claim_value_gbp,
-        0
-      );
-
-    byId(
-      "qualityResolutionType"
-    ).value =
-      caseRow?.resolution_type ||
-      "";
-
-    byId(
-      "qualityCarrierReference"
-    ).value =
-      caseRow
-        ?.carrier_claim_reference ||
-      "";
-
-    byId(
-      "qualityCustomerReference"
-    ).value =
-      caseRow
-        ?.customer_claim_reference ||
-      "";
+  if (orderSelect) {
+    orderSelect.value =
+      isLegacy
+        ? "__legacy__"
+        : (
+            caseRow?.order_id ||
+            ""
+          );
   }
+
+
+  const legacyFields =
+    byId(
+      "qualityLegacyFields"
+    );
+
+
+  if (legacyFields) {
+    legacyFields.style.display =
+      isLegacy
+        ? "block"
+        : "none";
+  }
+
+
+  // =========================================================
+  // LEGACY VALUES
+  // =========================================================
+
+  const legacyOrderNumber =
+    byId(
+      "qualityLegacyOrderNumber"
+    );
+
+  if (legacyOrderNumber) {
+    legacyOrderNumber.value =
+      isLegacy
+        ? (
+            caseRow?.order_number ||
+            caseRow?.external_reference ||
+            ""
+          )
+        : "";
+  }
+
+
+  const legacyCustomer =
+    byId(
+      "qualityLegacyCustomer"
+    );
+
+  if (legacyCustomer) {
+    legacyCustomer.value =
+      isLegacy
+        ? (
+            caseRow?.retailer_name ||
+            ""
+          )
+        : "";
+  }
+
+
+  const legacyProductOwner =
+    byId(
+      "qualityLegacyProductOwner"
+    );
+
+  if (legacyProductOwner) {
+    legacyProductOwner.value =
+      isLegacy
+        ? (
+            caseRow?.product_owner_name ||
+            ""
+          )
+        : "";
+  }
+
+
+  const legacyCarrier =
+    byId(
+      "qualityLegacyCarrier"
+    );
+
+  if (legacyCarrier) {
+    legacyCarrier.value =
+      isLegacy
+        ? (
+            caseRow?.carrier_name ||
+            "FDS"
+          )
+        : "FDS";
+  }
+
+
+  const legacySku =
+    byId(
+      "qualityLegacySku"
+    );
+
+  const legacyProductDescription =
+    byId(
+      "qualityLegacyProductDescription"
+    );
+
+
+  const firstCaseProduct =
+    caseRow
+      ?.quality_case_products
+      ?.find(Boolean) ||
+    null;
+
+
+  if (legacySku) {
+    legacySku.value =
+      isLegacy
+        ? (
+            firstCaseProduct
+              ?.sku_base ||
+            ""
+          )
+        : "";
+  }
+
+
+  if (
+    legacyProductDescription
+  ) {
+    legacyProductDescription.value =
+      isLegacy
+        ? (
+            firstCaseProduct
+              ?.description ||
+            ""
+          )
+        : "";
+  }
+
+
+  // =========================================================
+  // NORMAL CASE VALUES
+  // =========================================================
+
+  byId(
+    "qualityIssueType"
+  ).value =
+    caseRow?.issue_type ||
+    "damaged_packaging";
+
+
+  byId(
+    "qualityPriority"
+  ).value =
+    caseRow?.priority ||
+    "normal";
+
+
+  byId(
+    "qualityResponsibility"
+  ).value =
+    caseRow?.responsibility ||
+    "under_review";
+
+
+  byId(
+    "qualityDiscoveredAt"
+  ).value =
+    caseRow?.discovered_at ||
+    "";
+
+
+  byId(
+    "qualityDescription"
+  ).value =
+    caseRow?.description ||
+    "";
+
+
+  byId(
+    "qualityClaimValue"
+  ).value =
+    toNumber(
+      caseRow?.claim_value_gbp,
+      0
+    );
+
+
+  byId(
+    "qualityResolutionType"
+  ).value =
+    caseRow?.resolution_type ||
+    "";
+
+
+  byId(
+    "qualityCarrierReference"
+  ).value =
+    caseRow
+      ?.carrier_claim_reference ||
+    "";
+
+
+  byId(
+    "qualityCustomerReference"
+  ).value =
+    caseRow
+      ?.customer_claim_reference ||
+    "";
+}
 
   function closeCaseModal() {
     byId(
@@ -4877,34 +5415,55 @@ container
   // SAVE CASE
   // =========================================================
 
-  async function saveCase() {
-    const caseId =
-      cleanText(
-        byId(
-          "qualityCaseId"
-        )?.value
-      );
+async function saveCase() {
 
-    const orderId =
-      cleanText(
-        byId(
-          "qualityOrderSelect"
-        )?.value
-      );
+  const caseId =
+    cleanText(
+      byId(
+        "qualityCaseId"
+      )?.value
+    );
 
-    if (!orderId) {
-      showToast(
-        "Please select an order.",
-        "err"
-      );
 
-      return;
-    }
+  const orderSelection =
+    cleanText(
+      byId(
+        "qualityOrderSelect"
+      )?.value
+    );
 
-    const order =
+
+  if (!orderSelection) {
+    showToast(
+      "Please select an order or choose Legacy / order not in Veynor.",
+      "err"
+    );
+
+    return;
+  }
+
+
+  const isLegacy =
+    orderSelection ===
+    "__legacy__";
+
+
+  let order = null;
+
+
+  // =========================================================
+  // NORMAL VEYNOR ORDER
+  // =========================================================
+
+  if (!isLegacy) {
+
+    order =
       orderMap.get(
-        String(orderId)
+        String(
+          orderSelection
+        )
       );
+
 
     if (!order) {
       showToast(
@@ -4915,215 +5474,587 @@ container
       return;
     }
 
-    const payload = {
-      company_id: companyId,
-      order_id: order.id,
-      customer_id:
-        order.customer_id ||
-        null,
-      route_id:
-        order.route_id ||
-        order.routes?.id ||
-        null,
+  }
 
-      order_number:
-        order.order_number ||
-        null,
 
-      external_reference:
-        order.external_reference ||
-        null,
+  // =========================================================
+  // LEGACY VALUES
+  // =========================================================
 
-      product_owner_name:
-        getProductOwnerName(
-          order
-        ),
+  const legacyOrderNumber =
+    cleanText(
+      byId(
+        "qualityLegacyOrderNumber"
+      )?.value
+    );
 
-      retailer_name:
-        getRetailerName(
-          order
-        ),
 
-      retailer_code:
-        order.retailer_code ||
-        null,
+  const legacyCustomer =
+    cleanText(
+      byId(
+        "qualityLegacyCustomer"
+      )?.value
+    );
 
-      delivery_address:
-        getOrderAddress(
-          order
-        ),
 
-      delivery_postcode:
-        order.delivery_postcode ||
-        null,
+  const legacySku =
+    cleanText(
+      byId(
+        "qualityLegacySku"
+      )?.value
+    );
 
-      carrier_name:
-        getCarrierName(
-          order
-        ),
 
-      driver_name:
-        getDriverName(
-          order
-        ),
+  const legacyDescription =
+    cleanText(
+      byId(
+        "qualityLegacyProductDescription"
+      )?.value
+    );
 
-      issue_type:
+
+  const legacyProductOwner =
+    cleanText(
+      byId(
+        "qualityLegacyProductOwner"
+      )?.value
+    );
+
+
+  const legacyCarrier =
+    cleanText(
+      byId(
+        "qualityLegacyCarrier"
+      )?.value
+    ) || "FDS";
+
+
+  if (
+    isLegacy &&
+    !legacyOrderNumber
+  ) {
+    showToast(
+      "Enter the original order or reference.",
+      "err"
+    );
+
+    return;
+  }
+
+
+  // =========================================================
+  // QUALITY CASE PAYLOAD
+  // =========================================================
+
+  const payload = {
+
+    company_id:
+      companyId,
+
+
+    order_id:
+      isLegacy
+        ? null
+        : order.id,
+
+
+    customer_id:
+      isLegacy
+        ? null
+        : (
+            order.customer_id ||
+            null
+          ),
+
+
+    route_id:
+      isLegacy
+        ? null
+        : (
+            order.route_id ||
+            order.routes?.id ||
+            null
+          ),
+
+
+    order_number:
+      isLegacy
+        ? legacyOrderNumber
+        : (
+            order.order_number ||
+            null
+          ),
+
+
+    external_reference:
+      isLegacy
+        ? legacyOrderNumber
+        : (
+            order.external_reference ||
+            null
+          ),
+
+
+    product_owner_name:
+      isLegacy
+        ? (
+            legacyProductOwner ||
+            null
+          )
+        : getProductOwnerName(
+            order
+          ),
+
+
+    retailer_name:
+      isLegacy
+        ? (
+            legacyCustomer ||
+            null
+          )
+        : getRetailerName(
+            order
+          ),
+
+
+    retailer_code:
+      isLegacy
+        ? null
+        : (
+            order.retailer_code ||
+            null
+          ),
+
+
+    delivery_address:
+      isLegacy
+        ? null
+        : getOrderAddress(
+            order
+          ),
+
+
+    delivery_postcode:
+      isLegacy
+        ? null
+        : (
+            order.delivery_postcode ||
+            null
+          ),
+
+
+    carrier_name:
+      isLegacy
+        ? legacyCarrier
+        : getCarrierName(
+            order
+          ),
+
+
+    driver_name:
+      isLegacy
+        ? null
+        : getDriverName(
+            order
+          ),
+
+
+    issue_type:
+      byId(
+        "qualityIssueType"
+      ).value,
+
+
+    priority:
+      byId(
+        "qualityPriority"
+      ).value,
+
+
+    responsibility:
+      byId(
+        "qualityResponsibility"
+      ).value,
+
+
+    discovered_at:
+      cleanText(
         byId(
-          "qualityIssueType"
+          "qualityDiscoveredAt"
+        ).value
+      ) || null,
+
+
+    description:
+      cleanText(
+        byId(
+          "qualityDescription"
+        ).value
+      ) || null,
+
+
+    claim_value_gbp:
+      toNumber(
+        byId(
+          "qualityClaimValue"
         ).value,
+        0
+      ),
 
-      priority:
+
+    resolution_type:
+      byId(
+        "qualityResolutionType"
+      ).value ||
+      null,
+
+
+    carrier_claim_reference:
+      cleanText(
         byId(
-          "qualityPriority"
-        ).value,
+          "qualityCarrierReference"
+        ).value
+      ) || null,
 
-      responsibility:
+
+    customer_claim_reference:
+      cleanText(
         byId(
-          "qualityResponsibility"
-        ).value,
+          "qualityCustomerReference"
+        ).value
+      ) || null
+  };
 
-      discovered_at:
-        cleanText(
-          byId(
-            "qualityDiscoveredAt"
-          ).value
-        ) || null,
 
-      description:
-        cleanText(
-          byId(
-            "qualityDescription"
-          ).value
-        ) || null,
+  try {
 
-      claim_value_gbp:
-        toNumber(
-          byId(
-            "qualityClaimValue"
-          ).value,
-          0
-        ),
+    // =========================================================
+    // UPDATE EXISTING CASE
+    // =========================================================
 
-      resolution_type:
-        byId(
-          "qualityResolutionType"
-        ).value || null,
+    if (caseId) {
 
-      carrier_claim_reference:
-        cleanText(
-          byId(
-            "qualityCarrierReference"
-          ).value
-        ) || null,
-
-      customer_claim_reference:
-        cleanText(
-          byId(
-            "qualityCustomerReference"
-          ).value
-        ) || null
-    };
-
-    try {
-      if (caseId) {
-        const existing =
-          allCases.find(row =>
+      const existing =
+        allCases.find(
+          row =>
             String(row.id) ===
             String(caseId)
-          );
-
-        const {
-          error
-        } = await client
-          .from(
-            "quality_cases"
-          )
-          .update(payload)
-          .eq("id", caseId)
-          .eq(
-            "company_id",
-            companyId
-          );
-
-        if (error) throw error;
-
-        await addActivity(
-          caseId,
-          "case_updated",
-          "Quality case updated.",
-          existing?.status || null,
-          existing?.status || null
         );
 
-        selectedCaseId =
-          caseId;
 
-        showToast(
-          "Quality case updated."
+      const {
+        error
+      } = await client
+        .from(
+          "quality_cases"
+        )
+        .update(
+          payload
+        )
+        .eq(
+          "id",
+          caseId
+        )
+        .eq(
+          "company_id",
+          companyId
         );
-      } else {
-        payload.status = "open";
-        payload.reported_by =
-          currentProfile.id;
-        payload.created_by =
-          currentProfile.id;
 
-        const {
-          data,
-          error
-        } = await client
-          .from(
-            "quality_cases"
-          )
-          .insert(payload)
-          .select()
-          .single();
 
-        if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
-        selectedCaseId =
-          data.id;
 
-        await addActivity(
-          data.id,
-          "case_created",
-          "Quality case created.",
+      // =======================================================
+      // LEGACY PRODUCT UPDATE
+      // =======================================================
+
+      if (isLegacy) {
+
+        const existingProduct =
+          existing
+            ?.quality_case_products
+            ?.find(Boolean) ||
+          null;
+
+
+        if (
+          legacySku ||
+          legacyDescription
+        ) {
+
+          const productPayload = {
+
+            company_id:
+              companyId,
+
+            quality_case_id:
+              caseId,
+
+            order_line_id:
+              null,
+
+            product_id:
+              null,
+
+            sku_base:
+              legacySku ||
+              "LEGACY",
+
+            description:
+              legacyDescription ||
+              legacySku ||
+              "Legacy product",
+
+            quantity:
+              1,
+
+            affected_quantity:
+              1
+          };
+
+
+          if (
+            existingProduct?.id
+          ) {
+
+            const {
+              error:
+                updateProductError
+            } = await client
+              .from(
+                "quality_case_products"
+              )
+              .update({
+                sku_base:
+                  productPayload
+                    .sku_base,
+
+                description:
+                  productPayload
+                    .description,
+
+                quantity:
+                  1
+              })
+              .eq(
+                "id",
+                existingProduct.id
+              )
+              .eq(
+                "company_id",
+                companyId
+              );
+
+
+            if (
+              updateProductError
+            ) {
+              throw updateProductError;
+            }
+
+          } else {
+
+            const {
+              error:
+                insertProductError
+            } = await client
+              .from(
+                "quality_case_products"
+              )
+              .insert(
+                productPayload
+              );
+
+
+            if (
+              insertProductError
+            ) {
+              throw insertProductError;
+            }
+
+          }
+
+        }
+
+      }
+
+
+      await addActivity(
+        caseId,
+        "case_updated",
+        "Quality case updated.",
+        existing?.status ||
           null,
-          "open"
-        );
+        existing?.status ||
+          null
+      );
+
+
+      selectedCaseId =
+        caseId;
+
+
+      showToast(
+        "Quality case updated."
+      );
+
+    }
+
+
+    // =========================================================
+    // CREATE NEW CASE
+    // =========================================================
+
+    else {
+
+      payload.status =
+        "open";
+
+      payload.reported_by =
+        currentProfile.id;
+
+      payload.created_by =
+        currentProfile.id;
+
+
+      const {
+        data,
+        error
+      } = await client
+        .from(
+          "quality_cases"
+        )
+        .insert(
+          payload
+        )
+        .select()
+        .single();
+
+
+      if (error) {
+        throw error;
+      }
+
+
+      selectedCaseId =
+        data.id;
+
+
+      await addActivity(
+        data.id,
+        "case_created",
+        isLegacy
+          ? "Legacy quality case created."
+          : "Quality case created.",
+        null,
+        "open"
+      );
+
+
+      // =======================================================
+      // PRODUCT LINK
+      // =======================================================
+
+      if (isLegacy) {
+
+        if (
+          legacySku ||
+          legacyDescription
+        ) {
+
+          const {
+            error:
+              productError
+          } = await client
+            .from(
+              "quality_case_products"
+            )
+            .insert({
+
+              company_id:
+                companyId,
+
+              quality_case_id:
+                data.id,
+
+              order_line_id:
+                null,
+
+              product_id:
+                null,
+
+              sku_base:
+                legacySku ||
+                "LEGACY",
+
+              description:
+                legacyDescription ||
+                legacySku ||
+                "Legacy product",
+
+              quantity:
+                1,
+
+              affected_quantity:
+                1
+            });
+
+
+          if (productError) {
+            throw productError;
+          }
+
+        }
+
+      } else {
 
         await createInitialProductLinks(
           data.id,
           order
         );
 
-        showToast(
-          `${data.case_number || "Quality case"} created.`
-        );
       }
 
-      closeCaseModal();
-
-      await loadCases();
-
-      if (selectedCaseId) {
-        await renderSelectedCase();
-      }
-
-    } catch (error) {
-      console.error(
-        "Save quality case failed:",
-        error
-      );
 
       showToast(
-        error.message ||
-        "Could not save quality case.",
-        "err"
+        `${
+          data.case_number ||
+          "Quality case"
+        } created.`
       );
-    }
-  }
 
+    }
+
+
+    closeCaseModal();
+
+
+    await loadCases();
+
+
+    if (selectedCaseId) {
+      await renderSelectedCase();
+    }
+
+
+  } catch (error) {
+
+    console.error(
+      "Save quality case failed:",
+      error
+    );
+
+
+    showToast(
+      error.message ||
+      "Could not save quality case.",
+      "err"
+    );
+
+  }
+}
 
   // =========================================================
   // PRODUCT LINKS
@@ -5583,203 +6514,311 @@ container
   // EVENTS
   // =========================================================
 
-  function bindEvents() {
-    byId(
-      "btnNewQualityCase"
-    )?.addEventListener(
-      "click",
-      () => {
-        openCaseModal();
+function bindEvents() {
+
+  byId(
+    "btnNewQualityCase"
+  )?.addEventListener(
+    "click",
+    () => {
+      openCaseModal();
+    }
+  );
+
+
+  byId(
+    "btnCloseQualityCaseModal"
+  )?.addEventListener(
+    "click",
+    closeCaseModal
+  );
+
+
+  byId(
+    "btnCancelQualityCase"
+  )?.addEventListener(
+    "click",
+    closeCaseModal
+  );
+
+
+  byId(
+    "qualityCaseModal"
+  )?.addEventListener(
+    "click",
+    event => {
+
+      if (
+        event.target.id ===
+        "qualityCaseModal"
+      ) {
+        closeCaseModal();
       }
-    );
 
-    byId(
-      "btnCloseQualityCaseModal"
-    )?.addEventListener(
-      "click",
-      closeCaseModal
-    );
+    }
+  );
 
-    byId(
-      "btnCancelQualityCase"
-    )?.addEventListener(
-      "click",
-      closeCaseModal
-    );
 
-    byId(
-      "qualityCaseModal"
-    )?.addEventListener(
-      "click",
-      event => {
-        if (
-          event.target.id ===
-          "qualityCaseModal"
-        ) {
-          closeCaseModal();
-        }
-      }
-    );
+  // =========================================================
+  // ORDER / LEGACY SWITCH
+  // =========================================================
 
-    byId(
-      "btnSaveQualityCase"
-    )?.addEventListener(
-      "click",
-      saveCase
-    );
+  byId(
+    "qualityOrderSelect"
+  )?.addEventListener(
+    "change",
+    () => {
 
-    byId(
-      "btnApplyQualityFilters"
-    )?.addEventListener(
-      "click",
-      () => {
-        currentPage = 1;
-        applyFilters();
-        renderAll();
-      }
-    );
+      const isLegacy =
+        byId(
+          "qualityOrderSelect"
+        )?.value ===
+        "__legacy__";
 
-    byId(
-      "filterQualitySearch"
-    )?.addEventListener(
-      "input",
-      () => {
-        currentPage = 1;
-        applyFilters();
-        renderAll();
-      }
-    );
 
-    byId(
-      "btnClearQualityFilters"
-    )?.addEventListener(
-      "click",
-      () => {
-        [
-          "filterQualitySearch",
-          "filterQualityStatus",
-          "filterQualityIssue",
-          "filterQualityCustomer",
-          "filterQualityCarrier",
-          "filterQualityResponsibility"
-        ].forEach(id => {
-          const element =
-            byId(id);
-
-          if (element) {
-            element.value = "";
-          }
-        });
-
-        activeCaseTab = "all";
-        currentPage = 1;
-
-        updateCaseTabs();
-
-        applyFilters();
-        renderAll();
-      }
-    );
-
-    document
-      .querySelectorAll(
-        "[data-quality-tab]"
-      )
-      .forEach(button => {
-        button.addEventListener(
-          "click",
-          () => {
-            activeCaseTab =
-              button.dataset
-                .qualityTab;
-
-            currentPage = 1;
-
-            updateCaseTabs();
-
-            applyFilters();
-            renderAll();
-          }
+      const legacyFields =
+        byId(
+          "qualityLegacyFields"
         );
+
+
+      if (legacyFields) {
+        legacyFields.style.display =
+          isLegacy
+            ? "block"
+            : "none";
+      }
+
+    }
+  );
+
+
+  // =========================================================
+  // SAVE CASE
+  // =========================================================
+
+  byId(
+    "btnSaveQualityCase"
+  )?.addEventListener(
+    "click",
+    saveCase
+  );
+
+
+  // =========================================================
+  // FILTERS
+  // =========================================================
+
+  byId(
+    "btnApplyQualityFilters"
+  )?.addEventListener(
+    "click",
+    () => {
+
+      currentPage = 1;
+
+      applyFilters();
+
+      renderAll();
+
+    }
+  );
+
+
+  byId(
+    "filterQualitySearch"
+  )?.addEventListener(
+    "input",
+    () => {
+
+      currentPage = 1;
+
+      applyFilters();
+
+      renderAll();
+
+    }
+  );
+
+
+  byId(
+    "btnClearQualityFilters"
+  )?.addEventListener(
+    "click",
+    () => {
+
+      [
+        "filterQualitySearch",
+        "filterQualityStatus",
+        "filterQualityIssue",
+        "filterQualityCustomer",
+        "filterQualityCarrier",
+        "filterQualityResponsibility"
+      ].forEach(id => {
+
+        const element =
+          byId(id);
+
+
+        if (element) {
+          element.value = "";
+        }
+
       });
 
-    document
-      .querySelectorAll(
-        "[data-quality-detail-tab]"
-      )
-      .forEach(button => {
-        button.addEventListener(
-          "click",
-          async () => {
-            activeDetailTab =
-              button.dataset
-                .qualityDetailTab;
 
-            updateDetailTabs();
+      activeCaseTab =
+        "all";
 
-            await renderDetailTab();
-          }
-        );
-      });
+      currentPage =
+        1;
 
-    byId(
-      "btnCloseQualityDetail"
-    )?.addEventListener(
-      "click",
-      closeCaseDetail
-    );
 
-    byId(
-      "btnEditQualityCase"
-    )?.addEventListener(
-      "click",
-      () => {
-        const caseRow =
-          getSelectedCase();
+      updateCaseTabs();
 
-        if (caseRow) {
-          openCaseModal(
-            caseRow
-          );
+      applyFilters();
+
+      renderAll();
+
+    }
+  );
+
+
+  // =========================================================
+  // MAIN CASE TABS
+  // =========================================================
+
+  document
+    .querySelectorAll(
+      "[data-quality-tab]"
+    )
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        () => {
+
+          activeCaseTab =
+            button.dataset
+              .qualityTab;
+
+
+          currentPage =
+            1;
+
+
+          updateCaseTabs();
+
+          applyFilters();
+
+          renderAll();
+
         }
+      );
+
+    });
+
+
+  // =========================================================
+  // DETAIL TABS
+  // =========================================================
+
+  document
+    .querySelectorAll(
+      "[data-quality-detail-tab]"
+    )
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        async () => {
+
+          activeDetailTab =
+            button.dataset
+              .qualityDetailTab;
+
+
+          updateDetailTabs();
+
+
+          await renderDetailTab();
+
+        }
+      );
+
+    });
+
+
+  byId(
+    "btnCloseQualityDetail"
+  )?.addEventListener(
+    "click",
+    closeCaseDetail
+  );
+
+
+  byId(
+    "btnEditQualityCase"
+  )?.addEventListener(
+    "click",
+    () => {
+
+      const caseRow =
+        getSelectedCase();
+
+
+      if (caseRow) {
+        openCaseModal(
+          caseRow
+        );
       }
-    );
 
-    byId(
-      "btnAddQualityNote"
-    )?.addEventListener(
-      "click",
-      addNote
-    );
+    }
+  );
 
-    byId(
-      "btnUpdateQualityStatus"
-    )?.addEventListener(
-      "click",
-      updateStatus
-    );
 
-    byId(
-      "btnUploadQualityEvidence"
-    )?.addEventListener(
-      "click",
-      uploadEvidence
-    );
+  byId(
+    "btnAddQualityNote"
+  )?.addEventListener(
+    "click",
+    addNote
+  );
 
-    byId(
-      "btnViewAllQualityPhotos"
-    )?.addEventListener(
-      "click",
-      async () => {
-        activeDetailTab =
-          "evidence";
 
-        updateDetailTabs();
+  byId(
+    "btnUpdateQualityStatus"
+  )?.addEventListener(
+    "click",
+    updateStatus
+  );
 
-        await renderDetailTab();
-      }
-    );
-  }
+
+  byId(
+    "btnUploadQualityEvidence"
+  )?.addEventListener(
+    "click",
+    uploadEvidence
+  );
+
+
+  byId(
+    "btnViewAllQualityPhotos"
+  )?.addEventListener(
+    "click",
+    async () => {
+
+      activeDetailTab =
+        "evidence";
+
+
+      updateDetailTabs();
+
+
+      await renderDetailTab();
+
+    }
+  );
+}
 
   function updateCaseTabs() {
     document

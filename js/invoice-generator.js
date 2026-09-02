@@ -2149,7 +2149,423 @@ return {
 };
   }
 
-  window.InvoiceGenerator = {
-    generate
+async function createClaimPdfBlob(claim, invoiceNumber, ctx) {
+  if (!window.jspdf?.jsPDF) {
+    throw new Error("jsPDF is not loaded.");
+  }
+
+  const { jsPDF } = window.jspdf;
+
+  const doc = new jsPDF({
+    orientation: "portrait",
+    unit: "mm",
+    format: "a4"
+  });
+
+  const invoiceDate = new Date();
+  const dueDate = addDays(invoiceDate, ctx.paymentTermDays);
+  const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
+
+  drawHeader(
+    doc,
+    "Invoice",
+    invoiceNumber,
+    invoiceDate,
+    dueDate,
+    ctx,
+    logoDataUrl
+  );
+
+  // FDS address block
+  drawBillTo(doc, 92, {
+    name: "Furniture Delivery Solutions Limited",
+    address1: "Hastingwood Industrial Park",
+    address2: "",
+    city: "Erdington",
+    county: "Birmingham",
+    postcode: "B24 9QR",
+    country: "United Kingdom",
+    vat: "GB 378861440"
+  });
+
+  const net = round2(toNumber(claim.amount, 0));
+  const vat = round2(net * ctx.vatRate);
+  const total = round2(net + vat);
+
+  // Claim details
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  setDark(doc);
+  doc.text("Damage Claim", 110, 92);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.8);
+
+  let y = 103;
+
+  const detailRows = [
+    ["Quality Case", claim.caseNumber || "—"],
+    ["Order", claim.orderNumber || "—"],
+    ["Customer Reference", claim.externalReference || "—"],
+    ["Carrier Reference", claim.carrierReference || "—"]
+  ];
+
+  detailRows.forEach(([label, value]) => {
+    doc.setFont("helvetica", "bold");
+    doc.text(label, 110, y);
+
+    doc.setFont("helvetica", "normal");
+    doc.text(cleanText(value), 145, y);
+
+    y += 7;
+  });
+
+  // Invoice line
+  const tableY = 158;
+
+  doc.setFillColor(245, 245, 245);
+  doc.rect(14, tableY, 182, 10, "F");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.text("Description", 18, tableY + 6.5);
+  doc.text("Qty", 135, tableY + 6.5);
+  doc.text("Rate", 155, tableY + 6.5);
+  doc.text("Amount", 194, tableY + 6.5, { align: "right" });
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+
+  const description =
+    claim.description ||
+    `Damage claim ${claim.caseNumber || ""}`;
+
+  const descriptionLines =
+    splitText(doc, description, 108);
+
+  doc.text(descriptionLines, 18, tableY + 18);
+  doc.text("1", 135, tableY + 18);
+  doc.text(formatMoney(net), 155, tableY + 18);
+  doc.text(formatMoney(net), 194, tableY + 18, {
+    align: "right"
+  });
+
+  // Totals
+  let totalsY = tableY + 42;
+
+  doc.setDrawColor(210, 210, 210);
+  doc.line(125, totalsY - 5, 196, totalsY - 5);
+
+  const totals = [
+    ["Subtotal excl. VAT", net],
+    [`VAT ${Math.round(ctx.vatRate * 100)}%`, vat],
+    ["Invoice Total", total]
+  ];
+
+  totals.forEach(([label, value], index) => {
+    const bold = index === totals.length - 1;
+
+    doc.setFont(
+      "helvetica",
+      bold ? "bold" : "normal"
+    );
+
+    doc.text(label, 140, totalsY);
+    doc.text(
+      formatMoney(value),
+      194,
+      totalsY,
+      { align: "right" }
+    );
+
+    totalsY += 8;
+  });
+
+  drawPaymentDetails(doc, 224, ctx.company);
+  drawFooter(doc, ctx.company);
+
+  return {
+    blob: doc.output("blob"),
+    subtotal: net,
+    vat,
+    total,
+    invoiceDate,
+    dueDate
   };
+}
+
+
+async function generateClaimInvoice(
+  claim,
+  client,
+  companyId
+) {
+  if (!claim) {
+    throw new Error(
+      "Claim details are missing."
+    );
+  }
+
+  if (!client) {
+    throw new Error(
+      "Supabase client is missing."
+    );
+  }
+
+  if (!companyId) {
+    throw new Error(
+      "Company ID is missing."
+    );
+  }
+
+  const amount =
+    round2(
+      toNumber(
+        claim.amount,
+        0
+      )
+    );
+
+  if (amount <= 0) {
+    throw new Error(
+      "Claim amount must be greater than £0.00."
+    );
+  }
+
+
+  // =========================================================
+  // FIND FDS CUSTOMER / DEBTOR
+  // =========================================================
+
+  const {
+    data: fdsCustomer,
+    error: fdsError
+  } = await client
+    .from("customers")
+    .select(`
+      id,
+      name,
+      customer_code,
+      customer_type,
+      billing_email,
+      vat_number
+    `)
+    .eq(
+      "company_id",
+      companyId
+    )
+    .eq(
+      "customer_code",
+      "FDS"
+    )
+    .eq(
+      "is_active",
+      true
+    )
+    .maybeSingle();
+
+
+  if (fdsError) {
+    throw fdsError;
+  }
+
+
+  if (!fdsCustomer?.id) {
+    throw new Error(
+      "FDS could not be found in customers."
+    );
+  }
+
+
+  // =========================================================
+  // COMPANY SETTINGS
+  // =========================================================
+
+  const ctx =
+    await loadCompanySettings(
+      client,
+      companyId
+    );
+
+
+  // =========================================================
+  // NEXT INVOICE NUMBER
+  // =========================================================
+
+  const invoiceNumber =
+    await reserveNextInvoiceNumber(
+      client,
+      companyId,
+      ctx.invoicePrefix
+    );
+
+
+  // =========================================================
+  // CREATE PDF
+  // =========================================================
+
+  const pdf =
+    await createClaimPdfBlob(
+      {
+        ...claim,
+        amount
+      },
+      invoiceNumber,
+      ctx
+    );
+
+
+  // =========================================================
+  // UPLOAD PDF
+  // =========================================================
+
+  const uploaded =
+    await uploadPdf(
+      client,
+      companyId,
+      invoiceNumber,
+      pdf.blob
+    );
+
+
+  if (
+    !uploaded.fileUrl ||
+    !uploaded.storagePath
+  ) {
+    throw new Error(
+      "Claim invoice PDF was uploaded, but no file URL/storage path was returned."
+    );
+  }
+
+
+  // =========================================================
+  // CREATE INVOICE RECORD
+  // =========================================================
+
+  const {
+    data: invoice,
+    error: invoiceError
+  } = await client
+    .from("invoices")
+    .insert({
+
+      company_id:
+        companyId,
+
+      customer_id:
+        fdsCustomer.id,
+
+      invoice_number:
+        invoiceNumber,
+
+      invoice_date:
+        pdf.invoiceDate
+          .toISOString()
+          .slice(0, 10),
+
+      due_date:
+        pdf.dueDate
+          .toISOString()
+          .slice(0, 10),
+
+      subtotal:
+        pdf.subtotal,
+
+      vat_amount:
+        pdf.vat,
+
+      total_amount:
+        pdf.total,
+
+      storage_path:
+        uploaded.storagePath,
+
+      file_url:
+        uploaded.fileUrl,
+
+      status:
+        "generated"
+    })
+    .select("id")
+    .single();
+
+
+  if (invoiceError) {
+    throw invoiceError;
+  }
+
+
+  // =========================================================
+  // LINK INVOICE TO QUALITY CASE
+  // =========================================================
+
+  if (!claim.qualityCaseId) {
+    throw new Error(
+      "Quality Case ID is missing."
+    );
+  }
+
+
+  const {
+    error: claimError
+  } = await client
+    .from("quality_cases")
+    .update({
+
+      claim_invoice_id:
+        invoice.id,
+
+      claim_invoiced_at:
+        new Date()
+          .toISOString()
+
+    })
+    .eq(
+      "id",
+      claim.qualityCaseId
+    )
+    .eq(
+      "company_id",
+      companyId
+    );
+
+
+  if (claimError) {
+    throw claimError;
+  }
+
+
+  // =========================================================
+  // RESULT
+  // =========================================================
+
+  return {
+
+    invoiceId:
+      invoice.id,
+
+    invoiceNumber,
+
+    customerId:
+      fdsCustomer.id,
+
+    customerName:
+      fdsCustomer.name,
+
+    subtotal:
+      pdf.subtotal,
+
+    vat:
+      pdf.vat,
+
+    total:
+      pdf.total,
+
+    ...uploaded
+  };
+}
+window.InvoiceGenerator = {
+  generate,
+  generateClaimInvoice
+};
 })();

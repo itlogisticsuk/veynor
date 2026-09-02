@@ -35,6 +35,12 @@
   src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 ></script>
 
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+></script>
+
+<script src="/js/invoice-generator.js"></script>
+
 <script src="/js/quality.js" defer></script>
 
 
@@ -2765,25 +2771,159 @@
 
         <!-- ORDER -->
 
-        <div class="field span-2">
+<!-- ORDER -->
 
-          <label for="qualityOrderSelect">
-            Order
-          </label>
+<div class="field span-2">
 
-          <select
-            id="qualityOrderSelect"
-            class="select"
-          >
+  <label for="qualityOrderSelect">
+    Order
+  </label>
 
-            <option value="">
-              Select delivered order
-            </option>
+  <select
+    id="qualityOrderSelect"
+    class="select"
+  >
+    <option value="">
+      Select delivered order
+    </option>
+  </select>
 
-          </select>
+</div>
 
-        </div>
 
+<!-- LEGACY ORDER DETAILS -->
+
+<div
+  id="qualityLegacyFields"
+  class="field span-2"
+  style="display:none;"
+>
+
+  <div
+    style="
+      padding:14px;
+      border:1px solid #dbeafe;
+      border-radius:12px;
+      background:#f8fbff;
+    "
+  >
+
+    <div
+      style="
+        margin-bottom:12px;
+        color:#07152f;
+        font-size:11px;
+        font-weight:950;
+      "
+    >
+      Legacy Order Details
+    </div>
+
+
+    <div class="quality-form-grid">
+
+
+      <div class="field">
+
+        <label for="qualityLegacyOrderNumber">
+          Original Order / Reference
+        </label>
+
+        <input
+          id="qualityLegacyOrderNumber"
+          class="input"
+          type="text"
+          placeholder="e.g. ACK1024 or old SO number"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label for="qualityLegacyCustomer">
+          Customer / Retailer
+        </label>
+
+        <input
+          id="qualityLegacyCustomer"
+          class="input"
+          type="text"
+          placeholder="e.g. Julian Foye & Son Ltd"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label for="qualityLegacySku">
+          SKU / Product
+        </label>
+
+        <input
+          id="qualityLegacySku"
+          class="input"
+          type="text"
+          placeholder="e.g. CRO807"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label for="qualityLegacyProductDescription">
+          Product Description
+        </label>
+
+        <input
+          id="qualityLegacyProductDescription"
+          class="input"
+          type="text"
+          placeholder="Optional"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label for="qualityLegacyProductOwner">
+          Product Owner
+        </label>
+
+        <input
+          id="qualityLegacyProductOwner"
+          class="input"
+          type="text"
+          placeholder="e.g. Bellstone Furniture Distributors Ltd"
+        >
+
+      </div>
+
+
+      <div class="field">
+
+        <label for="qualityLegacyCarrier">
+          Carrier
+        </label>
+
+        <input
+          id="qualityLegacyCarrier"
+          class="input"
+          type="text"
+          value="FDS"
+        >
+
+      </div>
+
+
+    </div>
+
+  </div>
+
+</div>
 
         <!-- ISSUE -->
 

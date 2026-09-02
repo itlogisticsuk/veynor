@@ -3484,10 +3484,8 @@ async function findOpenPhysicalSetForPackage(
     throw error;
   }
 
-
   const groups =
     new Map();
-
 
   (data || []).forEach(
     item => {
@@ -3510,19 +3508,10 @@ async function findOpenPhysicalSetForPackage(
       }
 
       if (
-        String(
-          item.warehouse_id ||
-          ""
-        ) !==
-        String(
-          row.warehouse_id ||
-          ""
+        !groups.has(
+          physicalId
         )
       ) {
-        return;
-      }
-
-      if (!groups.has(physicalId)) {
         groups.set(
           physicalId,
           []
@@ -3534,7 +3523,6 @@ async function findOpenPhysicalSetForPackage(
         .push(item);
     }
   );
-
 
   for (
     const [
@@ -3554,6 +3542,11 @@ async function findOpenPhysicalSetForPackage(
         )
       );
 
+    /*
+     * Als het package dat we nu willen toevoegen
+     * al binnen deze fysieke set bestaat,
+     * kan deze set niet gebruikt worden.
+     */
     if (
       presentPackages.has(
         Number(
@@ -3564,6 +3557,10 @@ async function findOpenPhysicalSetForPackage(
       continue;
     }
 
+    /*
+     * Als alle package-posities al aanwezig zijn,
+     * is dit fysieke product al compleet.
+     */
     if (
       presentPackages.size >=
       Number(
@@ -3573,10 +3570,22 @@ async function findOpenPhysicalSetForPackage(
       continue;
     }
 
+    /*
+     * Belangrijk:
+     *
+     * warehouse_id en location_id worden hier
+     * BEWUST niet vergeleken.
+     *
+     * Packages van hetzelfde fysieke product
+     * mogen in verschillende barns/locaties staan.
+     */
     return physicalId;
   }
 
-
+  /*
+   * Geen bestaande incomplete fysieke set gevonden.
+   * Maak daarom een nieuwe physical_product_id.
+   */
   return inventoryUuid();
 }
 

@@ -216,9 +216,14 @@ function getOrderPackages(order) {
     )
   );
 }
-  function getOrderVolume(order) {
-    return Number(order?.planning_volume_m3 || order?.volume_m3 || 0);
-  }
+function getOrderVolume(order) {
+  return Number(
+    order?.total_order_volume_m3 ??
+    order?.volume_m3 ??
+    order?.planning_volume_m3 ??
+    0
+  );
+}
 
 function getOrderWeight(order) {
   const direct =
