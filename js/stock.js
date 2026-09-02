@@ -2414,217 +2414,434 @@ async function loadStock() {
   }
 
 
-  function calculateCompleteness(
-    items
-  ) {
-    const active =
-      activePackages(
-        items
-      );
-
-    if (!active.length) {
-      return {
-        totalPackages: 0,
-        packageTotal: 1,
-        completeProducts: 0,
-        availableComplete: 0,
-        reservedComplete: 0,
-        overstock: [],
-        missing: [],
-        allByPackage: {
-          1: 0
-        },
-        availableByPackage: {
-          1: 0
-        },
-        reservedByPackage: {
-          1: 0
-        }
-      };
-    }
-
-
-    const totalPackages =
-      Math.max(
-        1,
-        ...active.map(
-          item =>
-            toNumber(
-              item.package_total,
-              1
-            )
-        )
-      );
-
-
-    const availableByPackage =
-      {};
-
-    const reservedByPackage =
-      {};
-
-    const allByPackage =
-      {};
-
-
-    for (
-      let i = 1;
-      i <= totalPackages;
-      i++
-    ) {
-      availableByPackage[i] =
-        0;
-
-      reservedByPackage[i] =
-        0;
-
-      allByPackage[i] =
-        0;
-    }
-
-
-    active.forEach(
-      item => {
-        const no =
-          Math.min(
-            Math.max(
-              1,
-              toNumber(
-                item.package_no,
-                1
-              )
-            ),
-            totalPackages
-          );
-
-        allByPackage[no] +=
-          1;
-
-        if (
-          isAvailable(item)
-        ) {
-          availableByPackage[no] +=
-            1;
-        }
-
-        if (
-          isReserved(item)
-        ) {
-          reservedByPackage[no] +=
-            1;
-        }
-      }
+ function calculateCompleteness(items) {
+  const active =
+    activePackages(
+      items
     );
 
-
-    const completeProducts =
-      Math.min(
-        ...Object.values(
-          allByPackage
-        )
-      );
-
-    const availableComplete =
-      Math.min(
-        ...Object.values(
-          availableByPackage
-        )
-      );
-
-    const reservedComplete =
-      Math.min(
-        ...Object.values(
-          reservedByPackage
-        )
-      );
-
-
-    const overstock = [];
-    const missing = [];
-
-
-    for (
-      let i = 1;
-      i <= totalPackages;
-      i++
-    ) {
-      const extra =
-        allByPackage[i] -
-        completeProducts;
-
-      if (extra > 0) {
-        overstock.push({
-          package_no:
-            i,
-
-          package_total:
-            totalPackages,
-
-          qty:
-            extra,
-
-          label:
-            `${extra}x package ${i}/${totalPackages}`
-        });
+  if (!active.length) {
+    return {
+      totalPackages: 0,
+      packageTotal: 1,
+      completeProducts: 0,
+      availableComplete: 0,
+      reservedComplete: 0,
+      overstock: [],
+      missing: [],
+      allByPackage: {
+        1: 0
+      },
+      availableByPackage: {
+        1: 0
+      },
+      reservedByPackage: {
+        1: 0
       }
+    };
+  }
+
+
+  // ==========================================================
+  // IMPORTANT
+  //
+  // A single SKU may historically exist with different
+  // package structures.
+  //
+  // Example:
+  //
+  // old CRO813:
+  //   1/2 + 2/2
+  //
+  // new CRO813:
+  //   1/3 + 2/3 + 3/3
+  //
+  // These structures must NEVER be mixed together when
+  // calculating completeness.
+  //
+  // For products that only have one package structure,
+  // behaviour remains exactly the same as before.
+  // ==========================================================
+
+  const packageGroups =
+    new Map();
+
+
+  active.forEach(
+    item => {
+      const packageTotal =
+        Math.max(
+          1,
+          toNumber(
+            item.package_total,
+            1
+          )
+        );
+
+
+      if (
+        !packageGroups.has(
+          packageTotal
+        )
+      ) {
+        packageGroups.set(
+          packageTotal,
+          []
+        );
+      }
+
+
+      packageGroups
+        .get(
+          packageTotal
+        )
+        .push(
+          item
+        );
     }
+  );
 
 
-    overstock.forEach(
-      row => {
+  let completeProducts =
+    0;
+
+  let availableComplete =
+    0;
+
+  let reservedComplete =
+    0;
+
+
+  const overstock =
+    [];
+
+  const missing =
+    [];
+
+
+  /*
+   * Keep these fields for backwards compatibility with the
+   * rest of Current Stock.
+   *
+   * Counts are accumulated across package structures.
+   */
+  const allByPackage =
+    {};
+
+  const availableByPackage =
+    {};
+
+  const reservedByPackage =
+    {};
+
+
+  // ==========================================================
+  // CALCULATE EACH PACKAGE STRUCTURE SEPARATELY
+  // ==========================================================
+
+  Array.from(
+    packageGroups.entries()
+  )
+    .sort(
+      (
+        [totalA],
+        [totalB]
+      ) =>
+        totalA - totalB
+    )
+    .forEach(
+      (
+        [
+          packageTotal,
+          groupItems
+        ]
+      ) => {
+
+
+        const groupAll =
+          {};
+
+        const groupAvailable =
+          {};
+
+        const groupReserved =
+          {};
+
+
         for (
-          let i = 1;
-          i <= totalPackages;
-          i++
+          let packageNo = 1;
+          packageNo <= packageTotal;
+          packageNo++
         ) {
+          groupAll[
+            packageNo
+          ] = 0;
+
+          groupAvailable[
+            packageNo
+          ] = 0;
+
+          groupReserved[
+            packageNo
+          ] = 0;
+        }
+
+
+        // ------------------------------------------------------
+        // Count packages inside THIS structure only
+        // ------------------------------------------------------
+
+        groupItems.forEach(
+          item => {
+            const packageNo =
+              Math.min(
+                packageTotal,
+                Math.max(
+                  1,
+                  toNumber(
+                    item.package_no,
+                    1
+                  )
+                )
+              );
+
+
+            groupAll[
+              packageNo
+            ] += 1;
+
+
+            if (
+              isAvailable(
+                item
+              )
+            ) {
+              groupAvailable[
+                packageNo
+              ] += 1;
+            }
+
+
+            if (
+              isReserved(
+                item
+              )
+            ) {
+              groupReserved[
+                packageNo
+              ] += 1;
+            }
+
+
+            // --------------------------------------------------
+            // Backwards-compatible aggregate counters
+            // --------------------------------------------------
+
+            allByPackage[
+              packageNo
+            ] =
+              (
+                allByPackage[
+                  packageNo
+                ] ||
+                0
+              ) +
+              1;
+
+
+            if (
+              isAvailable(
+                item
+              )
+            ) {
+              availableByPackage[
+                packageNo
+              ] =
+                (
+                  availableByPackage[
+                    packageNo
+                  ] ||
+                  0
+                ) +
+                1;
+            }
+
+
+            if (
+              isReserved(
+                item
+              )
+            ) {
+              reservedByPackage[
+                packageNo
+              ] =
+                (
+                  reservedByPackage[
+                    packageNo
+                  ] ||
+                  0
+                ) +
+                1;
+            }
+          }
+        );
+
+
+        // ------------------------------------------------------
+        // Completeness for THIS package structure
+        //
+        // 2-colli:
+        // MIN(1/2, 2/2)
+        //
+        // 3-colli:
+        // MIN(1/3, 2/3, 3/3)
+        // ------------------------------------------------------
+
+        const structureComplete =
+          Math.min(
+            ...Object.values(
+              groupAll
+            )
+          );
+
+
+        const structureAvailable =
+          Math.min(
+            ...Object.values(
+              groupAvailable
+            )
+          );
+
+
+        const structureReserved =
+          Math.min(
+            ...Object.values(
+              groupReserved
+            )
+          );
+
+
+        completeProducts +=
+          structureComplete;
+
+        availableComplete +=
+          structureAvailable;
+
+        reservedComplete +=
+          structureReserved;
+
+
+        // ------------------------------------------------------
+        // Overstock for THIS structure only
+        // ------------------------------------------------------
+
+        for (
+          let packageNo = 1;
+          packageNo <= packageTotal;
+          packageNo++
+        ) {
+          const extra =
+            groupAll[
+              packageNo
+            ] -
+            structureComplete;
+
+
           if (
-            i === row.package_no
+            extra <= 0
           ) {
             continue;
           }
 
-          missing.push({
+
+          overstock.push({
             package_no:
-              i,
+              packageNo,
 
             package_total:
-              totalPackages,
+              packageTotal,
 
             qty:
-              row.qty,
+              extra,
 
             label:
-              `${row.qty}x package ${i}/${totalPackages}`
+              `${extra}x package ${packageNo}/${packageTotal}`
           });
+
+
+          // ----------------------------------------------------
+          // Existing UI expects a matching "missing" description
+          // for package overstock.
+          // ----------------------------------------------------
+
+          for (
+            let missingNo = 1;
+            missingNo <= packageTotal;
+            missingNo++
+          ) {
+            if (
+              missingNo ===
+              packageNo
+            ) {
+              continue;
+            }
+
+
+            missing.push({
+              package_no:
+                missingNo,
+
+              package_total:
+                packageTotal,
+
+              qty:
+                extra,
+
+              label:
+                `${extra}x package ${missingNo}/${packageTotal}`
+            });
+          }
         }
       }
     );
 
 
-    return {
-      totalPackages:
-        active.length,
+  const highestPackageTotal =
+    Math.max(
+      ...Array.from(
+        packageGroups.keys()
+      )
+    );
 
-      packageTotal:
-        totalPackages,
 
-      completeProducts,
+  return {
+    totalPackages:
+      active.length,
 
-      availableComplete,
+    /*
+     * Retained for backwards compatibility.
+     * When multiple structures exist this is simply the highest.
+     */
+    packageTotal:
+      highestPackageTotal,
 
-      reservedComplete,
+    completeProducts,
 
-      overstock,
+    availableComplete,
 
-      missing,
+    reservedComplete,
 
-      allByPackage,
+    overstock,
 
-      availableByPackage,
+    missing,
 
-      reservedByPackage
-    };
-  }
+    allByPackage,
+
+    availableByPackage,
+
+    reservedByPackage
+  };
+}
 
 
   // ============================================================
