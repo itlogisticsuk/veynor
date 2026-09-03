@@ -91,7 +91,7 @@
   label: "Storage Invoicing",
   icon: "pound",
   group: "Warehouse",
-  roles: TENANT_ROLES
+  roles: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES]
 },
 
 {

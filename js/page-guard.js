@@ -33,6 +33,11 @@ stock: [
   ...PRODUCT_OWNER_ROLES
 ],
 
+"storage-invoicing": [
+  ...SOFA2U_ROLES,
+  ...PRODUCT_OWNER_ROLES
+],
+
 outbound: SOFA2U_ROLES,
 inventory: SOFA2U_ROLES,
 
