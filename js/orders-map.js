@@ -583,13 +583,49 @@ function getGroupCustomerTotal(group) {
 }
 
 function isFdsOrder(order) {
-  return (
-    normalize(order.transport_type) === "charter" ||
-    normalize(order.status) === "export_for_charter" ||
-    !!order.fds_collection_week ||
-    !!order.fds_collection_date ||
-    !!order.fds_job_ref
-  );
+  if (!order) {
+    return false;
+  }
+
+  /*
+   * De actuele transporttoewijzing is leidend.
+   *
+   * Oude FDS-velden zoals:
+   * - fds_collection_date
+   * - fds_collection_week
+   * - fds_job_ref
+   *
+   * mogen een order NIET zelfstandig opnieuw
+   * als FDS laten verschijnen.
+   */
+  const transportType =
+    normalize(order.transport_type);
+
+  const status =
+    normalize(order.status);
+
+  const transportStatus =
+    normalize(order.transport_status);
+
+  /*
+   * Expliciete FDS / Carrier assignment.
+   */
+  if (transportType === "charter") {
+    return true;
+  }
+
+  /*
+   * Ondersteuning voor orders die daadwerkelijk
+   * nog de actieve charterstatus hebben.
+   */
+  if (
+    status === "export_for_charter" ||
+    transportStatus === "export_for_charter"
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function getSelectedOrders() {
