@@ -1152,286 +1152,199 @@ labels.push({
     }
   }
 
-  function drawLabel(
+function drawLabel(
+  doc,
+  label,
+  settings,
+  logos,
+  icons
+) {
+  const order =
+    label.order;
+
+  const salesOrder =
+    clean(
+      order.order_number ||
+      "—"
+    );
+
+  const acknowledgement =
+    clean(
+      order.external_reference ||
+      "—"
+    );
+
+  const purchaseOrder =
+    clean(
+      order.purchase_order ||
+      "Unknown"
+    );
+
+  const shipTo =
+    shipToLines(order);
+
+
+  // ============================================================
+  // BASIS LABEL
+  // ============================================================
+
+  doc.setFillColor(
+    255,
+    255,
+    255
+  );
+
+  doc.rect(
+    0,
+    0,
+    LABEL_WIDTH_MM,
+    LABEL_HEIGHT_MM,
+    "F"
+  );
+
+  roundedBox(
     doc,
-    label,
-    settings,
-    logos,
-    icons
-  ) {
-    const order =
-      label.order;
+    1.5,
+    1.5,
+    147,
+    107,
+    3
+  );
 
-    const salesOrder =
-      clean(
-        order.order_number ||
-        "—"
-      );
 
-    const acknowledgement =
-      clean(
-        order.external_reference ||
-        "—"
-      );
+  // ============================================================
+  // HOOFDLIJNEN
+  // ============================================================
 
-    const purchaseOrder =
-      clean(
-        order.purchase_order ||
-        "Unknown"
-      );
+  line(
+    doc,
+    1.5,
+    28,
+    148.5,
+    28
+  );
 
-    const shipTo =
-      shipToLines(order);
+  line(
+    doc,
+    1.5,
+    73,
+    148.5,
+    73
+  );
 
-    doc.setFillColor(
-      255,
-      255,
-      255
-    );
+  line(
+    doc,
+    1.5,
+    91,
+    148.5,
+    91
+  );
 
-    doc.rect(
-      0,
-      0,
-      LABEL_WIDTH_MM,
-      LABEL_HEIGHT_MM,
-      "F"
-    );
+  line(
+    doc,
+    57,
+    28,
+    57,
+    73
+  );
 
-    roundedBox(
-      doc,
-      1.5,
-      1.5,
-      147,
-      107,
-      3
-    );
+  line(
+    doc,
+    99,
+    28,
+    99,
+    73
+  );
 
-    line(
-      doc,
-      1.5,
-      28,
-      148.5,
-      28
-    );
+  line(
+    doc,
+    105,
+    1.5,
+    105,
+    28
+  );
 
-    line(
-      doc,
-      1.5,
-      73,
-      148.5,
-      73
-    );
 
-    line(
-      doc,
-      1.5,
-      91,
-      148.5,
-      91
-    );
+  // ============================================================
+  // LOGO'S
+  // ============================================================
 
-    line(
-      doc,
-      57,
-      28,
-      57,
-      73
-    );
+  addImageContain(
+    doc,
+    logos.sofa,
+    5,
+    4,
+    22,
+    20
+  );
 
-    line(
-      doc,
-      99,
-      28,
-      99,
-      73
-    );
+  addImageContain(
+    doc,
+    logos.owner,
+    30,
+    4,
+    20,
+    20
+  );
 
-    line(
-      doc,
-      105,
-      1.5,
-      105,
-      28
-    );
 
-    addImageContain(
-      doc,
-      logos.sofa,
-      5,
-      4,
-      22,
-      20
-    );
+  // ============================================================
+  // SALES ORDER
+  // ============================================================
 
-    addImageContain(
-      doc,
-      logos.owner,
-      30,
-      4,
-      20,
-      20
-    );
+  titleBar(
+    doc,
+    "SALES ORDER",
+    58,
+    4,
+    40,
+    6.2,
+    7.2
+  );
 
-    titleBar(
-      doc,
-      "SALES ORDER",
-      58,
-      4,
-      40,
-      6.2,
-      7.2
-    );
+  valueText(
+    doc,
+    salesOrder,
+    56,
+    22,
+    20
+  );
 
+
+  // ============================================================
+  // PACKAGE
+  // ============================================================
+
+  titleBar(
+    doc,
+    "PACKAGE",
+    111,
+    4,
+    34,
+    6.2,
+    7.2
+  );
+
+  valueText(
+    doc,
+    label.packageLabel,
+    114,
+    19,
+    20
+  );
+
+  /*
+   * Bij een serviceorder staat onder
+   * bijvoorbeeld 1/2 duidelijk dat slechts
+   * één pakket moet worden geleverd.
+   */
+  if (label.isService) {
     valueText(
       doc,
-      salesOrder,
-      56,
-      22,
-      20
-    );
-
-    titleBar(
-      doc,
-      "PACKAGE",
-      111,
-      4,
-      34,
-      6.2,
-      7.2
-    );
-
-    valueText(
-      doc,
-      label.packageLabel,
-      114,
-      19,
-      20
-    );
-
-    /*
-     * Bij een serviceorder staat onder
-     * bijvoorbeeld 1/2 duidelijk dat slechts
-     * één pakket moet worden geleverd.
-     */
-    if (label.isService) {
-      valueText(
-        doc,
-        "1 PACKAGE",
-        128,
-        24,
-        6.5,
-        {
-          align: "center"
-        }
-      );
-
-      labelText(
-        doc,
-        "SERVICE DELIVERY",
-        128,
-        27,
-        4.5,
-        {
-          align: "center"
-        }
-      );
-    } else {
-      valueText(
-        doc,
-        `OF ${label.packageTotal}`,
-        121,
-        25.5,
-        6.5
-      );
-    }
-
-    titleBar(
-      doc,
-      "SHIP TO",
-      4,
-      31,
-      22,
-      5.8,
-      6.2
-    );
-
-    let shipY = 42;
-
-    shipTo
-      .slice(0, 7)
-      .forEach(
-        (text, index) => {
-          const maxWidth = 50;
-
-          const size =
-            index === 0
-              ? 7.2
-              : 7.6;
-
-          doc.setFont(
-            "helvetica",
-            "bold"
-          );
-
-          doc.setFontSize(size);
-
-          const addressLines =
-            doc.splitTextToSize(
-              text,
-              maxWidth
-            );
-
-          addressLines
-            .slice(0, 2)
-            .forEach(
-              addressLine => {
-                if (shipY < 70) {
-                  doc.text(
-                    addressLine,
-                    4,
-                    shipY
-                  );
-
-                  shipY += 5.4;
-                }
-              }
-            );
-        }
-      );
-
-    line(
-      doc,
-      57,
-      41,
-      99,
-      41
-    );
-
-    line(
-      doc,
-      57,
-      55,
-      99,
-      55
-    );
-
-    labelText(
-      doc,
-      "ACK / SUPPLIER REF",
-      78,
-      35,
-      5.2,
-      {
-        align: "center"
-      }
-    );
-
-    valueText(
-      doc,
-      acknowledgement,
-      78,
-      40,
-      8.8,
+      "1 PACKAGE",
+      128,
+      24,
+      6.5,
       {
         align: "center"
       }
@@ -1439,469 +1352,669 @@ labels.push({
 
     labelText(
       doc,
-      "PURCHASE ORDER",
-      78,
-      49,
-      5.2,
+      "SERVICE DELIVERY",
+      128,
+      27,
+      4.5,
       {
         align: "center"
       }
     );
-
+  } else {
     valueText(
       doc,
-      purchaseOrder,
-      78,
-      54,
-      8.2,
-      {
-        align: "center"
-      }
-    );
-
-    labelText(
-      doc,
-      "TOTAL PACKAGES",
-      78,
-      62.5,
-      5.2,
-      {
-        align: "center"
-      }
-    );
-
-    labelText(
-      doc,
-      "IN THIS ORDER",
-      78,
-      66.5,
-      5.2,
-      {
-        align: "center"
-      }
-    );
-
-    const orderPackageCount =
-      label.totalPackages ||
-      label.packageTotal ||
-      0;
-
-    valueText(
-      doc,
-      `${orderPackageCount} ${
-        orderPackageCount === 1
-          ? "PACKAGE"
-          : "PACKAGES"
-      }`,
-      78,
-      72,
-      9.5,
-      {
-        align: "center"
-      }
-    );
-
-    titleBar(
-      doc,
-      "SCAN FOR DETAILS",
-      103,
-      31,
-      42,
-      5.8,
-      6.2
-    );
-
-    drawBarcode(
-      doc,
-      106,
-      37.5,
-      36,
-      9.5,
-      label.barcodeValue
-    );
-
-const isServiceOrder =
-  clean(
-    order.order_type
-  ).toLowerCase() === "service";
-
-const baseProductDescription =
-  isServiceOrder
-    ? (
-        clean(
-          label.line?.description
-        ) ||
-        clean(
-          label.sku || "—"
-        )
-      )
-    : (
-        clean(
-          label.description ||
-          label.line?.products
-            ?.description ||
-          label.line?.products
-            ?.name ||
-          ""
-        ) ||
-        clean(
-          label.sku || "—"
-        )
-      );
-
-const productDescription =
-  label.oneOffAck
-    ? `${baseProductDescription} (${label.oneOffAck})`
-    : baseProductDescription;
-
-    const descriptionCenterX =
-      124;
-
-    const descriptionStartY =
-      50.5;
-
-    const descriptionMaxWidth =
-      40;
-
-    const descriptionMaxLines =
-      2;
-
-    let descriptionFontSize =
-      8.5;
-
-    const minimumDescriptionFontSize =
-      4.8;
-
-    let descriptionLines = [];
-
-    doc.setFont(
-      "helvetica",
-      "bold"
-    );
-
-    while (
-      descriptionFontSize >=
-      minimumDescriptionFontSize
-    ) {
-      doc.setFontSize(
-        descriptionFontSize
-      );
-
-      const candidateLines =
-        doc.splitTextToSize(
-          productDescription,
-          descriptionMaxWidth
-        );
-
-      const widestLine =
-        candidateLines.reduce(
-          (
-            currentMaxWidth,
-            textLine
-          ) => {
-            return Math.max(
-              currentMaxWidth,
-              doc.getTextWidth(
-                String(
-                  textLine || ""
-                )
-              )
-            );
-          },
-          0
-        );
-
-      if (
-        candidateLines.length <=
-          descriptionMaxLines &&
-        widestLine <=
-          descriptionMaxWidth
-      ) {
-        descriptionLines =
-          candidateLines;
-
-        break;
-      }
-
-      descriptionFontSize -=
-        0.35;
-    }
-
-    if (
-      !descriptionLines.length
-    ) {
-      doc.setFontSize(
-        minimumDescriptionFontSize
-      );
-
-      descriptionLines =
-        doc
-          .splitTextToSize(
-            productDescription,
-            descriptionMaxWidth
-          )
-          .slice(
-            0,
-            descriptionMaxLines
-          );
-    }
-
-    const descriptionY =
-      descriptionLines.length > 1
-        ? descriptionStartY - 1.2
-        : descriptionStartY;
-
-    doc.setTextColor(
-      0,
-      0,
-      0
-    );
-
-    doc.text(
-      descriptionLines,
-      descriptionCenterX,
-      descriptionY,
-      {
-        align: "center",
-        lineHeightFactor: 1.12
-      }
-    );
-
-    doc.setLineDashPattern(
-      [1, 1],
-      0
-    );
-
-    line(
-      doc,
-      102,
-      56,
-      146,
-      56
-    );
-
-    doc.setLineDashPattern(
-      [],
-      0
-    );
-
-    labelText(
-      doc,
-      "SKU",
-      104,
-      63,
-      6
-    );
-
-    valueText(
-      doc,
-      label.sku || "—",
-      104,
-      71,
-      12
-    );
-
-    roundedBox(
-      doc,
-      4,
-      75,
-      142,
-      13.5,
-      1.5
-    );
-
-    const weightText =
-      label.weight
-        ? `${fmt(
-            label.weight,
-            1
-          )} kg`
-        : "—";
-
-    const volumeText =
-      label.volume
-        ? `${fmt(
-            label.volume,
-            2
-          )} m³`
-        : "—";
-
-    labelText(
-      doc,
-      "PACKAGE DETAILS",
-      8,
-      81,
-      5.4
-    );
-
-    valueText(
-      doc,
-      label.packageLabel,
-      8,
-      87,
-      8
-    );
-
-    labelText(
-      doc,
-      "SKU",
-      38,
-      81,
-      5.4
-    );
-
-    valueText(
-      doc,
-      label.sku || "—",
-      38,
-      87,
-      8
-    );
-
-    addImageContain(
-      doc,
-      icons.weight,
-      78,
-      82,
-      5,
-      5
-    );
-
-    labelText(
-      doc,
-      "WEIGHT",
-      87,
-      81,
-      5.4
-    );
-
-    valueText(
-      doc,
-      weightText,
-      87,
-      87,
-      7
-    );
-
-    addImageContain(
-      doc,
-      icons.volume,
-      114,
-      82,
-      5,
-      5
-    );
-
-    labelText(
-      doc,
-      "VOLUME",
-      123,
-      81,
-      5.4
-    );
-
-    valueText(
-      doc,
-      volumeText,
-      123,
-      87,
-      7
-    );
-
-    addImageContain(
-      doc,
-      icons.email,
-      15,
-      98.8,
-      5,
-      5
-    );
-
-    labelText(
-      doc,
-      "QUESTIONS ABOUT THIS DELIVERY?",
-      22,
-      98,
-      5.2
-    );
-
-    normalText(
-      doc,
-      `Email: ${
-        settings.contactEmail ||
-        DEFAULT_CONTACT_EMAIL
-      }`,
-      22,
-      103.5,
-      5.5
-    );
-
-    line(
-      doc,
-      75,
-      94,
-      75,
-      106
-    );
-
-    line(
-      doc,
-      112,
-      94,
-      112,
-      106
-    );
-
-    addImageContain(
-      doc,
-      icons.fragile,
-      79,
-      97,
-      6,
-      6
-    );
-
-    valueText(
-      doc,
-      "FRAGILE",
-      86,
-      99,
-      6
-    );
-
-    normalText(
-      doc,
-      "HANDLE WITH CARE",
-      86,
-      104,
-      4.8
-    );
-
-    addImageContain(
-      doc,
-      icons.keepDry,
-      116,
-      97,
-      6,
-      6
-    );
-
-    valueText(
-      doc,
-      "KEEP DRY",
-      123,
-      99,
-      6
-    );
-
-    normalText(
-      doc,
-      "PROTECT FROM MOISTURE",
-      123,
-      104,
-      4.8
+      `OF ${label.packageTotal}`,
+      121,
+      25.5,
+      6.5
     );
   }
+
+
+  // ============================================================
+  // SHIP TO
+  // ============================================================
+
+  titleBar(
+    doc,
+    "SHIP TO",
+    4,
+    31,
+    22,
+    5.8,
+    6.2
+  );
+
+  let shipY = 42;
+
+  shipTo
+    .slice(0, 7)
+    .forEach(
+      (text, index) => {
+        const maxWidth = 50;
+
+        const size =
+          index === 0
+            ? 7.2
+            : 7.6;
+
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.setFontSize(size);
+
+        const addressLines =
+          doc.splitTextToSize(
+            text,
+            maxWidth
+          );
+
+        addressLines
+          .slice(0, 2)
+          .forEach(
+            addressLine => {
+              if (shipY < 70) {
+                doc.text(
+                  addressLine,
+                  4,
+                  shipY
+                );
+
+                shipY += 5.4;
+              }
+            }
+          );
+      }
+    );
+
+
+  // ============================================================
+  // ACK / PO / TOTAL PACKAGES
+  // ============================================================
+
+  line(
+    doc,
+    57,
+    41,
+    99,
+    41
+  );
+
+  line(
+    doc,
+    57,
+    55,
+    99,
+    55
+  );
+
+  labelText(
+    doc,
+    "ACK / SUPPLIER REF",
+    78,
+    35,
+    5.2,
+    {
+      align: "center"
+    }
+  );
+
+  valueText(
+    doc,
+    acknowledgement,
+    78,
+    40,
+    8.8,
+    {
+      align: "center"
+    }
+  );
+
+  labelText(
+    doc,
+    "PURCHASE ORDER",
+    78,
+    49,
+    5.2,
+    {
+      align: "center"
+    }
+  );
+
+  valueText(
+    doc,
+    purchaseOrder,
+    78,
+    54,
+    8.2,
+    {
+      align: "center"
+    }
+  );
+
+  labelText(
+    doc,
+    "TOTAL PACKAGES",
+    78,
+    62.5,
+    5.2,
+    {
+      align: "center"
+    }
+  );
+
+  labelText(
+    doc,
+    "IN THIS ORDER",
+    78,
+    66.5,
+    5.2,
+    {
+      align: "center"
+    }
+  );
+
+  const orderPackageCount =
+    label.totalPackages ||
+    label.packageTotal ||
+    0;
+
+  valueText(
+    doc,
+    `${orderPackageCount} ${
+      orderPackageCount === 1
+        ? "PACKAGE"
+        : "PACKAGES"
+    }`,
+    78,
+    72,
+    9.5,
+    {
+      align: "center"
+    }
+  );
+
+
+  // ============================================================
+  // PRODUCT DESCRIPTION
+  //
+  // Was voorheen "SCAN FOR DETAILS" + barcode.
+  // Hier komt nu uitsluitend de productomschrijving.
+  // De SKU blijft apart onder de stippellijn staan.
+  // ============================================================
+
+  titleBar(
+    doc,
+    "PRODUCT DESCRIPTION",
+    103,
+    31,
+    42,
+    5.8,
+    5.6
+  );
+
+  /*
+   * Eerst de omschrijving van de orderregel.
+   *
+   * Dat is belangrijk omdat de orderregel in deze generator
+   * al een description bevat.
+   *
+   * Alleen wanneer die ontbreekt proberen we de productnaam /
+   * productomschrijving en uiteindelijk de SKU.
+   */
+  const baseProductDescription =
+    clean(
+      label.line?.description ||
+      label.line?.products?.description ||
+      label.line?.products?.name ||
+      label.description ||
+      ""
+    ) ||
+    clean(
+      label.sku || "—"
+    );
+
+  /*
+   * Bestaande one-off ACK-logica behouden.
+   */
+  const productDescription =
+    label.oneOffAck
+      ? `${baseProductDescription} (${label.oneOffAck})`
+      : baseProductDescription;
+
+
+  /*
+   * Beschikbare ruimte:
+   *
+   * Titelbalk eindigt rond 36.8 mm.
+   * Stippellijn staat op 56 mm.
+   *
+   * Daarom mag de beschrijving maximaal 3 regels gebruiken.
+   */
+  const descriptionCenterX =
+    124;
+
+  const descriptionStartY =
+    43;
+
+  const descriptionMaxWidth =
+    40;
+
+  const descriptionMaxLines =
+    3;
+
+  let descriptionFontSize =
+    8.5;
+
+  const minimumDescriptionFontSize =
+    4.8;
+
+  let descriptionLines =
+    [];
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+
+  /*
+   * Lettertype automatisch verkleinen totdat
+   * de complete omschrijving binnen maximaal
+   * drie regels past.
+   */
+  while (
+    descriptionFontSize >=
+    minimumDescriptionFontSize
+  ) {
+    doc.setFontSize(
+      descriptionFontSize
+    );
+
+    const candidateLines =
+      doc.splitTextToSize(
+        productDescription,
+        descriptionMaxWidth
+      );
+
+    const widestLine =
+      candidateLines.reduce(
+        (
+          currentMaxWidth,
+          textLine
+        ) => {
+          return Math.max(
+            currentMaxWidth,
+            doc.getTextWidth(
+              String(
+                textLine || ""
+              )
+            )
+          );
+        },
+        0
+      );
+
+    if (
+      candidateLines.length <=
+        descriptionMaxLines &&
+      widestLine <=
+        descriptionMaxWidth
+    ) {
+      descriptionLines =
+        candidateLines;
+
+      break;
+    }
+
+    descriptionFontSize -=
+      0.35;
+  }
+
+
+  /*
+   * Mocht de omschrijving zelfs op het minimumformaat
+   * te lang zijn, dan tonen we maximaal drie regels.
+   */
+  if (
+    !descriptionLines.length
+  ) {
+    doc.setFontSize(
+      minimumDescriptionFontSize
+    );
+
+    descriptionLines =
+      doc
+        .splitTextToSize(
+          productDescription,
+          descriptionMaxWidth
+        )
+        .slice(
+          0,
+          descriptionMaxLines
+        );
+  }
+
+
+  /*
+   * Verticale centrering binnen het vak.
+   */
+  let descriptionY =
+    descriptionStartY;
+
+  if (
+    descriptionLines.length === 1
+  ) {
+    descriptionY =
+      46;
+  }
+
+  if (
+    descriptionLines.length === 2
+  ) {
+    descriptionY =
+      43.5;
+  }
+
+  if (
+    descriptionLines.length >= 3
+  ) {
+    descriptionY =
+      41.5;
+  }
+
+  doc.setTextColor(
+    0,
+    0,
+    0
+  );
+
+  doc.text(
+    descriptionLines,
+    descriptionCenterX,
+    descriptionY,
+    {
+      align: "center",
+      lineHeightFactor: 1.12
+    }
+  );
+
+
+  // ============================================================
+  // SCHEIDING PRODUCT DESCRIPTION / SKU
+  // ============================================================
+
+  doc.setLineDashPattern(
+    [1, 1],
+    0
+  );
+
+  line(
+    doc,
+    102,
+    56,
+    146,
+    56
+  );
+
+  doc.setLineDashPattern(
+    [],
+    0
+  );
+
+
+  // ============================================================
+  // SKU
+  // ============================================================
+
+  labelText(
+    doc,
+    "SKU",
+    104,
+    63,
+    6
+  );
+
+  valueText(
+    doc,
+    label.sku || "—",
+    104,
+    71,
+    12
+  );
+
+
+  // ============================================================
+  // PACKAGE DETAILS
+  // ============================================================
+
+  roundedBox(
+    doc,
+    4,
+    75,
+    142,
+    13.5,
+    1.5
+  );
+
+  const weightText =
+    label.weight
+      ? `${fmt(
+          label.weight,
+          1
+        )} kg`
+      : "—";
+
+  const volumeText =
+    label.volume
+      ? `${fmt(
+          label.volume,
+          2
+        )} m³`
+      : "—";
+
+
+  labelText(
+    doc,
+    "PACKAGE DETAILS",
+    8,
+    81,
+    5.4
+  );
+
+  valueText(
+    doc,
+    label.packageLabel,
+    8,
+    87,
+    8
+  );
+
+
+  labelText(
+    doc,
+    "SKU",
+    38,
+    81,
+    5.4
+  );
+
+  valueText(
+    doc,
+    label.sku || "—",
+    38,
+    87,
+    8
+  );
+
+
+  addImageContain(
+    doc,
+    icons.weight,
+    78,
+    82,
+    5,
+    5
+  );
+
+  labelText(
+    doc,
+    "WEIGHT",
+    87,
+    81,
+    5.4
+  );
+
+  valueText(
+    doc,
+    weightText,
+    87,
+    87,
+    7
+  );
+
+
+  addImageContain(
+    doc,
+    icons.volume,
+    114,
+    82,
+    5,
+    5
+  );
+
+  labelText(
+    doc,
+    "VOLUME",
+    123,
+    81,
+    5.4
+  );
+
+  valueText(
+    doc,
+    volumeText,
+    123,
+    87,
+    7
+  );
+
+
+  // ============================================================
+  // FOOTER - EMAIL
+  // ============================================================
+
+  addImageContain(
+    doc,
+    icons.email,
+    15,
+    98.8,
+    5,
+    5
+  );
+
+  labelText(
+    doc,
+    "QUESTIONS ABOUT THIS DELIVERY?",
+    22,
+    98,
+    5.2
+  );
+
+  normalText(
+    doc,
+    `Email: ${
+      settings.contactEmail ||
+      DEFAULT_CONTACT_EMAIL
+    }`,
+    22,
+    103.5,
+    5.5
+  );
+
+
+  // ============================================================
+  // FOOTER SCHEIDING
+  // ============================================================
+
+  line(
+    doc,
+    75,
+    94,
+    75,
+    106
+  );
+
+  line(
+    doc,
+    112,
+    94,
+    112,
+    106
+  );
+
+
+  // ============================================================
+  // FRAGILE
+  // ============================================================
+
+  addImageContain(
+    doc,
+    icons.fragile,
+    79,
+    97,
+    6,
+    6
+  );
+
+  valueText(
+    doc,
+    "FRAGILE",
+    86,
+    99,
+    6
+  );
+
+  normalText(
+    doc,
+    "HANDLE WITH CARE",
+    86,
+    104,
+    4.8
+  );
+
+
+  // ============================================================
+  // KEEP DRY
+  // ============================================================
+
+  addImageContain(
+    doc,
+    icons.keepDry,
+    116,
+    97,
+    6,
+    6
+  );
+
+  valueText(
+    doc,
+    "KEEP DRY",
+    123,
+    99,
+    6
+  );
+
+  normalText(
+    doc,
+    "PROTECT FROM MOISTURE",
+    123,
+    104,
+    4.8
+  );
+}
 
   async function createPdf(
     order,
