@@ -8,14 +8,17 @@
   let liveQueue = [];
   let liveTimer = null;
 
-  const state = {
-    notifications: [],
-    messages: [],
-    threads: [],
-    announcements: [],
-    users: [],
-    customers: []
-  };
+const state = {
+  notifications: [],
+  messages: [],
+  threads: [],
+
+  planningMessages: [],
+
+  announcements: [],
+  users: [],
+  customers: []
+};
 
   function byId(id) {
     return document.getElementById(id);
@@ -302,6 +305,46 @@
 
     state.messages = data || [];
   }
+
+async function loadPlanningMessages() {
+  const client =
+    ensureClient();
+
+  let query =
+    client
+      .from("messages")
+      .select("*")
+      .eq(
+        "message_type",
+        "planning_digest"
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false
+        }
+      )
+      .limit(100);
+
+  query =
+    scopedQuery(
+      query,
+      true
+    );
+
+  const {
+    data,
+    error
+  } =
+    await query;
+
+  if (error) {
+    throw error;
+  }
+
+  state.planningMessages =
+    data || [];
+}
 
   async function loadAnnouncements() {
     const client = ensureClient();
@@ -707,38 +750,886 @@ function unreadCountForThread(threadId) {
   ).length;
 }
 
-  function renderThreads() {
-    const el = byId("threadList");
-    if (!el) return;
+function renderThreads() {
+  const el =
+    byId("threadList");
 
-    if (!state.threads.length) {
-      el.innerHTML = `
-        <div class="thread-row">
-          <div class="thread-title">No conversations yet</div>
-          <div class="thread-sub">Create a new message to start a conversation.</div>
+  if (!el) {
+    return;
+  }
+
+  /*
+   * Alleen gewone directe gesprekken.
+   * Planning threads horen in de
+   * aparte Planning-tab.
+   */
+  const directThreads =
+    state.threads.filter(
+      thread =>
+        String(
+          thread.thread_type ||
+          "direct"
+        ).toLowerCase() ===
+        "direct"
+    );
+
+  if (!directThreads.length) {
+    el.innerHTML = `
+      <div class="thread-row">
+
+        <div class="thread-title">
+          No conversations yet
         </div>
-      `;
-      return;
+
+        <div class="thread-sub">
+          Create a new message to start a conversation.
+        </div>
+
+      </div>
+    `;
+
+    return;
+  }
+
+  el.innerHTML =
+    directThreads
+      .map(thread => {
+
+        const unread =
+          unreadCountForThread(
+            thread.id
+          );
+
+        return `
+          <div
+            class="
+              thread-row
+              ${
+                thread.id ===
+                  activeThreadId
+                  ? "active"
+                  : ""
+              }
+            "
+            data-thread-id="${escapeHtml(
+              thread.id
+            )}"
+          >
+
+            <div
+              style="
+                display:flex;
+                align-items:center;
+                justify-content:space-between;
+                gap:10px;
+              "
+            >
+
+              <div class="thread-title">
+                ${escapeHtml(
+                  thread.subject ||
+                  "Message"
+                )}
+              </div>
+
+              ${
+                unread > 0
+                  ? `
+                      <span
+                        class="thread-unread-badge"
+                      >
+                        ${n(unread)}
+                      </span>
+                    `
+                  : ""
+              }
+
+            </div>
+
+            <div class="thread-sub">
+              ${escapeHtml(
+                thread.status ||
+                "open"
+              )}
+              ·
+              ${formatDate(
+                thread.updated_at ||
+                thread.created_at
+              )}
+            </div>
+
+          </div>
+        `;
+      })
+      .join("");
+}
+
+function parsePlanningDigest(message) {
+  const body =
+    String(message?.body || "");
+
+  const lines =
+    body
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean);
+
+  if (lines.length < 3) {
+    return [];
+  }
+
+  const isChanged =
+    String(
+      message?.title || ""
+    )
+      .toLowerCase()
+      .includes("changed");
+
+  /*
+   * Eerste regel is de samenvatting:
+   * "3 orders received..."
+   *
+   * Daarna komen steeds twee regels per order.
+   */
+  const detailLines =
+    lines.slice(1);
+
+  const rows = [];
+
+  for (
+    let i = 0;
+    i < detailLines.length;
+    i += 2
+  ) {
+    const orderLine =
+      detailLines[i] || "";
+
+    const dateLine =
+      detailLines[i + 1] || "";
+
+    const parts =
+      orderLine.split(" · ");
+
+    const orderNumber =
+      parts[0] || "";
+
+    const bellstoneRef =
+      parts[1] || "";
+
+    const retailer =
+      parts
+        .slice(2)
+        .join(" · ");
+
+    let previousDate = "";
+    let deliveryDate = "";
+
+    if (isChanged) {
+      const dates =
+        dateLine.split("→");
+
+      previousDate =
+        String(
+          dates[0] || ""
+        ).trim();
+
+      deliveryDate =
+        String(
+          dates[1] || ""
+        ).trim();
+    } else {
+      deliveryDate =
+        dateLine
+          .replace(
+            /^Delivery:\s*/i,
+            ""
+          )
+          .trim();
     }
 
-  el.innerHTML = state.threads.map(t => {
-  const unread = unreadCountForThread(t.id);
+    if (!orderNumber) {
+      continue;
+    }
+
+    rows.push({
+      orderNumber,
+      bellstoneRef,
+      retailer,
+      previousDate,
+      deliveryDate,
+      changeType:
+        isChanged
+          ? "Changed"
+          : "New"
+    });
+  }
+
+  return rows;
+}
+
+
+function csvEscape(value) {
+  const text =
+    String(value ?? "");
+
+  return `"${text.replace(
+    /"/g,
+    '""'
+  )}"`;
+}
+
+
+function exportPlanningDigest(message) {
+  const rows =
+    parsePlanningDigest(
+      message
+    );
+
+  if (!rows.length) {
+    showToast(
+      "No planning data available for export.",
+      "err"
+    );
+
+    return;
+  }
+
+  const headers = [
+    "Order",
+    "Bellstone Ref",
+    "Retailer",
+    "Previous Delivery Date",
+    "Delivery Date",
+    "Change Type"
+  ];
+
+  const csvRows = [
+    headers.map(csvEscape).join(","),
+
+    ...rows.map(row =>
+      [
+        row.orderNumber,
+        row.bellstoneRef,
+        row.retailer,
+        row.previousDate,
+        row.deliveryDate,
+        row.changeType
+      ]
+        .map(csvEscape)
+        .join(",")
+    )
+  ];
+
+  /*
+   * BOM zorgt ervoor dat Excel
+   * UTF-8 netjes opent.
+   */
+  const csv =
+    "\uFEFF" +
+    csvRows.join("\r\n");
+
+  const blob =
+    new Blob(
+      [csv],
+      {
+        type:
+          "text/csv;charset=utf-8;"
+      }
+    );
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+  const link =
+    document.createElement("a");
+
+  const date =
+    new Date(
+      message.created_at ||
+      Date.now()
+    );
+
+  const yyyy =
+    date.getFullYear();
+
+  const mm =
+    String(
+      date.getMonth() + 1
+    ).padStart(2, "0");
+
+  const dd =
+    String(
+      date.getDate()
+    ).padStart(2, "0");
+
+  link.href = url;
+
+  link.download =
+    `Veynor-Planning-${yyyy}-${mm}-${dd}.csv`;
+
+  document.body.appendChild(
+    link
+  );
+
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(
+    url
+  );
+
+  showToast(
+    "Planning export downloaded.",
+    "ok"
+  );
+}
+
+function formatPlanningDeliveryDate(value) {
+  if (!value) {
+    return "Unknown delivery date";
+  }
+
+  const parts =
+    String(value)
+      .trim()
+      .split("/");
+
+  if (parts.length !== 3) {
+    return value;
+  }
+
+  const date =
+    new Date(
+      Number(parts[2]),
+      Number(parts[1]) - 1,
+      Number(parts[0])
+    );
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return value;
+  }
+
+  return date
+    .toLocaleDateString(
+      "en-GB",
+      {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+      }
+    )
+    .toUpperCase();
+}
+
+function renderPlanningDigestBody(message) {
+  const rows =
+    parsePlanningDigest(message);
+
+  if (!rows.length) {
+    return `
+      <div class="planning-digest-raw">
+        ${escapeHtml(
+          message.body || ""
+        )}
+      </div>
+    `;
+  }
+
+  const isChanged =
+    String(
+      message.title || ""
+    )
+      .toLowerCase()
+      .includes("changed");
+
+
+  /*
+   * =========================================
+   * GEWIJZIGDE LEVERDATA
+   * =========================================
+   */
+
+  if (isChanged) {
+    return `
+      <div class="planning-change-list">
+
+        ${rows.map(row => `
+          <div class="planning-change-row">
+
+            <div class="planning-order-main">
+
+              <strong>
+                ${escapeHtml(
+                  row.orderNumber
+                )}
+              </strong>
+
+              <span class="planning-order-ref">
+                ${escapeHtml(
+                  row.bellstoneRef
+                )}
+              </span>
+
+              <span class="planning-order-retailer">
+                ${escapeHtml(
+                  row.retailer
+                )}
+              </span>
+
+            </div>
+
+
+            <div class="planning-date-change">
+
+              <span class="planning-old-date">
+                ${escapeHtml(
+                  row.previousDate
+                )}
+              </span>
+
+              <span class="planning-date-arrow">
+                →
+              </span>
+
+              <span class="planning-new-date">
+                ${escapeHtml(
+                  row.deliveryDate
+                )}
+              </span>
+
+            </div>
+
+          </div>
+        `).join("")}
+
+      </div>
+    `;
+  }
+
+
+  /*
+   * =========================================
+   * NIEUWE LEVERDATA
+   * Groeperen per leverdatum
+   * =========================================
+   */
+
+  const groups = {};
+
+  rows.forEach(row => {
+
+    const key =
+      row.deliveryDate ||
+      "Unknown";
+
+    if (!groups[key]) {
+      groups[key] = [];
+    }
+
+    groups[key].push(row);
+  });
+
+
+  /*
+   * Datum omzetten voor chronologische sortering
+   */
+
+  const parseDate =
+    value => {
+
+      const parts =
+        String(value)
+          .split("/");
+
+      if (parts.length !== 3) {
+        return 0;
+      }
+
+      return new Date(
+        Number(parts[2]),
+        Number(parts[1]) - 1,
+        Number(parts[0])
+      ).getTime();
+    };
+
+
+  const sortedDates =
+    Object.keys(groups)
+      .sort(
+        (a, b) =>
+          parseDate(a) -
+          parseDate(b)
+      );
+
+
+  /*
+   * =========================================
+   * RENDER
+   * =========================================
+   */
 
   return `
-    <div class="thread-row ${t.id === activeThreadId ? "active" : ""}" data-thread-id="${escapeHtml(t.id)}">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-        <div class="thread-title">${escapeHtml(t.subject || "Message")}</div>
-        ${
-          unread > 0
-            ? `<span class="thread-unread-badge">${n(unread)}</span>`
-            : ""
-        }
-      </div>
-      <div class="thread-sub">${escapeHtml(t.status || "open")} · ${formatDate(t.updated_at || t.created_at)}</div>
+    <div class="planning-date-groups">
+
+      ${sortedDates.map(date => {
+
+        const orders =
+          groups[date];
+
+        return `
+          <section class="planning-date-group">
+
+            <div class="planning-date-header">
+
+              <div class="planning-date-title">
+
+                <span class="planning-date-calendar">
+                  ▣
+                </span>
+
+                ${escapeHtml(
+                  formatPlanningDeliveryDate(
+                    date
+                  )
+                )}
+
+              </div>
+
+
+              <span class="planning-date-count">
+
+                ${orders.length}
+
+                ${
+                  orders.length === 1
+                    ? "order"
+                    : "orders"
+                }
+
+              </span>
+
+            </div>
+
+
+            <div class="planning-orders-list">
+
+              <div class="planning-order-head">
+
+                <div>
+                  Order
+                </div>
+
+                <div>
+                  Bellstone Ref
+                </div>
+
+                <div>
+                  Retailer
+                </div>
+
+              </div>
+
+
+              ${orders.map(row => `
+                <div class="planning-order-row">
+
+                  <div class="planning-order-number">
+                    ${escapeHtml(
+                      row.orderNumber
+                    )}
+                  </div>
+
+                  <div class="planning-order-reference">
+                    ${escapeHtml(
+                      row.bellstoneRef
+                    )}
+                  </div>
+
+                  <div class="planning-order-retailer">
+                    ${escapeHtml(
+                      row.retailer
+                    )}
+                  </div>
+
+                </div>
+              `).join("")}
+
+            </div>
+
+          </section>
+        `;
+      }).join("")}
+
     </div>
   `;
-}).join("");
+}
+
+function renderPlanning() {
+  const el =
+    byId(
+      "planningDigestList"
+    );
+
+  if (!el) {
+    return;
   }
+
+  const rows =
+    [...state.planningMessages]
+      .sort(
+        (a, b) =>
+          new Date(
+            b.created_at || 0
+          ) -
+          new Date(
+            a.created_at || 0
+          )
+      );
+
+
+  setText(
+    "planningSummaryBadge",
+    `${rows.length} update${
+      rows.length === 1
+        ? ""
+        : "s"
+    }`
+  );
+
+
+  if (!rows.length) {
+    el.innerHTML = `
+      <div class="planning-empty">
+
+        <div class="row-icon">
+          🚚
+        </div>
+
+        <div>
+
+          <strong>
+            No planning updates yet.
+          </strong>
+
+          <div class="row-sub">
+            Daily planning summaries will appear here.
+          </div>
+
+        </div>
+
+      </div>
+    `;
+
+    return;
+  }
+
+
+  el.innerHTML =
+    rows
+      .map(message => {
+
+        const isChanged =
+          String(
+            message.title || ""
+          )
+            .toLowerCase()
+            .includes("changed");
+
+        const icon =
+          isChanged
+            ? "↔"
+            : "✓";
+
+        const parsedRows =
+          parsePlanningDigest(
+            message
+          );
+
+        const orderCount =
+          parsedRows.length;
+
+
+        return `
+          <article
+            class="
+              planning-digest-card
+              ${
+                !message.read_at
+                  ? "unread"
+                  : ""
+              }
+            "
+            data-planning-message-id="${escapeHtml(
+              message.id
+            )}"
+          >
+
+            <div class="planning-digest-head">
+
+              <div class="planning-digest-heading">
+
+                <div class="planning-digest-icon">
+                  ${icon}
+                </div>
+
+                <div>
+
+                  <div class="planning-digest-title">
+
+                    ${escapeHtml(
+                      message.title ||
+                      "Planning Update"
+                    )}
+
+                    ${
+                      !message.read_at
+                        ? `
+                            <span
+                              class="planning-unread-dot"
+                            ></span>
+                          `
+                        : ""
+                    }
+
+                  </div>
+
+
+                  <div class="planning-digest-sub">
+
+                    ${orderCount}
+                    ${
+                      orderCount === 1
+                        ? "order"
+                        : "orders"
+                    }
+
+                    ·
+
+                    ${
+                      isChanged
+                        ? "Delivery dates changed"
+                        : "New delivery dates assigned"
+                    }
+
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              <div class="planning-digest-actions">
+
+                <div class="planning-digest-date">
+                  ${formatDate(
+                    message.created_at
+                  )}
+                </div>
+
+                <button
+                  class="planning-export-btn"
+                  type="button"
+                  data-export-planning-id="${escapeHtml(
+                    message.id
+                  )}"
+                >
+                  ↓ Export CSV
+                </button>
+
+              </div>
+
+            </div>
+
+
+            <div class="planning-digest-body">
+
+              ${renderPlanningDigestBody(
+                message
+              )}
+
+            </div>
+
+          </article>
+        `;
+      })
+      .join("");
+}
+
+async function markPlanningMessageRead(
+  messageId
+) {
+  if (!messageId) {
+    return;
+  }
+
+  const existing =
+    state.planningMessages.find(
+      message =>
+        String(message.id) ===
+        String(messageId)
+    );
+
+  if (
+    !existing ||
+    existing.read_at
+  ) {
+    return;
+  }
+
+  const client =
+    ensureClient();
+
+  const readAt =
+    new Date()
+      .toISOString();
+
+  const {
+    error
+  } =
+    await client
+      .from("messages")
+      .update({
+        read_at: readAt
+      })
+      .eq(
+        "id",
+        messageId
+      );
+
+  if (error) {
+    throw error;
+  }
+
+  state.planningMessages =
+    state.planningMessages.map(
+      message =>
+        String(message.id) ===
+        String(messageId)
+          ? {
+              ...message,
+              read_at: readAt
+            }
+          : message
+    );
+
+  renderPlanning();
+  updateTabBadges();
+
+  if (
+    window
+      .VeynorUpdateMessageCenterNavBadge
+  ) {
+    await window
+      .VeynorUpdateMessageCenterNavBadge();
+  }
+}
 
 async function markThreadMessagesRead(threadId) {
   const client = ensureClient();
@@ -820,45 +1711,149 @@ updateTabBadges();
     return u?.full_name || u?.email || "User";
   }
 
-  function renderMessagesKpi() {
-    const unread = state.messages.filter(m =>
-      String(m.sender_profile_id) !== String(profile.id) && !m.read_at
+function renderMessagesKpi() {
+  const unread =
+    state.messages.filter(
+      message =>
+        String(
+          message.message_type ||
+          ""
+        ) !==
+        "planning_digest" &&
+
+        String(
+          message.sender_profile_id
+        ) !==
+        String(
+          profile.id
+        ) &&
+
+        !message.read_at
     ).length;
 
-    setText("kpiNewMessages", n(unread));
-  }
+  setText(
+    "kpiNewMessages",
+    n(unread)
+  );
+}
 
 function updateTabBadges() {
-  const unreadMessages = state.messages.filter(m =>
-    String(m.sender_profile_id) !== String(profile.id) && !m.read_at
-  ).length;
+  const unreadMessages =
+    state.messages.filter(
+      message =>
+        String(
+          message.message_type ||
+          ""
+        ) !==
+        "planning_digest" &&
 
-  const unreadNotifications = state.notifications.filter(n => !n.is_read).length;
-  const openTasks = Number(byId("kpiOpenTasks")?.textContent || 0);
-  const activeAnnouncements = state.announcements.length;
+        String(
+          message.sender_profile_id
+        ) !==
+        String(
+          profile.id
+        ) &&
+
+        !message.read_at
+    ).length;
+
+
+  const unreadPlanning =
+    state.planningMessages.filter(
+      message =>
+        !message.read_at
+    ).length;
+
+
+  const unreadNotifications =
+    state.notifications.filter(
+      notification =>
+        !notification.is_read
+    ).length;
+
+
+  const openTasks =
+    Number(
+      byId(
+        "kpiOpenTasks"
+      )?.textContent || 0
+    );
+
+
+  const activeAnnouncements =
+    state.announcements.length;
+
 
   const badges = [
-    ["messagesTabBadge", unreadMessages],
-    ["notificationsTabBadge", unreadNotifications],
-    ["tasksTabBadge", openTasks],
-    ["announcementsTabBadge", activeAnnouncements]
+    [
+      "messagesTabBadge",
+      unreadMessages
+    ],
+
+    [
+      "notificationsTabBadge",
+      unreadNotifications
+    ],
+
+    [
+      "planningTabBadge",
+      unreadPlanning
+    ],
+
+    [
+      "tasksTabBadge",
+      openTasks
+    ],
+
+    [
+      "announcementsTabBadge",
+      activeAnnouncements
+    ]
   ];
 
-  badges.forEach(([id, count]) => {
-    const badge = byId(id);
-    if (!badge) return;
 
-    badge.textContent = n(count);
-    badge.style.display = count > 0 ? "inline-flex" : "none";
-  });
+  badges.forEach(
+    ([id, count]) => {
 
-  // Deze werkt pas nadat we layout.js hebben aangepast
-  const total = unreadMessages + unreadNotifications + openTasks + activeAnnouncements;
+      const badge =
+        byId(id);
 
-  const navBadge = document.querySelector('[data-nav-badge="message-center"]');
+      if (!badge) {
+        return;
+      }
+
+      badge.textContent =
+        n(count);
+
+      badge.style.display =
+        count > 0
+          ? "inline-flex"
+          : "none";
+    }
+  );
+
+
+  const total =
+    unreadMessages +
+    unreadNotifications +
+    unreadPlanning +
+    openTasks +
+    activeAnnouncements;
+
+
+  const navBadge =
+    document.querySelector(
+      '[data-nav-badge="message-center"]'
+    );
+
   if (navBadge) {
-    navBadge.textContent = n(total);
-    navBadge.style.display = total > 0 ? "inline-flex" : "none";
+    navBadge.textContent =
+      n(total);
+
+    navBadge.style.display =
+      total > 0
+        ? "inline-flex"
+        : "none";
   }
 }
 
@@ -1153,82 +2148,6 @@ function populateContactPersons() {
   console.log("Loaded contacts:", users);
 }
 
-async function sendNewMessage() {
-  const client = ensureClient();
-
-  const subject = clean(byId("newMessageSubject")?.value);
-  const body = clean(byId("newMessageBody")?.value);
-  const recipientType = byId("newMessageRecipientType")?.value || "tenant";
-  const recipient = byId("newMessageRecipient")?.value || null;
-  const contactPerson = byId("newMessageContact")?.value || null;
-
-  if (!subject || !body) {
-    showToast("Please enter a subject and message.", "err");
-    return;
-  }
-
-  const customerId = isTenantRole()
-    ? (
-        recipientType === "product_owner" || recipientType === "retailer"
-          ? recipient
-          : null
-      )
-    : currentCustomerId();
-
-  const recipientProfileId = contactPerson
-    ? contactPerson
-    : (
-        recipientType === "user" || recipientType === "driver"
-          ? recipient
-          : null
-      );
-
-  const recipientRole = !isTenantRole()
-    ? "tenant_admin"
-    : (recipientType === "tenant" ? "tenant_admin" : null);
-
-  const { data: thread, error: threadError } = await client
-    .from("message_threads")
-    .insert({
-      company_id: profile.company_id,
-      customer_id: customerId || null,
-      subject,
-      thread_type: "direct",
-      status: "open",
-      created_by: profile.id
-    })
-    .select("*")
-    .single();
-
-  if (threadError) throw threadError;
-
-  const { error: msgError } = await client
-    .from("messages")
-    .insert({
-      thread_id: thread.id,
-      company_id: profile.company_id,
-      customer_id: customerId || null,
-      sender_profile_id: profile.id,
-      recipient_profile_id: recipientProfileId,
-      recipient_role: recipientRole,
-      message_type: "manual",
-      title: subject,
-      body,
-      is_system: false
-    });
-
-  if (msgError) throw msgError;
-
-  byId("newMessageSubject").value = "";
-  byId("newMessageBody").value = "";
-  byId("newMessagePanel").style.display = "none";
-
-  await refreshAll();
-  await openThread(thread.id);
-
-  showToast("Message sent.", "ok");
-}
-
   async function sendNewMessage() {
   const client = ensureClient();
 
@@ -1444,6 +2363,91 @@ function setReplyEnabled(enabled) {
       });
     });
   }
+
+function bindPlanningEvents() {
+  byId(
+    "planningDigestList"
+  )?.addEventListener(
+    "click",
+    async event => {
+
+      /*
+       * Eerst controleren of op
+       * Export CSV is geklikt.
+       */
+      const exportButton =
+        event.target.closest(
+          "[data-export-planning-id]"
+        );
+
+      if (exportButton) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const messageId =
+          exportButton.dataset
+            .exportPlanningId;
+
+        const message =
+          state.planningMessages.find(
+            item =>
+              String(item.id) ===
+              String(messageId)
+          );
+
+        if (!message) {
+          showToast(
+            "Planning update not found.",
+            "err"
+          );
+
+          return;
+        }
+
+        exportPlanningDigest(
+          message
+        );
+
+        return;
+      }
+
+
+      /*
+       * Gewone klik op kaart:
+       * markeer als gelezen.
+       */
+      const card =
+        event.target.closest(
+          "[data-planning-message-id]"
+        );
+
+      if (!card) {
+        return;
+      }
+
+      try {
+
+        await markPlanningMessageRead(
+          card.dataset
+            .planningMessageId
+        );
+
+      } catch (error) {
+
+        console.error(
+          "Planning message read failed:",
+          error
+        );
+
+        showToast(
+          error.message ||
+          "Could not mark planning update as read.",
+          "err"
+        );
+      }
+    }
+  );
+}
 
  function bindEvents() {
 
@@ -1737,78 +2741,194 @@ document.addEventListener("click", async event => {
       }
     );
 
-    channel.on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "messages" },
-      payload => {
-        const m = payload.new;
+channel.on(
+  "postgres_changes",
+  {
+    event: "INSERT",
+    schema: "public",
+    table: "messages"
+  },
+  payload => {
 
-        if (profile.company_id && m.company_id && String(m.company_id) !== String(profile.company_id)) return;
-        if (!isTenantRole() && m.customer_id && String(m.customer_id) !== String(currentCustomerId())) return;
+    const message =
+      payload.new;
 
-        if (String(m.sender_profile_id) !== String(profile.id)) {
-          pushLivePopup({
-            title: "New Message",
-            message: m.title || "A new message has been received.",
-            action_url: "./message-center.html",
-            notification_type: "message",
-            severity: "info"
-          });
-        }
+    if (
+      profile.company_id &&
+      message.company_id &&
+      String(
+        message.company_id
+      ) !==
+      String(
+        profile.company_id
+      )
+    ) {
+      return;
+    }
 
-        refreshAll();
-      }
-    );
+    if (
+      !isTenantRole() &&
+      message.customer_id &&
+      String(
+        message.customer_id
+      ) !==
+      String(
+        currentCustomerId()
+      )
+    ) {
+      return;
+    }
+
+
+    /*
+     * Planning digest:
+     * GEEN gewone New Message popup.
+     *
+     * Alleen Planning-tab vernieuwen.
+     */
+    if (
+      String(
+        message.message_type ||
+        ""
+      ) ===
+      "planning_digest"
+    ) {
+
+      loadPlanningMessages()
+        .then(() => {
+          renderPlanning();
+          updateTabBadges();
+        })
+        .catch(
+          error =>
+            console.error(
+              "Planning realtime refresh failed:",
+              error
+            )
+        );
+
+      return;
+    }
+
+
+    /*
+     * Gewone directe message.
+     */
+    if (
+      String(
+        message.sender_profile_id
+      ) !==
+      String(
+        profile.id
+      )
+    ) {
+
+      pushLivePopup({
+        title:
+          "New Message",
+
+        message:
+          message.title ||
+          "A new message has been received.",
+
+        action_url:
+          "./message-center.html",
+
+        notification_type:
+          "message",
+
+        severity:
+          "info"
+      });
+    }
+
+
+    refreshAll();
+  }
+);
 
     channel.subscribe();
   }
 
-  async function refreshAll() {
-    await Promise.all([
-      loadNotifications(),
-      loadThreads(),
-      loadMessages(activeThreadId),
-      loadAnnouncements()
-    ]);
+async function refreshAll() {
+  await Promise.all([
+    loadNotifications(),
+    loadThreads(),
+    loadMessages(
+      activeThreadId
+    ),
+    loadPlanningMessages(),
+    loadAnnouncements()
+  ]);
 
-    await renderSinceLastVisit();
-    renderNotifications();
-    renderThreads();
-    renderChat();
-    renderMessagesKpi();
-    renderAnnouncements();
-    renderLiveFeed();
-    await renderTasks();
+  await renderSinceLastVisit();
 
-updateTabBadges();
-  }
+  renderNotifications();
+
+  renderThreads();
+
+  renderChat();
+
+  renderMessagesKpi();
+
+  renderPlanning();
+
+  renderAnnouncements();
+
+  renderLiveFeed();
+
+  await renderTasks();
+
+  updateTabBadges();
+}
 
 async function init() {
   injectPopupStyle();
+
   bindTabs();
   bindEvents();
-  setReplyEnabled(false);
+  bindPlanningEvents();
+
+  setReplyEnabled(
+    false
+  );
 
   try {
-      await loadProfile();
-      await loadNotificationState();
-await loadUsersAndCustomers();
 
-populateRecipients();
-populateContactPersons();
+    await loadProfile();
 
-await refreshAll();
+    await loadNotificationState();
 
-      bindRealtime();
+    await loadUsersAndCustomers();
 
-      setTimeout(updateLastSeen, 2500);
+    populateRecipients();
+    populateContactPersons();
 
-      showToast("Message Center loaded.", "ok");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Message Center could not load.", "err");
-    }
+    await refreshAll();
+
+    bindRealtime();
+
+    setTimeout(
+      updateLastSeen,
+      2500
+    );
+
+    showToast(
+      "Message Center loaded.",
+      "ok"
+    );
+
+  } catch (error) {
+
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Message Center could not load.",
+      "err"
+    );
   }
+}
 
   document.addEventListener("DOMContentLoaded", init);
 })();

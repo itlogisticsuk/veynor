@@ -906,11 +906,17 @@
         <table class="occ-table">
           <thead>
               <tr>
-  <th class="order-select-cell select-column tenant-only">Select</th>
-  <th class="expand-cell"></th>
-  <th class="sortable-th" data-sort-key="order">
-    Order
-    <span class="sort-indicator" data-sort-indicator="order"></span>
+<th class="order-select-cell select-column tenant-only">Select</th>
+<th class="expand-cell"></th>
+
+<th class="sortable-th import-date-column" data-sort-key="import_date">
+  Import Date
+  <span class="sort-indicator" data-sort-indicator="import_date"></span>
+</th>
+
+<th class="sortable-th" data-sort-key="order">
+  Order
+  <span class="sort-indicator" data-sort-indicator="order"></span>
 </th>
 
 <th>Type</th>
@@ -1222,7 +1228,7 @@
   <button type="button" data-row-action="portal_events">Portal Events</button>
 </div>
 
-<div id="occGenericActionModal" class="occ-modal tenant-only" aria-hidden="true">
+<div id="occGenericActionModal" class="occ-modal" aria-hidden="true">
   <div class="occ-modal-card">
     <div class="occ-modal-head">
       <div>

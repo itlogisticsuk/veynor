@@ -52,17 +52,23 @@
 
 .tab-badge{
   display:inline-flex;
-  align-items:center;<style>
+  align-items:center;
   justify-content:center;
+
   min-width:20px;
   height:20px;
+
   margin-left:8px;
   padding:0 6px;
+
   border-radius:999px;
+
   background:#ef4444;
   color:#fff;
+
   font-size:11px;
   font-weight:950;
+
   animation:pulseBadge 1.2s infinite;
 }
 
@@ -654,8 +660,496 @@
     font-weight:900;
 }
 
-</style>
+/* =========================================
+   PLANNING DIGEST
+   ========================================= */
 
+.planning-digest-list{
+  display:grid;
+  gap:14px;
+}
+
+.planning-digest-card{
+  border:1px solid #dbeafe;
+  border-radius:16px;
+
+  background:#ffffff;
+
+  overflow:hidden;
+
+  box-shadow:
+    0 8px 24px rgba(15,23,42,.04);
+
+  transition:.16s ease;
+}
+
+.planning-digest-card:hover{
+  border-color:#93c5fd;
+
+  box-shadow:
+    0 12px 30px rgba(15,23,42,.07);
+}
+
+.planning-digest-card.unread{
+  border-left:4px solid #1267ff;
+}
+
+.planning-digest-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+
+  gap:16px;
+
+  padding:15px 16px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #f8fbff,
+      #eff6ff
+    );
+
+  border-bottom:
+    1px solid #dbeafe;
+}
+
+.planning-digest-heading{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+}
+
+.planning-digest-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:38px;
+  height:38px;
+
+  flex:0 0 38px;
+
+  border-radius:12px;
+
+  background:#1267ff;
+  color:#ffffff;
+
+  font-size:16px;
+  font-weight:950;
+}
+
+.planning-digest-title{
+  color:#07152f;
+
+  font-size:14px;
+  font-weight:950;
+
+  line-height:1.25;
+}
+
+.planning-digest-sub{
+  margin-top:3px;
+
+  color:#64748b;
+
+  font-size:11px;
+  font-weight:750;
+}
+
+.planning-digest-date{
+  color:#64748b;
+
+  font-size:11px;
+  font-weight:800;
+
+  white-space:nowrap;
+}
+
+.planning-digest-body{
+  padding:14px 16px;
+
+  color:#334155;
+
+  font-size:12px;
+  line-height:1.45;
+
+  white-space:normal;
+}
+
+.planning-digest-body strong{
+  color:#07152f;
+}
+
+.planning-empty{
+  display:flex;
+  align-items:flex-start;
+
+  gap:12px;
+
+  padding:18px;
+
+  border:1px dashed #cbd5e1;
+  border-radius:14px;
+
+  background:#f8fafc;
+
+  color:#64748b;
+}
+
+.planning-unread-dot{
+  display:inline-block;
+
+  width:8px;
+  height:8px;
+
+  margin-left:7px;
+
+  border-radius:999px;
+
+  background:#1267ff;
+}
+
+.planning-digest-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:10px;
+}
+
+.planning-export-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+
+  min-height:32px;
+  padding:0 11px;
+
+  border:1px solid #bfdbfe;
+  border-radius:10px;
+
+  background:#ffffff;
+  color:#1267ff;
+
+  font-size:11px;
+  font-weight:950;
+
+  cursor:pointer;
+}
+
+.planning-export-btn:hover{
+  background:#eff6ff;
+  border-color:#93c5fd;
+}
+
+/* =========================================
+   PLANNING - COMPACT GROUPED VIEW
+   ========================================= */
+
+.planning-digest-body{
+  padding:14px 16px;
+}
+
+.planning-date-groups{
+  display:grid;
+  gap:12px;
+}
+
+.planning-date-group{
+  overflow:hidden;
+
+  border:1px solid #dbeafe;
+  border-radius:12px;
+
+  background:#fff;
+}
+
+.planning-date-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+
+  min-height:46px;
+
+  padding:8px 12px;
+
+  background:#f3f7ff;
+
+  border-bottom:1px solid #dbeafe;
+}
+
+.planning-date-title{
+  display:flex;
+  align-items:center;
+  gap:8px;
+
+  color:#0f2e5d;
+
+  font-size:11.5px;
+  font-weight:950;
+
+  letter-spacing:.025em;
+}
+
+.planning-date-calendar{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:22px;
+  height:22px;
+
+  border-radius:7px;
+
+  background:#1267ff;
+  color:#fff;
+
+  font-size:9px;
+  line-height:1;
+}
+
+.planning-date-count{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  min-height:24px;
+
+  padding:0 9px;
+
+  border:1px solid #bfdbfe;
+  border-radius:999px;
+
+  background:#fff;
+  color:#1267ff;
+
+  font-size:10px;
+  font-weight:950;
+}
+
+.planning-orders-list{
+  display:grid;
+}
+
+.planning-order-head{
+  display:grid;
+
+  grid-template-columns:
+    120px
+    150px
+    minmax(0,1fr);
+
+  gap:14px;
+
+  padding:7px 12px;
+
+  background:#fbfdff;
+
+  border-bottom:1px solid #eef2f7;
+
+  color:#64748b;
+
+  font-size:9.5px;
+  font-weight:950;
+
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+
+.planning-order-row{
+  display:grid;
+
+  grid-template-columns:
+    120px
+    150px
+    minmax(0,1fr);
+
+  gap:14px;
+
+  align-items:center;
+
+  min-height:42px;
+
+  padding:7px 12px;
+
+  border-bottom:1px solid #eef2f7;
+}
+
+.planning-order-row:last-child{
+  border-bottom:0;
+}
+
+.planning-order-row:hover{
+  background:#fafcff;
+}
+
+.planning-order-number{
+  color:#07152f;
+
+  font-size:11.5px;
+  font-weight:950;
+
+  white-space:nowrap;
+}
+
+.planning-order-reference{
+  color:#1267ff;
+
+  font-size:11px;
+  font-weight:900;
+
+  white-space:nowrap;
+}
+
+.planning-order-retailer{
+  color:#475569;
+
+  font-size:11px;
+  font-weight:750;
+
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+
+/* =========================================
+   CHANGED DELIVERY DATES
+   ========================================= */
+
+.planning-change-list{
+  display:grid;
+  gap:7px;
+}
+
+.planning-change-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+
+  gap:16px;
+
+  padding:9px 12px;
+
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+
+  background:#fff;
+}
+
+.planning-order-main{
+  display:flex;
+  align-items:center;
+  gap:9px;
+
+  min-width:0;
+}
+
+.planning-order-main strong{
+  color:#07152f;
+
+  font-size:11.5px;
+  font-weight:950;
+
+  white-space:nowrap;
+}
+
+.planning-order-ref{
+  color:#1267ff;
+
+  font-size:10.5px;
+  font-weight:900;
+
+  white-space:nowrap;
+}
+
+.planning-order-main .planning-order-retailer{
+  color:#64748b;
+
+  font-size:11px;
+}
+
+.planning-date-change{
+  display:flex;
+  align-items:center;
+  gap:7px;
+
+  white-space:nowrap;
+}
+
+.planning-old-date{
+  padding:4px 7px;
+
+  border-radius:7px;
+
+  background:#f1f5f9;
+  color:#64748b;
+
+  font-size:10.5px;
+  font-weight:850;
+
+  text-decoration:line-through;
+}
+
+.planning-date-arrow{
+  color:#94a3b8;
+
+  font-size:13px;
+  font-weight:950;
+}
+
+.planning-new-date{
+  padding:4px 7px;
+
+  border:1px solid #bfdbfe;
+  border-radius:7px;
+
+  background:#eff6ff;
+  color:#1267ff;
+
+  font-size:10.5px;
+  font-weight:950;
+}
+
+.planning-digest-raw{
+  white-space:pre-wrap;
+}
+
+
+/* =========================================
+   MOBILE
+   ========================================= */
+
+@media(max-width:800px){
+
+  .planning-order-head{
+    display:none;
+  }
+
+  .planning-order-row{
+    grid-template-columns:1fr;
+    gap:2px;
+
+    padding:10px 12px;
+  }
+
+  .planning-order-retailer{
+    white-space:normal;
+  }
+
+  .planning-change-row{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+
+  .planning-order-main{
+    align-items:flex-start;
+    flex-direction:column;
+    gap:3px;
+  }
+}
   </style>
 </head>
 
@@ -679,25 +1173,97 @@
 
     <div id="toast" class="notice"></div>
 
-    <section class="card message-tabs">
-<button class="message-tab active" data-tab="overview" type="button">Overview</button>
+<section class="card message-tabs">
 
-<button class="message-tab" data-tab="messages" type="button">
-  Messages <span id="messagesTabBadge" class="tab-badge" style="display:none;">0</span>
-</button>
+  <button
+    class="message-tab active"
+    data-tab="overview"
+    type="button"
+  >
+    Overview
+  </button>
 
-<button class="message-tab" data-tab="notifications" type="button">
-  Notifications <span id="notificationsTabBadge" class="tab-badge" style="display:none;">0</span>
-</button>
+  <button
+    class="message-tab"
+    data-tab="messages"
+    type="button"
+  >
+    Messages
 
-<button class="message-tab" data-tab="tasks" type="button">
-  Tasks <span id="tasksTabBadge" class="tab-badge" style="display:none;">0</span>
-</button>
+    <span
+      id="messagesTabBadge"
+      class="tab-badge"
+      style="display:none;"
+    >
+      0
+    </span>
+  </button>
 
-<button class="message-tab" data-tab="announcements" type="button">
-  Announcements <span id="announcementsTabBadge" class="tab-badge" style="display:none;">0</span>
-</button>
-    </section>
+  <button
+    class="message-tab"
+    data-tab="notifications"
+    type="button"
+  >
+    Notifications
+
+    <span
+      id="notificationsTabBadge"
+      class="tab-badge"
+      style="display:none;"
+    >
+      0
+    </span>
+  </button>
+
+  <button
+    class="message-tab"
+    data-tab="planning"
+    type="button"
+  >
+    Planning
+
+    <span
+      id="planningTabBadge"
+      class="tab-badge"
+      style="display:none;"
+    >
+      0
+    </span>
+  </button>
+
+  <button
+    class="message-tab"
+    data-tab="tasks"
+    type="button"
+  >
+    Tasks
+
+    <span
+      id="tasksTabBadge"
+      class="tab-badge"
+      style="display:none;"
+    >
+      0
+    </span>
+  </button>
+
+  <button
+    class="message-tab"
+    data-tab="announcements"
+    type="button"
+  >
+    Announcements
+
+    <span
+      id="announcementsTabBadge"
+      class="tab-badge"
+      style="display:none;"
+    >
+      0
+    </span>
+  </button>
+
+</section>
 
     <section id="tab-overview" class="tab-panel active">
       <section class="message-grid-4">
@@ -988,6 +1554,65 @@
         </div>
       </section>
     </section>
+
+<section
+  id="tab-planning"
+  class="tab-panel"
+>
+
+  <section class="card message-card">
+
+    <div class="message-card-head">
+
+      <div>
+        <h2>
+          Planning Updates
+        </h2>
+
+        <p>
+          Daily overview of newly assigned delivery dates
+          and delivery date changes.
+        </p>
+      </div>
+
+      <span
+        id="planningSummaryBadge"
+        class="badge info"
+      >
+        0 updates
+      </span>
+
+    </div>
+
+
+    <div
+      id="planningDigestList"
+      class="planning-digest-list"
+    >
+
+      <div class="planning-empty">
+
+        <div class="row-icon">
+          🚚
+        </div>
+
+        <div>
+          <strong>
+            Loading planning updates...
+          </strong>
+
+          <div class="row-sub">
+            Daily delivery planning summaries will appear here.
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </section>
+
+</section>
 
     <section id="tab-tasks" class="tab-panel">
       <section class="message-grid-3">

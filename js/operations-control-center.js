@@ -10,9 +10,12 @@
   let currentUser = null;
   let currentProfile = null;
 
-  let allOrders = [];
-  let filteredOrders = [];
+let allOrders = [];
+let filteredOrders = [];
 let allProducts = [];
+
+let deliveryDateHistoryMap =
+  new Map();
 let ownerProfiles = [];
 let deliveryGroupsMap = new Map();
 let closedDeliveryGroupOrderIds = new Set();
@@ -144,6 +147,104 @@ const STATUS_LABELS = {
 
     return d.toLocaleDateString("en-GB");
   }
+
+function getOrderImportDate(order) {
+  return (
+    order.imported_at ||
+    order.created_at ||
+    null
+  );
+}
+
+function getOrderDueDate(order) {
+  const importDate =
+    getOrderImportDate(order);
+
+  if (!importDate) {
+    return null;
+  }
+
+  const date =
+    new Date(importDate);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return null;
+  }
+
+  date.setDate(
+    date.getDate() + 21
+  );
+
+  return date;
+}
+
+function getOccDeliveryDate(order) {
+  return (
+    order.confirmed_delivery_date ||
+    order.expected_delivery_date ||
+    order.planned_route_date ||
+    order.routes?.planned_delivery_date ||
+    order.routes?.route_date ||
+    null
+  );
+}
+
+function orderHasPlannedDelivery(order) {
+  return !!getOccDeliveryDate(order);
+}
+
+function getOccDeliveryDeadline(order) {
+  return getOrderDueDate(order);
+}
+
+function getOrderAgeClass(order) {
+  const importDate =
+    getOrderImportDate(order);
+
+  if (!importDate) {
+    return "";
+  }
+
+  const imported =
+    new Date(importDate);
+
+  if (
+    Number.isNaN(
+      imported.getTime()
+    )
+  ) {
+    return "";
+  }
+
+  const now =
+    new Date();
+
+  imported.setHours(0, 0, 0, 0);
+  now.setHours(0, 0, 0, 0);
+
+  const ageDays =
+    Math.floor(
+      (
+        now.getTime() -
+        imported.getTime()
+      ) /
+      86400000
+    );
+
+  if (ageDays > 21) {
+    return "overdue";
+  }
+
+  if (ageDays >= 15) {
+    return "warning";
+  }
+
+  return "good";
+}
 
   function formatDateTime(value) {
     if (!value) return "—";
@@ -732,20 +833,20 @@ async function loadPodDownloadStatus() {
     return order.requested_delivery_date || order.delivery_date || null;
   }
 
-  function getExpectedDeliveryDate(order) {
-    const stop = getRouteStop(order);
+function getExpectedDeliveryDate(order) {
+  const stop = getRouteStop(order);
 
-    return (
-      order.expected_delivery_date ||
-      order.confirmed_delivery_date ||
-      order.planned_route_date ||
-      order.routes?.planned_delivery_date ||
-      order.routes?.route_date ||
-      stop?.planned_delivery_date ||
-      stop?.route_date ||
-      null
-    );
-  }
+  return (
+    order.confirmed_delivery_date ||
+    order.expected_delivery_date ||
+    order.planned_route_date ||
+    order.routes?.planned_delivery_date ||
+    order.routes?.route_date ||
+    stop?.planned_delivery_date ||
+    stop?.route_date ||
+    null
+  );
+}
 
   function getEtaStatus(order) {
     if (getPlannedEtaStart(order)) return "confirmed";
@@ -1833,18 +1934,103 @@ closedDeliveryGroupOrderIds =
       .map(String)
   );
 }
+
+async function loadDeliveryDateHistory() {
+  const cid =
+    await getCompanyId();
+
+  const {
+    data,
+    error
+  } =
+    await client
+      .from(
+        "order_delivery_date_history"
+      )
+      .select(`
+        id,
+        company_id,
+        order_id,
+        delivery_date,
+        change_sequence,
+        source,
+        changed_by,
+        created_at
+      `)
+      .eq(
+        "company_id",
+        cid
+      )
+      .order(
+        "change_sequence",
+        {
+          ascending: true
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: true
+        }
+      );
+
+  if (error) {
+    throw new Error(
+      "Delivery date history could not be loaded: " +
+      error.message
+    );
+  }
+
+  deliveryDateHistoryMap =
+    new Map();
+
+  (data || []).forEach(row => {
+    const orderId =
+      String(
+        row.order_id || ""
+      );
+
+    if (!orderId) {
+      return;
+    }
+
+    if (
+      !deliveryDateHistoryMap.has(
+        orderId
+      )
+    ) {
+      deliveryDateHistoryMap.set(
+        orderId,
+        []
+      );
+    }
+
+    deliveryDateHistoryMap
+      .get(orderId)
+      .push(row);
+  });
+}
+
 async function loadOrders() {
-  const cid = await getCompanyId();
+  const cid =
+    await getCompanyId();
 
-await loadOwnerProfilesForMinimumRules();
-await loadStoredDeliveryGroups();
-await loadAckDownloadStatus();
-await loadPodDownloadStatus();
+  await loadOwnerProfilesForMinimumRules();
+  await loadStoredDeliveryGroups();
+  await loadAckDownloadStatus();
+  await loadPodDownloadStatus();
 
-    let query = client
+  /*
+   * Nieuwe planning history laden.
+   */
+  await loadDeliveryDateHistory();
+
+  let query =
+    client
       .from("orders")
       .select(`
         *,
+
         customers (
           id,
           name,
@@ -1853,6 +2039,7 @@ await loadPodDownloadStatus();
           vat_number,
           billing_email
         ),
+
         routes (
           id,
           route_code,
@@ -1871,6 +2058,7 @@ await loadPodDownloadStatus();
           estimated_profit_gbp,
           estimated_margin_percentage
         ),
+
         route_stops (
           id,
           order_id,
@@ -1888,6 +2076,7 @@ await loadPodDownloadStatus();
           status,
           delivery_status
         ),
+
         order_documents (
           id,
           company_id,
@@ -1903,6 +2092,7 @@ await loadPodDownloadStatus();
           created_at,
           updated_at
         ),
+
         order_pod_assets (
           id,
           company_id,
@@ -1916,6 +2106,7 @@ await loadPodDownloadStatus();
           captured_at,
           captured_by_name
         ),
+
         order_activity_log (
           id,
           activity_type,
@@ -1925,36 +2116,39 @@ await loadPodDownloadStatus();
           created_by,
           created_at
         ),
-order_lines (
-  id,
-  order_id,
-  order_line_stock_priorities (
-    id,
-    priority_level,
-    priority_status,
-    reason,
-    created_at,
-    updated_at,
-    fulfilled_at
-  ),
-  quantity_ordered,
-  quantity_allocated,
-  matched_quantity,
-  packages_per_unit,
-  total_packages,
-  requested_package_no,
-  requested_package_total,
-  requested_package_label,
-  product_id,
-  sku_base,
-description,
-line_type,
-manual_description,
-manual_amount_gbp,
-manual_quantity,
-manual_unit,
-manual_rate_gbp,
-unit_volume_m3,
+
+        order_lines (
+          id,
+          order_id,
+
+          order_line_stock_priorities (
+            id,
+            priority_level,
+            priority_status,
+            reason,
+            created_at,
+            updated_at,
+            fulfilled_at
+          ),
+
+          quantity_ordered,
+          quantity_allocated,
+          matched_quantity,
+          packages_per_unit,
+          total_packages,
+          requested_package_no,
+          requested_package_total,
+          requested_package_label,
+          product_id,
+          sku_base,
+          description,
+          line_type,
+          manual_description,
+          manual_amount_gbp,
+          manual_quantity,
+          manual_unit,
+          manual_rate_gbp,
+          unit_volume_m3,
           total_volume_m3,
           total_line_volume_m3,
           tariff_storage,
@@ -1962,85 +2156,192 @@ unit_volume_m3,
           tariff_handling,
           tariff_transport,
           total_customer_charge,
+
           products (
-  id,
-  sku_base,
-  name,
-  description,
-  volume_m3,
-  weight_kg,
-  net_weight_kg,
-  package_count,
-  package_1_qty,
-  package_2_qty,
-  package_3_qty,
-  packages_per_unit
-),
+            id,
+            sku_base,
+            name,
+            description,
+            volume_m3,
+            weight_kg,
+            net_weight_kg,
+            package_count,
+            package_1_qty,
+            package_2_qty,
+            package_3_qty,
+            packages_per_unit
+          ),
+
           order_allocations (
-  id,
-  order_line_id,
-  item_id,
-  allocation_status,
-items (
-  id,
-  status,
-  product_id,
-  physical_product_id,
-  stock_set_id,
-  package_no,
-  package_total,
-  package_label
-)
-)
+            id,
+            order_line_id,
+            item_id,
+            allocation_status,
+
+            items (
+              id,
+              status,
+              product_id,
+              physical_product_id,
+              stock_set_id,
+              package_no,
+              package_total,
+              package_label
+            )
+          )
         )
       `)
-      .eq("company_id", cid)
-      .order("last_activity_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false });
+      .eq(
+        "company_id",
+        cid
+      )
+      .order(
+        "last_activity_at",
+        {
+          ascending: false,
+          nullsFirst: false
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: false
+        }
+      );
 
-    if (isProductOwnerRole() && currentProfile.customer_id) {
-      query = query.eq("customer_id", currentProfile.customer_id);
-    }
-
-    if (isRetailerRole() && currentProfile.retailer_code) {
-      query = query.eq("retailer_code", currentProfile.retailer_code);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-allOrders = (data || []).map(enrichOrder);
-rebuildDeliveryGroups();
-exposeDeliveryGroupsToPlanner();
-
-    selectedOrderIds.forEach(id => {
-      if (!allOrders.some(order => String(order.id) === String(id))) {
-        selectedOrderIds.delete(id);
-      }
-    });
-
-    expandedOrderIds.forEach(id => {
-      if (!allOrders.some(order => String(order.id) === String(id))) {
-        expandedOrderIds.delete(id);
-      }
-    });
-
-    applyFilters();
-    renderAll();
+  if (
+    isProductOwnerRole() &&
+    currentProfile.customer_id
+  ) {
+    query =
+      query.eq(
+        "customer_id",
+        currentProfile.customer_id
+      );
   }
 
-  function sortValue(order, key) {
-    if (key === "order") return normalize(order.order_number || "");
-    if (key === "customer") return normalize(order.product_owner_name || "");
-    if (key === "ship_to") return normalize(order.ship_to_address || "");
-    if (key === "products") return toNumber(order.product_completeness?.pct, 0);
-    if (key === "progress") return toNumber(order.progress_level, 0);
-    if (key === "finance") return normalize(order.derived_finance_status || "");
-    if (key === "confirmed_date") return getExpectedDeliveryDate(order) ? new Date(getExpectedDeliveryDate(order)).getTime() : 0;
-    if (key === "activity") return order.last_activity_at ? new Date(order.last_activity_at).getTime() : 0;
-
-    return normalize(order.order_number || "");
+  if (
+    isRetailerRole() &&
+    currentProfile.retailer_code
+  ) {
+    query =
+      query.eq(
+        "retailer_code",
+        currentProfile.retailer_code
+      );
   }
+
+  const {
+    data,
+    error
+  } =
+    await query;
+
+  if (error) {
+    throw error;
+  }
+
+  allOrders =
+    (data || [])
+      .map(enrichOrder);
+
+  rebuildDeliveryGroups();
+  exposeDeliveryGroupsToPlanner();
+
+  selectedOrderIds.forEach(id => {
+    if (
+      !allOrders.some(order =>
+        String(order.id) ===
+        String(id)
+      )
+    ) {
+      selectedOrderIds.delete(id);
+    }
+  });
+
+  expandedOrderIds.forEach(id => {
+    if (
+      !allOrders.some(order =>
+        String(order.id) ===
+        String(id)
+      )
+    ) {
+      expandedOrderIds.delete(id);
+    }
+  });
+
+  applyFilters();
+  renderAll();
+}
+
+function sortValue(order, key) {
+  if (key === "import_date") {
+    const value =
+      getOrderImportDate(order);
+
+    return value
+      ? new Date(value).getTime()
+      : 0;
+  }
+
+  if (key === "order") {
+    return normalize(
+      order.order_number || ""
+    );
+  }
+
+  if (key === "customer") {
+    return normalize(
+      order.product_owner_name || ""
+    );
+  }
+
+  if (key === "ship_to") {
+    return normalize(
+      order.ship_to_address || ""
+    );
+  }
+
+  if (key === "products") {
+    return toNumber(
+      order.product_completeness?.pct,
+      0
+    );
+  }
+
+  if (key === "progress") {
+    return toNumber(
+      order.progress_level,
+      0
+    );
+  }
+
+  if (key === "finance") {
+    return normalize(
+      order.derived_finance_status || ""
+    );
+  }
+
+  if (key === "confirmed_date") {
+    return getExpectedDeliveryDate(order)
+      ? new Date(
+          getExpectedDeliveryDate(order)
+        ).getTime()
+      : 0;
+  }
+
+  if (key === "activity") {
+    return order.last_activity_at
+      ? new Date(
+          order.last_activity_at
+        ).getTime()
+      : 0;
+  }
+
+  return normalize(
+    order.order_number || ""
+  );
+}
 
 function isServiceOrder(order) {
   const orderNumber =
@@ -3956,6 +4257,106 @@ function isWarehousePickupOrder(order) {
   );
 }
 
+function isFdsOrderLocked(order) {
+  const isFdsOrder =
+    normalize(
+      order?.transport_type
+    ) === "charter" ||
+    normalize(
+      order?.transport_type
+    ) === "fds" ||
+    normalize(
+      order?.status
+    ) === "export_for_charter";
+
+  if (!isFdsOrder) {
+    return false;
+  }
+
+  /*
+   * Nieuwe FDS-orders:
+   * gebruik de echte opgeslagen lock timestamp.
+   */
+  if (order?.fds_lock_at) {
+    const lockDate =
+      new Date(
+        order.fds_lock_at
+      );
+
+    if (
+      !Number.isNaN(
+        lockDate.getTime()
+      )
+    ) {
+      return (
+        new Date().getTime() >=
+        lockDate.getTime()
+      );
+    }
+  }
+
+  /*
+   * Fallback voor oudere FDS-orders
+   * die nog geen fds_lock_at hebben.
+   */
+  const collectionDate =
+    order?.fds_collection_date ||
+    null;
+
+  if (!collectionDate) {
+    return false;
+  }
+
+  const dateText =
+    String(
+      collectionDate
+    ).slice(0, 10);
+
+  const match =
+    dateText.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    );
+
+  if (!match) {
+    return false;
+  }
+
+  const year =
+    Number(match[1]);
+
+  const month =
+    Number(match[2]);
+
+  const day =
+    Number(match[3]);
+
+  /*
+   * Eén kalenderdag vóór collection.
+   */
+  const previousDay =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day - 1,
+        12,
+        0,
+        0
+      )
+    );
+
+  /*
+   * Voor bestaande oude orders is dit
+   * hoofdzakelijk een fallback.
+   *
+   * Nieuwe orders gebruiken altijd
+   * fds_lock_at uit Supabase.
+   */
+  return (
+    new Date().getTime() >=
+    previousDay.getTime()
+  );
+}
 function getFdsWeekLabel(order) {
   const collectionDate =
     order.fds_collection_date ||
@@ -3987,6 +4388,9 @@ function getFdsWeekLabel(order) {
 }
 
 function renderDeliveryCell(order) {
+  /*
+   * LEGACY / DELIVERED
+   */
   if (normalize(order.order_type) === "legacy") {
     const deliveredDate =
       order.confirmed_delivery_date ||
@@ -3996,165 +4400,167 @@ function renderDeliveryCell(order) {
 
     return `
       <div class="delivery-cell">
-        <strong>${escapeHtml(formatDate(deliveredDate))}</strong>
+        <strong>
+          ${escapeHtml(
+            formatDate(deliveredDate)
+          )}
+        </strong>
+
         ${pill("delivered", "Delivered")}
-        <span class="subline">Legacy delivered order</span>
+
+        <span class="subline">
+          Legacy delivered order
+        </span>
       </div>
     `;
   }
 
-if (isCollectionOrder(order)) {
-const collectionDate =
-  order.fds_collection_date ||
-  getExpectedDeliveryDate(order) ||
-  "";
 
-  return `
-    <div class="delivery-cell">
-
-      ${
-        collectionDate
-          ? `
-            <strong>
-              ${escapeHtml(
-                formatDate(collectionDate)
-              )}
-            </strong>
-          `
-          : ""
-      }
-
-      <span class="status-pill collection">
-        COLLECTION
-      </span>
-
-      <span class="subline">
-        ${
-          collectionDate
-            ? "Collection date"
-            : "Collection date pending"
-        }
-      </span>
-    </div>
-  `;
-}
-
-  if (isWarehousePickupOrder(order)) {
-    const pickupDate =
-      order.expected_delivery_date ||
-      order.confirmed_delivery_date ||
+  /*
+   * COLLECTION ORDER
+   */
+  if (isCollectionOrder(order)) {
+    const collectionDate =
+      order.fds_collection_date ||
+      getOccDeliveryDate(order) ||
       null;
-
-    const pickupStatus =
-      normalize(order.status) === "picked_up"
-        ? "Picked up"
-        : pickupDate
-          ? "Pickup date confirmed"
-          : "Pickup date pending";
 
     return `
       <div class="delivery-cell">
-        ${
-          pickupDate
-            ? `
-              <strong>
-                ${escapeHtml(formatDate(pickupDate))}
-              </strong>
-            `
-            : ""
-        }
+
+        <strong>
+          ${escapeHtml(
+            formatDate(
+              collectionDate ||
+              getOccDeliveryDeadline(order)
+            )
+          )}
+        </strong>
+
+        <span class="status-pill collection">
+          COLLECTION
+        </span>
+
+        <span class="subline">
+          ${
+            collectionDate
+              ? "Collection date"
+              : "Latest delivery date"
+          }
+        </span>
+
+      </div>
+    `;
+  }
+
+
+  /*
+   * WAREHOUSE PICKUP
+   */
+  if (isWarehousePickupOrder(order)) {
+    const pickupDate =
+      getOccDeliveryDate(order);
+
+    return `
+      <div class="delivery-cell">
+
+        <strong>
+          ${escapeHtml(
+            formatDate(
+              pickupDate ||
+              getOccDeliveryDeadline(order)
+            )
+          )}
+        </strong>
 
         <span class="status-pill pickup">
           PICK UP
         </span>
 
         <span class="subline">
-          ${escapeHtml(pickupStatus)}
+          ${
+            pickupDate
+              ? "Provisional pickup date"
+              : "Latest delivery date"
+          }
         </span>
+
       </div>
     `;
   }
 
-  if (isFdsCarrierOrder(order)) {
-    const fdsStatus = normalize(order.fds_status || "");
-    const isAllocated = fdsStatus === "allocated";
 
-    /*
-     * FDS-importdatum heeft voorrang.
-     * Als FDS nog unallocated is, tonen we de
-     * handmatig ingevoerde confirmed delivery date.
-     */
-    const deliveryDate =
-      order.expected_delivery_date ||
-      order.confirmed_delivery_date ||
-      null;
+  /*
+   * NORMAL / FDS DELIVERY
+   */
+  const plannedDate =
+    getOccDeliveryDate(order);
 
-    const etaFrom = formatTime(
-      order.delivery_eta_from || ""
-    );
+  const dueDate =
+    getOccDeliveryDeadline(order);
 
-    const etaTo = formatTime(
-      order.delivery_eta_to || ""
-    );
+const isFds =
+  (
+    normalize(order.transport_type) === "charter" ||
+    normalize(order.transport_type) === "fds" ||
+    normalize(order.status) === "export_for_charter"
+  ) &&
+  isFdsOrderLocked(order);
 
-    const etaText = etaFrom
-      ? etaTo && etaTo !== etaFrom
-        ? `${etaFrom} - ${etaTo}`
-        : etaFrom
-      : "";
+  const displayDate =
+    plannedDate || dueDate;
 
-    let statusText = "Actual date pending";
-
-    if (isAllocated) {
-      statusText = etaText || "Time not confirmed yet";
-    } else if (deliveryDate && etaText) {
-      statusText = `Manual date · ${etaText}`;
-    } else if (deliveryDate) {
-      statusText = "Manual delivery date";
-    }
-
-    return `
-      <div class="delivery-cell">
-        ${
-          deliveryDate
-            ? `
-              <strong>
-                ${escapeHtml(formatDate(deliveryDate))}
-              </strong>
-            `
-            : ""
-        }
-
-        ${pill("planned", getFdsWeekLabel(order))}
-
-        <span class="subline">
-          ${escapeHtml(statusText)}
-        </span>
-      </div>
-    `;
-  }
-
-  const expectedDate = getExpectedDeliveryDate(order);
-  const etaStatus = getEtaStatus(order);
-
-  const etaPill =
-    etaStatus === "confirmed"
-      ? pill("confirmed", "ETA confirmed")
-      : etaStatus === "planned"
-        ? pill("planned", "Date planned")
-        : pill("pending", "Pending");
+  const dateLabel =
+    plannedDate
+      ? "Provisional delivery date"
+      : "Latest delivery date";
 
   return `
     <div class="delivery-cell">
-      <strong>${escapeHtml(formatDate(expectedDate))}</strong>
-      ${etaPill}
+
+      <strong>
+        ${escapeHtml(
+          formatDate(displayDate)
+        )}
+      </strong>
+
+      ${
+        plannedDate
+          ? `
+            <span class="status-pill blue">
+              Planned
+            </span>
+          `
+          : `
+            <span class="status-pill gray">
+              Due
+            </span>
+          `
+      }
+
+      ${
+        isFds
+          ? `
+<button
+  type="button"
+  class="fds-info-badge"
+  data-fds-info-order-id="${escapeHtml(order.id)}"
+  title="Click for FDS planning information"
+>
+  FDS
+  <span class="fds-info-icon">i</span>
+</button>
+          `
+          : ""
+      }
+
       <span class="subline">
-        ${escapeHtml(getEtaDisplay(order))}
+        ${escapeHtml(dateLabel)}
       </span>
+
     </div>
   `;
 }
-
 
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
@@ -4535,16 +4941,19 @@ function renderProductLines(order) {
     line => normalize(line.line_type) === "manual"
   );
 
-  const stockHtml = !c.lines.length
-    ? `
+const stockHtml = !c.lines.length
+  ? `
       <div class="detail-line">
-        <span class="detail-label">Products</span>
+        <span class="detail-label">
+          Products
+        </span>
+
         <span class="detail-value">
-          No stock product lines found.
+          No product lines
         </span>
       </div>
     `
-    : c.lines.map(line => {
+  : c.lines.map(line => {
         const sourceLine = sourceLines.find(
           row => String(row.id) === String(line.id)
         );
@@ -5014,6 +5423,288 @@ function renderDocumentsPanel(order) {
   `;
 }
 
+function getDeliveryDateHistory(order) {
+  if (!order?.id) {
+    return [];
+  }
+
+  const rows =
+    deliveryDateHistoryMap.get(
+      String(order.id)
+    ) || [];
+
+  return rows
+    .slice()
+    .sort(
+      (a, b) => {
+
+        const sequenceA =
+          toNumber(
+            a.change_sequence,
+            0
+          );
+
+        const sequenceB =
+          toNumber(
+            b.change_sequence,
+            0
+          );
+
+        if (
+          sequenceA !== sequenceB
+        ) {
+          return (
+            sequenceA -
+            sequenceB
+          );
+        }
+
+        return (
+          new Date(
+            a.created_at || 0
+          ).getTime() -
+          new Date(
+            b.created_at || 0
+          ).getTime()
+        );
+      }
+    );
+}
+
+function renderDeliveryDateHistory(order) {
+  const history =
+    getDeliveryDateHistory(order);
+
+  if (!history.length) {
+    return `
+      <div class="planning-history-empty">
+        No delivery date planned yet.
+      </div>
+    `;
+  }
+
+  return `
+    <div class="planning-history">
+
+      <div class="planning-history-title">
+        Planning history
+      </div>
+
+      ${history
+        .map(
+          (item, index) => {
+
+            const isCurrent =
+              index ===
+              history.length - 1;
+
+            const sequence =
+              toNumber(
+                item.change_sequence,
+                index + 1
+              );
+
+            const changedAt =
+              item.created_at
+                ? new Date(
+                    item.created_at
+                  )
+                : null;
+
+            const changedAtText =
+              changedAt &&
+              !Number.isNaN(
+                changedAt.getTime()
+              )
+                ? changedAt.toLocaleString(
+                    "en-GB",
+                    {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: false
+                    }
+                  )
+                : "";
+
+            const changeLabel =
+              index === 0
+                ? "Set"
+                : "Changed";
+
+            return `
+              <div
+                class="
+                  planning-history-row
+                  ${isCurrent ? "current" : ""}
+                "
+              >
+
+                <div class="planning-history-main">
+
+                  <span class="planning-history-label">
+                    Planned ${sequence}
+                  </span>
+
+                  <span class="planning-history-date">
+                    ${escapeHtml(
+                      formatDate(
+                        item.delivery_date
+                      )
+                    )}
+
+                    ${
+                      isCurrent
+                        ? `
+                          <span
+                            class="planning-current-badge"
+                          >
+                            Current
+                          </span>
+                        `
+                        : ""
+                    }
+                  </span>
+
+                </div>
+
+                ${
+                  changedAtText
+                    ? `
+                      <div class="planning-history-meta">
+                        ${changeLabel}
+                        ${escapeHtml(
+                          changedAtText
+                        )}
+                      </div>
+                    `
+                    : ""
+                }
+
+              </div>
+            `;
+          }
+        )
+        .join("")}
+
+    </div>
+  `;
+}
+
+function renderFinanceActivityPanel(
+  order,
+  latestActivity,
+  financeStatus
+) {
+  return `
+    <section
+      class="
+        detail-box
+        finance-activity-compact
+      "
+    >
+
+      <h3>
+        ${
+          canSeeFinance()
+            ? "Finance / Activity"
+            : "Activity"
+        }
+      </h3>
+
+      <div class="finance-activity-main">
+
+        ${
+          canSeeFinance()
+            ? `
+              <div class="detail-line">
+                <span class="detail-label">
+                  Finance
+                </span>
+
+                <span class="detail-value">
+                  ${pill(
+                    financeStatus
+                  )}
+                </span>
+              </div>
+            `
+            : ""
+        }
+
+        ${
+          canSeeInternalPlanningData()
+            ? `
+              <div class="detail-line">
+                <span class="detail-label">
+                  Revenue
+                </span>
+
+                <span class="detail-value">
+                  ${formatMoney(
+                    getOrderRevenue(order)
+                  )}
+                </span>
+              </div>
+            `
+            : ""
+        }
+
+        <div class="detail-line">
+          <span class="detail-label">
+            Route
+          </span>
+
+          <span class="detail-value">
+            ${escapeHtml(
+              order.routes?.route_code ||
+              order.routes?.route_name ||
+              order.routes?.name ||
+              "—"
+            )}
+          </span>
+        </div>
+
+        <div class="detail-line">
+          <span class="detail-label">
+            Driver
+          </span>
+
+          <span class="detail-value">
+            ${escapeHtml(
+              order.routes?.driver_name ||
+              order.driver_name ||
+              "—"
+            )}
+          </span>
+        </div>
+
+      </div>
+
+      ${renderDeliveryDateHistory(order)}
+
+      <div class="finance-last-activity">
+
+        <span class="detail-label">
+          Last activity
+        </span>
+
+        <span class="detail-value">
+          ${escapeHtml(
+            latestActivity?.description ||
+            order.delivery_status_label ||
+            "—"
+          )}
+        </span>
+
+      </div>
+
+    </section>
+  `;
+}
+
 function renderExpandedRow(order) {
   const c =
     order.product_completeness ||
@@ -5026,23 +5717,42 @@ function renderExpandedRow(order) {
       : null;
 
   const isCancelled =
-    normalize(order.derived_lifecycle_status) === "cancelled" ||
-    normalize(order.status) === "cancelled" ||
-    normalize(order.overall_status) === "cancelled";
+    normalize(
+      order.derived_lifecycle_status
+    ) === "cancelled" ||
+    normalize(
+      order.status
+    ) === "cancelled" ||
+    normalize(
+      order.overall_status
+    ) === "cancelled";
 
   const cancellationReasonLabels = {
-    customer_cancelled: "Customer cancelled",
-    duplicate_order: "Duplicate order",
-    stock_unavailable: "Stock unavailable",
-    damaged: "Damaged",
-    other: "Other"
+    customer_cancelled:
+      "Customer cancelled",
+
+    duplicate_order:
+      "Duplicate order",
+
+    stock_unavailable:
+      "Stock unavailable",
+
+    damaged:
+      "Damaged",
+
+    other:
+      "Other"
   };
 
   const cancellationReason =
     cancellationReasonLabels[
-      normalize(order.cancellation_reason)
+      normalize(
+        order.cancellation_reason
+      )
     ] ||
-    cleanText(order.cancellation_reason) ||
+    cleanText(
+      order.cancellation_reason
+    ) ||
     "—";
 
   const financeStatus =
@@ -5053,12 +5763,21 @@ function renderExpandedRow(order) {
   return `
     <tr
       class="expanded-row"
-      data-expanded-order-id="${escapeHtml(order.id)}"
+      data-expanded-order-id="${escapeHtml(
+        order.id
+      )}"
     >
+
       <td colspan="13">
+
         <div class="order-expanded-panel">
 
+          <!-- =========================
+               TABS
+               ========================= -->
+
           <div class="expanded-tabs">
+
             <button
               class="expanded-tab active"
               type="button"
@@ -5090,338 +5809,443 @@ function renderExpandedRow(order) {
             ${
               canSeeFinance()
                 ? `
-                  <button
-                    class="expanded-tab"
-                    type="button"
-                  >
-                    Finance
-                  </button>
-                `
+                    <button
+                      class="expanded-tab"
+                      type="button"
+                    >
+                      Finance
+                    </button>
+                  `
                 : ""
             }
+
           </div>
+
+
+          <!-- =========================
+               OVERVIEW GRID
+               ========================= -->
 
           <div class="expanded-grid">
 
-            <!-- ORDER DETAILS -->
+
+            <!-- =========================
+                 ORDER DETAILS
+                 ========================= -->
+
             <section class="detail-box">
-              <h3>Order Details</h3>
 
-<div class="detail-line">
-  <span class="detail-label">Order</span>
+              <h3>
+                Order Details
+              </h3>
 
-  <span class="detail-value">
-    ${escapeHtml(order.order_number || "—")}
-  </span>
-</div>
-
-<div class="detail-line">
-  <span class="detail-label">Import date</span>
-
-  <span class="detail-value">
-    ${escapeHtml(formatDateTime(order.created_at))}
-  </span>
-</div>
-
-<div class="detail-line">
-  <span class="detail-label">Supplier ref</span>
-
-                <span class="detail-value">
-                  ${escapeHtml(order.external_reference || "—")}
-                </span>
-              </div>
 
               <div class="detail-line">
-                <span class="detail-label">PO</span>
+
+                <span class="detail-label">
+                  Order
+                </span>
 
                 <span class="detail-value">
-                  ${escapeHtml(order.purchase_order || "—")}
+                  ${escapeHtml(
+                    order.order_number ||
+                    "—"
+                  )}
                 </span>
+
               </div>
 
+
               <div class="detail-line">
-                <span class="detail-label">Owner</span>
+
+                <span class="detail-label">
+                  Import date
+                </span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    formatDate(
+                      getOrderImportDate(
+                        order
+                      )
+                    )
+                  )}
+                </span>
+
+              </div>
+
+
+              <div class="detail-line">
+
+                <span class="detail-label">
+                  Supplier ref
+                </span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.external_reference ||
+                    "—"
+                  )}
+                </span>
+
+              </div>
+
+
+              <div class="detail-line">
+
+                <span class="detail-label">
+                  PO
+                </span>
+
+                <span class="detail-value">
+                  ${escapeHtml(
+                    order.purchase_order ||
+                    "—"
+                  )}
+                </span>
+
+              </div>
+
+
+              <div class="detail-line">
+
+                <span class="detail-label">
+                  Owner
+                </span>
 
                 <span class="detail-value">
                   ${escapeHtml(
                     order.product_owner_name ||
-                    getProductOwnerName(order) ||
+                    getProductOwnerName(
+                      order
+                    ) ||
                     "—"
                   )}
                 </span>
+
               </div>
 
+
               <div class="detail-line">
-                <span class="detail-label">Retailer</span>
+
+                <span class="detail-label">
+                  Retailer
+                </span>
 
                 <span class="detail-value">
                   ${escapeHtml(
                     order.retailer_name ||
-                    getRetailerName(order) ||
+                    getRetailerName(
+                      order
+                    ) ||
                     "—"
                   )}
                 </span>
+
               </div>
 
+
               <div class="detail-line">
-                <span class="detail-label">Ship to</span>
+
+                <span class="detail-label">
+                  Ship to
+                </span>
 
                 <span class="detail-value">
                   ${escapeHtml(
                     order.ship_to_address ||
-                    getAddressText(order) ||
+                    getAddressText(
+                      order
+                    ) ||
                     "—"
                   )}
                 </span>
+
               </div>
+
             </section>
 
-            <!-- LIFECYCLE -->
+
+            <!-- =========================
+                 LIFECYCLE
+                 ========================= -->
+
             <section class="detail-box">
-              <h3>Lifecycle</h3>
+
+              <h3>
+                Lifecycle
+              </h3>
+
 
               <div class="detail-line">
-                <span class="detail-label">Current</span>
+
+                <span class="detail-label">
+                  Current
+                </span>
 
                 <span class="detail-value">
-                  ${pill(order.derived_lifecycle_status)}
+                  ${pill(
+                    order.derived_lifecycle_status
+                  )}
                 </span>
+
               </div>
+
 
               ${
                 isCancelled
                   ? `
-                    <div class="detail-line">
-                      <span class="detail-label">Reason</span>
 
-                      <span class="detail-value">
-                        ${escapeHtml(cancellationReason)}
-                      </span>
-                    </div>
+                      <div class="detail-line">
 
-                    ${
-                      order.cancellation_notes
-                        ? `
-                          <div class="detail-line">
-                            <span class="detail-label">Notes</span>
+                        <span class="detail-label">
+                          Reason
+                        </span>
 
-                            <span class="detail-value">
-                              ${escapeHtml(
-                                order.cancellation_notes
-                              )}
-                            </span>
-                          </div>
-                        `
-                        : ""
-                    }
+                        <span class="detail-value">
+                          ${escapeHtml(
+                            cancellationReason
+                          )}
+                        </span>
 
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Charge customer
-                      </span>
+                      </div>
 
-                      <span class="detail-value">
-                        ${
-                          order.is_chargeable === true
-                            ? "Yes"
-                            : "No"
-                        }
-                      </span>
-                    </div>
 
-                    <div class="detail-line">
-                      <span class="detail-label">Finance</span>
+                      ${
+                        order.cancellation_notes
+                          ? `
 
-                      <span class="detail-value">
-                        ${pill(financeStatus)}
-                      </span>
-                    </div>
-                  `
+                              <div class="detail-line">
+
+                                <span class="detail-label">
+                                  Notes
+                                </span>
+
+                                <span class="detail-value">
+                                  ${escapeHtml(
+                                    order.cancellation_notes
+                                  )}
+                                </span>
+
+                              </div>
+
+                            `
+                          : ""
+                      }
+
+
+                      <div class="detail-line">
+
+                        <span class="detail-label">
+                          Charge customer
+                        </span>
+
+                        <span class="detail-value">
+                          ${
+                            order.is_chargeable ===
+                            true
+                              ? "Yes"
+                              : "No"
+                          }
+                        </span>
+
+                      </div>
+
+
+                      <div class="detail-line">
+
+                        <span class="detail-label">
+                          Finance
+                        </span>
+
+                        <span class="detail-value">
+                          ${pill(
+                            financeStatus
+                          )}
+                        </span>
+
+                      </div>
+
+                    `
                   : `
-<div class="detail-line">
-  <span class="detail-label">
-    Completeness
-  </span>
 
-  <span class="detail-value">
-    ${formatNumber(
-      c.matched,
-      0
-    )}
-    /
-    ${formatNumber(
-      c.required,
-      0
-    )}
-    packages physically available
+                      <div class="detail-line">
 
-    ${
-      isOrderExpectedComplete(order) &&
-      c.status !== "complete"
-        ? `
-          <span class="subline">
-            <span class="status-pill blue">
-              Expected complete
-            </span>
-          </span>
+                        <span class="detail-label">
+                          Completeness
+                        </span>
 
-          <span class="subline">
-            Complete from:
-            <strong>
-              ${escapeHtml(
-                formatDate(
-                  getOrderExpectedCompleteDate(
-                    order
-                  )
-                )
-              )}
-            </strong>
-          </span>
-        `
-        : ""
-    }
-  </span>
-</div>
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Requested
-                      </span>
+                        <span class="detail-value">
 
-                      <span class="detail-value">
-                        ${escapeHtml(
-                          formatDate(
-                            getRequestedDeliveryDate(order)
-                          )
-                        )}
-                      </span>
-                    </div>
+                          ${formatNumber(
+                            c.matched,
+                            0
+                          )}
+                          /
+                          ${formatNumber(
+                            c.required,
+                            0
+                          )}
 
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Expected
-                      </span>
+                          packages physically available
 
-                      <span class="detail-value">
-                        ${escapeHtml(
-                          formatDate(
-                            getExpectedDeliveryDate(order)
-                          )
-                        )}
-                      </span>
-                    </div>
 
-                    <div class="detail-line">
-                      <span class="detail-label">ETA</span>
+                          ${
+                            isOrderExpectedComplete(
+                              order
+                            ) &&
+                            c.status !==
+                              "complete"
+                              ? `
 
-                      <span class="detail-value">
-                        ${escapeHtml(getEtaDisplay(order))}
-                      </span>
-                    </div>
-                  `
+                                  <span class="subline">
+
+                                    <span
+                                      class="status-pill blue"
+                                    >
+                                      Expected complete
+                                    </span>
+
+                                  </span>
+
+
+                                  <span class="subline">
+
+                                    Complete from:
+
+                                    <strong>
+                                      ${escapeHtml(
+                                        formatDate(
+                                          getOrderExpectedCompleteDate(
+                                            order
+                                          )
+                                        )
+                                      )}
+                                    </strong>
+
+                                  </span>
+
+                                `
+                              : ""
+                          }
+
+                        </span>
+
+                      </div>
+
+
+                      <div class="detail-line">
+
+                        <span class="detail-label">
+                          Requested
+                        </span>
+
+                        <span class="detail-value">
+                          ${escapeHtml(
+                            formatDate(
+                              getRequestedDeliveryDate(
+                                order
+                              )
+                            )
+                          )}
+                        </span>
+
+                      </div>
+
+
+                      <div class="detail-line">
+
+                        <span class="detail-label">
+                          Expected
+                        </span>
+
+                        <span class="detail-value">
+                          ${escapeHtml(
+                            formatDate(
+                              getExpectedDeliveryDate(
+                                order
+                              )
+                            )
+                          )}
+                        </span>
+
+                      </div>
+
+
+                      <div class="detail-line">
+
+                        <span class="detail-label">
+                          ETA
+                        </span>
+
+                        <span class="detail-value">
+                          ${escapeHtml(
+                            getEtaDisplay(
+                              order
+                            )
+                          )}
+                        </span>
+
+                      </div>
+
+                    `
               }
+
             </section>
 
-            <!-- DOCUMENTS -->
+
+            <!-- =========================
+                 DOCUMENTS
+                 ========================= -->
+
             <section class="detail-box">
-              <h3>Documents</h3>
 
-              ${renderDocumentsPanel(order)}
-            </section>
-
-            <!-- PRODUCTS -->
-            <section class="detail-box">
-              <h3>Products</h3>
-
-              ${renderProductLines(order)}
-            </section>
-
-            <!-- FINANCE / ACTIVITY -->
-            <section class="detail-box">
               <h3>
-                ${
-                  canSeeFinance()
-                    ? "Finance / Activity"
-                    : "Activity"
-                }
+                Documents
               </h3>
 
-              ${
-                canSeeFinance()
-                  ? `
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Finance
-                      </span>
+              ${renderDocumentsPanel(
+                order
+              )}
 
-                      <span class="detail-value">
-                        ${pill(financeStatus)}
-                      </span>
-                    </div>
-                  `
-                  : ""
-              }
-
-              ${
-                canSeeInternalPlanningData()
-                  ? `
-                    <div class="detail-line">
-                      <span class="detail-label">
-                        Revenue
-                      </span>
-
-                      <span class="detail-value">
-                        ${formatMoney(
-                          getOrderRevenue(order)
-                        )}
-                      </span>
-                    </div>
-                  `
-                  : ""
-              }
-
-              <div class="detail-line">
-                <span class="detail-label">Route</span>
-
-                <span class="detail-value">
-                  ${escapeHtml(
-                    order.routes?.route_code ||
-                    order.routes?.route_name ||
-                    order.routes?.name ||
-                    "—"
-                  )}
-                </span>
-              </div>
-
-              <div class="detail-line">
-                <span class="detail-label">Driver</span>
-
-                <span class="detail-value">
-                  ${escapeHtml(
-                    order.routes?.driver_name ||
-                    order.driver_name ||
-                    "—"
-                  )}
-                </span>
-              </div>
-
-              <div class="detail-line">
-                <span class="detail-label">
-                  Last activity
-                </span>
-
-                <span class="detail-value">
-                  ${escapeHtml(
-                    latestActivity?.description ||
-                    order.delivery_status_label ||
-                    "—"
-                  )}
-                </span>
-              </div>
             </section>
 
+
+            <!-- =========================
+                 PRODUCTS
+                 ========================= -->
+
+            <section class="detail-box">
+
+              <h3>
+                Products
+              </h3>
+
+              ${renderProductLines(
+                order
+              )}
+
+            </section>
+
+
+            <!-- =========================
+                 FINANCE / ACTIVITY
+                 + PLANNING HISTORY
+                 ========================= -->
+
+            ${renderFinanceActivityPanel(
+              order,
+              latestActivity,
+              financeStatus
+            )}
+
+
           </div>
+
         </div>
+
       </td>
+
     </tr>
   `;
 }
@@ -6965,6 +7789,25 @@ if (!filteredOrders.length) {
             </button>
           </td>
 
+<td class="import-date-cell ${getOrderAgeClass(order)}">
+  <strong>
+    ${escapeHtml(
+      formatDate(
+        getOrderImportDate(order)
+      )
+    )}
+  </strong>
+
+  <span class="subline">
+    Due:
+    ${escapeHtml(
+      formatDate(
+        getOrderDueDate(order)
+      )
+    )}
+  </span>
+</td>
+
       <td>
   <span class="order-ref">
     ${escapeHtml(order.order_number || "—")}
@@ -7056,21 +7899,27 @@ ${
     `;
   })()
 }
-          <td class="actions-cell">
+<td class="actions-cell">
   ${
-    isTenantRole()
-      ? `<button
-           class="action-menu-btn tenant-only"
-           type="button"
-           data-order-actions="${escapeHtml(orderId)}">
-           ⋯
-         </button>`
-      : `<button
-           class="action-menu-btn"
-           type="button"
-           data-expand-order-id="${escapeHtml(orderId)}">
-           ⋯
-         </button>`
+    isTenantRole() || isBellstoneProductOwnerLogin()
+      ? `
+          <button
+            class="action-menu-btn"
+            type="button"
+            data-order-actions="${escapeHtml(orderId)}"
+          >
+            ⋯
+          </button>
+        `
+      : `
+          <button
+            class="action-menu-btn"
+            type="button"
+            data-expand-order-id="${escapeHtml(orderId)}"
+          >
+            ⋯
+          </button>
+        `
   }
 </td>
         </tr>
@@ -7167,15 +8016,106 @@ byId("occGenericActionModal")?.addEventListener("click", event => {
   }
 });
 
+function configureOrderActionMenuForCurrentUser() {
+  const menu =
+    byId("occRowActionMenu");
+
+  if (!menu) {
+    return;
+  }
+
+  const sections =
+    Array.from(
+      menu.querySelectorAll(
+        ".occ-row-menu-section"
+      )
+    );
+
+  const buttons =
+    Array.from(
+      menu.querySelectorAll(
+        "[data-row-action]"
+      )
+    );
+
+  /*
+   * Sofa2U / Veynor:
+   * alles zichtbaar.
+   */
+  if (isTenantRole()) {
+    sections.forEach(section => {
+      section.style.display = "";
+    });
+
+    buttons.forEach(button => {
+      button.style.display = "";
+    });
+
+    return;
+  }
+
+  /*
+   * Bellstone:
+   * alleen View Activity.
+   */
+  if (isBellstoneProductOwnerLogin()) {
+
+    sections.forEach(section => {
+      section.style.display = "none";
+    });
+
+    buttons.forEach(button => {
+      button.style.display = "none";
+    });
+
+    const activityButton =
+      menu.querySelector(
+        '[data-row-action="view_activity"]'
+      );
+
+    if (activityButton) {
+      activityButton.style.display = "";
+    }
+
+    /*
+     * Alleen HISTORY-kop tonen.
+     */
+    sections.forEach(section => {
+      if (
+        normalize(section.textContent) ===
+        "history"
+      ) {
+        section.style.display = "";
+      }
+    });
+
+    return;
+  }
+
+  /*
+   * Andere externe rollen:
+   * geen OCC-acties.
+   */
+  sections.forEach(section => {
+    section.style.display = "none";
+  });
+
+  buttons.forEach(button => {
+    button.style.display = "none";
+  });
+}
+
 function openOrderActionMenu(
   orderId,
   button
 ) {
   /*
-   * Zorg eerst dat de Quality-optie
-   * in het bestaande menu aanwezig is.
+   * Quality alleen toevoegen voor
+   * interne Sofa2U / Veynor-gebruikers.
    */
-  ensureQualityActionInOccMenu();
+  if (isTenantRole()) {
+    ensureQualityActionInOccMenu();
+  }
 
   const menu =
     byId("occRowActionMenu");
@@ -7210,6 +8150,17 @@ function openOrderActionMenu(
     return;
   }
 
+  /*
+   * Menu-items aanpassen aan de rol.
+   *
+   * Bellstone:
+   * alleen View Activity.
+   *
+   * Sofa2U:
+   * volledig menu.
+   */
+  configureOrderActionMenuForCurrentUser();
+
   const rect =
     button.getBoundingClientRect();
 
@@ -7238,31 +8189,25 @@ function openOrderActionMenu(
   );
 
   /*
-   * Quality is vooral bedoeld voor
-   * geleverde/historische orders,
-   * maar we blokkeren hem hier bewust niet.
-   *
-   * Daardoor kun je indien nodig ook al
-   * tijdens een delivery issue een case maken.
+   * Quality is alleen relevant
+   * voor interne gebruikers.
    */
-  const qualityButton =
-    menu.querySelector(
-      '[data-row-action="quality_case"]'
-    );
-
-  if (qualityButton) {
-    const existingLabel =
-      qualityButton.querySelector(
-        "span:last-child"
+  if (isTenantRole()) {
+    const qualityButton =
+      menu.querySelector(
+        '[data-row-action="quality_case"]'
       );
 
-    if (existingLabel) {
-      existingLabel.textContent =
-        normalize(
-          order.derived_lifecycle_status
-        ) === "delivered"
-          ? "Create / Open"
-          : "Create / Open";
+    if (qualityButton) {
+      const existingLabel =
+        qualityButton.querySelector(
+          "span:last-child"
+        );
+
+      if (existingLabel) {
+        existingLabel.textContent =
+          "Create / Open";
+      }
     }
   }
 
@@ -7271,7 +8216,11 @@ function openOrderActionMenu(
     {
       orderId,
       orderNumber:
-        order.order_number
+        order.order_number,
+      role:
+        currentProfile?.role,
+      bellstone:
+        isBellstoneProductOwnerLogin()
     }
   );
 }
@@ -7441,20 +8390,76 @@ tbody.querySelectorAll("[data-upload-legacy-ack]").forEach(button => {
   });
 });
 
-    tbody.querySelectorAll("[data-memo-order-id]").forEach(el => {
-      el.addEventListener("click", event => {
-        event.stopPropagation();
-        openMemoModal(el.dataset.memoOrderId);
-      });
-    });
+    tbody
+  .querySelectorAll(
+    "[data-memo-order-id]"
+  )
+  .forEach(el => {
 
-    tbody.querySelectorAll("[data-open-pod-photos]").forEach(button => {
-      button.addEventListener("click", event => {
+    el.addEventListener(
+      "click",
+      event => {
+
         event.stopPropagation();
-        openPhotoModal(button.dataset.openPodPhotos);
-      });
-    });
-  }
+
+        openMemoModal(
+          el.dataset.memoOrderId
+        );
+      }
+    );
+
+  });
+
+
+tbody
+  .querySelectorAll(
+    "[data-open-pod-photos]"
+  )
+  .forEach(button => {
+
+    button.addEventListener(
+      "click",
+      event => {
+
+        event.stopPropagation();
+
+        openPhotoModal(
+          button.dataset.openPodPhotos
+        );
+      }
+    );
+
+  });
+
+
+/*
+ * FDS information badge
+ */
+tbody
+  .querySelectorAll(
+    "[data-fds-info-order-id]"
+  )
+  .forEach(button => {
+
+    button.addEventListener(
+      "click",
+      event => {
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        openFdsInfoModal(
+          button.getAttribute(
+            "data-fds-info-order-id"
+          )
+        );
+
+      }
+    );
+
+  });
+
+}
 
   function renderAll() {
     renderKpis();
@@ -7477,11 +8482,310 @@ style.textContent = `
   font-weight:950;
 }
 
+.delivery-cell{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:5px;
+}
+
+.delivery-cell > strong{
+  width:100%;
+  display:block;
+  font-weight:950;
+  color:#07152f;
+}
+
+.fds-info-badge{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+
+  min-height:24px;
+  padding:4px 9px;
+
+  border:1px solid #93c5fd;
+  border-radius:999px;
+
+  background:#eff6ff;
+  color:#1267ff;
+
+  font-size:9px;
+  font-weight:950;
+  line-height:1;
+
+  cursor:pointer;
+
+  box-shadow:
+    0 1px 3px rgba(18,103,255,.10);
+
+  transition:
+    background .15s ease,
+    border-color .15s ease,
+    transform .15s ease,
+    box-shadow .15s ease;
+}
+
+.fds-info-badge:hover{
+  background:#dbeafe;
+  border-color:#60a5fa;
+
+  transform:translateY(-1px);
+
+  box-shadow:
+    0 3px 8px rgba(18,103,255,.18);
+}
+
+.fds-info-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:15px;
+  height:15px;
+
+  border-radius:999px;
+
+  background:#1267ff;
+  color:#ffffff;
+
+  font-size:9px;
+  font-weight:950;
+}
+
+.fds-info-modal-card{
+  width:min(560px,94vw);
+
+  background:#ffffff;
+
+  border:1px solid #dbeafe;
+  border-radius:18px;
+
+  box-shadow:
+    0 24px 70px rgba(15,23,42,.28);
+
+  overflow:hidden;
+}
+
+.fds-info-modal-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+
+  padding:18px 20px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #071b3b,
+      #0d3f88
+    );
+
+  color:#ffffff;
+}
+
+.fds-info-modal-heading{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+
+.fds-info-modal-heading strong{
+  display:block;
+  font-size:15px;
+  font-weight:950;
+}
+
+.fds-info-modal-heading .subline{
+  margin-top:3px;
+  color:#bfdbfe;
+}
+
+.fds-info-modal-logo{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:42px;
+  height:42px;
+
+  border-radius:12px;
+
+  background:#1267ff;
+  color:#ffffff;
+
+  font-size:12px;
+  font-weight:950;
+
+  box-shadow:
+    0 0 0 4px rgba(255,255,255,.10);
+}
+
+.fds-info-close{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:36px;
+  height:36px;
+
+  border:1px solid rgba(255,255,255,.22);
+  border-radius:10px;
+
+  background:rgba(255,255,255,.10);
+  color:#ffffff;
+
+  font-size:22px;
+  line-height:1;
+
+  cursor:pointer;
+}
+
+.fds-info-close:hover{
+  background:rgba(255,255,255,.18);
+}
+
+.fds-info-modal-body{
+  padding:20px;
+}
+
+.fds-info-callout{
+  display:flex;
+  gap:14px;
+
+  padding:16px;
+
+  border:1px solid #bfdbfe;
+  border-radius:14px;
+
+  background:#eff6ff;
+}
+
+.fds-info-callout-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+
+  width:32px;
+  height:32px;
+  flex:0 0 32px;
+
+  border-radius:999px;
+
+  background:#1267ff;
+  color:#ffffff;
+
+  font-weight:950;
+}
+
+.fds-info-callout strong{
+  display:block;
+  margin-bottom:6px;
+
+  color:#0f2e5d;
+  font-size:13px;
+}
+
+.fds-info-callout p{
+  margin:0;
+
+  color:#334155;
+  font-size:12px;
+  line-height:1.55;
+}
+
+.fds-info-note{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+
+  margin-top:14px;
+  padding:13px 14px;
+
+  border-left:4px solid #1267ff;
+  border-radius:8px;
+
+  background:#f8fafc;
+}
+
+.fds-info-note strong{
+  color:#0f2e5d;
+  font-size:12px;
+}
+
+.fds-info-note span{
+  color:#475569;
+  font-size:12px;
+  line-height:1.45;
+}
+
+.delivery-cell .subline{
+  width:100%;
+}
+
+.import-date-cell{
+  min-width:105px;
+  width:105px;
+  white-space:nowrap;
+  transition:
+    background .15s ease,
+    border-color .15s ease;
+}
+
+.import-date-cell strong{
+  display:block;
+  color:#07152f;
+  font-weight:900;
+}
+
+/* 0 - 14 days */
+.import-date-cell.good{
+  background:#f0fdf4;
+}
+
+/* 15 - 21 days */
+.import-date-cell.warning{
+  background:#fff7ed;
+}
+
+/* More than 21 days */
+.import-date-cell.overdue{
+  background:#fef2f2;
+}
+
+.import-date-cell.good .subline{
+  color:#15803d;
+}
+
+.import-date-cell.warning .subline{
+  color:#c2410c;
+}
+
+.import-date-cell.overdue .subline{
+  color:#b91c1c;
+  font-weight:900;
+}
+
 .status-pill.collection{
   background:#ecfeff;
   border:1px solid #67e8f9;
   color:#0e7490;
   font-weight:950;
+}
+
+.import-date-column,
+.import-date-cell{
+  min-width:105px;
+  width:105px;
+  white-space:nowrap;
+}
+
+.import-date-cell strong{
+  display:block;
+  color:#07152f;
+  font-weight:900;
 }
 
 .compact-type-logo.collection{
@@ -8303,6 +9607,184 @@ box-shadow:
   min-width:150px;
 }
 
+/* =========================================
+   PLANNING HISTORY
+   ========================================= */
+
+.finance-activity-compact{
+  display:flex;
+  flex-direction:column;
+}
+
+.finance-activity-main{
+  display:flex;
+  flex-direction:column;
+  gap:0;
+}
+
+.finance-activity-compact .detail-line{
+  min-height:34px;
+  padding:5px 0;
+  margin:0;
+}
+
+.planning-history{
+  margin-top:12px;
+  padding-top:12px;
+
+  border-top:1px solid #dbe5f1;
+}
+
+.planning-history-title{
+  margin-bottom:7px;
+
+  color:#07152f;
+
+  font-size:11px;
+  font-weight:950;
+}
+
+.planning-history-row{
+  display:block;
+
+  min-height:30px;
+
+  padding:6px 0;
+
+  border-bottom:
+    1px solid #eef2f7;
+}
+
+.planning-history-row:last-child{
+  border-bottom:0;
+}
+
+.planning-history-label{
+  color:#64748b;
+
+  font-size:10.5px;
+  font-weight:850;
+}
+
+.planning-history-date{
+  display:flex;
+
+  align-items:center;
+  flex-wrap:wrap;
+
+  gap:6px;
+
+  color:#07152f;
+
+  font-size:11px;
+  font-weight:900;
+}
+
+.planning-history-main{
+  display:grid;
+
+  grid-template-columns:
+    minmax(90px, 110px)
+    1fr;
+
+  align-items:center;
+
+  gap:10px;
+}
+
+.planning-history-meta{
+  margin-left:120px;
+
+  margin-top:2px;
+
+  color:#94a3b8;
+
+  font-size:9.5px;
+  font-weight:700;
+
+  line-height:1.35;
+}
+
+.planning-history-row.current{
+  margin-top:2px;
+
+  padding:
+    5px 7px;
+
+  border:
+    1px solid #bfdbfe;
+
+  border-radius:8px;
+
+  background:#eff6ff;
+}
+
+.planning-current-badge{
+  display:inline-flex;
+
+  align-items:center;
+  justify-content:center;
+
+  min-height:20px;
+
+  padding:
+    2px 7px;
+
+  border:
+    1px solid #93c5fd;
+
+  border-radius:999px;
+
+  background:#ffffff;
+
+  color:#1267ff;
+
+  font-size:9px;
+  font-weight:950;
+}
+
+.planning-history-empty{
+  margin-top:12px;
+
+  padding-top:10px;
+
+  border-top:
+    1px solid #dbe5f1;
+
+  color:#94a3b8;
+
+  font-size:10.5px;
+}
+
+.finance-last-activity{
+  display:grid;
+
+  grid-template-columns:
+    minmax(90px,110px)
+    1fr;
+
+  gap:10px;
+
+  margin-top:12px;
+
+  padding-top:10px;
+
+  border-top:
+    1px solid #dbe5f1;
+}
+
+.finance-last-activity .detail-label{
+  color:#64748b;
+  font-size:10.5px;
+  font-weight:850;
+}
+
+.finance-last-activity .detail-value{
+  color:#07152f;
+  font-size:10.5px;
+  line-height:1.4;
+}
+
 `;
 
 document.head.appendChild(style);
@@ -8315,15 +9797,6 @@ document.head.appendChild(style);
 
     const modal = document.createElement("div");
     modal.className = "occ-memo-modal-backdrop";
-    modal.innerHTML = `
-      <section class="occ-memo-modal-card">
-        <div class="occ-memo-modal-head">
-          <strong>Memo · ${escapeHtml(order.order_number || "Order")}</strong>
-          <button class="mini-btn" type="button" data-close>Close</button>
-        </div>
-        <div class="occ-memo-modal-text">${escapeHtml(getMemo(order) || "No memo available.")}</div>
-      </section>
-    `;
 
     modal.addEventListener("click", event => {
       if (event.target === modal || event.target.hasAttribute("data-close")) {
@@ -8338,45 +9811,74 @@ function openPhotoModal(orderId) {
   ensurePageStyles();
 
   const order = allOrders.find(
-    row => String(row.id) === String(orderId)
+    row =>
+      String(row.id) ===
+      String(orderId)
   );
 
   if (!order) {
-    showToast("Order not found.", "err");
+    showToast(
+      "Order not found.",
+      "err"
+    );
     return;
   }
 
-  const photos = getPodPhotos(order);
+  const photos =
+    getPodPhotos(order);
 
-  const ack = order.external_reference || "NO-ACK";
-  const so = order.order_number || "Order";
+  const ack =
+    order.external_reference ||
+    "NO-ACK";
+
+  const so =
+    order.order_number ||
+    "Order";
+
   const retailer =
     order.retailer_name ||
     order.retail_name ||
     "Retailer";
 
-  const deliveryDate = formatDate(
-    order.confirmed_delivery_date ||
-    order.pod_signed_at ||
-    order.updated_at ||
-    order.created_at
-  );
+  const deliveryDate =
+    formatDate(
+      order.confirmed_delivery_date ||
+      order.pod_signed_at ||
+      order.updated_at ||
+      order.created_at
+    );
 
-  const modal = document.createElement("div");
-  modal.className = "occ-memo-modal-backdrop occ-photo-backdrop";
+  const modal =
+    document.createElement("div");
+
+  modal.className =
+    "occ-memo-modal-backdrop occ-photo-backdrop";
 
   modal.innerHTML = `
     <section class="occ-photo-modal-card">
 
       <div class="occ-photo-modal-header">
+
         <div>
-          <h2>Delivery Photos</h2>
+          <h2>
+            Delivery Photos ·
+            ${escapeHtml(so)}
+          </h2>
 
           <div class="occ-photo-order-meta">
-            <span><strong>${escapeHtml(so)}</strong></span>
-            <span>ACK: ${escapeHtml(ack)}</span>
-            <span>${escapeHtml(retailer)}</span>
-            <span>Delivered: ${escapeHtml(deliveryDate)}</span>
+
+            <span>
+              ${escapeHtml(retailer)}
+            </span>
+
+            <span>
+              ${escapeHtml(ack)}
+            </span>
+
+            <span>
+              ${escapeHtml(deliveryDate)}
+            </span>
+
           </div>
         </div>
 
@@ -8384,69 +9886,53 @@ function openPhotoModal(orderId) {
           class="occ-photo-close"
           type="button"
           data-close-photo-modal
-          aria-label="Close delivery photos"
+          aria-label="Close"
         >
           ×
         </button>
+
       </div>
 
       <div class="occ-photo-modal-body">
+
         ${
           photos.length
             ? `
               <div class="occ-photo-grid">
-                ${photos.map((url, index) => {
-                  const fileName =
-                    `${so}-${ack}-POD-photo-${index + 1}.jpg`;
 
-                  return `
-                    <article class="occ-photo-card">
+                ${photos.map(
+                  (photo, index) => `
+                    <div class="occ-photo-card">
+
                       <div class="occ-photo-number">
                         Photo ${index + 1}
                       </div>
 
                       <a
-                        href="${escapeHtml(url)}"
+                        class="occ-photo-preview-link"
+                        href="${escapeHtml(photo)}"
                         target="_blank"
                         rel="noopener"
-                        class="occ-photo-preview-link"
-                        title="Open photo in full size"
                       >
                         <img
-                          src="${escapeHtml(url)}"
-                          alt="POD photo ${index + 1}"
-                          loading="lazy"
-                        />
+                          src="${escapeHtml(photo)}"
+                          alt="Delivery photo ${index + 1}"
+                        >
                       </a>
 
-                      <a
-                        href="${escapeHtml(url)}"
-                        download="${escapeHtml(fileName)}"
-                        class="btn btn-primary occ-photo-download"
-                      >
-                        Download Photo ${index + 1}
-                      </a>
-                    </article>
-                  `;
-                }).join("")}
+                    </div>
+                  `
+                ).join("")}
+
               </div>
             `
             : `
               <div class="occ-photo-empty">
-                No delivery photos are available for this order.
+                No delivery photos available.
               </div>
             `
         }
-      </div>
 
-      <div class="occ-photo-modal-footer">
-        <button
-          class="btn"
-          type="button"
-          data-close-photo-modal
-        >
-          Close
-        </button>
       </div>
 
     </section>
@@ -8467,22 +9953,32 @@ function openPhotoModal(orderId) {
     }
   }
 
-  modal.addEventListener("click", event => {
-    if (
-      event.target === modal ||
-      event.target.closest("[data-close-photo-modal]")
-    ) {
-      closePhotoModal();
+  modal.addEventListener(
+    "click",
+    event => {
+
+      if (
+        event.target === modal ||
+        event.target.closest(
+          "[data-close-photo-modal]"
+        )
+      ) {
+        closePhotoModal();
+      }
+
     }
-  });
+  );
 
   document.addEventListener(
     "keydown",
     handlePhotoModalKeydown
   );
 
-  document.body.appendChild(modal);
+  document.body.appendChild(
+    modal
+  );
 }
+
   function openManualOpsModal(orderId) {
     const order = allOrders.find(row => String(row.id) === String(orderId));
 
@@ -10314,7 +11810,152 @@ function closeGenericActionModal() {
 }
 
 function getOrderById(orderId) {
-  return allOrders.find(order => String(order.id) === String(orderId)) || null;
+  return allOrders.find(
+    order =>
+      String(order.id) ===
+      String(orderId)
+  ) || null;
+}
+
+/*
+ * Public read-only accessor for OCC tools.
+ *
+ * ActivityViewTool runs in its own JS file and therefore
+ * cannot access the private allOrders array inside this IIFE.
+ *
+ * Exposing only this lookup function keeps the order data
+ * read-only from the external tool.
+ */
+window.getOrderById = getOrderById;
+
+
+function openFdsInfoModal(orderId) {
+  ensurePageStyles();
+
+  const order =
+    getOrderById(orderId);
+
+  if (!order) {
+    return;
+  }
+
+  const existing =
+    document.querySelector(
+      "#fdsOccInfoModal"
+    );
+
+  if (existing) {
+    existing.remove();
+  }
+
+  const modal =
+    document.createElement("div");
+
+  modal.id =
+    "fdsOccInfoModal";
+
+  modal.className =
+    "occ-memo-modal-backdrop";
+
+  modal.innerHTML = `
+    <section class="fds-info-modal-card">
+
+      <div class="fds-info-modal-header">
+
+        <div class="fds-info-modal-heading">
+
+          <div class="fds-info-modal-logo">
+            FDS
+          </div>
+
+          <div>
+            <strong>
+              FDS Delivery ·
+              ${escapeHtml(
+                order.order_number ||
+                "Order"
+              )}
+            </strong>
+
+            <div class="subline">
+              ${escapeHtml(
+                order.retailer_name ||
+                getRetailerName(order) ||
+                ""
+              )}
+            </div>
+          </div>
+
+        </div>
+
+        <button
+          class="fds-info-close"
+          type="button"
+          data-close-fds-info
+          aria-label="Close"
+        >
+          ×
+        </button>
+
+      </div>
+
+      <div class="fds-info-modal-body">
+
+        <div class="fds-info-callout">
+
+          <div class="fds-info-callout-icon">
+            i
+          </div>
+
+          <div>
+            <strong>
+              This order has been assigned to FDS.
+            </strong>
+
+            <p>
+              Once the order has been collected by FDS,
+              it becomes more difficult to add or combine
+              new orders with this delivery.
+            </p>
+          </div>
+
+        </div>
+
+        <div class="fds-info-note">
+
+          <strong>
+            Planning note
+          </strong>
+
+          <span>
+            Please check with Sofa2U before making
+            changes to the delivery plan.
+          </span>
+
+        </div>
+
+      </div>
+
+    </section>
+  `;
+
+  modal.addEventListener(
+    "click",
+    event => {
+      if (
+        event.target === modal ||
+        event.target.closest(
+          "[data-close-fds-info]"
+        )
+      ) {
+        modal.remove();
+      }
+    }
+  );
+
+  document.body.appendChild(
+    modal
+  );
 }
 
 async function getNextCopyOrderNumber(originalOrderNumber) {
@@ -11091,13 +12732,14 @@ const preparedRows = rows.map(row => {
         delivery_eta_from,
         delivery_eta_to,
         delivery_eta_status,
-        fds_status,
-        fds_job_ref,
-        fds_eta_label,
-        fds_last_import_at,
-        fds_collection_date,
-        fds_collection_week,
-        planned_route_date
+fds_status,
+fds_job_ref,
+fds_eta_label,
+fds_last_import_at,
+fds_collection_date,
+fds_collection_week,
+fds_lock_at,
+planned_route_date
       `)
       .eq("company_id", cid)
       .in("order_number", allOrderNumbers);

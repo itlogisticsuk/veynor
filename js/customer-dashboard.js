@@ -1109,14 +1109,11 @@ function getUniqueInvoices(orders = filteredOrders) {
   }
 
 function getDeliveredDate(order) {
-    return (
-        order.actual_delivery_date ||
-        order.fds_delivery_date ||
-        order.delivered_at ||
-        order.delivery_completed_at ||
-        order.pod_completed_at ||
-        ""
-    );
+  return (
+    order.pod_completed_at ||
+    order.pod_signed_at ||
+    ""
+  );
 }
 
 function getCompleteDate(order) {
@@ -1198,6 +1195,246 @@ function getCompleteDate(order) {
 
     return businessDays;
   }
+
+function getDeliveryPerformanceRegion(order) {
+  const explicitRegion =
+    normalize(
+      order.delivery_region || ""
+    );
+
+  if (
+    explicitRegion.includes(
+      "scotland"
+    )
+  ) {
+    return "Scotland";
+  }
+
+  if (
+    explicitRegion.includes(
+      "england"
+    )
+  ) {
+    return "England";
+  }
+
+
+  const postcode =
+    String(
+      order.delivery_postcode ||
+      order.postcode_display ||
+      ""
+    )
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, "");
+
+
+  if (!postcode) {
+    return "Other";
+  }
+
+
+  /*
+   * Schotse postcodegebieden.
+   */
+  const scotlandPrefixes = [
+    "AB",
+    "DD",
+    "DG",
+    "EH",
+    "FK",
+    "G",
+    "HS",
+    "IV",
+    "KA",
+    "KW",
+    "KY",
+    "ML",
+    "PA",
+    "PH",
+    "TD",
+    "ZE"
+  ];
+
+
+  if (
+    scotlandPrefixes.some(
+      prefix =>
+        postcode.startsWith(
+          prefix
+        )
+    )
+  ) {
+    return "Scotland";
+  }
+
+
+  /*
+   * Wales en Northern Ireland
+   * tellen wel mee bij ALL,
+   * maar niet bij England.
+   */
+  const otherUkPrefixes = [
+    "BT",
+    "CF",
+    "LD",
+    "LL",
+    "NP",
+    "SA"
+  ];
+
+
+  if (
+    otherUkPrefixes.some(
+      prefix =>
+        postcode.startsWith(
+          prefix
+        )
+    )
+  ) {
+    return "Other";
+  }
+
+
+  return "England";
+}
+
+
+function averagePerformanceDays(rows) {
+  const values =
+    rows
+      .map(row =>
+        Number(
+          row.workingDays
+        )
+      )
+      .filter(
+        value =>
+          Number.isFinite(
+            value
+          )
+      );
+
+
+  if (!values.length) {
+    return null;
+  }
+
+
+  return (
+    values.reduce(
+      (sum, value) =>
+        sum + value,
+      0
+    ) /
+    values.length
+  );
+}
+
+
+function getImportDeliveredPerformanceRows() {
+  const start =
+    dateRangeStart();
+
+
+  return rawOrders
+    .filter(order =>
+      !isLegacyOrder(order) &&
+      !isCancelled(order)
+    )
+    .map(order => {
+
+      const imported =
+        getImportedDate(order);
+
+      const delivered =
+        getDeliveredDate(order);
+
+
+      if (
+        !imported ||
+        !delivered
+      ) {
+        return null;
+      }
+
+
+      const importedDate =
+        new Date(imported);
+
+      const deliveredDate =
+        new Date(delivered);
+
+
+      if (
+        Number.isNaN(
+          importedDate.getTime()
+        ) ||
+        Number.isNaN(
+          deliveredDate.getTime()
+        )
+      ) {
+        return null;
+      }
+
+
+      /*
+       * Voor deze KPI is de periode gebaseerd
+       * op de daadwerkelijke afleverdatum.
+       *
+       * Dus "Last 90 days" betekent:
+       * geleverd in de laatste 90 dagen.
+       */
+      if (
+        start &&
+        deliveredDate < start
+      ) {
+        return null;
+      }
+
+
+      const workingDays =
+        businessDayDiff(
+          imported,
+          delivered
+        );
+
+
+      if (
+        workingDays === null
+      ) {
+        return null;
+      }
+
+
+      return {
+        order,
+        imported,
+        delivered,
+        deliveredDate,
+        workingDays,
+
+        region:
+          getDeliveryPerformanceRegion(
+            order
+          ),
+
+        month:
+          monthKey(
+            delivered
+          )
+      };
+    })
+    .filter(Boolean);
+}
+
+
+function getImportDeliveredAverage() {
+  return averagePerformanceDays(
+    getImportDeliveredPerformanceRows()
+  );
+}
 
   function enrichOrder(order) {
     const completeness =
@@ -1802,75 +2039,92 @@ function getCompleteDate(order) {
   }
 
   function renderKpis() {
-    const orders =
-      filteredOrders;
+  const orders =
+    filteredOrders;
 
-    const open =
-      orders.filter(isOpen);
 
-    const awaiting =
-      orders.filter(order =>
-        order.lifecycle_status ===
-        "awaiting_goods"
-      );
+  const open =
+    orders.filter(
+      isOpen
+    );
 
-    const complete =
-      orders.filter(order =>
-        [
-          "stock_complete",
-          "picked"
-        ].includes(
-          order.lifecycle_status
-        )
-      );
 
-    const missingQty =
-      orders.reduce(
-        (sum, order) =>
-          sum +
-          toNumber(
-            order.product_completeness
-              ?.missing,
-            0
-          ),
-        0
-      );
+  const awaiting =
+    orders.filter(order =>
+      order.lifecycle_status ===
+      "awaiting_goods"
+    );
 
-    const deliveredMonth =
-      orders.filter(
-        isDeliveredThisMonth
-      );
 
-    const attention =
-      orders.filter(
-        isAttention
-      );
+  const complete =
+    orders.filter(order =>
+      [
+        "stock_complete",
+        "picked"
+      ].includes(
+        order.lifecycle_status
+      )
+    );
 
-    const openWithConfirmedDates =
-      open.filter(order =>
-        !!order.confirmed_delivery_date
-      );
 
-    const confirmedPct =
-      open.length
-        ? (
-            openWithConfirmedDates.length /
-            open.length
-          ) * 100
-        : 0;
+  const missingQty =
+    orders.reduce(
+      (sum, order) =>
+        sum +
+        toNumber(
+          order
+            .product_completeness
+            ?.missing,
+          0
+        ),
+      0
+    );
 
-    const podAvailable =
-      orders.filter(order =>
-        hasDocument(
-          order,
-          "pod"
-        )
-      ).length;
 
-const invoicesAvailable =
-  getUniqueInvoices(orders).length;
+  const deliveredMonth =
+    orders.filter(
+      isDeliveredThisMonth
+    );
 
-    const retailers = new Set(
+
+  const attention =
+    orders.filter(
+      isAttention
+    );
+
+
+  const openWithConfirmedDates =
+    open.filter(order =>
+      !!order.confirmed_delivery_date
+    );
+
+
+  const confirmedPct =
+    open.length
+      ? (
+          openWithConfirmedDates.length /
+          open.length
+        ) * 100
+      : 0;
+
+
+  const podAvailable =
+    orders.filter(order =>
+      hasDocument(
+        order,
+        "pod"
+      )
+    ).length;
+
+
+  const invoicesAvailable =
+    getUniqueInvoices(
+      orders
+    ).length;
+
+
+  const retailers =
+    new Set(
       orders
         .map(order =>
           normalize(
@@ -1880,131 +2134,1233 @@ const invoicesAvailable =
         .filter(Boolean)
     );
 
-    const completeToDeliveredLeadTimes =
-      orders
-        .filter(order =>
-          [
-            "delivered",
-            "invoiced",
-            "closed"
-          ].includes(
-            order.lifecycle_status
-          )
-        )
-        .map(order =>
-          businessDayDiff(
-            order.complete_date_display,
-            order.delivered_date_display
-          )
-        )
-        .filter(
-          value =>
-            value !== null
-        );
 
-const avgCompleteToDelivered =
-  completeToDeliveredLeadTimes.length
-    ? completeToDeliveredLeadTimes.reduce(
-        (sum, value) => sum + value,
-        0
-      ) / completeToDeliveredLeadTimes.length
-    : null;
+  /*
+   * ========================================
+   * IMPORT → DELIVERED
+   * ========================================
+   */
 
-    setText(
-      "kpiOpenOrders",
-      formatNumber(open.length)
+  const avgImportToDelivered =
+    getImportDeliveredAverage();
+
+
+  setText(
+    "kpiOpenOrders",
+    formatNumber(
+      open.length
+    )
+  );
+
+
+  setText(
+    "kpiAwaitingGoods",
+    formatNumber(
+      awaiting.length
+    )
+  );
+
+
+  const awaitingGoodsElement =
+    byId(
+      "kpiAwaitingGoods"
     );
 
-    setText(
-      "kpiAwaitingGoods",
-      formatNumber(awaiting.length)
+
+  if (awaitingGoodsElement) {
+
+    awaitingGoodsElement
+      .classList
+      .toggle(
+        "kpi-good",
+        awaiting.length === 0
+      );
+
+    awaitingGoodsElement
+      .classList
+      .toggle(
+        "kpi-warn",
+        awaiting.length > 0
+      );
+  }
+
+
+  setText(
+    "kpiStockComplete",
+    formatNumber(
+      complete.length
+    )
+  );
+
+
+  setText(
+    "kpiMissingProducts",
+    formatNumber(
+      missingQty
+    )
+  );
+
+
+  setText(
+    "kpiDeliveredMonth",
+    formatNumber(
+      deliveredMonth.length
+    )
+  );
+
+
+  /*
+   * Nog maar één gemiddelde KPI.
+   */
+  setText(
+    "kpiAvgLeadImport",
+    formatDays(
+      avgImportToDelivered
+    )
+  );
+
+
+  setText(
+    "kpiConfirmedDates",
+    formatPercent(
+      confirmedPct
+    )
+  );
+
+
+  setText(
+    "kpiPodAvailable",
+    formatNumber(
+      podAvailable
+    )
+  );
+
+
+  setText(
+    "kpiInvoicesAvailable",
+    formatNumber(
+      invoicesAvailable
+    )
+  );
+
+
+  setText(
+    "kpiRetailers",
+    formatNumber(
+      retailers.size
+    )
+  );
+
+
+  setText(
+    "kpiAttention",
+    formatNumber(
+      attention.length
+    )
+  );
+}
+
+function renderDeliveryPerformanceModal() {
+  const summaryBox =
+    byId(
+      "performanceSummary"
     );
 
-    const awaitingGoodsElement =
-      byId("kpiAwaitingGoods");
+  const monthsBox =
+    byId(
+      "performanceMonths"
+    );
 
-    if (awaitingGoodsElement) {
-      awaitingGoodsElement
-        .classList
-        .toggle(
-          "kpi-good",
-          awaiting.length === 0
-        );
+  const periodBox =
+    byId(
+      "performancePeriodText"
+    );
 
-      awaitingGoodsElement
-        .classList
-        .toggle(
-          "kpi-warn",
-          awaiting.length > 0
-        );
+
+  if (
+    !summaryBox ||
+    !monthsBox
+  ) {
+    return;
+  }
+
+
+  const rows =
+    getImportDeliveredPerformanceRows();
+
+
+  const englandRows =
+    rows.filter(
+      row =>
+        row.region ===
+        "England"
+    );
+
+
+  const scotlandRows =
+    rows.filter(
+      row =>
+        row.region ===
+        "Scotland"
+    );
+
+
+  /*
+   * Toon welke periode bovenin
+   * het dashboard geselecteerd is.
+   */
+
+  const periodSelect =
+    byId(
+      "dateRange"
+    );
+
+  const periodLabel =
+    periodSelect
+      ?.options[
+        periodSelect.selectedIndex
+      ]
+      ?.textContent
+      ?.trim() ||
+    "Selected period";
+
+
+  if (periodBox) {
+    periodBox.textContent =
+      `Period: ${periodLabel} · Based on actual delivery date`;
+  }
+
+
+  /*
+   * =========================================
+   * SUMMARY: ALL / ENGLAND / SCOTLAND
+   * =========================================
+   */
+
+  const summaries = [
+    {
+      label:
+        "All",
+      rows
+    },
+
+    {
+      label:
+        "England",
+      rows:
+        englandRows
+    },
+
+    {
+      label:
+        "Scotland",
+      rows:
+        scotlandRows
+    }
+  ];
+
+
+  summaryBox.innerHTML =
+    summaries
+      .map(item => {
+
+        const average =
+          averagePerformanceDays(
+            item.rows
+          );
+
+        return `
+          <div class="performance-summary-card">
+
+            <div class="performance-summary-label">
+              ${escapeHtml(
+                item.label
+              )}
+            </div>
+
+            <div class="performance-summary-value">
+              ${escapeHtml(
+                formatDays(
+                  average
+                )
+              )}
+            </div>
+
+            <div class="performance-summary-sub">
+
+              ${formatNumber(
+                item.rows.length
+              )}
+
+              ${
+                item.rows.length === 1
+                  ? "order"
+                  : "orders"
+              }
+
+            </div>
+
+          </div>
+        `;
+      })
+      .join("");
+
+
+  /*
+   * =========================================
+   * GROEPEREN PER AFLEVERMAAND
+   * =========================================
+   */
+
+  const monthMap =
+    new Map();
+
+
+  rows.forEach(row => {
+
+    if (
+      !monthMap.has(
+        row.month
+      )
+    ) {
+      monthMap.set(
+        row.month,
+        []
+      );
     }
 
-    setText(
-      "kpiStockComplete",
-      formatNumber(complete.length)
-    );
+    monthMap
+      .get(row.month)
+      .push(row);
+  });
 
-    setText(
-      "kpiMissingProducts",
-      formatNumber(missingQty)
-    );
 
-    setText(
-      "kpiDeliveredMonth",
-      formatNumber(
-        deliveredMonth.length
+  const months =
+    [...monthMap.entries()]
+      .sort(
+        ([monthA], [monthB]) =>
+          monthB.localeCompare(
+            monthA
+          )
+      );
+
+
+  if (!months.length) {
+
+    monthsBox.innerHTML = `
+      <div class="performance-empty">
+        No delivered orders with a valid import date were found for this period.
+      </div>
+    `;
+
+    return;
+  }
+
+
+  monthsBox.innerHTML =
+    months
+      .map(
+        ([month, monthRows]) => {
+
+          const england =
+            monthRows.filter(
+              row =>
+                row.region ===
+                "England"
+            );
+
+          const scotland =
+            monthRows.filter(
+              row =>
+                row.region ===
+                "Scotland"
+            );
+
+
+          const avgAll =
+            averagePerformanceDays(
+              monthRows
+            );
+
+          const avgEngland =
+            averagePerformanceDays(
+              england
+            );
+
+          const avgScotland =
+            averagePerformanceDays(
+              scotland
+            );
+
+
+          /*
+           * Nieuwste levering bovenaan
+           * binnen iedere maand.
+           */
+          const sortedRows =
+            [...monthRows]
+              .sort(
+                (a, b) =>
+                  b.deliveredDate -
+                  a.deliveredDate
+              );
+
+
+          return `
+            <div
+              class="performance-month"
+              data-performance-month
+            >
+
+              <button
+                type="button"
+                class="performance-month-button"
+                data-toggle-performance-month
+              >
+
+                <div class="performance-month-name">
+                  ${escapeHtml(
+                    monthLabel(
+                      month
+                    )
+                  )}
+                </div>
+
+
+                <div class="performance-month-metric">
+                  All:
+                  ${escapeHtml(
+                    formatDays(
+                      avgAll
+                    )
+                  )}
+                </div>
+
+
+                <div class="performance-month-metric">
+                  England:
+                  ${escapeHtml(
+                    formatDays(
+                      avgEngland
+                    )
+                  )}
+                </div>
+
+
+                <div class="performance-month-metric">
+                  Scotland:
+                  ${escapeHtml(
+                    formatDays(
+                      avgScotland
+                    )
+                  )}
+                </div>
+
+
+                <div class="performance-month-arrow">
+                  ▾
+                </div>
+
+              </button>
+
+
+              <div class="performance-order-wrap">
+
+                <table class="performance-order-table">
+
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Bellstone Ref</th>
+                      <th>Retailer</th>
+                      <th>Region</th>
+                      <th>Imported</th>
+                      <th>Delivered</th>
+                      <th>Working Days</th>
+                    </tr>
+                  </thead>
+
+
+                  <tbody>
+
+                    ${sortedRows
+                      .map(row => {
+
+                        const order =
+                          row.order;
+
+                        return `
+                          <tr>
+
+                            <td>
+                              <span class="performance-order-number">
+                                ${escapeHtml(
+                                  order.order_number ||
+                                  "—"
+                                )}
+                              </span>
+                            </td>
+
+
+                            <td>
+                              <span class="performance-order-ref">
+                                ${escapeHtml(
+                                  order.external_reference ||
+                                  "—"
+                                )}
+                              </span>
+                            </td>
+
+
+                            <td>
+                              ${escapeHtml(
+                                order.retailer_display ||
+                                getRetailerName(
+                                  order
+                                ) ||
+                                "—"
+                              )}
+                            </td>
+
+
+                            <td>
+                              <span class="performance-region">
+                                ${escapeHtml(
+                                  row.region
+                                )}
+                              </span>
+                            </td>
+
+
+                            <td>
+                              ${escapeHtml(
+                                formatDate(
+                                  row.imported
+                                )
+                              )}
+                            </td>
+
+
+                            <td>
+                              ${escapeHtml(
+                                formatDate(
+                                  row.delivered
+                                )
+                              )}
+                            </td>
+
+
+                            <td>
+                              <span class="performance-days">
+                                ${formatNumber(
+                                  row.workingDays
+                                )}
+                              </span>
+                            </td>
+
+                          </tr>
+                        `;
+                      })
+                      .join("")}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+            </div>
+          `;
+        }
       )
+      .join("");
+}
+
+
+function openDeliveryPerformanceModal() {
+  const modal =
+    byId(
+      "deliveryPerformanceModal"
     );
 
-    setText(
-      "kpiAvgLeadComplete",
-      formatDays(
-        avgCompleteToDelivered
-      )
+  if (!modal) {
+    return;
+  }
+
+
+  renderDeliveryPerformanceModal();
+
+
+  modal.classList.add(
+    "open"
+  );
+
+  modal.setAttribute(
+    "aria-hidden",
+    "false"
+  );
+
+  document.body.style.overflow =
+    "hidden";
+}
+
+
+function closeDeliveryPerformanceModal() {
+  const modal =
+    byId(
+      "deliveryPerformanceModal"
     );
 
-    setText(
-      "kpiAvgLeadImport",
-      formatDays(
-        avgCompleteToDelivered
-      )
+  if (!modal) {
+    return;
+  }
+
+
+  modal.classList.remove(
+    "open"
+  );
+
+  modal.setAttribute(
+    "aria-hidden",
+    "true"
+  );
+
+  document.body.style.overflow =
+    "";
+}
+
+function exportDeliveryPerformancePdf() {
+  const jsPdf =
+    window.jspdf?.jsPDF ||
+    window.jsPDF;
+
+  if (!jsPdf) {
+    showToast(
+      "PDF library is not available.",
+      "err"
+    );
+    return;
+  }
+
+  const rows =
+    getImportDeliveredPerformanceRows();
+
+  if (!rows.length) {
+    showToast(
+      "No delivery performance data available.",
+      "err"
+    );
+    return;
+  }
+
+  const doc =
+    new jsPdf({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+  const pageWidth =
+    doc.internal.pageSize.getWidth();
+
+  const margin = 14;
+  let y = 16;
+
+
+  /*
+   * Titel
+   */
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(16);
+
+  doc.text(
+    "Import to Delivered Performance",
+    margin,
+    y
+  );
+
+  y += 7;
+
+
+  /*
+   * Subtitel
+   */
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.setFontSize(9);
+
+  doc.text(
+    "Average working days from order import to actual delivery",
+    margin,
+    y
+  );
+
+  y += 7;
+
+
+  /*
+   * Periode
+   */
+  const periodSelect =
+    byId("dateRange");
+
+  const periodLabel =
+    periodSelect
+      ?.options[
+        periodSelect.selectedIndex
+      ]
+      ?.textContent
+      ?.trim() ||
+    "Selected period";
+
+  doc.text(
+    `Period: ${periodLabel}`,
+    margin,
+    y
+  );
+
+  y += 9;
+
+
+  /*
+   * Summary
+   */
+  const englandRows =
+    rows.filter(
+      row =>
+        row.region ===
+        "England"
     );
 
-    setText(
-      "kpiConfirmedDates",
-      formatPercent(
-        confirmedPct
-      )
+  const scotlandRows =
+    rows.filter(
+      row =>
+        row.region ===
+        "Scotland"
     );
 
-    setText(
-      "kpiPodAvailable",
-      formatNumber(
-        podAvailable
+  const summaries = [
+    {
+      label: "All",
+      rows
+    },
+    {
+      label: "England",
+      rows: englandRows
+    },
+    {
+      label: "Scotland",
+      rows: scotlandRows
+    }
+  ];
+
+  const boxGap = 4;
+
+  const boxWidth =
+    (
+      pageWidth -
+      margin * 2 -
+      boxGap * 2
+    ) / 3;
+
+  summaries.forEach(
+    (item, index) => {
+
+      const x =
+        margin +
+        index *
+          (
+            boxWidth +
+            boxGap
+          );
+
+      doc.roundedRect(
+        x,
+        y,
+        boxWidth,
+        22,
+        2,
+        2
+      );
+
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
+      doc.setFontSize(8);
+
+      doc.text(
+        item.label.toUpperCase(),
+        x + 4,
+        y + 6
+      );
+
+      const avg =
+        averagePerformanceDays(
+          item.rows
+        );
+
+      doc.setFontSize(14);
+
+      doc.text(
+        formatDays(avg),
+        x + 4,
+        y + 13
+      );
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setFontSize(8);
+
+      doc.text(
+        `${item.rows.length} orders`,
+        x + 4,
+        y + 18
+      );
+    }
+  );
+
+  y += 30;
+
+
+  /*
+   * Groeperen per maand
+   */
+  const monthMap =
+    new Map();
+
+  rows.forEach(row => {
+
+    if (
+      !monthMap.has(
+        row.month
       )
+    ) {
+      monthMap.set(
+        row.month,
+        []
+      );
+    }
+
+    monthMap
+      .get(row.month)
+      .push(row);
+  });
+
+
+  const months =
+    [...monthMap.entries()]
+      .sort(
+        ([a], [b]) =>
+          b.localeCompare(a)
+      );
+
+
+  months.forEach(
+    ([month, monthRows]) => {
+
+      const england =
+        monthRows.filter(
+          row =>
+            row.region ===
+            "England"
+        );
+
+      const scotland =
+        monthRows.filter(
+          row =>
+            row.region ===
+            "Scotland"
+        );
+
+
+      const avgAll =
+        averagePerformanceDays(
+          monthRows
+        );
+
+      const avgEngland =
+        averagePerformanceDays(
+          england
+        );
+
+      const avgScotland =
+        averagePerformanceDays(
+          scotland
+        );
+
+
+      /*
+       * Nieuwe pagina indien nodig.
+       */
+      if (y > 265) {
+        doc.addPage();
+        y = 16;
+      }
+
+
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
+      doc.setFontSize(10);
+
+      doc.text(
+        monthLabel(month),
+        margin,
+        y
+      );
+
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setFontSize(8);
+
+      doc.text(
+        `All: ${formatDays(avgAll)}   England: ${formatDays(avgEngland)}   Scotland: ${formatDays(avgScotland)}`,
+        margin + 42,
+        y
+      );
+
+      y += 5;
+
+
+      /*
+       * Kolomkoppen
+       */
+      doc.setFont(
+        "helvetica",
+        "bold"
+      );
+
+      doc.setFontSize(7);
+
+      doc.text(
+        "Order",
+        margin,
+        y
+      );
+
+      doc.text(
+        "Bellstone Ref",
+        margin + 24,
+        y
+      );
+
+      doc.text(
+        "Retailer",
+        margin + 52,
+        y
+      );
+
+      doc.text(
+        "Region",
+        margin + 113,
+        y
+      );
+
+      doc.text(
+        "Imported",
+        margin + 139,
+        y
+      );
+
+      doc.text(
+        "Delivered",
+        margin + 161,
+        y
+      );
+
+      doc.text(
+        "Days",
+        margin + 184,
+        y
+      );
+
+      y += 4;
+
+
+      const sortedRows =
+        [...monthRows]
+          .sort(
+            (a, b) =>
+              b.deliveredDate -
+              a.deliveredDate
+          );
+
+
+      sortedRows.forEach(row => {
+
+        if (y > 282) {
+          doc.addPage();
+          y = 16;
+        }
+
+        const order =
+          row.order;
+
+        doc.setFont(
+          "helvetica",
+          "normal"
+        );
+
+        doc.setFontSize(7);
+
+        doc.text(
+          String(
+            order.order_number ||
+            "-"
+          ).slice(0, 16),
+          margin,
+          y
+        );
+
+        doc.text(
+          String(
+            order.external_reference ||
+            "-"
+          ).slice(0, 18),
+          margin + 24,
+          y
+        );
+
+        doc.text(
+          String(
+            order.retailer_display ||
+            getRetailerName(order) ||
+            "-"
+          ).slice(0, 38),
+          margin + 52,
+          y
+        );
+
+        doc.text(
+          row.region,
+          margin + 113,
+          y
+        );
+
+        doc.text(
+          formatDate(
+            row.imported
+          ),
+          margin + 139,
+          y
+        );
+
+        doc.text(
+          formatDate(
+            row.delivered
+          ),
+          margin + 161,
+          y
+        );
+
+        doc.text(
+          String(
+            row.workingDays
+          ),
+          margin + 184,
+          y
+        );
+
+        y += 4;
+      });
+
+
+      y += 5;
+    }
+  );
+
+
+  /*
+   * Bestandsnaam
+   */
+  const today =
+    new Date();
+
+  const yyyy =
+    today.getFullYear();
+
+  const mm =
+    String(
+      today.getMonth() + 1
+    ).padStart(2, "0");
+
+  const dd =
+    String(
+      today.getDate()
+    ).padStart(2, "0");
+
+
+  doc.save(
+    `Veynor-Import-Delivered-${yyyy}-${mm}-${dd}.pdf`
+  );
+}
+
+
+function bindDeliveryPerformanceEvents() {
+  const card =
+    byId(
+      "kpiImportDeliveredCard"
     );
 
-    setText(
-      "kpiInvoicesAvailable",
-      formatNumber(
-        invoicesAvailable
-      )
-    );
 
-    setText(
-      "kpiRetailers",
-      formatNumber(
-        retailers.size
-      )
-    );
+  if (
+    card &&
+    card.dataset.performanceBound !== "1"
+  ) {
+    card.dataset.performanceBound =
+      "1";
 
-    setText(
-      "kpiAttention",
-      formatNumber(
-        attention.length
-      )
+    card.style.cursor =
+      "pointer";
+
+    card.addEventListener(
+      "click",
+      () => {
+        openDeliveryPerformanceModal();
+      }
     );
   }
+
+
+  const exportButton =
+    byId(
+      "exportDeliveryPerformancePdf"
+    );
+
+
+  if (
+    exportButton &&
+    exportButton.dataset.bound !== "1"
+  ) {
+    exportButton.dataset.bound =
+      "1";
+
+    exportButton.addEventListener(
+      "click",
+      event => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        exportDeliveryPerformancePdf();
+      }
+    );
+  }
+
+
+  const modal =
+    byId(
+      "deliveryPerformanceModal"
+    );
+
+
+  if (
+    !modal ||
+    modal.dataset.bound === "1"
+  ) {
+    return;
+  }
+
+
+  modal.dataset.bound =
+    "1";
+
+
+  modal.addEventListener(
+    "click",
+    event => {
+
+      /*
+       * Sluiten via X of achtergrond
+       */
+      const closeButton =
+        event.target.closest(
+          "[data-close-delivery-performance]"
+        );
+
+
+      if (closeButton) {
+        closeDeliveryPerformanceModal();
+        return;
+      }
+
+
+      /*
+       * Maand openen / sluiten
+       */
+      const monthButton =
+        event.target.closest(
+          "[data-toggle-performance-month]"
+        );
+
+
+      if (!monthButton) {
+        return;
+      }
+
+
+      const month =
+        monthButton.closest(
+          "[data-performance-month]"
+        );
+
+
+      if (!month) {
+        return;
+      }
+
+
+      const isOpen =
+        month.classList.toggle(
+          "open"
+        );
+
+
+      const arrow =
+        month.querySelector(
+          ".performance-month-arrow"
+        );
+
+
+      if (arrow) {
+        arrow.textContent =
+          isOpen
+            ? "▴"
+            : "▾";
+      }
+    }
+  );
+
+
+  document.addEventListener(
+    "keydown",
+    event => {
+
+      if (
+        event.key === "Escape"
+      ) {
+        closeDeliveryPerformanceModal();
+      }
+    }
+  );
+}
 
   function bindKpiClicks() {
   const map = {
@@ -3527,47 +4883,68 @@ function openFdsDeliveredImport() {
   byId("fdsDeliveredFileInput")?.click();
 }
 
-  async function init() {
-    try {
-      if (
-        typeof sb !== "function"
-      ) {
-        throw new Error(
-          "Supabase helper sb() is not available."
-        );
-      }
+async function init() {
+  try {
 
-      client = sb();
-
-      await loadProfile();
-
-      if (
-        !isTenantRole() &&
-        !isProductOwnerRole()
-      ) {
-        throw new Error(
-          "This dashboard is only available for Veynor, Sofa2U or product owner accounts."
-        );
-      }
-
-      await resolveCustomer();
-      bindEvents();
-      await loadOrders();
-
-      showToast(
-        "Customer dashboard loaded.",
-        "ok"
-      );
-    } catch (error) {
-      console.error(error);
-
-      showToast(
-        error.message ||
-        "Could not load customer dashboard.",
-        "err"
+    if (
+      typeof sb !== "function"
+    ) {
+      throw new Error(
+        "Supabase helper sb() is not available."
       );
     }
+
+
+    client =
+      sb();
+
+
+    await loadProfile();
+
+
+    if (
+      !isTenantRole() &&
+      !isProductOwnerRole()
+    ) {
+      throw new Error(
+        "This dashboard is only available for Veynor, Sofa2U or product owner accounts."
+      );
+    }
+
+
+    await resolveCustomer();
+
+
+    bindEvents();
+
+    /*
+     * Nieuwe Import → Delivered popup.
+     */
+    bindDeliveryPerformanceEvents();
+
+
+    await loadOrders();
+
+
+    showToast(
+      "Customer dashboard loaded.",
+      "ok"
+    );
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+
+    showToast(
+      error.message ||
+      "Could not load customer dashboard.",
+      "err"
+    );
   }
+}
 
   document.addEventListener(
     "DOMContentLoaded",

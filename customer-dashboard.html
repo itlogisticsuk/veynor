@@ -11,8 +11,13 @@
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js?v=2" defer></script>
   <script src="/js/layout.js" defer></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="/js/customer-dashboard.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script
+  src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"
+></script>
+
+<script src="/js/customer-dashboard.js" defer></script>
 
   <style>
     .customer-page {
@@ -681,6 +686,426 @@
     min-height: 220px;
   }
 }
+
+/* =========================================
+   IMPORT → DELIVERED PERFORMANCE MODAL
+   ========================================= */
+
+.performance-modal{
+  position:fixed;
+  inset:0;
+  z-index:10000;
+
+  display:none;
+  align-items:center;
+  justify-content:center;
+
+  padding:24px;
+}
+
+.performance-modal.open{
+  display:flex;
+}
+
+.performance-modal-backdrop{
+  position:absolute;
+  inset:0;
+
+  background:rgba(7,21,47,.46);
+  backdrop-filter:blur(3px);
+}
+
+.performance-modal-card{
+  position:relative;
+  z-index:1;
+
+  width:min(1150px, 96vw);
+  max-height:90vh;
+
+  display:flex;
+  flex-direction:column;
+
+  overflow:hidden;
+
+  border:1px solid #dbe4f0;
+  border-radius:20px;
+
+  background:#fff;
+
+  box-shadow:
+    0 30px 80px
+    rgba(7,21,47,.24);
+}
+
+.performance-modal-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:20px;
+
+  padding:18px 20px;
+
+  border-bottom:1px solid #e5e7eb;
+
+  background:#f8fbff;
+}
+
+.performance-modal-head h2{
+  margin:0;
+
+  color:#07152f;
+
+  font-size:19px;
+  font-weight:950;
+}
+
+.performance-modal-head p{
+  margin:5px 0 0;
+
+  color:#667085;
+
+  font-size:12px;
+}
+
+.performance-modal-close{
+  width:36px;
+  height:36px;
+  flex:0 0 auto;
+
+  border:1px solid #dbe4f0;
+  border-radius:10px;
+
+  background:#fff;
+  color:#07152f;
+
+  font-size:21px;
+  font-weight:900;
+
+  cursor:pointer;
+}
+
+.performance-modal-close:hover{
+  background:#f1f5f9;
+}
+
+.performance-modal-body{
+  overflow:auto;
+
+  padding:18px 20px 22px;
+}
+
+.performance-period{
+  margin-bottom:12px;
+
+  color:#64748b;
+
+  font-size:11px;
+  font-weight:800;
+}
+
+
+/* Summary cards */
+
+.performance-summary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:12px;
+
+  margin-bottom:22px;
+}
+
+.performance-summary-card{
+  padding:14px 16px;
+
+  border:1px solid #dbe4f0;
+  border-radius:14px;
+
+  background:#fbfdff;
+}
+
+.performance-summary-label{
+  color:#667085;
+
+  font-size:10px;
+  font-weight:950;
+
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+
+.performance-summary-value{
+  margin-top:6px;
+
+  color:#07152f;
+
+  font-size:25px;
+  line-height:1;
+
+  font-weight:950;
+}
+
+.performance-summary-sub{
+  margin-top:6px;
+
+  color:#64748b;
+
+  font-size:11px;
+  font-weight:750;
+}
+
+
+/* Monthly section */
+
+.performance-section-head{
+  margin-bottom:10px;
+}
+
+.performance-section-head strong{
+  display:block;
+
+  color:#07152f;
+
+  font-size:14px;
+  font-weight:950;
+}
+
+.performance-section-head span{
+  display:block;
+
+  margin-top:2px;
+
+  color:#667085;
+
+  font-size:11px;
+}
+
+.performance-months{
+  display:grid;
+  gap:8px;
+}
+
+.performance-month{
+  overflow:hidden;
+
+  border:1px solid #dbe4f0;
+  border-radius:12px;
+
+  background:#fff;
+}
+
+.performance-month-button{
+  width:100%;
+
+  display:grid;
+  grid-template-columns:
+    minmax(170px,1fr)
+    125px
+    125px
+    125px
+    28px;
+
+  gap:12px;
+
+  align-items:center;
+
+  padding:11px 14px;
+
+  border:0;
+
+  background:#f8fbff;
+  color:#07152f;
+
+  text-align:left;
+
+  cursor:pointer;
+}
+
+.performance-month-button:hover{
+  background:#f1f6ff;
+}
+
+.performance-month.open
+.performance-month-button{
+  background:#eef5ff;
+}
+
+.performance-month-name{
+  font-size:12px;
+  font-weight:950;
+}
+
+.performance-month-metric{
+  color:#475569;
+
+  font-size:11px;
+  font-weight:850;
+}
+
+.performance-month-arrow{
+  text-align:right;
+
+  color:#1267ff;
+
+  font-size:14px;
+  font-weight:950;
+}
+
+
+/* Order details */
+
+.performance-order-wrap{
+  display:none;
+
+  overflow-x:auto;
+}
+
+.performance-month.open
+.performance-order-wrap{
+  display:block;
+}
+
+.performance-order-table{
+  width:100%;
+  min-width:900px;
+
+  border-collapse:collapse;
+}
+
+.performance-order-table th,
+.performance-order-table td{
+  padding:9px 12px;
+
+  border-top:1px solid #eef2f7;
+
+  text-align:left;
+  vertical-align:middle;
+}
+
+.performance-order-table th{
+  background:#fff;
+
+  color:#667085;
+
+  font-size:9.5px;
+  font-weight:950;
+
+  text-transform:uppercase;
+  letter-spacing:.04em;
+
+  white-space:nowrap;
+}
+
+.performance-order-table td{
+  color:#475569;
+
+  font-size:11px;
+}
+
+.performance-order-number{
+  color:#07152f;
+
+  font-weight:950;
+
+  white-space:nowrap;
+}
+
+.performance-order-ref{
+  color:#1267ff;
+
+  font-weight:900;
+
+  white-space:nowrap;
+}
+
+.performance-days{
+  color:#07152f;
+
+  font-weight:950;
+
+  white-space:nowrap;
+}
+
+.performance-region{
+  display:inline-flex;
+  align-items:center;
+
+  padding:3px 7px;
+
+  border:1px solid #dbeafe;
+  border-radius:999px;
+
+  background:#eff6ff;
+  color:#1d4ed8;
+
+  font-size:10px;
+  font-weight:900;
+}
+
+.performance-empty{
+  padding:22px;
+
+  border:1px dashed #cbd5e1;
+  border-radius:12px;
+
+  background:#f8fafc;
+  color:#64748b;
+
+  text-align:center;
+
+  font-size:12px;
+  font-weight:800;
+}
+
+
+/* Mobile */
+
+@media(max-width:760px){
+
+  .performance-modal{
+    padding:10px;
+  }
+
+  .performance-summary{
+    grid-template-columns:1fr;
+  }
+
+  .performance-month-button{
+    grid-template-columns:1fr auto;
+  }
+
+  .performance-month-metric{
+    display:none;
+  }
+}
+
+.performance-modal-head-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.performance-export-btn{
+  min-height:36px;
+
+  padding:0 12px;
+
+  border:1px solid #bfdbfe;
+  border-radius:10px;
+
+  background:#fff;
+  color:#1267ff;
+
+  font-size:11px;
+  font-weight:950;
+
+  cursor:pointer;
+}
+
+.performance-export-btn:hover{
+  background:#eff6ff;
+}
+
+
   </style>
 </head>
 
@@ -782,17 +1207,25 @@
         <div class="kpi-sub">Delivered in current calendar month</div>
       </article>
 
-      <article class="card kpi-card">
-        <div class="kpi-label">Avg Complete → Delivered</div>
-        <div class="kpi-value" id="kpiAvgLeadComplete">—</div>
-        <div class="kpi-sub">Operational lead time after goods complete</div>
-      </article>
+<article
+  class="card kpi-card"
+  id="kpiImportDeliveredCard"
+>
+  <div class="kpi-label">
+    Avg Import → Delivered
+  </div>
 
-      <article class="card kpi-card">
-<div class="kpi-label">Avg Stock Complete → Delivered</div>
-        <div class="kpi-value" id="kpiAvgLeadImport">—</div>
-        <div class="kpi-sub">Average working days after stock completion</div>
-      </article>
+  <div
+    class="kpi-value"
+    id="kpiAvgLeadImport"
+  >
+    —
+  </div>
+
+  <div class="kpi-sub">
+    Average working days from order import to actual delivery
+  </div>
+</article>
 
       <article class="card kpi-card">
         <div class="kpi-label">Delivery Date Confirmed</div>
@@ -1079,6 +1512,101 @@
       </article>
     </section>
   </main>
+</div>
+<div
+  id="deliveryPerformanceModal"
+  class="performance-modal"
+  aria-hidden="true"
+>
+  <div
+    class="performance-modal-backdrop"
+    data-close-delivery-performance
+  ></div>
+
+  <section
+    class="performance-modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="deliveryPerformanceTitle"
+  >
+
+    <div class="performance-modal-head">
+
+      <div>
+        <h2 id="deliveryPerformanceTitle">
+          Import → Delivered Performance
+        </h2>
+
+        <p>
+          Average working days from order import to actual delivery.
+        </p>
+      </div>
+
+
+      <div class="performance-modal-head-actions">
+
+        <button
+          type="button"
+          class="performance-export-btn"
+          id="exportDeliveryPerformancePdf"
+        >
+          Export PDF
+        </button>
+
+
+        <button
+          type="button"
+          class="performance-modal-close"
+          data-close-delivery-performance
+          aria-label="Close"
+        >
+          ×
+        </button>
+
+      </div>
+
+    </div>
+
+
+    <div class="performance-modal-body">
+
+      <div
+        id="performancePeriodText"
+        class="performance-period"
+      >
+        —
+      </div>
+
+
+      <div
+        id="performanceSummary"
+        class="performance-summary"
+      ></div>
+
+
+      <div class="performance-section-head">
+
+        <div>
+          <strong>
+            Monthly performance
+          </strong>
+
+          <span>
+            Click a month to view the individual orders.
+          </span>
+        </div>
+
+      </div>
+
+
+      <div
+        id="performanceMonths"
+        class="performance-months"
+      ></div>
+
+    </div>
+
+  </section>
 </div>
 </body>
 </html>

@@ -2726,14 +2726,17 @@ async function assignSelectedToWarehousePickup(
        * Otherwise OCC / Map could still
        * recognise the order as FDS.
        */
-      fds_collection_date:
-        null,
+fds_collection_date:
+  null,
 
-      fds_collection_week:
-        null,
+fds_collection_week:
+  null,
 
-      fds_job_ref:
-        null,
+fds_job_ref:
+  null,
+
+fds_lock_at:
+  null,
 
       /*
        * No driver is required for
@@ -2963,6 +2966,163 @@ function isSelectedVehicleCarrier() {
   ) === "carrier";
 }
 
+function getFdsLockAt(carrierDate) {
+  const dateText =
+    String(
+      carrierDate ||
+      ""
+    ).slice(0, 10);
+
+  if (!dateText) {
+    return null;
+  }
+
+  const match =
+    dateText.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    );
+
+  if (!match) {
+    throw new Error(
+      "Invalid FDS collection date."
+    );
+  }
+
+  const year =
+    Number(match[1]);
+
+  const month =
+    Number(match[2]);
+
+  const day =
+    Number(match[3]);
+
+  /*
+   * Eerst één kalenderdag terug.
+   *
+   * We gebruiken UTC alleen om veilig met
+   * de kalenderdatum te rekenen.
+   */
+  const previousDay =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day - 1,
+        12,
+        0,
+        0
+      )
+    );
+
+  const lockYear =
+    previousDay.getUTCFullYear();
+
+  const lockMonth =
+    previousDay.getUTCMonth() + 1;
+
+  const lockDay =
+    previousDay.getUTCDate();
+
+  /*
+   * Gewenste lokale tijd:
+   *
+   * Europe/London
+   * 12:00:00
+   *
+   * Deze methode houdt automatisch rekening
+   * met GMT / British Summer Time.
+   */
+  const desiredUtc =
+    Date.UTC(
+      lockYear,
+      lockMonth - 1,
+      lockDay,
+      12,
+      0,
+      0
+    );
+
+  let timestamp =
+    desiredUtc;
+
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        timeZone:
+          "Europe/London",
+
+        year:
+          "numeric",
+
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        second:
+          "2-digit",
+
+        hourCycle:
+          "h23"
+      }
+    );
+
+  /*
+   * Twee iteraties zijn voldoende om de
+   * juiste UTC-timestamp voor de lokale
+   * UK-tijd te vinden.
+   */
+  for (
+    let attempt = 0;
+    attempt < 2;
+    attempt += 1
+  ) {
+    const parts =
+      formatter.formatToParts(
+        new Date(timestamp)
+      );
+
+    const values = {};
+
+    parts.forEach(part => {
+      if (
+        part.type !==
+        "literal"
+      ) {
+        values[part.type] =
+          Number(part.value);
+      }
+    });
+
+    const representedUtc =
+      Date.UTC(
+        values.year,
+        values.month - 1,
+        values.day,
+        values.hour,
+        values.minute,
+        values.second
+      );
+
+    timestamp +=
+      desiredUtc -
+      representedUtc;
+  }
+
+  return new Date(
+    timestamp
+  ).toISOString();
+}
+
 async function assignSelectedToCarrierNoRoute(
   carrierDate = null
 ) {
@@ -2976,6 +3136,7 @@ async function assignSelectedToCarrierNoRoute(
         "Select at least one order first.",
         "err"
       );
+
       return;
     }
 
@@ -2984,6 +3145,7 @@ async function assignSelectedToCarrierNoRoute(
         "Select FDS / carrier first.",
         "err"
       );
+
       return;
     }
 
@@ -3004,6 +3166,7 @@ async function assignSelectedToCarrierNoRoute(
         "Selected resource is not a carrier.",
         "err"
       );
+
       return;
     }
 
@@ -3023,6 +3186,10 @@ async function assignSelectedToCarrierNoRoute(
       );
     }
 
+    /*
+     * De geselecteerde datum is de daadwerkelijke
+     * FDS collection date.
+     */
     const date =
       carrierDate ||
       getManualRouteDeliveryDate();
@@ -3034,8 +3201,8 @@ async function assignSelectedToCarrierNoRoute(
     }
 
     /*
-     * Expected Stock-orders may not be assigned
-     * before their earliest planning date.
+     * Expected Stock-orders mogen niet vóór hun
+     * earliest planning date aan FDS worden toegewezen.
      */
     assertOrdersCanBePlannedOnDate(
       selectedOrders,
@@ -3048,7 +3215,24 @@ async function assignSelectedToCarrierNoRoute(
     const now =
       new Date().toISOString();
 
+    /*
+     * FDS lock-moment.
+     *
+     * Eén dag vóór collection om 12:00.
+     */
+    const fdsLockAt =
+      getFdsLockAt(date);
+
+    if (!fdsLockAt) {
+      throw new Error(
+        "Could not calculate FDS lock time."
+      );
+    }
+
     const updatePayload = {
+      /*
+       * FDS / carrier assignment.
+       */
       transport_type:
         "charter",
 
@@ -3061,21 +3245,36 @@ async function assignSelectedToCarrierNoRoute(
       overall_status:
         "export_for_charter",
 
+      /*
+       * FDS heeft geen normale Veynor-route.
+       */
       route_id:
         null,
 
       carrier_vehicle_id:
         selectedVehicleId,
 
-planned_route_date:
-  null,
-
-fds_collection_date:
-  date,
+      planned_route_date:
+        null,
 
       /*
-       * The actual delivery date is still unknown.
-       * The selected date is the carrier collection date.
+       * Werkelijke FDS collection date.
+       */
+      fds_collection_date:
+        date,
+
+      /*
+       * Vanaf dit tijdstip mag de OCC/FDS-badge
+       * zichtbaar worden.
+       */
+      fds_lock_at:
+        fdsLockAt,
+
+      /*
+       * Actual delivery date is nog onbekend.
+       *
+       * De gekozen datum hierboven is dus alleen
+       * de collection date.
        */
       expected_delivery_date:
         null,
@@ -3083,6 +3282,9 @@ fds_collection_date:
       confirmed_delivery_date:
         null,
 
+      /*
+       * Geen Sofa2U-driver.
+       */
       driver_user_id:
         null,
 
@@ -3095,6 +3297,9 @@ fds_collection_date:
       driver_email:
         null,
 
+      /*
+       * ETA volgt later vanuit FDS.
+       */
       delivery_eta_from:
         null,
 
@@ -3133,6 +3338,7 @@ fds_collection_date:
           carrier_vehicle_id,
           planned_route_date,
           fds_collection_date,
+          fds_lock_at,
           planning_stock_basis,
           earliest_planning_date
         `);
@@ -3150,17 +3356,74 @@ fds_collection_date:
       );
     }
 
-    selectedOrderIds.clear();
-    selectedOrderId = null;
+    /*
+     * Activity-log toevoegen.
+     */
+    const activityRows =
+      selectedIds.map(orderId => ({
+        company_id:
+          cid,
 
+        order_id:
+          orderId,
+
+        activity_type:
+          "fds_planning_allocated",
+
+        old_status:
+          null,
+
+        new_status:
+          "export_for_charter",
+
+        description:
+          `Order assigned to ${vehicle.name || vehicle.vehicle_name || "FDS"}. ` +
+          `Collection date: ${date}. ` +
+          `FDS release / lock time: ${fdsLockAt}.`,
+
+        created_at:
+          now
+      }));
+
+    const {
+      error: activityError
+    } =
+      await client
+        .from(
+          "order_activity_log"
+        )
+        .insert(
+          activityRows
+        );
+
+    if (activityError) {
+      console.warn(
+        "[orders.js] FDS activity log skipped:",
+        activityError.message
+      );
+    }
+
+    /*
+     * Selectie wissen.
+     */
+    selectedOrderIds.clear();
+
+    selectedOrderId =
+      null;
+
+    /*
+     * Nieuwe waarden direct opnieuw uit Supabase laden.
+     */
     await refreshAll();
 
     showToast(
       `${data.length} order(s) assigned to ` +
       `${vehicle.name || vehicle.vehicle_name || "carrier"} ` +
-      `for ${formatDate(date)}.`,
+      `for ${formatDate(date)}. ` +
+      `FDS releases one day earlier at 12:00.`,
       "ok"
     );
+
   } catch (error) {
     console.error(
       "[orders.js] Carrier assignment failed:",
