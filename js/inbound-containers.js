@@ -2954,14 +2954,6 @@ function renderContainerLine(
       }
     }
 
-    /*
-     * Bijvoorbeeld:
-     *
-     * 15 x 1/2
-     * 11 x 2/2
-     *
-     * complete = 11
-     */
     const completeQuantity =
       packageCounts.length
         ? Math.min(
@@ -3032,8 +3024,8 @@ function renderContainerLine(
 
         <td>
           ${escapeHtml(
-            line.product_name_snapshot ||
             line.description_snapshot ||
+            line.product_name_snapshot ||
             "—"
           )}
         </td>
@@ -3180,7 +3172,7 @@ function renderContainerLine(
 
   /*
    * ==========================================================
-   * ORIGINAL EXPECTED VIEW
+   * EXPECTED VIEW
    * ==========================================================
    */
 
@@ -3243,8 +3235,8 @@ function renderContainerLine(
 
       <td>
         ${escapeHtml(
-          line.product_name_snapshot ||
           line.description_snapshot ||
+          line.product_name_snapshot ||
           "—"
         )}
       </td>
