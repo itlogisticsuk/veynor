@@ -541,52 +541,100 @@ activeReceiveContainerId: null,
   }
 
  async function loadContainerLines(containerId) {
-  const cacheKey = String(containerId);
+  const cacheKey =
+    String(containerId);
 
-  if (state.loadedContainerLines.has(cacheKey)) {
-    return state.loadedContainerLines.get(cacheKey);
+  if (
+    state.loadedContainerLines.has(
+      cacheKey
+    )
+  ) {
+    return state.loadedContainerLines.get(
+      cacheKey
+    );
   }
 
-  const db = getDb();
+  const db =
+    getDb();
+
+  /*
+   * ==========================================================
+   * CONTAINER PRODUCT LINES
+   * ==========================================================
+   */
 
   const {
     data: lines,
     error: linesError
-  } = await db
-    .from("inbound_container_lines")
-    .select("*")
-    .eq("container_id", containerId)
-    .order("line_number", {
-      ascending: true,
-      nullsFirst: false
-    })
-    .order("created_at", {
-      ascending: true
-    });
+  } =
+    await db
+      .from(
+        "inbound_container_lines"
+      )
+      .select("*")
+      .eq(
+        "container_id",
+        containerId
+      )
+      .order(
+        "line_number",
+        {
+          ascending: true,
+          nullsFirst: false
+        }
+      )
+      .order(
+        "created_at",
+        {
+          ascending: true
+        }
+      );
 
   if (linesError) {
     throw linesError;
   }
 
-  const lineIds = (lines || []).map(line => line.id);
+  const safeLines =
+    lines || [];
 
-  let allocations = [];
+  const lineIds =
+    safeLines.map(
+      line => line.id
+    );
+
+  /*
+   * ==========================================================
+   * EXPECTED ORDER ALLOCATIONS
+   * ==========================================================
+   */
+
+  let allocations =
+    [];
 
   if (lineIds.length) {
     const {
       data: allocationRows,
       error: allocationError
-    } = await db
-      .from("inbound_expected_allocations")
-      .select(`
-        *,
-        orders (
-          id,
-          order_number
+    } =
+      await db
+        .from(
+          "inbound_expected_allocations"
         )
-      `)
-      .in("container_line_id", lineIds)
-      .eq("status", "expected");
+        .select(`
+          *,
+          orders (
+            id,
+            order_number
+          )
+        `)
+        .in(
+          "container_line_id",
+          lineIds
+        )
+        .eq(
+          "status",
+          "expected"
+        );
 
     if (allocationError) {
       console.warn(
@@ -594,32 +642,198 @@ activeReceiveContainerId: null,
         allocationError.message
       );
     } else {
-      allocations = allocationRows || [];
+      allocations =
+        allocationRows || [];
     }
   }
 
-  const allocationsByLine = new Map();
+  const allocationsByLine =
+    new Map();
 
-  allocations.forEach(allocation => {
-    const lineKey = String(allocation.container_line_id);
+  allocations.forEach(
+    allocation => {
+      const lineKey =
+        String(
+          allocation.container_line_id
+        );
 
-    if (!allocationsByLine.has(lineKey)) {
-      allocationsByLine.set(lineKey, []);
+      if (
+        !allocationsByLine.has(
+          lineKey
+        )
+      ) {
+        allocationsByLine.set(
+          lineKey,
+          []
+        );
+      }
+
+      allocationsByLine
+        .get(lineKey)
+        .push(allocation);
+    }
+  );
+
+  /*
+   * ==========================================================
+   * PHYSICAL PACKAGES ACTUALLY RECEIVED
+   *
+   * Alle voorraad die door deze container is aangemaakt heeft:
+   *
+   * inbound_reference = INBOUND:<container-id>
+   *
+   * Hiermee kunnen we na ontvangst reconstrueren:
+   *
+   * package 1/2 = 15
+   * package 2/2 = 11
+   * complete = 11
+   * missing = 4x package 2/2
+   * overstock = 4x package 1/2
+   * ==========================================================
+   */
+
+  let physicalItems =
+    [];
+
+  const {
+    data: itemRows,
+    error: itemError
+  } =
+    await db
+      .from("items")
+      .select(`
+        id,
+        product_id,
+        package_no,
+        package_total,
+        package_label,
+        inbound_reference,
+        stock_set_id,
+        stock_set_status
+      `)
+      .eq(
+        "company_id",
+        state.companyId
+      )
+      .eq(
+        "inbound_reference",
+        `INBOUND:${containerId}`
+      );
+
+  if (itemError) {
+    console.warn(
+      "Physical inbound packages could not be loaded:",
+      itemError.message
+    );
+  } else {
+    physicalItems =
+      itemRows || [];
+  }
+
+  /*
+   * Packages groeperen per product.
+   */
+  const packagesByProduct =
+    new Map();
+
+  physicalItems.forEach(item => {
+    if (!item.product_id) {
+      return;
     }
 
-    allocationsByLine
-      .get(lineKey)
-      .push(allocation);
+    const productKey =
+      String(
+        item.product_id
+      );
+
+    if (
+      !packagesByProduct.has(
+        productKey
+      )
+    ) {
+      packagesByProduct.set(
+        productKey,
+        new Map()
+      );
+    }
+
+    const packageNo =
+      Math.max(
+        1,
+        integerValue(
+          item.package_no,
+          1
+        )
+      );
+
+    const productPackages =
+      packagesByProduct.get(
+        productKey
+      );
+
+    productPackages.set(
+      packageNo,
+      (
+        productPackages.get(
+          packageNo
+        ) || 0
+      ) + 1
+    );
   });
 
-  const combined = (lines || []).map(line => ({
-    ...line,
+  /*
+   * ==========================================================
+   * COMBINE
+   * ==========================================================
+   */
 
-    expected_allocations:
-      allocationsByLine.get(
-        String(line.id)
-      ) || []
-  }));
+  const combined =
+    safeLines.map(line => {
+      const productPackages =
+        packagesByProduct.get(
+          String(
+            line.product_id
+          )
+        ) ||
+        new Map();
+
+      const packageTotal =
+        Math.max(
+          1,
+          integerValue(
+            line.packages_per_unit,
+            1
+          )
+        );
+
+      const receivedPackages =
+        {};
+
+      for (
+        let packageNo = 1;
+        packageNo <= packageTotal;
+        packageNo++
+      ) {
+        receivedPackages[
+          packageNo
+        ] =
+          productPackages.get(
+            packageNo
+          ) || 0;
+      }
+
+      return {
+        ...line,
+
+        expected_allocations:
+          allocationsByLine.get(
+            String(line.id)
+          ) || [],
+
+        received_packages:
+          receivedPackages
+      };
+    });
 
   state.loadedContainerLines.set(
     cacheKey,
@@ -1868,58 +2082,99 @@ function renderContainers() {
 }
 
 
-function renderContainerDetailShell(container) {
+function renderContainerDetailShell(
+  container
+) {
+  const received =
+    isReceivedContainer(
+      container
+    );
+
   return `
     <div class="detail-section-stack">
 
       <div class="detail-grid">
+
         <section class="detail-panel">
           <div class="detail-head">
+
             <div>
-              <h3>Expected Products</h3>
+              <h3>
+                ${
+                  received
+                    ? "Received Products"
+                    : "Expected Products"
+                }
+              </h3>
 
               <span class="subline">
-                Products expected in this container.
+                ${
+                  received
+                    ? "Physical quantities received and any discrepancies found during booking."
+                    : "Products expected in this container."
+                }
               </span>
             </div>
 
             <div class="container-action-bar">
-              <button
-                class="btn"
-                type="button"
-                data-container-refresh="${escapeHtml(container.id)}"
-              >
-                Refresh
-              </button>
 
               <button
                 class="btn"
                 type="button"
-                data-container-edit="${escapeHtml(container.id)}"
+                data-container-refresh="${escapeHtml(
+                  container.id
+                )}"
               >
-                Edit Container
+                Refresh
               </button>
+
+              ${
+                received
+                  ? ""
+                  : `
+                    <button
+                      class="btn"
+                      type="button"
+                      data-container-edit="${escapeHtml(
+                        container.id
+                      )}"
+                    >
+                      Edit Container
+                    </button>
+                  `
+              }
+
             </div>
           </div>
 
           <div
             class="table-wrap"
-            id="containerLines-${escapeHtml(container.id)}"
+            id="containerLines-${escapeHtml(
+              container.id
+            )}"
           >
             <div class="empty-state">
               Open the container to load products.
             </div>
           </div>
+
         </section>
 
+
         <aside class="detail-panel">
+
           <div class="detail-head">
-            <h3>Container Summary</h3>
+            <h3>
+              Container Summary
+            </h3>
           </div>
 
           <div class="summary-list">
+
             <div class="summary-line">
-              <span>Product Owner</span>
+              <span>
+                Product Owner
+              </span>
 
               <strong>
                 ${escapeHtml(
@@ -1930,24 +2185,37 @@ function renderContainerDetailShell(container) {
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Expected Units</span>
+              <span>
+                Expected Units
+              </span>
 
               <strong>
-                ${formatNumber(container.expected_units)}
+                ${formatNumber(
+                  container.expected_units
+                )}
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Expected Packages</span>
+              <span>
+                Expected Packages
+              </span>
 
               <strong>
-                ${formatNumber(container.expected_packages)}
+                ${formatNumber(
+                  container.expected_packages
+                )}
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Expected Weight</span>
+              <span>
+                Expected Weight
+              </span>
 
               <strong>
                 ${formatNumber(
@@ -1957,8 +2225,11 @@ function renderContainerDetailShell(container) {
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Expected Volume</span>
+              <span>
+                Expected Volume
+              </span>
 
               <strong>
                 ${formatNumber(
@@ -1968,16 +2239,46 @@ function renderContainerDetailShell(container) {
               </strong>
             </div>
 
+
+            ${
+              received
+                ? `
+                  <div class="summary-line">
+                    <span>
+                      Receipt Status
+                    </span>
+
+                    <strong>
+                      ${
+                        container
+                          .receipt_has_exceptions
+                          ? "Received with discrepancies"
+                          : "Received complete"
+                      }
+                    </strong>
+                  </div>
+                `
+                : ""
+            }
+
+
             <div class="summary-line">
-              <span>Linked Orders</span>
+              <span>
+                Linked Orders
+              </span>
 
               <strong>
-                ${formatNumber(container.linked_orders)}
+                ${formatNumber(
+                  container.linked_orders
+                )}
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Warehouse</span>
+              <span>
+                Warehouse
+              </span>
 
               <strong>
                 ${escapeHtml(
@@ -1988,8 +2289,11 @@ function renderContainerDetailShell(container) {
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Location</span>
+              <span>
+                Location
+              </span>
 
               <strong>
                 ${escapeHtml(
@@ -2000,25 +2304,37 @@ function renderContainerDetailShell(container) {
               </strong>
             </div>
 
+
             <div class="summary-line">
-              <span>Packing List</span>
+              <span>
+                Packing List
+              </span>
 
               <strong>
                 ${
                   container.packing_list_name
-                    ? escapeHtml(container.packing_list_name)
+                    ? escapeHtml(
+                        container
+                          .packing_list_name
+                      )
                     : "Not uploaded"
                 }
               </strong>
             </div>
+
           </div>
         </aside>
+
       </div>
+
 
       <section class="detail-panel">
         <div class="detail-head">
+
           <div>
-            <h3>Documents & Files</h3>
+            <h3>
+              Documents & Files
+            </h3>
 
             <span class="subline">
               Packing lists, delivery documents and other files.
@@ -2028,26 +2344,37 @@ function renderContainerDetailShell(container) {
           <button
             class="btn btn-primary"
             type="button"
-            data-container-upload-file="${escapeHtml(container.id)}"
+            data-container-upload-file="${escapeHtml(
+              container.id
+            )}"
           >
             + Upload File
           </button>
+
         </div>
 
         <div
           class="attachments-grid"
-          id="containerDocuments-${escapeHtml(container.id)}"
+          id="containerDocuments-${escapeHtml(
+            container.id
+          )}"
         >
           <div class="empty-state">
             Open the container to load documents.
           </div>
         </div>
+
       </section>
 
+
       <section class="detail-panel">
+
         <div class="detail-head">
+
           <div>
-            <h3>Photos & Inspection</h3>
+            <h3>
+              Photos & Inspection
+            </h3>
 
             <span class="subline">
               Container photos, unloading photos and damage evidence.
@@ -2057,26 +2384,37 @@ function renderContainerDetailShell(container) {
           <button
             class="btn"
             type="button"
-            data-container-upload-photo="${escapeHtml(container.id)}"
+            data-container-upload-photo="${escapeHtml(
+              container.id
+            )}"
           >
             + Upload Photos
           </button>
+
         </div>
 
         <div
           class="attachments-grid"
-          id="containerPhotos-${escapeHtml(container.id)}"
+          id="containerPhotos-${escapeHtml(
+            container.id
+          )}"
         >
           <div class="empty-state">
             Open the container to load photos.
           </div>
         </div>
+
       </section>
 
+
       <section class="detail-panel">
+
         <div class="detail-head">
+
           <div>
-            <h3>Notes & Damage</h3>
+            <h3>
+              Notes & Damage
+            </h3>
 
             <span class="subline">
               General remarks, missing goods, damages and quarantine notes.
@@ -2086,26 +2424,31 @@ function renderContainerDetailShell(container) {
           <button
             class="btn"
             type="button"
-            data-container-add-note="${escapeHtml(container.id)}"
+            data-container-add-note="${escapeHtml(
+              container.id
+            )}"
           >
             + Add Note
           </button>
+
         </div>
 
         <div
           class="note-list"
-          id="containerNotes-${escapeHtml(container.id)}"
+          id="containerNotes-${escapeHtml(
+            container.id
+          )}"
         >
           <div class="empty-state">
             Open the container to load notes.
           </div>
         </div>
+
       </section>
 
     </div>
   `;
 }
-
 
 function bindContainerRowEvents() {
 
@@ -2405,10 +2748,13 @@ function bindContainerRowEvents() {
     });
 }
 
-function renderLoadedContainerLines(containerId) {
-  const target = byId(
-    `containerLines-${containerId}`
-  );
+function renderLoadedContainerLines(
+  containerId
+) {
+  const target =
+    byId(
+      `containerLines-${containerId}`
+    );
 
   if (!target) {
     return;
@@ -2439,6 +2785,65 @@ function renderLoadedContainerLines(containerId) {
     return;
   }
 
+  const container =
+    findContainerById(
+      containerId
+    );
+
+  const received =
+    isReceivedContainer(
+      container
+    );
+
+  /*
+   * ==========================================================
+   * RECEIVED CONTAINER
+   * ==========================================================
+   */
+
+  if (received) {
+    target.innerHTML = `
+      <table
+        class="inbound-table"
+        style="min-width:1180px"
+      >
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Product</th>
+            <th>Expected</th>
+            <th>Received Packages</th>
+            <th>Complete</th>
+            <th>Missing</th>
+            <th>Overstock</th>
+            <th>Damaged</th>
+            <th>Quarantine</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${lines
+            .map(line =>
+              renderContainerLine(
+                line,
+                true
+              )
+            )
+            .join("")}
+        </tbody>
+      </table>
+    `;
+
+    return;
+  }
+
+  /*
+   * ==========================================================
+   * EXPECTED CONTAINER
+   * ==========================================================
+   */
+
   target.innerHTML = `
     <table class="inbound-table">
       <thead>
@@ -2458,7 +2863,10 @@ function renderLoadedContainerLines(containerId) {
       <tbody>
         ${lines
           .map(line =>
-            renderContainerLine(line)
+            renderContainerLine(
+              line,
+              false
+            )
           )
           .join("")}
       </tbody>
@@ -2466,24 +2874,331 @@ function renderLoadedContainerLines(containerId) {
   `;
 }
 
+function renderContainerLine(
+  line,
+  receivedMode = false
+) {
+  const expectedQuantity =
+    Math.max(
+      0,
+      integerValue(
+        line.expected_quantity,
+        0
+      )
+    );
 
-function renderContainerLine(line) {
+  const packagesPerUnit =
+    Math.max(
+      1,
+      integerValue(
+        line.packages_per_unit,
+        1
+      )
+    );
+
+  /*
+   * ==========================================================
+   * RECEIVED VIEW
+   * ==========================================================
+   */
+
+  if (receivedMode) {
+    const receivedPackages =
+      line.received_packages ||
+      {};
+
+    const packageCounts =
+      [];
+
+    const receivedParts =
+      [];
+
+    const missingParts =
+      [];
+
+    for (
+      let packageNo = 1;
+      packageNo <= packagesPerUnit;
+      packageNo++
+    ) {
+      const received =
+        Math.max(
+          0,
+          integerValue(
+            receivedPackages[
+              packageNo
+            ],
+            0
+          )
+        );
+
+      packageCounts.push(
+        received
+      );
+
+      receivedParts.push(
+        `${received} × ${packageNo}/${packagesPerUnit}`
+      );
+
+      const missing =
+        Math.max(
+          0,
+          expectedQuantity -
+          received
+        );
+
+      if (missing > 0) {
+        missingParts.push(
+          `${missing} × ${packageNo}/${packagesPerUnit}`
+        );
+      }
+    }
+
+    /*
+     * Bijvoorbeeld:
+     *
+     * 15 x 1/2
+     * 11 x 2/2
+     *
+     * complete = 11
+     */
+    const completeQuantity =
+      packageCounts.length
+        ? Math.min(
+            ...packageCounts
+          )
+        : 0;
+
+    const overstockParts =
+      [];
+
+    packageCounts.forEach(
+      (
+        received,
+        index
+      ) => {
+        const packageNo =
+          index + 1;
+
+        const overstock =
+          Math.max(
+            0,
+            received -
+            completeQuantity
+          );
+
+        if (overstock > 0) {
+          overstockParts.push(
+            `${overstock} × ${packageNo}/${packagesPerUnit}`
+          );
+        }
+      }
+    );
+
+    const damaged =
+      Math.max(
+        0,
+        integerValue(
+          line.damaged_quantity,
+          0
+        )
+      );
+
+    const quarantine =
+      Math.max(
+        0,
+        integerValue(
+          line.quarantine_quantity,
+          0
+        )
+      );
+
+    const hasDifference =
+      missingParts.length > 0 ||
+      overstockParts.length > 0 ||
+      damaged > 0 ||
+      quarantine > 0;
+
+    return `
+      <tr>
+        <td>
+          <strong>
+            ${escapeHtml(
+              line.sku_snapshot ||
+              "Unknown SKU"
+            )}
+          </strong>
+        </td>
+
+        <td>
+          ${escapeHtml(
+            line.product_name_snapshot ||
+            line.description_snapshot ||
+            "—"
+          )}
+        </td>
+
+        <td>
+          <strong>
+            ${formatNumber(
+              expectedQuantity
+            )}
+          </strong>
+        </td>
+
+        <td>
+          ${receivedParts
+            .map(part => `
+              <div
+                style="
+                  white-space:nowrap;
+                  margin-bottom:3px;
+                  font-weight:800;
+                "
+              >
+                ${escapeHtml(part)}
+              </div>
+            `)
+            .join("")}
+        </td>
+
+        <td>
+          <strong
+            style="
+              color:#047857;
+            "
+          >
+            ${formatNumber(
+              completeQuantity
+            )}
+          </strong>
+        </td>
+
+        <td>
+          ${
+            missingParts.length
+              ? `
+                <strong
+                  style="
+                    color:#c2410c;
+                  "
+                >
+                  ${escapeHtml(
+                    missingParts.join(
+                      ", "
+                    )
+                  )}
+                </strong>
+              `
+              : "—"
+          }
+        </td>
+
+        <td>
+          ${
+            overstockParts.length
+              ? `
+                <strong
+                  style="
+                    color:#c2410c;
+                  "
+                >
+                  ${escapeHtml(
+                    overstockParts.join(
+                      ", "
+                    )
+                  )}
+                </strong>
+              `
+              : "—"
+          }
+        </td>
+
+        <td>
+          ${
+            damaged > 0
+              ? `
+                <strong
+                  style="
+                    color:#b91c1c;
+                  "
+                >
+                  ${formatNumber(
+                    damaged
+                  )}
+                </strong>
+              `
+              : "—"
+          }
+        </td>
+
+        <td>
+          ${
+            quarantine > 0
+              ? `
+                <strong
+                  style="
+                    color:#b91c1c;
+                  "
+                >
+                  ${formatNumber(
+                    quarantine
+                  )}
+                </strong>
+              `
+              : "—"
+          }
+        </td>
+
+        <td>
+          ${
+            hasDifference
+              ? `
+                <span
+                  class="inspection-badge inspection-missing"
+                >
+                  Discrepancy
+                </span>
+              `
+              : `
+                <span
+                  class="inspection-badge"
+                  style="
+                    background:#ecfdf5;
+                    color:#047857;
+                    border-color:#bbf7d0;
+                  "
+                >
+                  Complete
+                </span>
+              `
+          }
+        </td>
+      </tr>
+    `;
+  }
+
+  /*
+   * ==========================================================
+   * ORIGINAL EXPECTED VIEW
+   * ==========================================================
+   */
+
   const allocations =
-    line.expected_allocations || [];
+    line.expected_allocations ||
+    [];
 
   const allocatedQuantity =
     allocations.reduce(
-      (total, allocation) =>
+      (
+        total,
+        allocation
+      ) =>
         total +
         integerValue(
           allocation.expected_quantity
         ),
       0
-    );
-
-  const expectedQuantity =
-    integerValue(
-      line.expected_quantity
     );
 
   const freeQuantity =
@@ -2493,34 +3208,36 @@ function renderContainerLine(line) {
       allocatedQuantity
     );
 
-  const orderNumbers = uniqueValues(
-    allocations.map(allocation =>
-      allocation.orders?.order_number ||
-      allocation.order_number
-    )
-  );
+  const orderNumbers =
+    uniqueValues(
+      allocations.map(
+        allocation =>
+          allocation.orders
+            ?.order_number ||
+          allocation.order_number
+      )
+    );
 
-  const packagesPerUnit = Math.max(
-    1,
-    integerValue(
-      line.packages_per_unit,
-      1
-    )
-  );
-
-  const packageSplit = Array.from(
-    {
-      length: packagesPerUnit
-    },
-    (_, index) =>
-      `${index + 1}/${packagesPerUnit}`
-  ).join(" + ");
+  const packageSplit =
+    Array.from(
+      {
+        length:
+          packagesPerUnit
+      },
+      (
+        _,
+        index
+      ) =>
+        `${index + 1}/${packagesPerUnit}`
+    ).join(" + ");
 
   return `
     <tr>
       <td>
         <strong>
-          ${escapeHtml(line.sku_snapshot)}
+          ${escapeHtml(
+            line.sku_snapshot
+          )}
         </strong>
       </td>
 
@@ -2533,15 +3250,21 @@ function renderContainerLine(line) {
       </td>
 
       <td>
-        ${formatNumber(expectedQuantity)}
+        ${formatNumber(
+          expectedQuantity
+        )}
       </td>
 
       <td>
-        ${formatNumber(line.expected_packages)}
+        ${formatNumber(
+          line.expected_packages
+        )}
       </td>
 
       <td>
-        ${escapeHtml(packageSplit)}
+        ${escapeHtml(
+          packageSplit
+        )}
       </td>
 
       <td>
@@ -2562,7 +3285,9 @@ function renderContainerLine(line) {
         ${
           orderNumbers.length
             ? escapeHtml(
-                orderNumbers.join(", ")
+                orderNumbers.join(
+                  ", "
+                )
               )
             : "—"
         }
@@ -2570,7 +3295,9 @@ function renderContainerLine(line) {
 
       <td>
         <strong>
-          ${formatNumber(freeQuantity)}
+          ${formatNumber(
+            freeQuantity
+          )}
         </strong>
       </td>
     </tr>
@@ -2643,60 +3370,69 @@ function ensureReceiveContainerModalEvents() {
               0
             );
 
-          const receivedInput =
-            row.querySelector(
-              "[data-received-qty]"
-            );
+          /*
+           * PACKAGE RECEIVED INPUTS
+           *
+           * Bijvoorbeeld:
+           * 1/2
+           * 2/2
+           *
+           * Of:
+           * 1/3
+           * 2/3
+           * 3/3
+           */
+          row
+            .querySelectorAll(
+              "[data-package-received]"
+            )
+            .forEach(input => {
+              if (everythingCorrect) {
+                input.value =
+                  expected;
 
+                input.readOnly =
+                  true;
+              } else {
+                input.readOnly =
+                  false;
+              }
+            });
+
+          /*
+           * DAMAGED
+           */
           const damagedInput =
             row.querySelector(
               "[data-damaged-qty]"
             );
 
+          if (damagedInput) {
+            if (everythingCorrect) {
+              damagedInput.value =
+                0;
+            }
+
+            damagedInput.readOnly =
+              everythingCorrect;
+          }
+
+          /*
+           * QUARANTINE
+           */
           const quarantineInput =
             row.querySelector(
               "[data-quarantine-qty]"
             );
 
-          if (everythingCorrect) {
-            if (receivedInput) {
-              receivedInput.value =
-                expected;
-
-              receivedInput.readOnly =
-                true;
-            }
-
-            if (damagedInput) {
-              damagedInput.value =
-                0;
-
-              damagedInput.readOnly =
-                true;
-            }
-
-            if (quarantineInput) {
+          if (quarantineInput) {
+            if (everythingCorrect) {
               quarantineInput.value =
                 0;
-
-              quarantineInput.readOnly =
-                true;
-            }
-          } else {
-            if (receivedInput) {
-              receivedInput.readOnly =
-                false;
             }
 
-            if (damagedInput) {
-              damagedInput.readOnly =
-                false;
-            }
-
-            if (quarantineInput) {
-              quarantineInput.readOnly =
-                false;
-            }
+            quarantineInput.readOnly =
+              everythingCorrect;
           }
         });
 
@@ -2748,19 +3484,13 @@ function ensureReceiveContainerModalEvents() {
     "true";
 }
 
-function renderReceiveContainerLines(
-  lines
-) {
+function renderReceiveContainerLines(lines) {
   const target =
-    byId(
-      "receiveContainerLines"
-    );
-
+    byId("receiveContainerLines");
 
   if (!target) {
     return;
   }
-
 
   if (!lines.length) {
     target.innerHTML = `
@@ -2776,26 +3506,71 @@ function renderReceiveContainerLines(
     return;
   }
 
-
   target.innerHTML =
     lines
       .map(line => {
-
         const expected =
           integerValue(
             line.expected_quantity,
             0
           );
 
+        const packageTotal =
+          Math.max(
+            1,
+            integerValue(
+              line.packages_per_unit,
+              1
+            )
+          );
 
-        const existingReceived =
-          line.received_quantity > 0
-            ? integerValue(
-                line.received_quantity,
-                expected
-              )
-            : expected;
+        const packageInputs =
+          Array.from(
+            {
+              length: packageTotal
+            },
+            (_, index) => {
+              const packageNo =
+                index + 1;
 
+              return `
+                <div
+                  style="
+                    display:flex;
+                    align-items:center;
+                    gap:6px;
+                    margin-bottom:5px;
+                  "
+                >
+                  <span
+                    style="
+                      min-width:34px;
+                      font-size:11px;
+                      font-weight:900;
+                    "
+                  >
+                    ${packageNo}/${packageTotal}
+                  </span>
+
+                  <input
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value="${expected}"
+                    data-package-received="${packageNo}"
+                    readonly
+                    style="
+                      width:75px;
+                      min-width:75px;
+                      padding:0 8px;
+                    "
+                  >
+                </div>
+              `;
+            }
+          )
+          .join("");
 
         const existingDamaged =
           integerValue(
@@ -2803,23 +3578,21 @@ function renderReceiveContainerLines(
             0
           );
 
-
         const existingQuarantine =
           integerValue(
             line.quarantine_quantity,
             0
           );
 
-
         const existingNote =
           line.receiving_note ||
           "";
-
 
         return `
           <tr
             data-receive-line="${escapeHtml(line.id)}"
             data-expected="${expected}"
+            data-package-total="${packageTotal}"
           >
 
             <td>
@@ -2831,7 +3604,6 @@ function renderReceiveContainerLines(
               </strong>
             </td>
 
-
             <td>
               ${escapeHtml(
                 line.product_name_snapshot ||
@@ -2840,30 +3612,26 @@ function renderReceiveContainerLines(
               )}
             </td>
 
-
             <td>
               <strong>
                 ${formatNumber(expected)}
               </strong>
             </td>
 
-
             <td>
-              <input
-                class="input"
-                type="number"
-                min="0"
-                step="1"
-                value="${existingReceived}"
-                data-received-qty
-                readonly
-                style="
-                  min-width:86px;
-                  padding:0 8px
-                "
-              >
-            </td>
+              ${packageInputs}
 
+              <div
+                style="
+                  margin-top:5px;
+                  font-size:10px;
+                  color:#667085;
+                "
+                data-complete-received
+              >
+                ${expected} complete
+              </div>
+            </td>
 
             <td>
               <input
@@ -2881,7 +3649,6 @@ function renderReceiveContainerLines(
               >
             </td>
 
-
             <td>
               <input
                 class="input"
@@ -2898,40 +3665,30 @@ function renderReceiveContainerLines(
               >
             </td>
 
-
             <td>
-              <strong
-                data-missing-qty
-              >
+              <strong data-missing-qty>
                 0
               </strong>
             </td>
 
-
             <td>
-              <strong
-                data-over-qty
-              >
+              <strong data-over-qty>
                 0
               </strong>
             </td>
 
-
             <td>
-              <strong
-                data-good-qty
-              >
+              <strong data-good-qty>
                 ${formatNumber(
                   Math.max(
                     0,
-                    existingReceived -
+                    expected -
                     existingDamaged -
                     existingQuarantine
                   )
                 )}
               </strong>
             </td>
-
 
             <td>
               <input
@@ -2949,20 +3706,14 @@ function renderReceiveContainerLines(
       })
       .join("");
 
-
   target
-    .querySelectorAll(
-      "input"
-    )
+    .querySelectorAll("input")
     .forEach(input => {
-
       input.addEventListener(
         "input",
         recalculateReceiveContainerModal
       );
-
     });
-
 
   recalculateReceiveContainerModal();
 }
@@ -2973,31 +3724,15 @@ function recalculateReceiveContainerModal() {
       "[data-receive-line]"
     );
 
-
-  let totalExpected =
-    0;
-
-  let totalReceived =
-    0;
-
-  let totalGood =
-    0;
-
-  let totalDamaged =
-    0;
-
-  let totalMissing =
-    0;
-
-  let totalOver =
-    0;
-
-  let totalQuarantine =
-    0;
-
+  let totalExpected = 0;
+  let totalReceived = 0;
+  let totalGood = 0;
+  let totalDamaged = 0;
+  let totalMissing = 0;
+  let totalOver = 0;
+  let totalQuarantine = 0;
 
   rows.forEach(row => {
-
     const expected =
       Math.max(
         0,
@@ -3007,18 +3742,38 @@ function recalculateReceiveContainerModal() {
         )
       );
 
-
-    const received =
-      Math.max(
-        0,
-        integerValue(
-          row.querySelector(
-            "[data-received-qty]"
-          )?.value,
-          0
+    const packageInputs =
+      Array.from(
+        row.querySelectorAll(
+          "[data-package-received]"
         )
       );
 
+    const packageCounts =
+      packageInputs.map(input =>
+        Math.max(
+          0,
+          integerValue(
+            input.value,
+            0
+          )
+        )
+      );
+
+    /*
+     * Voorbeeld:
+     *
+     * 15 x 1/2
+     * 11 x 2/2
+     *
+     * = 11 complete producten.
+     */
+    const receivedComplete =
+      packageCounts.length
+        ? Math.min(
+            ...packageCounts
+          )
+        : 0;
 
     const damaged =
       Math.max(
@@ -3031,7 +3786,6 @@ function recalculateReceiveContainerModal() {
         )
       );
 
-
     const quarantine =
       Math.max(
         0,
@@ -3043,49 +3797,47 @@ function recalculateReceiveContainerModal() {
         )
       );
 
-
     const missing =
       Math.max(
         0,
         expected -
-        received
+        receivedComplete
       );
-
 
     const over =
       Math.max(
         0,
-        received -
+        receivedComplete -
         expected
       );
-
 
     const good =
       Math.max(
         0,
-        received -
+        receivedComplete -
         damaged -
         quarantine
       );
-
 
     const missingTarget =
       row.querySelector(
         "[data-missing-qty]"
       );
 
-
     const overTarget =
       row.querySelector(
         "[data-over-qty]"
       );
-
 
     const goodTarget =
       row.querySelector(
         "[data-good-qty]"
       );
 
+    const completeTarget =
+      row.querySelector(
+        "[data-complete-received]"
+      );
 
     if (missingTarget) {
       missingTarget.textContent =
@@ -3094,14 +3846,12 @@ function recalculateReceiveContainerModal() {
         );
     }
 
-
     if (overTarget) {
       overTarget.textContent =
         formatNumber(
           over
         );
     }
-
 
     if (goodTarget) {
       goodTarget.textContent =
@@ -3110,12 +3860,21 @@ function recalculateReceiveContainerModal() {
         );
     }
 
+    if (completeTarget) {
+      completeTarget.textContent =
+        `${formatNumber(
+          receivedComplete
+        )} complete`;
+    }
 
     totalExpected +=
       expected;
 
     totalReceived +=
-      received;
+      receivedComplete;
+
+    totalGood +=
+      good;
 
     totalDamaged +=
       damaged;
@@ -3128,11 +3887,7 @@ function recalculateReceiveContainerModal() {
 
     totalQuarantine +=
       quarantine;
-
-    totalGood +=
-      good;
   });
-
 
   byId(
     "receiveSummaryExpected"
@@ -3141,14 +3896,12 @@ function recalculateReceiveContainerModal() {
       totalExpected
     );
 
-
   byId(
     "receiveSummaryReceived"
   ).textContent =
     formatNumber(
       totalReceived
     );
-
 
   byId(
     "receiveSummaryGood"
@@ -3157,14 +3910,12 @@ function recalculateReceiveContainerModal() {
       totalGood
     );
 
-
   byId(
     "receiveSummaryDamaged"
   ).textContent =
     formatNumber(
       totalDamaged
     );
-
 
   byId(
     "receiveSummaryMissing"
@@ -3173,7 +3924,6 @@ function recalculateReceiveContainerModal() {
       totalMissing
     );
 
-
   byId(
     "receiveSummaryQuarantine"
   ).textContent =
@@ -3181,12 +3931,14 @@ function recalculateReceiveContainerModal() {
       totalQuarantine
     );
 
-
   const notice =
     byId(
       "receiveExceptionNotice"
     );
 
+  if (!notice) {
+    return;
+  }
 
   const hasExceptions =
     totalDamaged > 0 ||
@@ -3194,14 +3946,7 @@ function recalculateReceiveContainerModal() {
     totalOver > 0 ||
     totalQuarantine > 0;
 
-
-  if (!notice) {
-    return;
-  }
-
-
   if (hasExceptions) {
-
     notice.style.display =
       "block";
 
@@ -3210,13 +3955,10 @@ function recalculateReceiveContainerModal() {
 
     notice.textContent =
       `Exceptions found: ` +
-      `${totalMissing} missing, ` +
+      `${totalMissing} incomplete/missing, ` +
       `${totalDamaged} damaged, ` +
-      `${totalQuarantine} quarantine, ` +
-      `${totalOver} over received.`;
-
+      `${totalQuarantine} quarantine.`;
   } else {
-
     notice.style.display =
       "block";
 
@@ -3224,8 +3966,7 @@ function recalculateReceiveContainerModal() {
       "notice success";
 
     notice.textContent =
-      "All quantities match the expected container quantities.";
-
+      "All package quantities match the expected container quantities.";
   }
 }
 
@@ -3235,7 +3976,6 @@ function getReceiveContainerLineValues() {
       "[data-receive-line]"
     )
   ).map(row => {
-
     const expected =
       Math.max(
         0,
@@ -3245,18 +3985,48 @@ function getReceiveContainerLineValues() {
         )
       );
 
-
-    const received =
+    const packageTotal =
       Math.max(
-        0,
+        1,
         integerValue(
-          row.querySelector(
-            "[data-received-qty]"
-          )?.value,
-          0
+          row.dataset.packageTotal,
+          1
         )
       );
 
+    const packageReceipts =
+      {};
+
+    for (
+      let packageNo = 1;
+      packageNo <= packageTotal;
+      packageNo++
+    ) {
+      packageReceipts[
+        packageNo
+      ] =
+        Math.max(
+          0,
+          integerValue(
+            row.querySelector(
+              `[data-package-received="${packageNo}"]`
+            )?.value,
+            0
+          )
+        );
+    }
+
+    const packageValues =
+      Object.values(
+        packageReceipts
+      );
+
+    const receivedComplete =
+      packageValues.length
+        ? Math.min(
+            ...packageValues
+          )
+        : 0;
 
     const damaged =
       Math.max(
@@ -3269,7 +4039,6 @@ function getReceiveContainerLineValues() {
         )
       );
 
-
     const quarantine =
       Math.max(
         0,
@@ -3281,42 +4050,37 @@ function getReceiveContainerLineValues() {
         )
       );
 
-
     if (
       damaged +
       quarantine >
-      received
+      receivedComplete
     ) {
       throw new Error(
-        "Damaged + quarantine quantity cannot be higher than the received quantity."
+        "Damaged + quarantine quantity cannot be higher than the number of complete received products."
       );
     }
-
 
     const missing =
       Math.max(
         0,
         expected -
-        received
+        receivedComplete
       );
-
 
     const overReceived =
       Math.max(
         0,
-        received -
+        receivedComplete -
         expected
       );
-
 
     const good =
       Math.max(
         0,
-        received -
+        receivedComplete -
         damaged -
         quarantine
       );
-
 
     return {
       id:
@@ -3326,7 +4090,13 @@ function getReceiveContainerLineValues() {
         expected,
 
       received_quantity:
-        received,
+        receivedComplete,
+
+      package_total:
+        packageTotal,
+
+      package_receipts:
+        packageReceipts,
 
       damaged_quantity:
         damaged,
@@ -3634,19 +4404,6 @@ async function createPhysicalStockForReceiptLine(
   receiptLine,
   receivedAt
 ) {
-  const goodQuantity =
-    Math.max(
-      0,
-      integerValue(
-        receiptLine.good_quantity,
-        0
-      )
-    );
-
-  if (!goodQuantity) {
-    return [];
-  }
-
   if (!line.product_id) {
     throw new Error(
       `${line.sku_snapshot || "Product"} has no product_id.`
@@ -3682,6 +4439,34 @@ async function createPhysicalStockForReceiptLine(
   const inboundReference =
     `INBOUND:${container.id}`;
 
+  const goodQuantity =
+    Math.max(
+      0,
+      integerValue(
+        receiptLine.good_quantity,
+        0
+      )
+    );
+
+  const receivedComplete =
+    Math.max(
+      0,
+      integerValue(
+        receiptLine.received_quantity,
+        0
+      )
+    );
+
+  const packageReceipts =
+    receiptLine.package_receipts ||
+    {};
+
+  /*
+   * ==========================================================
+   * COMPLETE SETS
+   * ==========================================================
+   */
+
   const physicalSets =
     [];
 
@@ -3714,83 +4499,85 @@ async function createPhysicalStockForReceiptLine(
     });
   }
 
-  /*
-   * Eerst complete stock_sets aanmaken.
-   */
-  const stockSetRows =
-    physicalSets.map(set => ({
-      company_id:
-        state.companyId,
+  let insertedStockSets =
+    [];
 
-      product_id:
-        set.product_id,
+  if (physicalSets.length) {
+    const stockSetRows =
+      physicalSets.map(set => ({
+        company_id:
+          state.companyId,
 
-      physical_product_id:
-        set.physical_product_id,
+        product_id:
+          set.product_id,
 
-      set_code:
-        set.set_code,
+        physical_product_id:
+          set.physical_product_id,
 
-      status:
-        "complete",
+        set_code:
+          set.set_code,
 
-      package_total:
-        packageTotal,
+        status:
+          "complete",
 
-      package_count:
-        packageTotal,
+        package_total:
+          packageTotal,
 
-      volume_m3:
-        numberValue(
-          line.unit_volume_m3,
-          0
-        ),
+        package_count:
+          packageTotal,
 
-      weight_kg:
-        numberValue(
-          line.unit_weight_kg,
-          0
-        ),
+        volume_m3:
+          numberValue(
+            line.unit_volume_m3,
+            0
+          ),
 
-      warehouse_id:
-        container.warehouse_id,
+        weight_kg:
+          numberValue(
+            line.unit_weight_kg,
+            0
+          ),
 
-      location_id:
-        container.location_id,
+        warehouse_id:
+          container.warehouse_id,
 
-      created_at:
-        receivedAt,
+        location_id:
+          container.location_id,
 
-      updated_at:
-        receivedAt
-    }));
+        created_at:
+          receivedAt,
 
-  const {
-    data: insertedStockSets,
-    error: stockSetError
-  } =
-    await db
-      .from(
-        "stock_sets"
-      )
-      .insert(
-        stockSetRows
-      )
-      .select(`
-        id,
-        physical_product_id
-      `);
+        updated_at:
+          receivedAt
+      }));
 
-  if (stockSetError) {
-    throw stockSetError;
+    const {
+      data,
+      error
+    } =
+      await db
+        .from(
+          "stock_sets"
+        )
+        .insert(
+          stockSetRows
+        )
+        .select(`
+          id,
+          physical_product_id
+        `);
+
+    if (error) {
+      throw error;
+    }
+
+    insertedStockSets =
+      data || [];
   }
 
   const stockSetIdByPhysical =
     new Map(
-      (
-        insertedStockSets ||
-        []
-      ).map(row => [
+      insertedStockSets.map(row => [
         String(
           row.physical_product_id
         ),
@@ -3835,7 +4622,10 @@ async function createPhysicalStockForReceiptLine(
           `${sku}-INB-` +
           `${String(
             unitIndex + 1
-          ).padStart(4, "0")}-` +
+          ).padStart(
+            4,
+            "0"
+          )}-` +
           `${packageNo}OF${packageTotal}-` +
           `${createInboundUuid()
             .replaceAll("-", "")
@@ -3905,46 +4695,53 @@ async function createPhysicalStockForReceiptLine(
     }
   );
 
-  const {
-    data: insertedItems,
-    error: itemError
-  } =
-    await db
-      .from(
-        "items"
-      )
-      .insert(
-        itemRows
-      )
-      .select(`
-        id,
-        product_id,
-        status,
-        physical_product_id,
-        stock_set_id,
-        package_no,
-        package_total,
-        package_label
-      `);
+  let insertedItems =
+    [];
 
-  if (itemError) {
-    throw itemError;
+  if (itemRows.length) {
+    const {
+      data,
+      error
+    } =
+      await db
+        .from(
+          "items"
+        )
+        .insert(
+          itemRows
+        )
+        .select(`
+          id,
+          product_id,
+          status,
+          physical_product_id,
+          stock_set_id,
+          package_no,
+          package_total,
+          package_label
+        `);
+
+    if (error) {
+      throw error;
+    }
+
+    insertedItems =
+      data || [];
   }
 
   const itemsByPhysical =
     new Map();
 
-  (
-    insertedItems ||
-    []
-  ).forEach(item => {
+  insertedItems.forEach(item => {
     const key =
       String(
         item.physical_product_id
       );
 
     if (
-      !itemsByPhysical.has(key)
+      !itemsByPhysical.has(
+        key
+      )
     ) {
       itemsByPhysical.set(
         key,
@@ -3957,23 +4754,218 @@ async function createPhysicalStockForReceiptLine(
       .push(item);
   });
 
-  return physicalSets.map(set => ({
-    ...set,
+  const result =
+    physicalSets.map(set => ({
+      ...set,
 
-    stock_set_id:
-      stockSetIdByPhysical.get(
-        String(
-          set.physical_product_id
-        )
-      ),
+      stock_set_id:
+        stockSetIdByPhysical.get(
+          String(
+            set.physical_product_id
+          )
+        ),
 
-    items:
-      itemsByPhysical.get(
-        String(
-          set.physical_product_id
+      items:
+        itemsByPhysical.get(
+          String(
+            set.physical_product_id
+          )
+        ) || [],
+
+      is_loose_overstock:
+        false
+    }));
+
+  /*
+   * ==========================================================
+   * LOOSE / OVERSTOCK PACKAGES
+   *
+   * Voorbeeld:
+   *
+   * 15 x 1/2
+   * 11 x 2/2
+   *
+   * Complete received = 11
+   *
+   * Dus:
+   * 4 x 1/2 losse overstock.
+   * ==========================================================
+   */
+
+  const looseRows =
+    [];
+
+  for (
+    let packageNo = 1;
+    packageNo <= packageTotal;
+    packageNo++
+  ) {
+    const receivedPackageQty =
+      Math.max(
+        0,
+        integerValue(
+          packageReceipts[
+            packageNo
+          ],
+          receivedComplete
         )
-      ) || []
-  }));
+      );
+
+    const looseQuantity =
+      Math.max(
+        0,
+        receivedPackageQty -
+        receivedComplete
+      );
+
+    if (!looseQuantity) {
+      continue;
+    }
+
+    const metrics =
+      getInboundPackageMetrics(
+        line,
+        packageNo,
+        packageTotal
+      );
+
+    for (
+      let index = 0;
+      index < looseQuantity;
+      index++
+    ) {
+      const physicalProductId =
+        createInboundUuid();
+
+      const uniqueReference =
+        `${sku}-INB-OVER-` +
+        `${packageNo}OF${packageTotal}-` +
+        `${createInboundUuid()
+          .replaceAll("-", "")
+          .slice(0, 10)
+        }`;
+
+      looseRows.push({
+        company_id:
+          state.companyId,
+
+        product_id:
+          line.product_id,
+
+        warehouse_id:
+          container.warehouse_id,
+
+        location_id:
+          container.location_id,
+
+        storage_mutation_id:
+          uniqueReference,
+
+        sku_unique:
+          uniqueReference,
+
+        status:
+          "in_stock",
+
+        volume_m3:
+          metrics.volume,
+
+        weight_kg:
+          metrics.weight,
+
+        inbound_reference:
+          inboundReference,
+
+        inbound_date:
+          receivedAt,
+
+        received_at:
+          receivedAt,
+
+        physical_product_id:
+          physicalProductId,
+
+        package_no:
+          packageNo,
+
+        package_total:
+          packageTotal,
+
+        package_label:
+          `${packageNo}/${packageTotal}`,
+
+        stock_set_id:
+          null,
+
+        stock_set_key:
+          `${line.product_id}:OVERSTOCK:` +
+          `${physicalProductId}`,
+
+        stock_set_status:
+          "incomplete"
+      });
+    }
+  }
+
+  if (looseRows.length) {
+    const {
+      data: insertedLooseItems,
+      error: looseError
+    } =
+      await db
+        .from(
+          "items"
+        )
+        .insert(
+          looseRows
+        )
+        .select(`
+          id,
+          product_id,
+          status,
+          physical_product_id,
+          stock_set_id,
+          package_no,
+          package_total,
+          package_label
+        `);
+
+    if (looseError) {
+      throw looseError;
+    }
+
+    /*
+     * Eén aparte return-entry zodat saveReceiveContainerCheck()
+     * deze fysieke packages gewoon meetelt.
+     *
+     * De allocationfunctie hieronder negeert deze entry.
+     */
+    result.push({
+      physical_product_id:
+        null,
+
+      product_id:
+        line.product_id,
+
+      line_id:
+        line.id,
+
+      package_total:
+        packageTotal,
+
+      stock_set_id:
+        null,
+
+      items:
+        insertedLooseItems ||
+        [],
+
+      is_loose_overstock:
+        true
+    });
+  }
+
+  return result;
 }
 
 async function loadExpectedAllocationsForContainer(
@@ -4047,10 +5039,27 @@ async function convertExpectedAllocationsToPhysical(
           .container_line_id
       );
 
+    /*
+     * Alleen COMPLETE sets mogen aan orders
+     * gekoppeld worden.
+     *
+     * Loose overstock wordt hier bewust uitgesloten.
+     */
     const availableSets =
-      physicalSetsByLine.get(
-        lineKey
-      ) || [];
+      (
+        physicalSetsByLine.get(
+          lineKey
+        ) || []
+      )
+        .filter(set =>
+          set &&
+          !set.is_loose_overstock &&
+          set.stock_set_id &&
+          Array.isArray(
+            set.items
+          ) &&
+          set.items.length
+        );
 
     const requestedQuantity =
       Math.max(
@@ -4070,6 +5079,31 @@ async function convertExpectedAllocationsToPhysical(
           availableSets.length
         )
       );
+
+    /*
+     * Verwijder de gebruikte complete sets
+     * ook uit de originele array.
+     */
+    const originalSets =
+      physicalSetsByLine.get(
+        lineKey
+      ) || [];
+
+    setsToAllocate.forEach(
+      allocatedSet => {
+        const index =
+          originalSets.indexOf(
+            allocatedSet
+          );
+
+        if (index >= 0) {
+          originalSets.splice(
+            index,
+            1
+          );
+        }
+      }
+    );
 
     let firstAllocationId =
       null;
@@ -4105,8 +5139,7 @@ async function convertExpectedAllocationsToPhysical(
               firstItem.id,
 
             stock_set_id:
-              set.stock_set_id ||
-              null,
+              set.stock_set_id,
 
             allocation_status:
               "reserved",
@@ -4127,9 +5160,7 @@ async function convertExpectedAllocationsToPhysical(
         throw allocationError;
       }
 
-      if (
-        !firstAllocationId
-      ) {
+      if (!firstAllocationId) {
         firstAllocationId =
           insertedAllocation.id;
       }
@@ -4144,9 +5175,7 @@ async function convertExpectedAllocationsToPhysical(
           )
           .filter(Boolean);
 
-      if (
-        itemIds.length
-      ) {
+      if (itemIds.length) {
         const {
           error: reserveError
         } =
@@ -4180,11 +5209,11 @@ async function convertExpectedAllocationsToPhysical(
     }
 
     /*
-     * De expected reservering is nu opgebruikt.
+     * De expected reservering is nu afgehandeld.
      *
-     * Ook wanneer er een shortage is, mag de
-     * reeds ontvangen container niet langer als
-     * toekomstige expected stock meetellen.
+     * Ook bij shortage mag dezelfde ontvangen
+     * container niet opnieuw als expected stock
+     * blijven meetellen.
      */
     const {
       error: expectedUpdateError
@@ -4208,9 +5237,7 @@ async function convertExpectedAllocationsToPhysical(
           expectedAllocation.id
         );
 
-    if (
-      expectedUpdateError
-    ) {
+    if (expectedUpdateError) {
       throw expectedUpdateError;
     }
 
@@ -4313,123 +5340,62 @@ async function createContainerReceivedNotification(
   databaseLines,
   hasExceptions
 ) {
-  const db = getDb();
+  const db =
+    getDb();
 
   try {
     const databaseLineById =
       new Map(
-        (databaseLines || []).map(line => [
-          String(line.id),
-          line
-        ])
+        (databaseLines || [])
+          .map(line => [
+            String(line.id),
+            line
+          ])
       );
+
+    /*
+     * ==========================================================
+     * MESSAGE 1
+     * Normale ontvangstbevestiging.
+     * Deze wordt ALTIJD verstuurd.
+     * ==========================================================
+     */
 
     const productSummary =
       receiptLines
         .map(receiptLine => {
           const databaseLine =
             databaseLineById.get(
-              String(receiptLine.id)
+              String(
+                receiptLine.id
+              )
             );
 
           const sku =
-            databaseLine?.sku_snapshot ||
+            databaseLine
+              ?.sku_snapshot ||
             "Unknown SKU";
 
-          const qty =
+          const good =
             integerValue(
-              receiptLine.good_quantity,
+              receiptLine
+                .good_quantity,
               0
             );
 
-          return `${sku} × ${qty}`;
+          return (
+            `${sku} × ${good}`
+          );
         })
-        .filter(Boolean)
         .join(" · ");
 
-    const totalDamaged =
-      receiptLines.reduce(
-        (total, line) =>
-          total +
-          integerValue(
-            line.damaged_quantity,
-            0
-          ),
-        0
-      );
-
-    const totalMissing =
-      receiptLines.reduce(
-        (total, line) =>
-          total +
-          integerValue(
-            line.missing_quantity,
-            0
-          ),
-        0
-      );
-
-    const totalQuarantine =
-      receiptLines.reduce(
-        (total, line) =>
-          total +
-          integerValue(
-            line.quarantine_quantity,
-            0
-          ),
-        0
-      );
-
-    const totalOver =
-      receiptLines.reduce(
-        (total, line) =>
-          total +
-          integerValue(
-            line.over_received_quantity,
-            0
-          ),
-        0
-      );
-
-    const exceptionParts = [];
-
-    if (totalMissing > 0) {
-      exceptionParts.push(
-        `${totalMissing} missing`
-      );
-    }
-
-    if (totalDamaged > 0) {
-      exceptionParts.push(
-        `${totalDamaged} damaged`
-      );
-    }
-
-    if (totalQuarantine > 0) {
-      exceptionParts.push(
-        `${totalQuarantine} quarantined`
-      );
-    }
-
-    if (totalOver > 0) {
-      exceptionParts.push(
-        `${totalOver} over received`
-      );
-    }
-
-    const exceptionText =
-      hasExceptions
-        ? `Exceptions reported: ${exceptionParts.join(", ")}.`
-        : "No exceptions were reported.";
-
-    const message =
-      `Container ${container.container_number} has been received and booked into stock. ` +
-      `${exceptionText} ` +
-      `Booked into stock: ${productSummary}.`;
-
-    const { error } =
+    const {
+      error: normalError
+    } =
       await db
-        .from("system_notifications")
+        .from(
+          "system_notifications"
+        )
         .insert({
           company_id:
             state.companyId,
@@ -4446,12 +5412,13 @@ async function createContainerReceivedNotification(
           title:
             "Container Received",
 
-          message,
+          message:
+            `Container ${container.container_number} ` +
+            `has been received and booked into stock. ` +
+            `Booked into stock: ${productSummary}.`,
 
           severity:
-            hasExceptions
-              ? "warning"
-              : "info",
+            "info",
 
           entity_type:
             "inbound_container",
@@ -4469,8 +5436,267 @@ async function createContainerReceivedNotification(
             false
         });
 
-    if (error) {
-      throw error;
+    if (normalError) {
+      throw normalError;
+    }
+
+    /*
+     * Geen tweede bericht wanneer alles klopt.
+     */
+    if (!hasExceptions) {
+      return;
+    }
+
+    /*
+     * ==========================================================
+     * MESSAGE 2
+     * Aparte discrepancy / incomplete melding.
+     * ==========================================================
+     */
+
+    const discrepancyLines =
+      [];
+
+    receiptLines.forEach(
+      receiptLine => {
+        const databaseLine =
+          databaseLineById.get(
+            String(
+              receiptLine.id
+            )
+          );
+
+        const sku =
+          databaseLine
+            ?.sku_snapshot ||
+          "Unknown SKU";
+
+        const packageTotal =
+          Math.max(
+            1,
+            integerValue(
+              receiptLine
+                .package_total,
+              databaseLine
+                ?.packages_per_unit ||
+              1
+            )
+          );
+
+        const packageReceipts =
+          receiptLine
+            .package_receipts ||
+          {};
+
+        const expected =
+          integerValue(
+            receiptLine
+              .expected_quantity,
+            0
+          );
+
+        const complete =
+          integerValue(
+            receiptLine
+              .received_quantity,
+            0
+          );
+
+        const receivedParts =
+          [];
+
+        const missingParts =
+          [];
+
+        const overstockParts =
+          [];
+
+        let packageDifference =
+          false;
+
+        for (
+          let packageNo = 1;
+          packageNo <= packageTotal;
+          packageNo++
+        ) {
+          const received =
+            Math.max(
+              0,
+              integerValue(
+                packageReceipts[
+                  packageNo
+                ],
+                complete
+              )
+            );
+
+          receivedParts.push(
+            `${received}x package ` +
+            `${packageNo}/${packageTotal}`
+          );
+
+          if (
+            received !==
+            expected
+          ) {
+            packageDifference =
+              true;
+          }
+
+          const missing =
+            Math.max(
+              0,
+              expected -
+              received
+            );
+
+          if (missing > 0) {
+            missingParts.push(
+              `${missing}x package ` +
+              `${packageNo}/${packageTotal}`
+            );
+          }
+
+          const overstock =
+            Math.max(
+              0,
+              received -
+              complete
+            );
+
+          if (overstock > 0) {
+            overstockParts.push(
+              `${overstock}x package ` +
+              `${packageNo}/${packageTotal}`
+            );
+          }
+        }
+
+        const damaged =
+          integerValue(
+            receiptLine
+              .damaged_quantity,
+            0
+          );
+
+        const quarantine =
+          integerValue(
+            receiptLine
+              .quarantine_quantity,
+            0
+          );
+
+        const hasLineDifference =
+          packageDifference ||
+          damaged > 0 ||
+          quarantine > 0;
+
+        if (!hasLineDifference) {
+          return;
+        }
+
+        let text =
+          `${sku}: received ` +
+          `${receivedParts.join(
+            ", "
+          )}. ` +
+          `${complete} complete set` +
+          `${complete === 1
+            ? ""
+            : "s"
+          } available.`;
+
+        if (
+          missingParts.length
+        ) {
+          text +=
+            ` Missing: ` +
+            `${missingParts.join(
+              ", "
+            )}.`;
+        }
+
+        if (
+          overstockParts.length
+        ) {
+          text +=
+            ` Overstock: ` +
+            `${overstockParts.join(
+              ", "
+            )}.`;
+        }
+
+        if (damaged > 0) {
+          text +=
+            ` Damaged: ${damaged}.`;
+        }
+
+        if (quarantine > 0) {
+          text +=
+            ` Quarantine: ${quarantine}.`;
+        }
+
+        discrepancyLines.push(
+          text
+        );
+      }
+    );
+
+    if (!discrepancyLines.length) {
+      return;
+    }
+
+    const {
+      error: discrepancyError
+    } =
+      await db
+        .from(
+          "system_notifications"
+        )
+        .insert({
+          company_id:
+            state.companyId,
+
+          customer_id:
+            container.product_owner_id,
+
+          recipient_role:
+            null,
+
+          notification_type:
+            "container_receipt_discrepancy",
+
+          title:
+            "Container Receipt Discrepancy",
+
+          message:
+            `Container ${container.container_number} ` +
+            `was not received complete. ` +
+            discrepancyLines.join(
+              " "
+            ),
+
+          severity:
+            "warning",
+
+          entity_type:
+            "inbound_container",
+
+          entity_id:
+            container.id,
+
+          action_url:
+            "./inbound-containers.html",
+
+          is_read:
+            false,
+
+          popup_shown:
+            false
+        });
+
+    if (discrepancyError) {
+      throw discrepancyError;
     }
 
   } catch (error) {

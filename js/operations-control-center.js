@@ -4388,42 +4388,70 @@ function getFdsWeekLabel(order) {
 }
 
 function renderDeliveryCell(order) {
+
   /*
+   * ==========================================================
    * LEGACY / DELIVERED
+   * ==========================================================
    */
-  if (normalize(order.order_type) === "legacy") {
+
+  if (
+    normalize(
+      order.order_type
+    ) === "legacy"
+  ) {
+
     const deliveredDate =
       order.confirmed_delivery_date ||
       order.pod_signed_at ||
       order.updated_at ||
       order.created_at;
 
+
     return `
       <div class="delivery-cell">
+
         <strong>
           ${escapeHtml(
-            formatDate(deliveredDate)
+            formatDate(
+              deliveredDate
+            )
           )}
         </strong>
 
-        ${pill("delivered", "Delivered")}
+        ${pill(
+          "delivered",
+          "Delivered"
+        )}
 
         <span class="subline">
           Legacy delivered order
         </span>
+
       </div>
     `;
   }
 
 
   /*
-   * COLLECTION ORDER
+   * ==========================================================
+   * COLLECTION
+   * ==========================================================
    */
-  if (isCollectionOrder(order)) {
+
+  if (
+    isCollectionOrder(
+      order
+    )
+  ) {
+
     const collectionDate =
       order.fds_collection_date ||
-      getOccDeliveryDate(order) ||
+      getOccDeliveryDate(
+        order
+      ) ||
       null;
+
 
     return `
       <div class="delivery-cell">
@@ -4432,7 +4460,9 @@ function renderDeliveryCell(order) {
           ${escapeHtml(
             formatDate(
               collectionDate ||
-              getOccDeliveryDeadline(order)
+              getOccDeliveryDeadline(
+                order
+              )
             )
           )}
         </strong>
@@ -4455,11 +4485,22 @@ function renderDeliveryCell(order) {
 
 
   /*
+   * ==========================================================
    * WAREHOUSE PICKUP
+   * ==========================================================
    */
-  if (isWarehousePickupOrder(order)) {
+
+  if (
+    isWarehousePickupOrder(
+      order
+    )
+  ) {
+
     const pickupDate =
-      getOccDeliveryDate(order);
+      getOccDeliveryDate(
+        order
+      );
+
 
     return `
       <div class="delivery-cell">
@@ -4468,7 +4509,9 @@ function renderDeliveryCell(order) {
           ${escapeHtml(
             formatDate(
               pickupDate ||
-              getOccDeliveryDeadline(order)
+              getOccDeliveryDeadline(
+                order
+              )
             )
           )}
         </strong>
@@ -4491,71 +4534,138 @@ function renderDeliveryCell(order) {
 
 
   /*
-   * NORMAL / FDS DELIVERY
+   * ==========================================================
+   * NORMALE DELIVERY
+   * ==========================================================
    */
+
   const plannedDate =
-    getOccDeliveryDate(order);
+    getOccDeliveryDate(
+      order
+    );
+
 
   const dueDate =
-    getOccDeliveryDeadline(order);
+    getOccDeliveryDeadline(
+      order
+    );
 
-const isFds =
-  (
-    normalize(order.transport_type) === "charter" ||
-    normalize(order.transport_type) === "fds" ||
-    normalize(order.status) === "export_for_charter"
-  ) &&
-  isFdsOrderLocked(order);
 
   const displayDate =
-    plannedDate || dueDate;
+    plannedDate ||
+    dueDate;
 
-  const dateLabel =
+
+  /*
+   * Is deze verwachte leverdatum via
+   * onze nieuwe FDS-import bevestigd?
+   */
+  const confirmedByFds =
+    normalize(
+      order.fds_status
+    ) ===
+      "delivery_confirmed" &&
+    !!order.expected_delivery_date;
+
+
+  /*
+   * Oude FDS assignment badge behouden voor
+   * orders die aan FDS zijn toegewezen maar
+   * nog geen delivery-confirmed datum hebben.
+   */
+  const isFdsAssignment =
+    (
+      normalize(
+        order.transport_type
+      ) === "charter" ||
+
+      normalize(
+        order.transport_type
+      ) === "fds" ||
+
+      normalize(
+        order.status
+      ) === "export_for_charter"
+    ) &&
+    isFdsOrderLocked(
+      order
+    );
+
+
+  let dateLabel =
     plannedDate
       ? "Provisional delivery date"
       : "Latest delivery date";
+
+
+  if (confirmedByFds) {
+    dateLabel =
+      "Expected delivery date";
+  }
+
 
   return `
     <div class="delivery-cell">
 
       <strong>
         ${escapeHtml(
-          formatDate(displayDate)
+          formatDate(
+            displayDate
+          )
         )}
       </strong>
 
-      ${
-        plannedDate
-          ? `
-            <span class="status-pill blue">
-              Planned
-            </span>
-          `
-          : `
-            <span class="status-pill gray">
-              Due
-            </span>
-          `
-      }
 
       ${
-        isFds
+        confirmedByFds
           ? `
-<button
-  type="button"
-  class="fds-info-badge"
-  data-fds-info-order-id="${escapeHtml(order.id)}"
-  title="Click for FDS planning information"
->
-  FDS
-  <span class="fds-info-icon">i</span>
-</button>
-          `
+              <span
+                class="status-pill green"
+                title="Expected delivery date confirmed from FDS planning"
+              >
+                Confirmed by FDS
+              </span>
+            `
+          : plannedDate
+            ? `
+                <span class="status-pill blue">
+                  Planned
+                </span>
+              `
+            : `
+                <span class="status-pill gray">
+                  Due
+                </span>
+              `
+      }
+
+
+      ${
+        isFdsAssignment &&
+        !confirmedByFds
+          ? `
+              <button
+                type="button"
+                class="fds-info-badge"
+                data-fds-info-order-id="${escapeHtml(
+                  order.id
+                )}"
+                title="Click for FDS planning information"
+              >
+                FDS
+                <span class="fds-info-icon">
+                  i
+                </span>
+              </button>
+            `
           : ""
       }
 
+
       <span class="subline">
-        ${escapeHtml(dateLabel)}
+        ${escapeHtml(
+          dateLabel
+        )}
       </span>
 
     </div>
@@ -7521,14 +7631,18 @@ function setupOrdersTopScrollbar() {
  * Bepaalt een korte, duidelijke tekst
  * voor bekende activity-types.
  */
+
 function getLastActivityLabel(
   activityType,
   order
 ) {
   const type =
-    normalize(activityType);
+    normalize(
+      activityType
+    );
 
   const labels = {
+
     order_created:
       "Order created",
 
@@ -7549,6 +7663,9 @@ function getLastActivityLabel(
 
     fds_planning_allocated:
       "FDS delivery planned",
+
+    fds_delivery_date_confirmed:
+      "FDS delivery date confirmed",
 
     pod_available:
       "POD available",
@@ -7575,18 +7692,13 @@ function getLastActivityLabel(
       "Delivery issue reported"
   };
 
+
   return (
     labels[type] ||
     order.delivery_status_label ||
     "Order updated"
   );
 }
-
-
-/*
- * Fallback wanneer er geen bruikbare
- * activity-logregel bestaat.
- */
 
 function getVisibleActivityDescription(order, description) {
   const text = cleanText(description);
@@ -7647,28 +7759,50 @@ function getOrderFallbackActivity(order) {
  * en zorgt dat datum en omschrijving
  * bij dezelfde activiteit horen.
  */
-function getLatestRelevantActivity(order) {
+
+function getLatestRelevantActivity(
+  order
+) {
   const activities =
-    Array.isArray(order.order_activity_log)
+    Array.isArray(
+      order.order_activity_log
+    )
       ? order.order_activity_log
       : [];
+
 
   const sortedActivities =
     activities
       .slice()
-      .sort((a, b) => {
-        const aTime =
-          new Date(
-            a.created_at || 0
-          ).getTime();
+      .sort(
+        (
+          a,
+          b
+        ) => {
 
-        const bTime =
-          new Date(
-            b.created_at || 0
-          ).getTime();
+          const aTime =
+            new Date(
+              a.created_at ||
+              0
+            )
+              .getTime();
 
-        return bTime - aTime;
-      });
+
+          const bTime =
+            new Date(
+              b.created_at ||
+              0
+            )
+              .getTime();
+
+
+          return (
+            bTime -
+            aTime
+          );
+        }
+      );
+
 
   const relevantTypes =
     new Set([
@@ -7679,6 +7813,13 @@ function getLatestRelevantActivity(order) {
       "delivery_planned",
       "manual_delivery_date",
       "fds_planning_allocated",
+
+      /*
+       * Nieuwe eenvoudige
+       * FDS delivery-date import.
+       */
+      "fds_delivery_date_confirmed",
+
       "pod_available",
       "pod_generated",
       "manual_signed_pod",
@@ -7689,38 +7830,44 @@ function getLatestRelevantActivity(order) {
       "delivery_issue"
     ]);
 
+
   const relevantActivity =
-    sortedActivities.find(activity =>
-      relevantTypes.has(
-        normalize(
-          activity.activity_type
+    sortedActivities.find(
+      activity =>
+        relevantTypes.has(
+          normalize(
+            activity.activity_type
+          )
         )
-      )
     );
+
 
   const latest =
     relevantActivity ||
     sortedActivities[0] ||
     null;
 
+
   if (latest) {
     return {
+
       date:
         latest.created_at ||
         order.last_activity_at ||
         order.created_at,
 
-description:
-  getVisibleActivityDescription(
-    order,
-    latest.description ||
-    getLastActivityLabel(
-      latest.activity_type,
-      order
-    )
-  )
+      description:
+        getVisibleActivityDescription(
+          order,
+          latest.description ||
+          getLastActivityLabel(
+            latest.activity_type,
+            order
+          )
+        )
     };
   }
+
 
   return {
     date:
@@ -7728,10 +7875,11 @@ description:
       order.created_at,
 
     description:
-      getOrderFallbackActivity(order)
+      getOrderFallbackActivity(
+        order
+      )
   };
 }
-
 
 function renderTable() {
   const tbody = byId("ordersBody");
@@ -12644,7 +12792,9 @@ function getExistingCollectionData(order) {
 
 async function importFdsPlanningFile(file) {
   if (!file) {
-    throw new Error("No FDS planning file selected.");
+    throw new Error(
+      "No FDS planning file selected."
+    );
   }
 
   if (!isTenantRole()) {
@@ -12653,418 +12803,680 @@ async function importFdsPlanningFile(file) {
     );
   }
 
-  const text = await file.text();
-  const rows = parseCsvText(text);
-  const cid = await getCompanyId();
+  const text =
+    await file.text();
 
-const preparedRows = rows.map(row => {
-  const orderRef = getCsvValue(row, [
-    "Order Ref",
-    "Order Reference",
-    "Order"
-  ]);
+  const rows =
+    parseCsvText(text);
 
-  const status = normalize(
-    getCsvValue(row, ["Status"])
+  const cid =
+    await getCompanyId();
+
+  /*
+   * ==========================================================
+   * VANDAAG
+   *
+   * Alleen leveringen NA vandaag worden meegenomen.
+   *
+   * Dus:
+   * gisteren  -> negeren
+   * vandaag   -> negeren
+   * morgen    -> importeren
+   * ==========================================================
+   */
+
+  const today =
+    new Date();
+
+  today.setHours(
+    0,
+    0,
+    0,
+    0
   );
 
-  const plannedStart = getCsvValue(row, [
-    "Planned Start",
-    "Planned start"
-  ]);
 
-  const plannedEnd = getCsvValue(row, [
-    "Planned End",
-    "Planned end"
-  ]);
+  /*
+   * ==========================================================
+   * CSV VOORBEREIDEN
+   * ==========================================================
+   */
 
-  const etaActual = getCsvValue(row, [
-    "ETA/Actual",
-    "ETA / Actual",
-    "ETA Actual"
-  ]);
+  const preparedRows =
+    rows.map(row => {
 
-  const etaLabel = getCsvValue(row, [
-    "ETA",
-    "ETA Label"
-  ]);
+      const orderRef =
+        getCsvValue(
+          row,
+          [
+            "Order Ref",
+            "Order Reference",
+            "Order"
+          ]
+        );
 
-  const jobRef = getCsvValue(row, [
-    "Job Ref",
-    "Job Reference",
-    "Job"
-  ]);
+      const plannedStartText =
+        getCsvValue(
+          row,
+          [
+            "Planned Start",
+            "Planned start"
+          ]
+        );
 
-  return {
-    rowNumber: row.__rowNumber,
-    orderRef,
-    orderNumbers: extractVeynorOrderNumbers(orderRef),
-    status,
-    plannedStart,
-    plannedEnd,
-    etaActual,
-    etaLabel,
-    jobRef
-  };
-});
+      const plannedStart =
+        parseFdsDateTime(
+          plannedStartText
+        );
 
-  const allOrderNumbers = [
-    ...new Set(
-      preparedRows.flatMap(row => row.orderNumbers)
-    )
-  ];
+      const jobRef =
+        getCsvValue(
+          row,
+          [
+            "Job Ref",
+            "Job Reference",
+            "Job"
+          ]
+        );
+
+      return {
+        rowNumber:
+          row.__rowNumber,
+
+        orderRef,
+
+        orderNumbers:
+          extractVeynorOrderNumbers(
+            orderRef
+          ),
+
+        plannedStartText,
+
+        plannedStart,
+
+        jobRef
+      };
+    });
+
+
+  /*
+   * ==========================================================
+   * ALLE SO-NUMMERS
+   * ==========================================================
+   */
+
+  const allOrderNumbers =
+    [
+      ...new Set(
+        preparedRows.flatMap(
+          row =>
+            row.orderNumbers
+        )
+      )
+    ];
+
 
   let existingOrders = [];
 
   if (allOrderNumbers.length) {
-    const { data, error } = await client
-      .from("orders")
-      .select(`
-        id,
-        order_number,
-        status,
-        transport_type,
-        transport_status,
-        overall_status,
-        warehouse_status,
-        expected_delivery_date,
-        confirmed_delivery_date,
-        delivery_eta_from,
-        delivery_eta_to,
-        delivery_eta_status,
-fds_status,
-fds_job_ref,
-fds_eta_label,
-fds_last_import_at,
-fds_collection_date,
-fds_collection_week,
-fds_lock_at,
-planned_route_date
-      `)
-      .eq("company_id", cid)
-      .in("order_number", allOrderNumbers);
+    const {
+      data,
+      error
+    } =
+      await client
+        .from("orders")
+        .select(`
+          id,
+          order_number,
+          expected_delivery_date,
+          confirmed_delivery_date,
+          fds_status,
+          fds_job_ref,
+          fds_last_import_at
+        `)
+        .eq(
+          "company_id",
+          cid
+        )
+        .in(
+          "order_number",
+          allOrderNumbers
+        );
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
-    existingOrders = data || [];
+    existingOrders =
+      data || [];
   }
 
-  const orderMap = getOrderMapByNumber(existingOrders);
-  const importTimestamp = new Date().toISOString();
 
-  const summary = {
-    rowsRead: rows.length,
-    allocatedRows: 0,
-    unallocatedRows: 0,
-    ordersUpdated: 0,
-    ordersUnchanged: 0,
-    unknownOrders: new Set(),
-    invalidEtaRows: [],
-    ignoredRows: 0,
-    errors: []
-  };
+  const orderMap =
+    getOrderMapByNumber(
+      existingOrders
+    );
 
-  for (const row of preparedRows) {
+  const importTimestamp =
+    new Date()
+      .toISOString();
+
+
+  /*
+   * ==========================================================
+   * PER SO-NUMMER DE BESTE TOEKOMSTIGE FDS-REGEL
+   *
+   * Wanneer hetzelfde SO-nummer meerdere keren voorkomt,
+   * gebruiken we de LAATSTE toekomstige Planned Start.
+   * ==========================================================
+   */
+
+  const bestRowByOrder =
+    new Map();
+
+
+  let ignoredPastOrToday = 0;
+  let invalidDateRows = 0;
+  let rowsWithoutOrder = 0;
+
+
+  preparedRows.forEach(row => {
+
     if (!row.orderNumbers.length) {
-      summary.ignoredRows++;
-      continue;
+      rowsWithoutOrder++;
+      return;
     }
 
-    if (
-      row.status !== "allocated" &&
-      row.status !== "unallocated"
-    ) {
-      summary.ignoredRows++;
-      continue;
+
+    if (!row.plannedStart?.date) {
+      invalidDateRows++;
+      return;
     }
 
-if (row.status === "allocated") {
-  summary.allocatedRows++;
-} else {
-  summary.unallocatedRows++;
-}
 
-const plannedStart =
-  row.status === "allocated"
-    ? parseFdsDateTime(row.plannedStart)
-    : null;
-
-const plannedEnd =
-  row.status === "allocated"
-    ? parseFdsDateTime(row.plannedEnd)
-    : null;
-
-if (
-  row.status === "allocated" &&
-  !plannedStart?.date
-) {
-
-  summary.invalidEtaRows.push({
-    row: row.rowNumber,
-    orderRef: row.orderRef,
-    plannedStart: row.plannedStart,
-    plannedEnd: row.plannedEnd
-  });
-
-  continue;
-}
-
-    for (const orderNumber of row.orderNumbers) {
-      const order = orderMap.get(
-        String(orderNumber).toUpperCase()
+    const deliveryDate =
+      new Date(
+        `${row.plannedStart.date}T00:00:00`
       );
 
-      if (!order?.id) {
-        summary.unknownOrders.add(orderNumber);
-        continue;
-      }
 
-      try {
-        const collection =
-          getExistingCollectionData(order);
+    if (
+      Number.isNaN(
+        deliveryDate.getTime()
+      )
+    ) {
+      invalidDateRows++;
+      return;
+    }
 
-        if (row.status === "allocated") {
-const deliveryDate = plannedStart.date;
-const etaFrom = plannedStart.time || "";
-const etaTo = plannedEnd?.time || "";
-          const currentDate = String(
-            order.expected_delivery_date || ""
-          ).slice(0, 10);
 
-          const currentEtaFrom = formatTime(
-            order.delivery_eta_from || ""
+    /*
+     * Vandaag en verleden NIET meenemen.
+     */
+    if (
+      deliveryDate <= today
+    ) {
+      ignoredPastOrToday++;
+      return;
+    }
+
+
+    row.orderNumbers.forEach(
+      orderNumber => {
+
+        const key =
+          String(
+            orderNumber
+          )
+            .trim()
+            .toUpperCase();
+
+
+        const existing =
+          bestRowByOrder.get(
+            key
           );
 
-          const currentEtaTo = formatTime(
-            order.delivery_eta_to || ""
+
+        if (!existing) {
+          bestRowByOrder.set(
+            key,
+            row
           );
 
-          const unchanged =
-            normalize(order.fds_status) === "allocated" &&
-            currentDate ===deliveryDate &&
-            currentEtaFrom === etaFrom &&
-            currentEtaTo === etaTo &&
-            cleanText(order.fds_job_ref || "") === row.jobRef &&
-            cleanText(order.fds_eta_label || "") === row.etaLabel;
-
-          if (unchanged) {
-            summary.ordersUnchanged++;
-            continue;
-          }
-
-          const previousDate = currentDate;
-          const previousEta = currentEtaFrom;
-
-          await safeUpdateOrder(order.id, {
-            fds_collection_date:
-              collection.collectionDate,
-
-            fds_collection_week:
-              collection.collectionWeek,
-
-            fds_status: "allocated",
-            fds_job_ref: row.jobRef || null,
-            fds_eta_label: row.etaLabel || null,
-            fds_last_import_at: importTimestamp,
-
-            expected_delivery_date: deliveryDate,
-
-            delivery_eta_from:
-              etaFrom || null,
-
-            delivery_eta_to:
-              etaTo || null,
-
-            delivery_eta_status:
-              etaFrom ? "confirmed" : "planned",
-
-            transport_type: "charter",
-            status: "export_for_charter",
-            transport_status: "planned",
-            overall_status: "planned",
-
-            last_activity_at: importTimestamp
-          });
-
-          let description =
-            `FDS planning imported from ${file.name}. ` +
-            `Status: Allocated. ` +
-            `Planned delivery: ${formatDate(deliveryDate)}`;
-
-          if (etaFrom) {
-            description +=
-              `, ETA ${etaFrom}` +
-              `${etaTo ? ` - ${etaTo}` : ""}`;
-          }
-
-          if (row.etaLabel) {
-            description +=
-              `. FDS ETA label: ${row.etaLabel}`;
-          }
-
-          if (
-            previousDate &&
-            previousDate !== deliveryDate
-          ) {
-            description +=
-              `. Previous delivery date: ${formatDate(previousDate)}`;
-          }
-
-          if (
-            previousEta &&
-            previousEta !== etaFrom
-          ) {
-            description +=
-              `. Previous ETA: ${previousEta}`;
-          }
-
-          description += ".";
-
-          await insertOrderActivity(
-            order.id,
-            description,
-            "fds_planning_allocated"
-          );
-
-          order.fds_status = "allocated";
-          order.expected_delivery_date = deliveryDate;
-          order.delivery_eta_from = etaFrom || null;
-          order.delivery_eta_to = etaTo || null;
-          order.fds_job_ref = row.jobRef || null;
-          order.fds_eta_label = row.etaLabel || null;
-
-          summary.ordersUpdated++;
-          continue;
+          return;
         }
 
-        const wasAlreadyUnallocated =
-          normalize(order.fds_status) === "unallocated" &&
-          !order.delivery_eta_from &&
-          !order.delivery_eta_to;
 
-        if (wasAlreadyUnallocated) {
-          summary.ordersUnchanged++;
-          continue;
+        const existingDate =
+          new Date(
+            `${existing.plannedStart.date}T00:00:00`
+          );
+
+        /*
+         * Bij meerdere toekomstige regels:
+         * de laatste geplande datum wint.
+         */
+        if (
+          deliveryDate >
+          existingDate
+        ) {
+          bestRowByOrder.set(
+            key,
+            row
+          );
         }
-
-await safeUpdateOrder(order.id, {
-  fds_collection_date:
-    collection.collectionDate,
-
-  fds_collection_week:
-    collection.collectionWeek,
-
-  fds_status: "allocated",
-  fds_job_ref: row.jobRef || null,
-  fds_eta_label: row.etaLabel || null,
-  fds_last_import_at: importTimestamp,
-
-  expected_delivery_date: deliveryDate,
-  delivery_eta_from: etaFrom || null,
-  delivery_eta_to: etaTo || null,
-  delivery_eta_status:
-    etaFrom ? "confirmed" : "planned",
-
-  transport_type: "charter",
-  status: "export_for_charter",
-  transport_status: "planned",
-  overall_status: "planned",
-
-  last_activity_at: importTimestamp
-});
-
-        await insertOrderActivity(
-          order.id,
-          `FDS planning imported from ${file.name}. Status: Unallocated. No delivery date is currently confirmed.`,
-          "fds_planning_unallocated"
-        );
-
-        order.fds_status = "unallocated";
-        order.expected_delivery_date = null;
-        order.delivery_eta_from = null;
-        order.delivery_eta_to = null;
-
-        summary.ordersUpdated++;
-      } catch (error) {
-        console.error(
-          "FDS planning import failed:",
-          orderNumber,
-          error
-        );
-
-        summary.errors.push(
-          `${orderNumber}: ${
-            error.message || "Unknown import error"
-          }`
-        );
       }
+    );
+  });
+
+
+  /*
+   * ==========================================================
+   * IMPORT SUMMARY
+   * ==========================================================
+   */
+
+  const summary = {
+    rowsRead:
+      rows.length,
+
+    futureOrdersFound:
+      bestRowByOrder.size,
+
+    ordersUpdated:
+      0,
+
+    ordersUnchanged:
+      0,
+
+    ignoredPastOrToday,
+
+    invalidDateRows,
+
+    rowsWithoutOrder,
+
+    unknownOrders:
+      new Set(),
+
+    errors:
+      []
+  };
+
+
+  /*
+   * ==========================================================
+   * ORDERS BIJWERKEN
+   * ==========================================================
+   */
+
+  for (
+    const [
+      orderNumber,
+      row
+    ]
+    of bestRowByOrder
+  ) {
+
+    const order =
+      orderMap.get(
+        orderNumber
+      );
+
+
+    if (!order?.id) {
+      summary
+        .unknownOrders
+        .add(
+          orderNumber
+        );
+
+      continue;
+    }
+
+
+    const deliveryDate =
+      row.plannedStart.date;
+
+
+    const currentDate =
+      String(
+        order.expected_delivery_date ||
+        ""
+      )
+        .slice(
+          0,
+          10
+        );
+
+
+    const alreadyConfirmedByFds =
+      normalize(
+        order.fds_status
+      ) ===
+      "delivery_confirmed";
+
+
+    /*
+     * Zelfde datum en al door FDS bevestigd:
+     * niets opnieuw schrijven.
+     */
+    if (
+      currentDate ===
+        deliveryDate &&
+      alreadyConfirmedByFds
+    ) {
+      summary.ordersUnchanged++;
+
+      continue;
+    }
+
+
+    try {
+
+      const previousDate =
+        currentDate || null;
+
+
+      /*
+       * ======================================================
+       * ALLEEN DE VERWACHTE LEVERDATUM
+       *
+       * Geen lifecycle.
+       * Geen transport_status.
+       * Geen confirmed_delivery_date.
+       * Geen ETA-tijden.
+       * ======================================================
+       */
+
+      await safeUpdateOrder(
+        order.id,
+        {
+          expected_delivery_date:
+            deliveryDate,
+
+          fds_status:
+            "delivery_confirmed",
+
+          fds_job_ref:
+            row.jobRef ||
+            order.fds_job_ref ||
+            null,
+
+          fds_last_import_at:
+            importTimestamp,
+
+          last_activity_at:
+            importTimestamp
+        }
+      );
+
+
+      /*
+       * ======================================================
+       * PLANNING HISTORY
+       * ======================================================
+       *
+       * Alleen een nieuwe history-regel wanneer de datum
+       * daadwerkelijk gewijzigd is.
+       */
+
+      if (
+        previousDate !==
+        deliveryDate
+      ) {
+
+        const existingHistory =
+          deliveryDateHistoryMap.get(
+            String(order.id)
+          ) || [];
+
+
+        const highestSequence =
+          existingHistory.reduce(
+            (
+              highest,
+              item
+            ) =>
+              Math.max(
+                highest,
+                Math.round(
+                  toNumber(
+                    item.change_sequence,
+                    0
+                  )
+                )
+              ),
+            0
+          );
+
+
+        const {
+          error:
+            historyError
+        } =
+          await client
+            .from(
+              "order_delivery_date_history"
+            )
+            .insert({
+              company_id:
+                cid,
+
+              order_id:
+                order.id,
+
+              delivery_date:
+                deliveryDate,
+
+              change_sequence:
+                highestSequence + 1,
+
+              source:
+                "FDS",
+
+              changed_by:
+                currentUser?.id ||
+                currentProfile?.id ||
+                null,
+
+              created_at:
+                importTimestamp
+            });
+
+
+        if (historyError) {
+          console.warn(
+            "FDS delivery date history could not be saved:",
+            orderNumber,
+            historyError.message
+          );
+        }
+      }
+
+
+      /*
+       * ======================================================
+       * ACTIVITY
+       * ======================================================
+       */
+
+      let description =
+        `Delivery date confirmed by FDS: ` +
+        `${formatDate(
+          deliveryDate
+        )}.`;
+
+
+      if (
+        previousDate &&
+        previousDate !==
+          deliveryDate
+      ) {
+        description +=
+          ` Previous expected delivery date: ` +
+          `${formatDate(
+            previousDate
+          )}.`;
+      }
+
+
+      if (row.jobRef) {
+        description +=
+          ` FDS Job Ref: ` +
+          `${row.jobRef}.`;
+      }
+
+
+      await insertOrderActivity(
+        order.id,
+        description,
+        "fds_delivery_date_confirmed"
+      );
+
+
+      /*
+       * Lokale kopie bijwerken.
+       */
+      order.expected_delivery_date =
+        deliveryDate;
+
+      order.fds_status =
+        "delivery_confirmed";
+
+      order.fds_job_ref =
+        row.jobRef ||
+        order.fds_job_ref ||
+        null;
+
+      order.fds_last_import_at =
+        importTimestamp;
+
+
+      summary.ordersUpdated++;
+
+    } catch (error) {
+
+      console.error(
+        "FDS delivery date import failed:",
+        orderNumber,
+        error
+      );
+
+
+      summary.errors.push(
+        `${orderNumber}: ${
+          error.message ||
+          "Unknown import error"
+        }`
+      );
     }
   }
+
+
+  /*
+   * ==========================================================
+   * OCC OPNIEUW LADEN
+   * ==========================================================
+   */
 
   await loadOrders();
 
-  const unknownOrders = [
-    ...summary.unknownOrders
-  ];
+
+  const unknownOrders =
+    [
+      ...summary.unknownOrders
+    ];
+
 
   let message =
-    `FDS planning import completed: ` +
+    `FDS delivery dates imported: ` +
     `${summary.ordersUpdated} updated, ` +
     `${summary.ordersUnchanged} unchanged, ` +
-    `${summary.unallocatedRows} unallocated row(s) processed`;
+    `${summary.ignoredPastOrToday} past/today row(s) ignored`;
 
-  if (unknownOrders.length) {
+
+  if (
+    unknownOrders.length
+  ) {
     message +=
       `, ${unknownOrders.length} order(s) not found`;
   }
 
-  if (summary.invalidEtaRows.length) {
+
+  if (
+    summary.invalidDateRows
+  ) {
     message +=
-      `, ${summary.invalidEtaRows.length} invalid ETA row(s)`;
+      `, ${summary.invalidDateRows} invalid date row(s)`;
   }
 
-  if (summary.errors.length) {
+
+  if (
+    summary.errors.length
+  ) {
     message +=
       `, ${summary.errors.length} error(s)`;
   }
 
+
   showToast(
     message + ".",
-    summary.errors.length ? "err" : "ok"
+    summary.errors.length
+      ? "err"
+      : "ok"
   );
 
+
   console.table({
-    "CSV rows read": summary.rowsRead,
-    "Allocated rows": summary.allocatedRows,
-    "Unallocated rows": summary.unallocatedRows,
-    "Orders updated": summary.ordersUpdated,
-    "Orders unchanged": summary.ordersUnchanged,
-    "Orders not found": unknownOrders.length,
-    "Invalid ETA rows": summary.invalidEtaRows.length,
-    "Ignored rows": summary.ignoredRows,
-    "Errors": summary.errors.length
+    "CSV rows read":
+      summary.rowsRead,
+
+    "Future SO orders":
+      summary.futureOrdersFound,
+
+    "Orders updated":
+      summary.ordersUpdated,
+
+    "Orders unchanged":
+      summary.ordersUnchanged,
+
+    "Past / today ignored":
+      summary.ignoredPastOrToday,
+
+    "Invalid dates":
+      summary.invalidDateRows,
+
+    "Rows without SO":
+      summary.rowsWithoutOrder,
+
+    "Orders not found":
+      unknownOrders.length,
+
+    "Errors":
+      summary.errors.length
   });
 
-  if (unknownOrders.length) {
+
+  if (
+    unknownOrders.length
+  ) {
     console.warn(
       "FDS order numbers not found in Veynor:",
       unknownOrders
     );
   }
 
-  if (summary.invalidEtaRows.length) {
-    console.warn(
-      "FDS rows with an invalid ETA/Actual value:",
-      summary.invalidEtaRows
-    );
-  }
 
-  if (summary.errors.length) {
+  if (
+    summary.errors.length
+  ) {
     console.error(
-      "FDS planning import errors:",
+      "FDS delivery date import errors:",
       summary.errors
     );
   }
+
 
   return summary;
 }
