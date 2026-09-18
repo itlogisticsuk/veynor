@@ -3079,79 +3079,69 @@ async function appendWarehousePickupInstructions(
 }
 
   async function uploadPdf(
-    client,
-    companyId,
-    order,
-    blob
-  ) {
-    const orderPart =
-      safeFilePart(
-        order.order_number ||
-        order.id
+  client,
+  companyId,
+  order,
+  blob
+) {
+  const orderPart =
+    safeFilePart(
+      order.order_number ||
+      order.id
+    );
+
+  const documentLabel =
+    isCollectionOrder(order)
+      ? "Collection Note"
+      : "Delivery Note";
+
+  /*
+   * BELANGRIJK:
+   * Geen Date.now() meer.
+   *
+   * Iedere order krijgt één vaste PDF.
+   * Bij opnieuw genereren wordt hetzelfde
+   * Storage-bestand overschreven.
+   */
+  const fileName =
+    `${documentLabel} ${orderPart}.pdf`;
+
+  const storagePath =
+    `${companyId}/${order.id}/${fileName}`;
+
+  const { error } =
+    await client.storage
+      .from(DOCUMENT_BUCKET)
+      .upload(
+        storagePath,
+        blob,
+        {
+          contentType:
+            "application/pdf",
+
+          upsert:
+            true
+        }
       );
 
-    const supplierPart =
-      safeFilePart(
-        order.external_reference ||
-        ""
-      );
-
-    const versionPart =
-      Date.now();
-
-    const documentLabel =
-      isCollectionOrder(order)
-        ? "Collection Note"
-        : "Delivery Note";
-
-    const fileName =
-      supplierPart
-        ? `${documentLabel} ${orderPart} ${supplierPart} ${versionPart}.pdf`
-        : `${documentLabel} ${orderPart} ${versionPart}.pdf`;
-
-    const storagePath =
-      `${companyId}/${order.id}/${fileName}`;
-
-    const {
-      error
-    } =
-      await client.storage
-        .from(
-          DOCUMENT_BUCKET
-        )
-        .upload(
-          storagePath,
-          blob,
-          {
-            contentType:
-              "application/pdf",
-            upsert:
-              true
-          }
-        );
-
-    if (error) {
-      throw error;
-    }
-
-    const {
-      data
-    } =
-      client.storage
-        .from(
-          DOCUMENT_BUCKET
-        )
-        .getPublicUrl(
-          storagePath
-        );
-
-    return {
-      storagePath,
-      fileUrl:
-        data?.publicUrl ||
-        ""
-    };
+  if (error) {
+    throw error;
   }
+
+  const { data } =
+    client.storage
+      .from(DOCUMENT_BUCKET)
+      .getPublicUrl(
+        storagePath
+      );
+
+  return {
+    storagePath,
+    fileUrl:
+      data?.publicUrl ||
+      ""
+  };
+}
 
   async function upsertDocumentRecord(
     client,
@@ -3446,17 +3436,58 @@ async function appendWarehousePickupInstructions(
     );
 
 
-  const workingOrder =
-    freshOrder ||
-    order;
+const workingOrder =
+  freshOrder ||
+  order;
 
 
-  /* =====================================================
-   * SETTINGS
-   * ===================================================== */
+/* =====================================================
+ * BESTAANDE DELIVERY NOTE HERGEBRUIKEN
+ * ===================================================== */
 
-  const ctx =
-    await loadCompanySettings(
+const existingDeliveryNote =
+  (
+    workingOrder.order_documents ||
+    []
+  ).find(
+    doc =>
+      normalize(
+        doc.document_type
+      ) ===
+        "delivery_note" &&
+      doc.file_url &&
+      doc.storage_path
+  );
+
+if (existingDeliveryNote) {
+  console.log(
+    "Existing delivery note reused:",
+    workingOrder.order_number,
+    existingDeliveryNote.storage_path
+  );
+
+  return {
+    documentId:
+      existingDeliveryNote.id,
+
+    fileUrl:
+      existingDeliveryNote.file_url,
+
+    storagePath:
+      existingDeliveryNote.storage_path,
+
+    reused:
+      true
+  };
+}
+
+
+/* =====================================================
+ * SETTINGS
+ * ===================================================== */
+
+const ctx =
+  await loadCompanySettings(
       client,
       companyId
     );

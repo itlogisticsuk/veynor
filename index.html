@@ -557,7 +557,499 @@
         margin:10px;
       }
     }
-  </style>
+
+</style>
+
+<style>
+  /* =========================================================
+     STOCK VALUE MODAL
+     ========================================================= */
+
+  .stock-value-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 15000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+
+  .stock-value-modal.open {
+    display: flex;
+  }
+
+  .stock-value-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, .62);
+    backdrop-filter: blur(2px);
+  }
+
+  .stock-value-modal-card {
+    position: relative;
+    z-index: 1;
+
+    width: min(1250px, 96vw);
+    max-height: 92vh;
+
+    display: flex;
+    flex-direction: column;
+
+    overflow: hidden;
+
+    border: 1px solid #dce5f2;
+    border-radius: 20px;
+
+    background: #fff;
+
+    box-shadow:
+      0 30px 90px
+      rgba(15, 23, 42, .32);
+  }
+
+
+  /* HEADER */
+
+  .stock-value-modal-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+
+    padding: 20px 22px;
+
+    border-bottom: 1px solid #e5edf7;
+
+    background: #fff;
+  }
+
+  .stock-value-modal-head h2 {
+    margin: 0;
+
+    color: #07152f;
+
+    font-size: 22px;
+    font-weight: 950;
+  }
+
+  .stock-value-modal-head p {
+    margin: 5px 0 0;
+
+    color: #64748b;
+
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .stock-value-close {
+    width: 38px;
+    height: 38px;
+
+    flex: 0 0 38px;
+
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    border: 1px solid #dce5f2;
+    border-radius: 10px;
+
+    background: #fff;
+    color: #334155;
+
+    font-size: 25px;
+    line-height: 1;
+
+    cursor: pointer;
+  }
+
+  .stock-value-close:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+  }
+
+
+  /* BODY */
+
+  .stock-value-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+
+    overflow: auto;
+
+    padding: 20px 22px 24px;
+
+    background: #f8fafc;
+  }
+
+
+  /* LOADING / ERROR */
+
+  .stock-value-loading {
+    padding: 35px;
+
+    border: 1px dashed #cbd5e1;
+    border-radius: 14px;
+
+    background: #fff;
+    color: #64748b;
+
+    text-align: center;
+
+    font-size: 13px;
+    font-weight: 800;
+  }
+
+  .stock-value-error {
+    padding: 14px 16px;
+
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+
+    background: #fef2f2;
+    color: #b42318;
+
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+
+  /* KPI */
+
+  .stock-value-kpi-grid {
+    display: grid;
+
+    grid-template-columns:
+      repeat(4, minmax(0, 1fr));
+
+    gap: 12px;
+
+    margin-bottom: 18px;
+  }
+
+  .stock-value-kpi {
+    padding: 15px 16px;
+
+    border: 1px solid #dce5f2;
+    border-radius: 14px;
+
+    background: #fff;
+  }
+
+  .stock-value-kpi span {
+    display: block;
+
+    color: #64748b;
+
+    font-size: 10px;
+    font-weight: 950;
+
+    letter-spacing: .05em;
+    text-transform: uppercase;
+  }
+
+  .stock-value-kpi strong {
+    display: block;
+
+    margin-top: 6px;
+
+    color: #07152f;
+
+    font-size: 24px;
+    font-weight: 950;
+  }
+
+  .stock-value-kpi small {
+    display: block;
+
+    margin-top: 5px;
+
+    color: #94a3b8;
+
+    font-size: 10px;
+    line-height: 1.4;
+  }
+
+  .stock-value-kpi.highlight {
+    border-color: #b9d3ff;
+    background: #f4f8ff;
+  }
+
+  .stock-value-kpi.highlight strong {
+    color: #1667ff;
+  }
+
+
+  /* SECTIONS */
+
+  .stock-value-section {
+    margin-top: 16px;
+
+    padding: 16px;
+
+    border: 1px solid #dce5f2;
+    border-radius: 16px;
+
+    background: #fff;
+  }
+
+  .stock-value-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    margin-bottom: 13px;
+  }
+
+  .stock-value-section-head h3 {
+    margin: 0;
+
+    color: #0f172a;
+
+    font-size: 15px;
+    font-weight: 950;
+  }
+
+  .stock-value-section-head p {
+    margin: 4px 0 0;
+
+    color: #64748b;
+
+    font-size: 11px;
+  }
+
+
+  /* TABLE */
+
+  .stock-value-table-wrap {
+    width: 100%;
+
+    overflow-x: auto;
+
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+  }
+
+  .stock-value-table {
+    width: 100%;
+    min-width: 900px;
+
+    border-collapse: collapse;
+
+    background: #fff;
+  }
+
+  .stock-value-table th,
+  .stock-value-table td {
+    padding: 10px 12px;
+
+    border-bottom: 1px solid #edf2f7;
+
+    text-align: left;
+    vertical-align: middle;
+
+    font-size: 12px;
+  }
+
+  .stock-value-table thead th {
+    background: #f8fafc;
+    color: #475569;
+
+    font-size: 10px;
+    font-weight: 950;
+
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  .stock-value-table tbody td {
+    color: #334155;
+  }
+
+  .stock-value-table tbody tr:hover {
+    background: #f8fbff;
+  }
+
+  .stock-value-table .num {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .stock-value-table tfoot th {
+    border-top: 2px solid #dce5f2;
+    border-bottom: 0;
+
+    background: #f8fafc;
+    color: #07152f;
+
+    font-weight: 950;
+  }
+
+
+  /* DETAIL BUTTON */
+
+  .stock-value-small-btn {
+    min-height: 34px;
+
+    padding: 6px 11px;
+
+    border: 1px solid #cbd5e1;
+    border-radius: 9px;
+
+    background: #fff;
+    color: #334155;
+
+    font-size: 11px;
+    font-weight: 850;
+
+    cursor: pointer;
+  }
+
+  .stock-value-small-btn:hover {
+    background: #f1f5f9;
+  }
+
+
+  /* NOTE */
+
+  .stock-value-note {
+    display: grid;
+    gap: 4px;
+
+    margin-top: 16px;
+
+    padding: 12px 14px;
+
+    border: 1px solid #dbe7f6;
+    border-radius: 12px;
+
+    background: #f8fbff;
+  }
+
+  .stock-value-note strong {
+    color: #10213f;
+
+    font-size: 11px;
+    font-weight: 950;
+  }
+
+  .stock-value-note span {
+    color: #64748b;
+
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+
+  /* FOOTER */
+
+  .stock-value-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+
+    padding: 14px 22px;
+
+    border-top: 1px solid #e5edf7;
+
+    background: #fff;
+  }
+
+  .stock-value-updated {
+    color: #94a3b8;
+
+    font-size: 10px;
+  }
+
+  .stock-value-modal-actions {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+
+.stock-value-btn {
+  min-height: 38px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 7px 14px;
+
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+
+  background: #fff;
+  color: #334155;
+
+  font-size: 12px;
+  font-weight: 850;
+
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.stock-value-btn:hover {
+  background: #f1f5f9;
+}
+
+.stock-value-btn.primary {
+  border-color: #1667ff;
+  background: #1667ff;
+  color: #fff;
+}
+
+.stock-value-btn.primary:hover {
+  background: #0f5be7;
+  border-color: #0f5be7;
+}
+
+
+/* =========================================================
+   RESPONSIVE
+   ========================================================= */
+
+@media (max-width: 900px) {
+
+  .stock-value-modal {
+    padding: 10px;
+  }
+
+  .stock-value-modal-card {
+    width: 100%;
+    max-height: 96vh;
+  }
+
+  .stock-value-kpi-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .stock-value-modal-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 600px) {
+
+  .stock-value-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-value-modal-actions {
+    width: 100%;
+  }
+
+  .stock-value-btn {
+    flex: 1;
+  }
+}
+
+</style>
 </head>
 
 <body>
@@ -593,12 +1085,31 @@
         <div class="kpi-sub">View operations →</div>
       </article>
 
-      <article class="card dashboard-kpi-card" data-go="./stock.html">
-        <div class="kpi-icon">📦</div>
-        <div class="kpi-label">Units in Stock</div>
-        <div id="kpiStockUnits" class="kpi-value">0</div>
-        <div class="kpi-sub">View current stock →</div>
-      </article>
+<article
+  class="card dashboard-kpi-card"
+  id="stockValueKpiCard"
+  role="button"
+  tabindex="0"
+  aria-haspopup="dialog"
+  aria-controls="stockValueModal"
+>
+  <div class="kpi-icon">📦</div>
+
+  <div class="kpi-label">
+    Units in Stock
+  </div>
+
+  <div
+    id="kpiStockUnits"
+    class="kpi-value"
+  >
+    0
+  </div>
+
+  <div class="kpi-sub">
+    View stock value →
+  </div>
+</article>
 
       <article class="card dashboard-kpi-card" data-go="./order-matching.html">
         <div class="kpi-icon">✅</div>
@@ -1022,6 +1533,425 @@
       </article>
     </section>
   </main>
+</div>
+<!-- =========================================================
+     STOCK VALUE MODAL
+     ========================================================= -->
+
+<div
+  id="stockValueModal"
+  class="stock-value-modal"
+  aria-hidden="true"
+>
+  <div
+    class="stock-value-modal-backdrop"
+    data-stock-value-close
+  ></div>
+
+
+  <section
+    class="stock-value-modal-card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="stockValueModalTitle"
+  >
+
+    <!-- HEADER -->
+    <div class="stock-value-modal-head">
+
+      <div>
+        <h2 id="stockValueModalTitle">
+          Current Stock Value
+        </h2>
+
+        <p>
+          Warehouse revenue if all current stock
+          was dispatched today.
+        </p>
+      </div>
+
+
+      <button
+        type="button"
+        class="stock-value-close"
+        id="stockValueCloseBtn"
+        aria-label="Close Stock Value"
+      >
+        ×
+      </button>
+
+    </div>
+
+
+    <!-- BODY -->
+    <div class="stock-value-modal-body">
+
+      <!-- LOADING -->
+      <div
+        id="stockValueLoading"
+        class="stock-value-loading"
+      >
+        Calculating current stock value...
+      </div>
+
+
+      <!-- ERROR -->
+      <div
+        id="stockValueError"
+        class="stock-value-error"
+        style="display:none;"
+      ></div>
+
+
+      <!-- CONTENT -->
+      <div
+        id="stockValueContent"
+        style="display:none;"
+      >
+
+        <!-- ===============================================
+             MAIN KPI SUMMARY
+             =============================================== -->
+
+        <div class="stock-value-kpi-grid">
+
+          <div class="stock-value-kpi">
+            <span>
+              Physical Packages
+            </span>
+
+            <strong id="stockValuePhysicalPackages">
+              0
+            </strong>
+
+            <small>
+              Packages currently in warehouse
+            </small>
+          </div>
+
+
+          <div class="stock-value-kpi">
+            <span>
+              Complete Products
+            </span>
+
+            <strong id="stockValueCompleteProducts">
+              0
+            </strong>
+
+            <small>
+              Complete saleable units
+            </small>
+          </div>
+
+
+          <div class="stock-value-kpi highlight">
+            <span>
+              Warehouse Value
+            </span>
+
+            <strong id="stockValueGrandTotal">
+              £0.00
+            </strong>
+
+            <small>
+              Storage + admin + handling
+            </small>
+          </div>
+
+
+          <div class="stock-value-kpi">
+            <span>
+              Product Owners
+            </span>
+
+            <strong id="stockValueOwnerCount">
+              0
+            </strong>
+
+            <small>
+              Owners with current stock
+            </small>
+          </div>
+
+        </div>
+
+
+        <!-- ===============================================
+             PRODUCT OWNER SUMMARY
+             =============================================== -->
+
+        <section class="stock-value-section">
+
+          <div class="stock-value-section-head">
+
+            <div>
+              <h3>
+                Value by Product Owner
+              </h3>
+
+              <p>
+                Warehouse value of the current physical stock.
+              </p>
+            </div>
+
+          </div>
+
+
+          <div class="stock-value-table-wrap">
+
+            <table class="stock-value-table">
+
+              <thead>
+                <tr>
+                  <th>
+                    Product Owner
+                  </th>
+
+                  <th class="num">
+                    Products
+                  </th>
+
+                  <th class="num">
+                    Units
+                  </th>
+
+                  <th class="num">
+                    Storage
+                  </th>
+
+                  <th class="num">
+                    Admin
+                  </th>
+
+                  <th class="num">
+                    Handling
+                  </th>
+
+                  <th class="num">
+                    Total
+                  </th>
+
+                  <th></th>
+                </tr>
+              </thead>
+
+
+              <tbody id="stockValueOwnerBody">
+
+                <!-- Filled by dashboard JS -->
+
+              </tbody>
+
+
+              <tfoot>
+                <tr>
+                  <th>
+                    TOTAL
+                  </th>
+
+                  <th
+                    id="stockValueTotalProducts"
+                    class="num"
+                  >
+                    0
+                  </th>
+
+                  <th
+                    id="stockValueTotalUnits"
+                    class="num"
+                  >
+                    0
+                  </th>
+
+                  <th
+                    id="stockValueTotalStorage"
+                    class="num"
+                  >
+                    £0.00
+                  </th>
+
+                  <th
+                    id="stockValueTotalAdmin"
+                    class="num"
+                  >
+                    £0.00
+                  </th>
+
+                  <th
+                    id="stockValueTotalHandling"
+                    class="num"
+                  >
+                    £0.00
+                  </th>
+
+                  <th
+                    id="stockValueTotalValue"
+                    class="num"
+                  >
+                    £0.00
+                  </th>
+
+                  <th></th>
+                </tr>
+              </tfoot>
+
+            </table>
+
+          </div>
+
+        </section>
+
+
+        <!-- ===============================================
+             PRODUCT DETAIL
+             =============================================== -->
+
+        <section
+          class="stock-value-section"
+          id="stockValueDetailSection"
+          style="display:none;"
+        >
+
+          <div class="stock-value-section-head">
+
+            <div>
+              <h3 id="stockValueDetailTitle">
+                Product Detail
+              </h3>
+
+              <p id="stockValueDetailSub">
+                Warehouse value by SKU.
+              </p>
+            </div>
+
+
+            <button
+              type="button"
+              class="stock-value-small-btn"
+              id="stockValueHideDetailBtn"
+            >
+              Hide Detail
+            </button>
+
+          </div>
+
+
+          <div class="stock-value-table-wrap">
+
+            <table class="stock-value-table stock-value-detail-table">
+
+              <thead>
+                <tr>
+
+                  <th>
+                    SKU
+                  </th>
+
+                  <th>
+                    Product
+                  </th>
+
+                  <th class="num">
+                    Packages
+                  </th>
+
+                  <th class="num">
+                    Units
+                  </th>
+
+                  <th class="num">
+                    Storage
+                  </th>
+
+                  <th class="num">
+                    Admin
+                  </th>
+
+                  <th class="num">
+                    Handling
+                  </th>
+
+                  <th class="num">
+                    Total
+                  </th>
+
+                </tr>
+              </thead>
+
+
+              <tbody id="stockValueDetailBody">
+
+                <!-- Filled by dashboard JS -->
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </section>
+
+
+        <!-- ===============================================
+             EXPLANATION
+             =============================================== -->
+
+        <div class="stock-value-note">
+
+          <strong>
+            Calculation
+          </strong>
+
+          <span>
+            Current warehouse value is based on complete
+            physical products currently held in stock and
+            their configured storage, admin and handling
+            tariffs. Transport revenue is excluded.
+          </span>
+
+        </div>
+
+      </div>
+
+    </div>
+
+
+    <!-- FOOTER -->
+    <div class="stock-value-modal-footer">
+
+      <div
+        class="stock-value-updated"
+        id="stockValueUpdated"
+      >
+        —
+      </div>
+
+
+      <div class="stock-value-modal-actions">
+
+        <button
+          type="button"
+          class="stock-value-btn"
+          id="stockValueModalCloseBtn"
+        >
+          Close
+        </button>
+
+
+        <a
+          href="./stock.html"
+          class="stock-value-btn primary"
+        >
+          Open Current Stock
+        </a>
+
+      </div>
+
+    </div>
+
+  </section>
+
 </div>
 </body>
 </html>

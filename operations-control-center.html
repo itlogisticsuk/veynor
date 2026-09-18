@@ -1023,10 +1023,25 @@
       <section class="occ-modal-section">
         <h3>Signed POD PDF</h3>
 
-        <div class="file-row">
-          <label for="manualSignedPodFile">Upload signed POD PDF</label>
-          <input id="manualSignedPodFile" class="input" type="file" accept="application/pdf"/>
-        </div>
+<div class="file-row">
+  <label for="manualSignedPodFile">Upload signed POD PDF(s)</label>
+
+  <input
+    id="manualSignedPodFile"
+    class="input"
+    type="file"
+    accept="application/pdf,.pdf"
+    multiple
+  />
+
+  <div
+    id="manualSignedPodFileInfo"
+    class="occ-help"
+    style="margin-top:4px;"
+  >
+    Select 1 or more PDF files. Multiple files will be combined into one POD document.
+  </div>
+</div>
 
         <div class="field">
           <label for="manualSignedBy">Signed by</label>

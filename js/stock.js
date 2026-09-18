@@ -36,9 +36,18 @@ const OUTBOUND_STATUSES = [
   let currentUser = null;
   let currentProfile = null;
 
-  let allStockItems = [];
-  let filteredStockItems = [];
-  let groupedStock = [];
+let allStockItems = [];
+let filteredStockItems = [];
+let groupedStock = [];
+
+/*
+ * Centrale voorraadwaarheid voor producten waarvan
+ * Stock History / movements is gereconstrueerd.
+ *
+ * key   = product_id
+ * value = row uit product_stock_ledger
+ */
+let productStockLedger = new Map();
 
   let customers = [];
   let warehouses = [];
@@ -751,6 +760,64 @@ const OUTBOUND_STATUSES = [
       );
   }
 
+function isKayflex(item) {
+  return (
+    normalize(
+      item?.stock_variant
+    ) === "kayflex"
+  );
+}
+
+
+function stockVariantLabel(item) {
+  if (
+    isKayflex(item)
+  ) {
+    return "KAYFLEX";
+  }
+
+  const variant =
+    String(
+      item?.stock_variant ||
+      ""
+    ).trim();
+
+  return variant ||
+    "Standard";
+}
+
+
+function stockVariantPill(item) {
+  if (
+    isKayflex(item)
+  ) {
+    return `
+      <span
+        class="soft-pill orange"
+        title="Kayflex stock - manual allocation only"
+      >
+        KAYFLEX
+      </span>
+    `;
+  }
+
+  return "";
+}
+
+
+function isMatchBlocked(item) {
+  /*
+   * Kayflex is ALWAYS manual allocation only.
+   *
+   * This provides an extra frontend safety layer even when
+   * is_match_blocked was accidentally not set in the database.
+   */
+  return (
+    item?.is_match_blocked === true ||
+    isKayflex(item)
+  );
+}
+
 
   function isMatchBlocked(item) {
     return (
@@ -1360,6 +1427,108 @@ function isBlocked(item) {
     }
   }
 
+async function loadProductStockLedger() {
+  const db =
+    ensureClient();
+
+  const cid =
+    await getCompanyId();
+
+  const {
+    data,
+    error
+  } =
+    await db
+      .from("product_stock_ledger")
+      .select(`
+        company_id,
+        product_id,
+        movement_count,
+        physical_units,
+        reserved_units,
+        committed_units,
+        available_units
+      `)
+      .eq(
+        "company_id",
+        cid
+      );
+
+  if (error) {
+    console.warn(
+      "Product stock ledger skipped:",
+      error.message
+    );
+
+    productStockLedger =
+      new Map();
+
+    return;
+  }
+
+  productStockLedger =
+    new Map(
+      (data || [])
+        .filter(
+          row =>
+            row.product_id &&
+            Number(
+              row.movement_count || 0
+            ) > 0
+        )
+        .map(
+          row => [
+            String(
+              row.product_id
+            ),
+            {
+              company_id:
+                row.company_id,
+
+              product_id:
+                row.product_id,
+
+              movement_count:
+                toNumber(
+                  row.movement_count,
+                  0
+                ),
+
+              physical_units:
+                toNumber(
+                  row.physical_units,
+                  0
+                ),
+
+              reserved_units:
+                toNumber(
+                  row.reserved_units,
+                  0
+                ),
+
+              committed_units:
+                toNumber(
+                  row.committed_units,
+                  0
+                ),
+
+              available_units:
+                toNumber(
+                  row.available_units,
+                  0
+                )
+            }
+          ]
+        )
+    );
+
+  console.log(
+    "Product stock ledger loaded:",
+    productStockLedger.size,
+    "product(s)"
+  );
+}
+
 
   // ============================================================
   // LOAD CURRENT STOCK
@@ -1374,24 +1543,32 @@ async function loadStock() {
 
 
   // ==========================================================
-  // 1. LOAD MASTER DATA
+  // 1. LOAD MASTER DATA + CENTRAL STOCK LEDGER
   // ==========================================================
 
   await Promise.all([
     loadCustomers(),
     loadWarehouses(),
     loadLocations(),
-    loadInboundContainers()
+    loadInboundContainers(),
+    loadProductStockLedger()
   ]);
 
 
   // ==========================================================
   // 2. LOAD ALL ITEM ROWS
   //
-  // Belangrijk:
-  // niet meer alleen .range(0, 2999).
+  // Items blijven nodig voor:
+  // - package IDs
+  // - locaties
+  // - containers
+  // - matching
+  // - allocations
+  // - scanning
+  // - detailregels
   //
-  // We halen nu ALLE items op in pagina's van 1000 records.
+  // Maar items zijn NIET meer automatisch de waarheid
+  // voor het producttotaal wanneer een ledger bestaat.
   // ==========================================================
 
   const pageSize =
@@ -1421,10 +1598,14 @@ async function loadStock() {
           storage_mutation_id,
           sku_unique,
 
-          inbound_reference,
-          inbound_date,
+inbound_reference,
+inbound_date,
 
-          status,
+source_system,
+stock_variant,
+batch_number,
+
+status,
 
           reserved_at,
           picked_at,
@@ -1506,22 +1687,21 @@ async function loadStock() {
       "Stock page loaded:",
       {
         from,
+
         to:
           from +
           rows.length -
           1,
+
         rows:
           rows.length,
+
         totalLoaded:
           data.length
       }
     );
 
 
-    /*
-     * Minder dan pageSize teruggekregen =
-     * laatste pagina bereikt.
-     */
     if (
       rows.length <
       pageSize
@@ -1542,7 +1722,9 @@ async function loadStock() {
 
 
   // ==========================================================
-  // 3. KEEP ONLY CURRENT PHYSICAL STOCK
+  // 3. KEEP CURRENT PHYSICAL ITEM RECORDS
+  //
+  // Deze rows zijn de operationele package/detail-laag.
   // ==========================================================
 
   allStockItems =
@@ -1660,7 +1842,7 @@ async function loadStock() {
 
 
             // ==================================================
-            // Inbound information
+            // Inbound
             // ==================================================
 
             inbound_reference:
@@ -1697,7 +1879,6 @@ async function loadStock() {
                 packageTotal
               ),
 
-
             product_volume_m3:
               productVolume,
 
@@ -1724,7 +1905,7 @@ async function loadStock() {
 
 
             // ==================================================
-            // Physical product / package structure
+            // Physical structure
             // ==================================================
 
             physical_product_id:
@@ -1774,7 +1955,7 @@ async function loadStock() {
 
 
             // ==================================================
-            // Inventory Check fields
+            // Inventory Check
             // ==================================================
 
             package_condition:
@@ -1814,7 +1995,7 @@ async function loadStock() {
 
 
   console.log(
-    "Current physical stock records:",
+    "Current physical item records:",
     allStockItems.length
   );
 
@@ -1885,10 +2066,6 @@ async function loadStock() {
 
   applyRoleVisibility();
 }
-
-  // ============================================================
-  // ALLOCATION OVERLAY
-  // ============================================================
 
   async function applyAllocationOverlay() {
     const db =
@@ -2849,312 +3026,541 @@ async function loadStock() {
   // ============================================================
 
   function groupItems(items) {
-    const map =
-      new Map();
+  const map =
+    new Map();
 
 
-    items.forEach(
-      item => {
-        const key =
-          item.product_id ||
-          item.sku_base ||
-          item.product_name ||
-          "unknown";
+  // ==========================================================
+  // 1. BUILD PRODUCT GROUPS FROM ITEM DETAIL ROWS
+  // ==========================================================
+
+  (items || []).forEach(
+    item => {
+      const key =
+        item.product_id ||
+        item.sku_base ||
+        item.product_name ||
+        "unknown";
 
 
-        if (!map.has(key)) {
-          map.set(
+      if (!map.has(key)) {
+        map.set(
+          key,
+          {
             key,
-            {
-              key,
 
-              product_id:
-                item.product_id ||
-                "",
+            product_id:
+              item.product_id ||
+              "",
 
-              sku_base:
-                item.sku_base ||
-                "—",
+            sku_base:
+              item.sku_base ||
+              "—",
 
-              product_name:
-                item.product_name ||
-                "Unknown product",
+            product_name:
+              item.product_name ||
+              "Unknown product",
 
-              product_description:
-                item.product_description ||
-                "",
+            product_description:
+              item.product_description ||
+              "",
 
-              customer_name:
-                item.customer_name ||
-                "—",
+            customer_name:
+              item.customer_name ||
+              "—",
 
-              customer_id:
-                item.customer_id ||
-                "",
-
-              total: 0,
-
-              physicalPackages:
-                0,
-
-              completeProducts:
-                0,
-
-              salesUnits:
-                0,
-
-              available:
-                0,
-
-              availableSalesUnits:
-                0,
-
-              reserved:
-                0,
-
-              blocked:
-                0,
-
-              conditionIncomplete:
-                0,
-
-              exceptionStock:
-                0,
-
-              sales_unit_name:
-                "Units",
-
-              sales_units_per_package:
-                1,
-
-              /*
-               * Existing variable retained for overstock count.
-               */
-              incomplete:
-                0,
-
-              overstock:
-                [],
-
-              missing:
-                [],
-
-              volume_m3:
-                0,
-
-              weight_kg:
-                0,
-
-              items:
-                []
-            }
-          );
-        }
+            customer_id:
+              item.customer_id ||
+              "",
 
 
-        const group =
-          map.get(key);
+            // -----------------------------------------------
+            // Display / stock totals
+            // -----------------------------------------------
+
+            total: 0,
+
+            physicalPackages: 0,
+
+            completeProducts: 0,
+
+            salesUnits: 0,
+
+            available: 0,
+
+            availableSalesUnits: 0,
+
+            reserved: 0,
+
+            committed: 0,
+
+            blocked: 0,
+
+            conditionIncomplete: 0,
+
+            exceptionStock: 0,
 
 
-        group.items.push(
-          item
+            // -----------------------------------------------
+            // Ledger
+            // -----------------------------------------------
+
+            ledgerManaged: false,
+
+            ledgerMovementCount: 0,
+
+            ledgerPhysical: null,
+
+            ledgerAvailable: null,
+
+            ledgerReserved: null,
+
+            ledgerCommitted: null,
+
+
+            // -----------------------------------------------
+            // Product structure
+            // -----------------------------------------------
+
+            sales_unit_name:
+              "Units",
+
+            sales_units_per_package:
+              1,
+
+            incomplete: 0,
+
+            overstock: [],
+
+            missing: [],
+
+            volume_m3: 0,
+
+            weight_kg: 0,
+
+            product_volume_m3: 0,
+
+            product_weight_kg: 0,
+
+            complete_volume_m3: 0,
+
+            available_complete_volume_m3: 0,
+
+            complete_weight_kg: 0,
+
+            available_complete_weight_kg: 0,
+
+            physical_volume_m3: 0,
+
+            physical_weight_kg: 0,
+
+            items: []
+          }
+        );
+      }
+
+
+      const group =
+        map.get(key);
+
+
+      group.items.push(
+        item
+      );
+
+      group.total +=
+        1;
+
+
+      group.product_volume_m3 =
+        toNumber(
+          item.product_volume_m3 ||
+          item.products?.volume_m3,
+          0
         );
 
-        group.total +=
+      group.product_weight_kg =
+        toNumber(
+          item.product_weight_kg ||
+          item.products?.weight_kg,
+          0
+        );
+
+
+      group.sales_unit_name =
+        item.sales_unit_name ||
+        "Units";
+
+      group.sales_units_per_package =
+        toNumber(
+          item.sales_units_per_package,
+          1
+        ) ||
+        1;
+
+
+      if (
+        isBlocked(item)
+      ) {
+        group.blocked +=
           1;
-
-        group.physicalPackages +=
-          1;
-
-
-        group.product_volume_m3 =
-          toNumber(
-            item.product_volume_m3 ||
-            item.products
-              ?.volume_m3,
-            0
-          );
-
-        group.product_weight_kg =
-          toNumber(
-            item.product_weight_kg ||
-            item.products
-              ?.weight_kg,
-            0
-          );
-
-        group.sales_unit_name =
-          item.sales_unit_name ||
-          "Units";
-
-        group.sales_units_per_package =
-          toNumber(
-            item.sales_units_per_package,
-            1
-          ) ||
-          1;
-
-
-        if (
-          isReserved(item)
-        ) {
-          group.reserved +=
-            1;
-        }
-
-        if (
-          isBlocked(item)
-        ) {
-          group.blocked +=
-            1;
-        }
-
-        if (
-          isConditionIncomplete(
-            item
-          )
-        ) {
-          group.conditionIncomplete +=
-            1;
-        }
-
-        if (
-          isPhysicalException(
-            item
-          )
-        ) {
-          group.exceptionStock +=
-            1;
-        }
       }
-    );
 
 
-    Array.from(
-      map.values()
-    ).forEach(
-      group => {
-        const completeness =
-          calculateCompleteness(
-            group.items
+      if (
+        isConditionIncomplete(
+          item
+        )
+      ) {
+        group.conditionIncomplete +=
+          1;
+      }
+
+
+      if (
+        isPhysicalException(
+          item
+        )
+      ) {
+        group.exceptionStock +=
+          1;
+      }
+    }
+  );
+
+
+  // ==========================================================
+  // 2. CALCULATE EACH PRODUCT GROUP
+  // ==========================================================
+
+  Array.from(
+    map.values()
+  ).forEach(
+    group => {
+
+      const completeness =
+        calculateCompleteness(
+          group.items
+        );
+
+
+      group.completeness =
+        completeness;
+
+
+      // ======================================================
+      // ITEM-BASED VALUES
+      //
+      // These remain the fallback for products that do not
+      // yet have a reconstructed movement ledger.
+      // ======================================================
+
+      const itemPhysicalPackages =
+        completeness.totalPackages;
+
+      const itemCompleteProducts =
+        completeness.completeProducts;
+
+      const itemAvailable =
+        completeness.availableComplete;
+
+      const itemReserved =
+        completeness.reservedComplete;
+
+      const itemCommitted =
+        group.items.filter(
+          item =>
+            [
+              "picked",
+              "loaded"
+            ].includes(
+              normalize(
+                item.status
+              )
+            )
+        ).length;
+
+
+      // ======================================================
+      // CENTRAL STOCK LEDGER
+      // ======================================================
+
+      const ledger =
+        productStockLedger.get(
+          String(
+            group.product_id ||
+            ""
+          )
+        ) ||
+        null;
+
+
+      if (
+        ledger &&
+        ledger.movement_count > 0
+      ) {
+
+        // ====================================================
+        // LEDGER MANAGED PRODUCT
+        //
+        // Stock History / movements is the master truth.
+        // ====================================================
+
+        group.ledgerManaged =
+          true;
+
+        group.ledgerMovementCount =
+          ledger.movement_count;
+
+        group.ledgerPhysical =
+          Math.max(
+            0,
+            toNumber(
+              ledger.physical_units,
+              0
+            )
           );
 
+        group.ledgerReserved =
+          Math.max(
+            0,
+            toNumber(
+              ledger.reserved_units,
+              0
+            )
+          );
 
-        group.completeness =
-          completeness;
+        group.ledgerCommitted =
+          Math.max(
+            0,
+            toNumber(
+              ledger.committed_units,
+              0
+            )
+          );
 
-        group.completeProducts =
-          completeness
-            .completeProducts;
-
-        group.available =
-          completeness
-            .availableComplete;
-
-        group.reservedComplete =
-          completeness
-            .reservedComplete;
-
-
-        group.salesUnits =
-          group.completeProducts *
-          group.sales_units_per_package;
-
-        group.availableSalesUnits =
-          group.available *
-          group.sales_units_per_package;
+        group.ledgerAvailable =
+          Math.max(
+            0,
+            toNumber(
+              ledger.available_units,
+              0
+            )
+          );
 
 
         /*
-         * Existing 'incomplete' means package overstock.
-         * Kept to preserve old behaviour.
+         * IMPORTANT
+         *
+         * For a ledger-managed product:
+         *
+         * Physical / Complete / Available / Reserved /
+         * Committed are driven by product_stock_ledger.
+         *
+         * The individual item rows remain visible underneath
+         * for location, container, package, allocation,
+         * scanning and operational detail.
          */
-        group.incomplete =
-          completeness
-            .overstock
-            .reduce(
-              (
-                sum,
-                row
-              ) =>
-                sum +
-                row.qty,
-              0
-            );
 
 
-        group.complete_volume_m3 =
-          group.completeProducts *
-          toNumber(
-            group.product_volume_m3,
-            0
+        group.completeProducts =
+          group.ledgerPhysical;
+
+
+        /*
+         * Current Stock currently labels this field
+         * "Physical Packages".
+         *
+         * For 1/1 products such as CRO802:
+         * 34 physical products = 34 packages.
+         *
+         * For multi-package products we convert physical
+         * products back to the expected package count.
+         */
+        const packageTotal =
+          Math.max(
+            1,
+            toNumber(
+              completeness.packageTotal,
+              1
+            )
           );
 
-        group.available_complete_volume_m3 =
-          group.available *
-          toNumber(
-            group.product_volume_m3,
-            0
-          );
 
-        group.complete_weight_kg =
-          group.completeProducts *
-          toNumber(
-            group.product_weight_kg,
-            0
-          );
-
-        group.available_complete_weight_kg =
-          group.available *
-          toNumber(
-            group.product_weight_kg,
-            0
-          );
-
-        group.physical_volume_m3 =
-          group.complete_volume_m3;
-
-        group.physical_weight_kg =
-          group.complete_weight_kg;
+        group.physicalPackages =
+          group.ledgerPhysical *
+          packageTotal;
 
 
-        group.overstock =
-          completeness
-            .overstock;
+        group.available =
+          group.ledgerAvailable;
 
-        group.missing =
-          completeness
-            .missing;
+        group.reserved =
+          group.ledgerReserved;
+
+        group.committed =
+          group.ledgerCommitted;
 
 
-        group.items =
-          group.items.map(
-            (
-              item,
-              index
-            ) => ({
-              ...item,
+      } else {
 
-              display_sku:
-                shortSku(
-                  item
-                ),
+        // ====================================================
+        // LEGACY / NOT-YET-MIGRATED PRODUCT
+        //
+        // Keep the existing Current Stock behaviour.
+        // ====================================================
 
-              display_mutation:
-                mutationDisplay(
-                  item,
-                  index + 1
-                )
-            })
-          );
+        group.ledgerManaged =
+          false;
+
+        group.physicalPackages =
+          itemPhysicalPackages;
+
+        group.completeProducts =
+          itemCompleteProducts;
+
+        group.available =
+          itemAvailable;
+
+        group.reserved =
+          itemReserved;
+
+        group.committed =
+          itemCommitted;
       }
-    );
 
 
-    return Array.from(
-      map.values()
-    );
-  }
+      // ======================================================
+      // SALES UNITS
+      // ======================================================
+
+      group.salesUnits =
+        group.completeProducts *
+        group.sales_units_per_package;
+
+
+      group.availableSalesUnits =
+        group.available *
+        group.sales_units_per_package;
+
+
+      // ======================================================
+      // PACKAGE OVERSTOCK / INCOMPLETE
+      //
+      // This still comes from the physical item detail layer.
+      // ======================================================
+
+      group.incomplete =
+        completeness
+          .overstock
+          .reduce(
+            (
+              sum,
+              row
+            ) =>
+              sum +
+              toNumber(
+                row.qty,
+                0
+              ),
+            0
+          );
+
+
+      group.overstock =
+        completeness.overstock ||
+        [];
+
+
+      group.missing =
+        completeness.missing ||
+        [];
+
+
+      // ======================================================
+      // VOLUME / WEIGHT
+      //
+      // Product totals follow the ledger quantity when the
+      // product is ledger managed.
+      // ======================================================
+
+      group.complete_volume_m3 =
+        group.completeProducts *
+        toNumber(
+          group.product_volume_m3,
+          0
+        );
+
+
+      group.available_complete_volume_m3 =
+        group.available *
+        toNumber(
+          group.product_volume_m3,
+          0
+        );
+
+
+      group.complete_weight_kg =
+        group.completeProducts *
+        toNumber(
+          group.product_weight_kg,
+          0
+        );
+
+
+      group.available_complete_weight_kg =
+        group.available *
+        toNumber(
+          group.product_weight_kg,
+          0
+        );
+
+
+      group.physical_volume_m3 =
+        group.complete_volume_m3;
+
+
+      group.physical_weight_kg =
+        group.complete_weight_kg;
+
+
+      // ======================================================
+      // DISPLAY FIELDS FOR INDIVIDUAL ITEM ROWS
+      // ======================================================
+
+      group.items =
+        group.items.map(
+          (
+            item,
+            index
+          ) => ({
+            ...item,
+
+            display_sku:
+              shortSku(
+                item
+              ),
+
+            display_mutation:
+              mutationDisplay(
+                item,
+                index + 1
+              )
+          })
+        );
+    }
+  );
+
+
+  // ==========================================================
+  // 3. RETURN GROUPS
+  // ==========================================================
+
+  return Array.from(
+    map.values()
+  );
+}
+
 
 
   // ============================================================
@@ -3307,120 +3713,173 @@ async function loadStock() {
   // KPI
   // ============================================================
 
-  function setKpis() {
-    const groups =
-      groupItems(
-        allStockItems
-      );
+ function setKpis() {
+  const groups =
+    groupItems(
+      allStockItems
+    );
 
-    const totalPackages =
-      allStockItems.length;
 
-    const availableComplete =
-      groups.reduce(
-        (
-          sum,
-          group
-        ) =>
-          sum +
+  // ==========================================================
+  // CENTRAL PRODUCT TOTALS
+  //
+  // groupItems() already decides:
+  //
+  // - ledger product -> product_stock_ledger
+  // - non-ledger product -> existing item calculation
+  // ==========================================================
+
+  const totalPhysicalPackages =
+    groups.reduce(
+      (
+        sum,
+        group
+      ) =>
+        sum +
+        toNumber(
+          group.physicalPackages,
+          0
+        ),
+      0
+    );
+
+
+  const availableComplete =
+    groups.reduce(
+      (
+        sum,
+        group
+      ) =>
+        sum +
+        toNumber(
           group.available,
-        0
-      );
-
-    const reservedPackages =
-      allStockItems
-        .filter(
-          isReserved
-        )
-        .length;
-
-    const blockedPackages =
-      allStockItems
-        .filter(
-          isBlocked
-        )
-        .length;
-
-    const pickedLoaded =
-      allStockItems
-        .filter(
-          item =>
-            [
-              "picked",
-              "loaded"
-            ].includes(
-              normalize(
-                item.status
-              )
-            )
-        )
-        .length;
-
-
-    setText(
-      "kpiSkuGroups",
-      formatNumber(
-        groups.length
-      )
-    );
-
-    setText(
-      "kpiStockTotal",
-      formatNumber(
-        totalPackages
-      )
-    );
-
-    setText(
-      "kpiStockAvailable",
-      formatNumber(
-        availableComplete
-      )
-    );
-
-    setText(
-      "kpiStockReserved",
-      formatNumber(
-        reservedPackages
-      )
-    );
-
-    setText(
-      "kpiStockBlocked",
-      formatNumber(
-        blockedPackages
-      )
+          0
+        ),
+      0
     );
 
 
-    setText(
-      "summaryAvailable",
-      formatNumber(
-        availableComplete
-      )
+  const reserved =
+    groups.reduce(
+      (
+        sum,
+        group
+      ) =>
+        sum +
+        toNumber(
+          group.reserved,
+          0
+        ),
+      0
     );
 
-    setText(
-      "summaryLinked",
-      formatNumber(
-        reservedPackages
-      )
+
+  const committed =
+    groups.reduce(
+      (
+        sum,
+        group
+      ) =>
+        sum +
+        toNumber(
+          group.committed,
+          0
+        ),
+      0
     );
 
-    setText(
-      "summaryShipments",
-      formatNumber(
-        pickedLoaded
-      )
-    );
 
-    setText(
-      "summaryBlocked",
-      formatNumber(
-        blockedPackages
+  /*
+   * Blocked remains an operational package-level value.
+   * It therefore still comes from the item detail layer.
+   */
+  const blockedPackages =
+    allStockItems
+      .filter(
+        isBlocked
       )
-    );
-  }
+      .length;
+
+
+  // ==========================================================
+  // TOP KPIs
+  // ==========================================================
+
+  setText(
+    "kpiSkuGroups",
+    formatNumber(
+      groups.length
+    )
+  );
+
+
+  setText(
+    "kpiStockTotal",
+    formatNumber(
+      totalPhysicalPackages
+    )
+  );
+
+
+  setText(
+    "kpiStockAvailable",
+    formatNumber(
+      availableComplete
+    )
+  );
+
+
+  setText(
+    "kpiStockReserved",
+    formatNumber(
+      reserved
+    )
+  );
+
+
+  setText(
+    "kpiStockBlocked",
+    formatNumber(
+      blockedPackages
+    )
+  );
+
+
+  // ==========================================================
+  // STOCK SUMMARY
+  // ==========================================================
+
+  setText(
+    "summaryAvailable",
+    formatNumber(
+      availableComplete
+    )
+  );
+
+
+  setText(
+    "summaryLinked",
+    formatNumber(
+      reserved
+    )
+  );
+
+
+  setText(
+    "summaryShipments",
+    formatNumber(
+      committed
+    )
+  );
+
+
+  setText(
+    "summaryBlocked",
+    formatNumber(
+      blockedPackages
+    )
+  );
+}
 
 
   // ============================================================
@@ -4183,72 +4642,221 @@ async function loadStock() {
   // INDIVIDUAL ITEM ROW
   // ============================================================
 
-  function makeItemRowHtml(item) {
-    const active =
+function makeItemRowHtml(item) {
+  const active =
+    String(
+      item.id
+    ) ===
+    String(
+      selectedStockId
+    )
+      ? "active"
+      : "";
+
+
+  const checked =
+    selectedItemIds.has(
       String(
         item.id
-      ) ===
-      String(
-        selectedStockId
       )
-        ? "active"
-        : "";
-
-    const checked =
-      selectedItemIds.has(
-        String(
-          item.id
-        )
-      )
-        ? "checked"
-        : "";
+    )
+      ? "checked"
+      : "";
 
 
-    const matchingHtml =
-      isMatchBlocked(item)
-        ? `
-          <span class="soft-pill gray">
-            Blocked
+  const kayflex =
+    isKayflex(item);
+
+
+  // ==========================================================
+  // MATCHING DISPLAY
+  // ==========================================================
+
+  const matchingHtml =
+    kayflex
+      ? `
+          <span
+            class="soft-pill orange"
+            title="Kayflex stock can only be allocated manually"
+          >
+            Manual Only
           </span>
 
-          ${
-            item.match_block_reason
-              ? `
-                <span class="subline">
-                  ${escapeHtml(
-                    item.match_block_reason
-                  )}
-                </span>
-              `
-              : ""
-          }
+          <span class="subline">
+            Kayflex stock
+          </span>
         `
+
+      : isMatchBlocked(item)
+        ? `
+            <span class="soft-pill gray">
+              Blocked
+            </span>
+
+            ${
+              item.match_block_reason
+                ? `
+                    <span class="subline">
+                      ${escapeHtml(
+                        item.match_block_reason
+                      )}
+                    </span>
+                  `
+                : ""
+            }
+          `
+
         : isConditionUnavailable(
             item
           )
           ? `
-            <span class="soft-pill orange">
-              Not Matchable
+              <span class="soft-pill orange">
+                Not Matchable
+              </span>
+            `
+
+          : `
+              <span class="soft-pill green">
+                Matchable
+              </span>
+            `;
+
+
+  // ==========================================================
+  // ALLOCATION / AVAILABILITY DISPLAY
+  // ==========================================================
+
+  const allocationHtml =
+    kayflex &&
+    !item.linked_order_id &&
+    normalize(
+      item.status
+    ) === "in_stock"
+      ? `
+          <span
+            class="soft-pill orange"
+            title="Physical Kayflex stock - manual allocation only"
+          >
+            Kayflex
+          </span>
+
+          <span class="subline">
+            Manual allocation
+          </span>
+        `
+      : allocationPill(
+          item
+        );
+
+
+  // ==========================================================
+  // SKU DISPLAY
+  // ==========================================================
+
+  const skuHtml = `
+    <span class="stock-link">
+      ${escapeHtml(
+        item.display_sku ||
+        shortSku(
+          item
+        )
+      )}
+    </span>
+
+    ${
+      kayflex
+        ? `
+            <span
+              class="soft-pill orange"
+              style="
+                margin-left:6px;
+                font-size:10px;
+                vertical-align:middle;
+              "
+            >
+              KAYFLEX
             </span>
           `
-          : `
-            <span class="soft-pill green">
-              Matchable
+        : ""
+    }
+
+    <span class="subline">
+      Package
+      ${escapeHtml(
+        packageLabel(
+          item
+        )
+      )}
+      ·
+      ${escapeHtml(
+        item.product_name ||
+        "—"
+      )}
+    </span>
+
+    ${
+      kayflex
+        ? `
+            <span class="subline">
+              Variant: Kayflex
             </span>
-          `;
+          `
+        : ""
+    }
+  `;
 
 
-    return `
-      <tr
-        class="${active}"
-        data-stock-id="${escapeHtml(
-          item.id
-        )}"
-      >
+  // ==========================================================
+  // REFERENCE DISPLAY
+  // ==========================================================
 
-        ${
-          canManageStock()
-            ? `
+  const referenceHtml =
+    kayflex
+      ? `
+          <b>
+            ${escapeHtml(
+              getInboundDisplayReference(
+                item
+              )
+            )}
+          </b>
+
+          <span class="subline">
+            CIN7 · Kayflex ·
+            ${escapeHtml(
+              item.batch_number ||
+              "Batch 1"
+            )}
+          </span>
+        `
+
+      : escapeHtml(
+          getInboundDisplayReference(
+            item
+          )
+        );
+
+
+  // ==========================================================
+  // ROW
+  // ==========================================================
+
+  return `
+    <tr
+      class="${active}${kayflex ? " kayflex-stock-row" : ""}"
+      data-stock-id="${escapeHtml(
+        item.id
+      )}"
+      ${
+        kayflex
+          ? 'data-stock-variant="kayflex"'
+          : ""
+      }
+    >
+
+      ${
+        canManageStock()
+          ? `
               <td class="tenant-only-stock">
 
                 <input
@@ -4262,197 +4870,174 @@ async function loadStock() {
 
               </td>
             `
-            : ""
-        }
+          : ""
+      }
 
 
-        <td>
-
-          <span class="stock-link">
-            ${escapeHtml(
-              item.display_sku ||
-              shortSku(
-                item
-              )
-            )}
-          </span>
-
-          <span class="subline">
-            Package
-            ${escapeHtml(
-              packageLabel(
-                item
-              )
-            )}
-            ·
-            ${escapeHtml(
-              item.product_name ||
-              "—"
-            )}
-          </span>
-
-        </td>
+      <td>
+        ${skuHtml}
+      </td>
 
 
-        <td>
+      <td>
 
-          <span class="mut-id">
-            ${escapeHtml(
-              item.display_mutation ||
-              mutationDisplay(
-                item
-              )
-            )}
-          </span>
-
-          <span class="subline">
-            ${escapeHtml(
-              item.sku_unique ||
-              "—"
-            )}
-          </span>
-
-        </td>
-
-
-        <td>
-
-          <span class="mut-id">
-            ${escapeHtml(
-              item.physical_product_id ||
-              "—"
-            )}
-          </span>
-
-          <span class="subline">
-            ${escapeHtml(
-              item.stock_set_status ||
-              "—"
-            )}
-          </span>
-
-        </td>
-
-
-        <td>
-          ${statusPill(
-            item.status
-          )}
-        </td>
-
-
-        <td>
-
-          ${conditionPill(
-            item
-          )}
-
-          ${
-            item.condition_notes
-              ? `
-                <span class="subline">
-                  ${escapeHtml(
-                    item.condition_notes
-                  )}
-                </span>
-              `
-              : ""
-          }
-
-        </td>
-
-
-        <td>
-          ${matchingHtml}
-        </td>
-
-
-        <td>
-          ${allocationPill(
-            item
-          )}
-        </td>
-
-
-        <td>
-          ${linkedOrderDisplay(
-            item
-          )}
-        </td>
-
-
-        <td>
+        <span class="mut-id">
           ${escapeHtml(
-            getInboundDisplayReference(
+            item.display_mutation ||
+            mutationDisplay(
               item
             )
           )}
-        </td>
+        </span>
 
-
-        <td>
-
+        <span class="subline">
           ${escapeHtml(
-            item.location_code ||
+            item.sku_unique ||
             "—"
           )}
+        </span>
 
-          <span class="subline">
-            ${escapeHtml(
-              item.warehouse_name ||
-              "—"
-            )}
-          </span>
-
-        </td>
+      </td>
 
 
-        <td>
-          ${formatNumber(
-            item.product_volume_m3,
-            3
-          )}
-        </td>
+      <td>
 
-
-        <td>
-          ${formatNumber(
-            item.product_weight_kg,
-            1
-          )}
-        </td>
-
-
-        <td>
-          ${formatNumber(
-            item.volume_m3,
-            3
-          )}
-        </td>
-
-
-        <td>
-          ${formatNumber(
-            item.weight_kg,
-            1
-          )}
-        </td>
-
-
-        <td>
+        <span class="mut-id">
           ${escapeHtml(
-            formatDateTime(
-              getInboundDate(
-                item
-              )
-            )
+            item.physical_product_id ||
+            "—"
           )}
-        </td>
+        </span>
 
+        <span class="subline">
+          ${escapeHtml(
+            item.stock_set_status ||
+            "—"
+          )}
+        </span>
+
+      </td>
+
+
+      <td>
+        ${statusPill(
+          item.status
+        )}
+      </td>
+
+
+      <td>
+
+        ${conditionPill(
+          item
+        )}
 
         ${
-          canManageStock()
+          kayflex
             ? `
+                <span class="subline">
+                  Kayflex variant
+                </span>
+              `
+            : item.condition_notes
+              ? `
+                  <span class="subline">
+                    ${escapeHtml(
+                      item.condition_notes
+                    )}
+                  </span>
+                `
+              : ""
+        }
+
+      </td>
+
+
+      <td>
+        ${matchingHtml}
+      </td>
+
+
+      <td>
+        ${allocationHtml}
+      </td>
+
+
+      <td>
+        ${linkedOrderDisplay(
+          item
+        )}
+      </td>
+
+
+      <td>
+        ${referenceHtml}
+      </td>
+
+
+      <td>
+
+        ${escapeHtml(
+          item.location_code ||
+          "—"
+        )}
+
+        <span class="subline">
+          ${escapeHtml(
+            item.warehouse_name ||
+            "—"
+          )}
+        </span>
+
+      </td>
+
+
+      <td>
+        ${formatNumber(
+          item.product_volume_m3,
+          3
+        )}
+      </td>
+
+
+      <td>
+        ${formatNumber(
+          item.product_weight_kg,
+          1
+        )}
+      </td>
+
+
+      <td>
+        ${formatNumber(
+          item.volume_m3,
+          3
+        )}
+      </td>
+
+
+      <td>
+        ${formatNumber(
+          item.weight_kg,
+          1
+        )}
+      </td>
+
+
+      <td>
+        ${escapeHtml(
+          formatDateTime(
+            getInboundDate(
+              item
+            )
+          )
+        )}
+      </td>
+
+
+      ${
+        canManageStock()
+          ? `
               <td class="tenant-only-stock">
 
                 <div class="stock-actions">
@@ -4476,6 +5061,11 @@ async function loadStock() {
                     data-stock-id="${escapeHtml(
                       item.id
                     )}"
+                    ${
+                      kayflex
+                        ? 'title="Kayflex - manual allocation only"'
+                        : ""
+                    }
                   >
                     Picked
                   </button>
@@ -4488,6 +5078,11 @@ async function loadStock() {
                     data-stock-id="${escapeHtml(
                       item.id
                     )}"
+                    ${
+                      kayflex
+                        ? 'title="Kayflex - manual allocation only"'
+                        : ""
+                    }
                   >
                     Loaded
                   </button>
@@ -4496,12 +5091,12 @@ async function loadStock() {
 
               </td>
             `
-            : ""
-        }
+          : ""
+      }
 
-      </tr>
-    `;
-  }
+    </tr>
+  `;
+}
 
 
   // ============================================================
@@ -6385,6 +6980,205 @@ async function loadStock() {
   // NORMAL STOCK EXPORT
   // ============================================================
 
+function stockBarnSummaryRows(items) {
+  const sourceItems =
+    items || [];
+
+  /*
+   * Get all barns dynamically.
+   *
+   * This means Barn 5, Barn 6, etc. will automatically
+   * appear as extra columns when they exist.
+   */
+  const barnNames =
+    [
+      ...new Set(
+        sourceItems
+          .map(
+            item =>
+              String(
+                item.warehouse_name ||
+                "Unknown"
+              ).trim()
+          )
+          .filter(Boolean)
+      )
+    ].sort(
+      (a, b) =>
+        a.localeCompare(
+          b,
+          "en-GB",
+          {
+            numeric: true,
+            sensitivity: "base"
+          }
+        )
+    );
+
+
+  /*
+   * Group by:
+   *
+   * SKU
+   * Product
+   * Package structure
+   *
+   * Example:
+   * CRO805 | Cromwell | 1/1
+   *
+   * All physical packages belonging to that combination
+   * are then counted per barn.
+   */
+  const grouped =
+    new Map();
+
+
+  sourceItems.forEach(
+    item => {
+      const sku =
+        shortSku(item);
+
+      const product =
+        item.product_name ||
+        "";
+
+      const description =
+        item.product_description ||
+        "";
+
+      const packageName =
+        packageLabel(item);
+
+      const barn =
+        String(
+          item.warehouse_name ||
+          "Unknown"
+        ).trim() ||
+        "Unknown";
+
+
+      const key =
+        [
+          sku,
+          product,
+          packageName
+        ].join("||");
+
+
+      if (!grouped.has(key)) {
+        grouped.set(
+          key,
+          {
+            sku,
+            product,
+            description,
+            packageName,
+            barns: {},
+            total: 0
+          }
+        );
+      }
+
+
+      const row =
+        grouped.get(key);
+
+
+      row.barns[barn] =
+        (
+          row.barns[barn] ||
+          0
+        ) + 1;
+
+
+      row.total += 1;
+    }
+  );
+
+
+  /*
+   * Convert groups to export rows.
+   */
+  const result =
+    Array.from(
+      grouped.values()
+    )
+      .sort(
+        (a, b) => {
+          const skuCompare =
+            String(
+              a.sku ||
+              ""
+            ).localeCompare(
+              String(
+                b.sku ||
+                ""
+              ),
+              "en-GB",
+              {
+                numeric: true,
+                sensitivity: "base"
+              }
+            );
+
+          if (skuCompare !== 0) {
+            return skuCompare;
+          }
+
+          return String(
+            a.packageName ||
+            ""
+          ).localeCompare(
+            String(
+              b.packageName ||
+              ""
+            ),
+            "en-GB",
+            {
+              numeric: true,
+              sensitivity: "base"
+            }
+          );
+        }
+      )
+      .map(
+        row => {
+          const output = {
+            "SKU":
+              row.sku,
+
+            "Product":
+              row.product,
+
+            "Description":
+              row.description,
+
+            "Package":
+              row.packageName
+          };
+
+
+          barnNames.forEach(
+            barn => {
+              output[barn] =
+                row.barns[barn] ||
+                0;
+            }
+          );
+
+
+          output["Total"] =
+            row.total;
+
+
+          return output;
+        }
+      );
+
+
+  return result;
+}
+
   function stockExportRows(items) {
     return (
       items || []
@@ -6614,77 +7408,111 @@ async function loadStock() {
 
 
   function getRowsForExport() {
-    const scope =
-      selectedExportScope();
+  const scope =
+    selectedExportScope();
 
 
-    if (
-      scope === "all"
-    ) {
-      return allStockItems;
-    }
+  if (
+    scope === "all"
+  ) {
+    return allStockItems;
+  }
 
 
-    if (
-      scope === "selected"
-    ) {
-      const ids =
-        new Set(
-          Array.from(
-            selectedItemIds
-          ).map(
-            String
-          )
-        );
-
-      return allStockItems
-        .filter(
-          item =>
-            ids.has(
-              String(
-                item.id
-              )
-            )
-        );
-    }
-
-
-    if (
-      scope === "product"
-    ) {
-      const key =
-        byId(
-          "stockExportProduct"
-        )?.value ||
-        "";
-
-      if (!key) {
-        return [];
-      }
-
-      const sourceGroups =
-        groupItems(
-          allStockItems
-        );
-
-      const group =
-        sourceGroups.find(
-          row =>
-            String(
-              row.key
-            ) ===
-            String(key)
-        );
-
-      return (
-        group?.items ||
-        []
+  if (
+    scope === "selected"
+  ) {
+    const ids =
+      new Set(
+        Array.from(
+          selectedItemIds
+        ).map(
+          String
+        )
       );
+
+
+    return allStockItems
+      .filter(
+        item =>
+          ids.has(
+            String(
+              item.id
+            )
+          )
+      );
+  }
+
+
+  if (
+    scope === "product"
+  ) {
+    const key =
+      byId(
+        "stockExportProduct"
+      )?.value ||
+      "";
+
+
+    if (!key) {
+      return [];
     }
 
 
+    const sourceGroups =
+      groupItems(
+        allStockItems
+      );
+
+
+    const group =
+      sourceGroups.find(
+        row =>
+          String(
+            row.key
+          ) ===
+          String(
+            key
+          )
+      );
+
+
+    return (
+      group?.items ||
+      []
+    );
+  }
+
+
+  /*
+   * Stock Summary by Barn uses the CURRENT FILTERED stock.
+   *
+   * Example:
+   * If Product Owner = Bellstone,
+   * only Bellstone stock is included.
+   *
+   * If SKU CRO805 is searched,
+   * only CRO805 is included.
+   */
+  if (
+    scope === "barn_summary"
+  ) {
     return filteredStockItems;
   }
+
+
+  /*
+   * Project export keeps the existing behaviour.
+   */
+  if (
+    scope === "project"
+  ) {
+    return filteredStockItems;
+  }
+
+
+  return filteredStockItems;
+}
 
 
   // ============================================================
@@ -6731,80 +7559,98 @@ async function loadStock() {
   // ============================================================
 
   function exportCsv(rows) {
-    const data =
-      selectedExportScope() ===
-      "project"
-        ? stockProjectExportRows(
-            rows
-          )
-        : stockExportRows(
-            rows
-          );
+  const scope =
+    selectedExportScope();
 
 
-    if (!data.length) {
-      showToast(
-        "No stock rows available for export.",
-        "err"
+  let data;
+
+
+  if (scope === "project") {
+    data =
+      stockProjectExportRows(
+        rows
       );
 
-      return;
-    }
-
-
-    const headers =
-      Object.keys(
-        data[0]
+  } else if (
+    scope === "barn_summary"
+  ) {
+    data =
+      stockBarnSummaryRows(
+        rows
       );
 
-
-    const csvRows = [
-      headers.join(";"),
-
-      ...data.map(
-        row =>
-          headers
-            .map(
-              header => {
-                const value =
-                  String(
-                    row[header] ??
-                    ""
-                  );
-
-                return `"${value.replace(
-                  /"/g,
-                  '""'
-                )}"`;
-              }
-            )
-            .join(";")
-      )
-    ];
-
-
-    const blob =
-      new Blob(
-        [
-          "\ufeff" +
-          csvRows.join(
-            "\n"
-          )
-        ],
-        {
-          type:
-            "text/csv;charset=utf-8;"
-        }
+  } else {
+    data =
+      stockExportRows(
+        rows
       );
-
-
-    downloadBlob(
-      blob,
-      exportFileName(
-        "csv"
-      )
-    );
   }
+
+
+  if (!data.length) {
+    showToast(
+      "No stock rows available for export.",
+      "err"
+    );
+
+    return;
+  }
+
+
+  const headers =
+    Object.keys(
+      data[0]
+    );
+
+
+  const csvRows = [
+    headers.join(";"),
+
+    ...data.map(
+      row =>
+        headers
+          .map(
+            header => {
+              const value =
+                String(
+                  row[header] ??
+                  ""
+                );
+
+              return `"${value.replace(
+                /"/g,
+                '""'
+              )}"`;
+            }
+          )
+          .join(";")
+    )
+  ];
+
+
+  const blob =
+    new Blob(
+      [
+        "\ufeff" +
+        csvRows.join(
+          "\n"
+        )
+      ],
+      {
+        type:
+          "text/csv;charset=utf-8;"
+      }
+    );
+
+
+  downloadBlob(
+    blob,
+    exportFileName(
+      "csv"
+    )
+  );
+}
 
 
   // ============================================================
@@ -6812,169 +7658,288 @@ async function loadStock() {
   // ============================================================
 
   function exportExcel(rows) {
-    const data =
-      selectedExportScope() ===
-      "project"
-        ? stockProjectExportRows(
-            rows
-          )
-        : stockExportRows(
-            rows
-          );
+  const scope =
+    selectedExportScope();
 
 
-    if (!data.length) {
-      showToast(
-        "No stock rows available for export.",
-        "err"
+  let data;
+
+
+  if (scope === "project") {
+    data =
+      stockProjectExportRows(
+        rows
       );
 
-      return;
-    }
-
-
-    if (!window.XLSX) {
-      showToast(
-        "XLSX library is not loaded.",
-        "err"
+  } else if (
+    scope === "barn_summary"
+  ) {
+    data =
+      stockBarnSummaryRows(
+        rows
       );
 
-      return;
-    }
+  } else {
+    data =
+      stockExportRows(
+        rows
+      );
+  }
 
 
-    const wb =
-      XLSX.utils
-        .book_new();
+  if (!data.length) {
+    showToast(
+      "No stock rows available for export.",
+      "err"
+    );
 
-    const ws =
-      XLSX.utils
-        .json_to_sheet(
-          data
+    return;
+  }
+
+
+  if (!window.XLSX) {
+    showToast(
+      "XLSX library is not loaded.",
+      "err"
+    );
+
+    return;
+  }
+
+
+  const wb =
+    XLSX.utils
+      .book_new();
+
+
+  const ws =
+    XLSX.utils
+      .json_to_sheet(
+        data
+      );
+
+
+  /*
+   * Calculate column widths based on
+   * both header and actual cell content.
+   */
+  const headers =
+    Object.keys(
+      data[0]
+    );
+
+
+  ws["!cols"] =
+    headers.map(
+      key => {
+        let maxLength =
+          key.length;
+
+
+        data.forEach(
+          row => {
+            const length =
+              String(
+                row[key] ??
+                ""
+              ).length;
+
+            maxLength =
+              Math.max(
+                maxLength,
+                length
+              );
+          }
         );
 
 
-    ws["!cols"] =
-      Object.keys(
-        data[0]
-      ).map(
-        key => ({
+        return {
           wch:
             Math.min(
               Math.max(
-                key.length +
-                4,
-                14
+                maxLength + 2,
+                10
               ),
-              36
+              40
             )
-        })
-      );
-
-
-    XLSX.utils
-      .book_append_sheet(
-        wb,
-        ws,
-        "Current Stock"
-      );
-
-
-    XLSX.writeFile(
-      wb,
-      exportFileName(
-        "xlsx"
-      )
+        };
+      }
     );
-  }
+
+
+  XLSX.utils
+    .book_append_sheet(
+      wb,
+      ws,
+      scope === "barn_summary"
+        ? "Stock by Barn"
+        : "Current Stock"
+    );
+
+
+  XLSX.writeFile(
+    wb,
+    exportFileName(
+      "xlsx"
+    )
+  );
+}
 
 
   // ============================================================
   // PDF EXPORT
   // ============================================================
 
-  function exportPdf(rows) {
-    const isProject =
-      selectedExportScope() ===
-      "project";
+function exportPdf(rows) {
+  const scope =
+    selectedExportScope();
+
+  const isProject =
+    scope === "project";
+
+  const isBarnSummary =
+    scope === "barn_summary";
 
 
-    const data =
-      isProject
-        ? stockProjectExportRows(
-            rows
-          )
-        : stockExportRows(
-            rows
-          );
+  let data;
 
 
-    if (!data.length) {
-      showToast(
-        "No stock rows available for export.",
-        "err"
+  if (isProject) {
+    data =
+      stockProjectExportRows(
+        rows
       );
 
-      return;
-    }
-
-
-    if (
-      !window.jspdf
-        ?.jsPDF
-    ) {
-      showToast(
-        "jsPDF library is not loaded.",
-        "err"
+  } else if (
+    isBarnSummary
+  ) {
+    data =
+      stockBarnSummaryRows(
+        rows
       );
 
-      return;
-    }
+  } else {
+    data =
+      stockExportRows(
+        rows
+      );
+  }
 
 
-    const {
-      jsPDF
-    } =
-      window.jspdf;
+  if (!data.length) {
+    showToast(
+      "No stock rows available for export.",
+      "err"
+    );
+
+    return;
+  }
 
 
-    const doc =
-      new jsPDF({
-        orientation:
-          "landscape",
+  if (
+    !window.jspdf
+      ?.jsPDF
+  ) {
+    showToast(
+      "jsPDF library is not loaded.",
+      "err"
+    );
 
-        unit:
-          "mm",
-
-        format:
-          "a4"
-      });
-
-
-    const projectName =
-      byId(
-        "stockExportProjectName"
-      )?.value
-        ?.trim() ||
-      "";
+    return;
+  }
 
 
+  const {
+    jsPDF
+  } =
+    window.jspdf;
+
+
+  const doc =
+    new jsPDF({
+      orientation:
+        "landscape",
+
+      unit:
+        "mm",
+
+      format:
+        "a4"
+    });
+
+
+  const projectName =
+    byId(
+      "stockExportProjectName"
+    )?.value
+      ?.trim() ||
+    "";
+
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(
+    16
+  );
+
+
+  let title =
+    "Veynor Current Stock Export";
+
+
+  if (isProject) {
+    title =
+      "Bellstone Import";
+  }
+
+
+  if (isBarnSummary) {
+    title =
+      "Veynor Stock Summary by Barn";
+  }
+
+
+  doc.text(
+    title,
+    14,
+    15
+  );
+
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
+  doc.setFontSize(
+    9
+  );
+
+
+  let startY =
+    32;
+
+
+  if (
+    isProject &&
+    projectName
+  ) {
     doc.setFont(
       "helvetica",
       "bold"
     );
 
     doc.setFontSize(
-      16
+      11
     );
 
-
     doc.text(
-      isProject
-        ? "Bellstone Import"
-        : "Veynor Current Stock Export",
+      projectName,
       14,
-      15
+      22
     );
 
 
@@ -6987,179 +7952,165 @@ async function loadStock() {
       9
     );
 
+    doc.text(
+      `Exported: ${new Date().toLocaleString(
+        "en-GB"
+      )}`,
+      14,
+      28
+    );
 
-    if (
-      isProject &&
-      projectName
-    ) {
-      doc.setFont(
-        "helvetica",
-        "bold"
-      );
+    doc.text(
+      `Rows: ${data.length}`,
+      14,
+      33
+    );
 
-      doc.setFontSize(
-        11
-      );
+    startY =
+      39;
 
-      doc.text(
-        projectName,
-        14,
-        22
-      );
+  } else {
+    doc.text(
+      `Exported: ${new Date().toLocaleString(
+        "en-GB"
+      )}`,
+      14,
+      21
+    );
 
-
-      doc.setFont(
-        "helvetica",
-        "normal"
-      );
-
-      doc.setFontSize(
-        9
-      );
-
-      doc.text(
-        `Exported: ${new Date().toLocaleString(
-          "en-GB"
-        )}`,
-        14,
-        28
-      );
-
-      doc.text(
-        `Rows: ${data.length}`,
-        14,
-        33
-      );
-
-    } else {
-      doc.text(
-        `Exported: ${new Date().toLocaleString(
-          "en-GB"
-        )}`,
-        14,
-        21
-      );
-
-      doc.text(
-        `Rows: ${data.length}`,
-        14,
-        26
-      );
-    }
-
-
-    const columns =
-      isProject
-        ? [
-            "SKU",
-            "Product",
-            "Description",
-            "1/1",
-            "1/2",
-            "2/2",
-            "1/3",
-            "2/3",
-            "3/3",
-            "Packages",
-            "Complete Products",
-            "Sales Unit",
-            "Sales Units"
-          ]
-
-        : [
-            "Product Owner",
-            "SKU",
-            "Product",
-            "Package",
-            "Physical Product ID",
-            "Status",
-            "Condition",
-            "Match Blocked",
-            "Availability",
-            "Linked Order",
-            "Retailer",
-            "Reference",
-            "Warehouse",
-            "Location",
-            "Inbound Date"
-          ];
-
-
-    const body =
-      data.map(
-        row =>
-          columns.map(
-            col =>
-              row[col] ??
-              ""
-          )
-      );
-
-
-    doc.autoTable({
-      head: [
-        columns
-      ],
-
-      body,
-
-      startY:
-        isProject
-          ? 39
-          : 32,
-
-      styles: {
-        fontSize:
-          7,
-
-        cellPadding:
-          1.6,
-
-        overflow:
-          "linebreak"
-      },
-
-      headStyles: {
-        fillColor:
-          [
-            18,
-            103,
-            255
-          ],
-
-        textColor:
-          255,
-
-        fontStyle:
-          "bold"
-      },
-
-      alternateRowStyles: {
-        fillColor:
-          [
-            248,
-            250,
-            252
-          ]
-      },
-
-      margin: {
-        left:
-          8,
-
-        right:
-          8
-      }
-    });
-
-
-    doc.save(
-      exportFileName(
-        "pdf"
-      )
+    doc.text(
+      `Rows: ${data.length}`,
+      14,
+      26
     );
   }
 
+
+  let columns;
+
+
+  if (isProject) {
+    columns = [
+      "SKU",
+      "Product",
+      "Description",
+      "1/1",
+      "1/2",
+      "2/2",
+      "1/3",
+      "2/3",
+      "3/3",
+      "Packages",
+      "Complete Products",
+      "Sales Unit",
+      "Sales Units"
+    ];
+
+  } else if (
+    isBarnSummary
+  ) {
+    /*
+     * Barn columns are dynamic.
+     * We simply use the keys generated by
+     * stockBarnSummaryRows().
+     */
+    columns =
+      Object.keys(
+        data[0]
+      );
+
+  } else {
+    columns = [
+      "Product Owner",
+      "SKU",
+      "Product",
+      "Package",
+      "Physical Product ID",
+      "Status",
+      "Condition",
+      "Match Blocked",
+      "Availability",
+      "Linked Order",
+      "Retailer",
+      "Reference",
+      "Warehouse",
+      "Location",
+      "Inbound Date"
+    ];
+  }
+
+
+  const body =
+    data.map(
+      row =>
+        columns.map(
+          col =>
+            row[col] ??
+            ""
+        )
+    );
+
+
+  doc.autoTable({
+    head: [
+      columns
+    ],
+
+    body,
+
+    startY,
+
+    styles: {
+      fontSize:
+        isBarnSummary
+          ? 8
+          : 7,
+
+      cellPadding:
+        1.6,
+
+      overflow:
+        "linebreak"
+    },
+
+    headStyles: {
+      fillColor: [
+        18,
+        103,
+        255
+      ],
+
+      textColor:
+        255,
+
+      fontStyle:
+        "bold"
+    },
+
+    alternateRowStyles: {
+      fillColor: [
+        248,
+        250,
+        252
+      ]
+    },
+
+    margin: {
+      left:
+        8,
+
+      right:
+        8
+    }
+  });
+
+
+  doc.save(
+    exportFileName(
+      "pdf"
+    )
+  );
+}
 
   // ============================================================
   // EXPORT MODAL

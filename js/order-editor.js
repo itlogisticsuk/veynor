@@ -709,13 +709,76 @@ byId("orderEditorAddManualLine")?.addEventListener("click", addManualLine);
   }
 
 async function invalidateEditableDocuments(orderId) {
-  const { error } = await client
-    .from("order_documents")
-    .delete()
-    .eq("order_id", orderId)
-    .in("document_type", ["acknowledgement", "delivery_note"]);
 
-  if (error) throw error;
+  /*
+   * Eerst bestaande documenten ophalen.
+   *
+   * We hebben storage_path nodig om de fysieke
+   * bestanden ook uit Supabase Storage te verwijderen.
+   */
+  const { data: documents, error: findError } =
+    await client
+      .from("order_documents")
+      .select(`
+        id,
+        document_type,
+        storage_path
+      `)
+      .eq("order_id", orderId)
+      .in(
+        "document_type",
+        [
+          "acknowledgement",
+          "delivery_note"
+        ]
+      );
+
+  if (findError) {
+    throw findError;
+  }
+
+
+  /*
+   * Fysieke bestanden uit Storage verwijderen.
+   */
+  const storagePaths =
+    (documents || [])
+      .map(doc => doc.storage_path)
+      .filter(Boolean);
+
+  if (storagePaths.length) {
+
+    const { error: storageError } =
+      await client.storage
+        .from("order-documents")
+        .remove(storagePaths);
+
+    if (storageError) {
+      throw storageError;
+    }
+  }
+
+
+  /*
+   * Pas nadat Storage succesvol is opgeschoond,
+   * verwijderen we de database-records.
+   */
+  const { error: deleteError } =
+    await client
+      .from("order_documents")
+      .delete()
+      .eq("order_id", orderId)
+      .in(
+        "document_type",
+        [
+          "acknowledgement",
+          "delivery_note"
+        ]
+      );
+
+  if (deleteError) {
+    throw deleteError;
+  }
 }
 
   async function neutralizeOrderLine(orderId, lineId) {

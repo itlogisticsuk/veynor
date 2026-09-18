@@ -14,9 +14,16 @@
   let dashboardMap = null;
   let dashboardMapLayer = null;
   let depotMarker = null;
-  let selectedFdsDate = "";
+let selectedFdsDate = "";
 
-  const charts = {};
+/*
+ * Stock Value popup data.
+ * Wordt iedere keer bijgewerkt wanneer
+ * het dashboard opnieuw geladen wordt.
+ */
+let stockValueData = null;
+
+const charts = {};
 
   function byId(id) {
     return document.getElementById(id);
@@ -179,9 +186,120 @@
     return loadTable("orders", cid, "*");
   }
 
-  async function loadItems(cid) {
-    return loadTable("items", cid, "*");
+async function loadItems(cid) {
+  return safeQuery(
+    "current stock items",
+    async () => {
+
+      const allItems = [];
+      const pageSize = 1000;
+
+      let from = 0;
+
+      while (true) {
+
+        const to =
+          from + pageSize - 1;
+
+        const {
+          data,
+          error
+        } =
+          await client
+            .from("items")
+            .select("*")
+            .eq(
+              "company_id",
+              cid
+            )
+            .range(
+              from,
+              to
+            );
+
+
+        if (error) {
+          throw error;
+        }
+
+
+        const batch =
+          data || [];
+
+
+        allItems.push(
+          ...batch
+        );
+
+
+        /*
+         * Minder dan 1000 ontvangen =
+         * laatste pagina bereikt.
+         */
+        if (
+          batch.length <
+          pageSize
+        ) {
+          break;
+        }
+
+
+        from +=
+          pageSize;
+      }
+
+
+      return allItems;
+    },
+    []
+  );
+}
+
+function isDashboardStockItem(item) {
+  const status =
+    normalize(
+      item?.status
+    );
+
+
+  /*
+   * NIET meetellen:
+   *
+   * reserved = al verkocht / toegewezen
+   * picked   = warehousevoorraad verlaten
+   * loaded   = geladen
+   * shipped  = verzonden
+   * missing  = niet fysiek aanwezig
+   * cancelled = vervallen
+   */
+  const excludedStatuses =
+    new Set([
+      "reserved",
+      "picked",
+      "loaded",
+      "shipped",
+      "missing",
+      "cancelled"
+    ]);
+
+
+  if (
+    excludedStatuses.has(
+      status
+    )
+  ) {
+    return false;
   }
+
+
+  /*
+   * Geblokkeerde voorraad telt WEL mee.
+   *
+   * Dus bijvoorbeeld damaged / blocked
+   * blijft fysieke warehouse stock.
+   */
+  return true;
+}
 
   async function loadProducts(cid) {
     return loadTable("products", cid, "*");
@@ -949,14 +1067,64 @@ const revenueMonth =
       return String(invoice.due_date).slice(0, 10) < today;
     }).length;
 
-    const stockAvailable = rows.items.filter(item => normalize(item.status) === "in_stock").length;
-    const stockReserved = rows.items.filter(item => normalize(item.status) === "reserved").length;
-    const stockPickedLoaded = rows.items.filter(item =>
-      ["picked", "loaded", "shipped"].includes(normalize(item.status))
-    ).length;
-    const stockBlocked = rows.items.filter(item =>
-      ["missing", "damaged", "cancelled"].includes(normalize(item.status))
-    ).length;
+const dashboardStockItems =
+  rows.items.filter(
+    isDashboardStockItem
+  );
+
+
+const stockAvailable =
+  rows.items.filter(
+    item =>
+      normalize(
+        item.status
+      ) ===
+      "in_stock"
+  ).length;
+
+
+const stockReserved =
+  rows.items.filter(
+    item =>
+      normalize(
+        item.status
+      ) ===
+      "reserved"
+  ).length;
+
+
+const stockPickedLoaded =
+  rows.items.filter(
+    item =>
+      [
+        "picked",
+        "loaded",
+        "shipped"
+      ].includes(
+        normalize(
+          item.status
+        )
+      )
+  ).length;
+
+
+/*
+ * Blocked stock is physically still
+ * in the warehouse and therefore
+ * remains part of Units in Stock.
+ */
+const stockBlocked =
+  rows.items.filter(
+    item =>
+      [
+        "damaged",
+        "blocked"
+      ].includes(
+        normalize(
+          item.status
+        )
+      )
+  ).length;
 
     const releasedOrders = openOrders.filter(order =>
       order.planning_release === true ||
@@ -1002,7 +1170,8 @@ const revenueMonth =
       deliveredToday: deliveredToday.length,
       completionPct,
 
-      stockUnits: rows.items.length,
+stockUnits:
+  dashboardStockItems.length,
       stockAvailable,
       stockReserved,
       stockPickedLoaded,
@@ -1027,6 +1196,1126 @@ const revenueMonth =
       routeSummariesToday
     };
   }
+
+/* =========================================================
+   STOCK VALUE
+   ========================================================= */
+
+function isCurrentPhysicalStockItem(item) {
+  const status =
+    normalize(item?.status);
+
+  /*
+   * Alleen items die fysiek nog in het warehouse
+   * aanwezig zijn.
+   *
+   * Shipped / cancelled / missing tellen niet mee.
+   */
+  return ![
+    "shipped",
+    "cancelled",
+    "missing"
+  ].includes(status);
+}
+
+
+function getStockProductId(item) {
+  return String(
+    item?.product_id ||
+    ""
+  );
+}
+
+
+function getStockPackageNo(item) {
+  return Math.max(
+    1,
+    Math.round(
+      toNumber(
+        item?.package_no,
+        1
+      )
+    )
+  );
+}
+
+
+function getStockPackageTotal(item, product) {
+  return Math.max(
+    1,
+    Math.round(
+      toNumber(
+        item?.package_total,
+        0
+      ) ||
+      toNumber(
+        product?.package_count,
+        0
+      ) ||
+      toNumber(
+        product?.packages_per_unit,
+        0
+      ) ||
+      1
+    )
+  );
+}
+
+
+function getStockOwner(product, productOwners) {
+  const productCustomerId =
+    String(
+      product?.customer_id ||
+      ""
+    );
+
+  /*
+   * Eerst exacte customer_id proberen.
+   */
+  let owner =
+    (productOwners || []).find(
+      row =>
+        String(
+          row?.id ||
+          ""
+        ) ===
+        productCustomerId
+    );
+
+
+  if (owner) {
+    return owner;
+  }
+
+
+  /*
+   * Fallback via eventuele owner velden
+   * op het product.
+   */
+  const productOwnerText =
+    normalize(
+      [
+        product?.product_owner,
+        product?.product_owner_name,
+        product?.customer_name,
+        product?.customer_code
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+
+  owner =
+    (productOwners || []).find(
+      row => {
+        const ownerValues = [
+          row?.name,
+          row?.legal_name,
+          row?.customer_code,
+          row?.key
+        ]
+          .map(normalize)
+          .filter(Boolean);
+
+        return ownerValues.some(
+          value =>
+            productOwnerText &&
+            (
+              productOwnerText === value ||
+              productOwnerText.includes(value) ||
+              value.includes(productOwnerText)
+            )
+        );
+      }
+    );
+
+
+  if (owner) {
+    return owner;
+  }
+
+
+  return {
+    id:
+      productCustomerId ||
+      "unknown",
+
+    key:
+      "unknown",
+
+    name:
+      product?.customer_name ||
+      product?.product_owner_name ||
+      "Unknown Product Owner",
+
+    legal_name:
+      "",
+
+    customer_code:
+      ""
+  };
+}
+
+
+function calculateCompleteStockUnits(
+  productItems,
+  product
+) {
+  if (!productItems.length) {
+    return 0;
+  }
+
+
+  /*
+   * Hoeveel packages horen bij één compleet product?
+   */
+  const packageTotal =
+    Math.max(
+      1,
+      ...productItems.map(
+        item =>
+          getStockPackageTotal(
+            item,
+            product
+          )
+      ),
+      Math.round(
+        toNumber(
+          product?.package_count,
+          0
+        )
+      ),
+      Math.round(
+        toNumber(
+          product?.packages_per_unit,
+          0
+        )
+      )
+    );
+
+
+  /*
+   * Product bestaat uit één package.
+   *
+   * Dan is ieder fysiek item één compleet product.
+   */
+  if (packageTotal <= 1) {
+    return productItems.length;
+  }
+
+
+  /*
+   * Voor multi-package producten tellen we
+   * hoeveel van ieder package aanwezig zijn.
+   *
+   * Voorbeeld:
+   *
+   * 1/2 = 20
+   * 2/2 = 18
+   *
+   * Complete products = 18.
+   */
+  const packageCounts =
+    new Map();
+
+
+  for (
+    let packageNo = 1;
+    packageNo <= packageTotal;
+    packageNo++
+  ) {
+    packageCounts.set(
+      packageNo,
+      0
+    );
+  }
+
+
+  productItems.forEach(
+    item => {
+      const packageNo =
+        getStockPackageNo(
+          item
+        );
+
+      packageCounts.set(
+        packageNo,
+        (
+          packageCounts.get(
+            packageNo
+          ) ||
+          0
+        ) + 1
+      );
+    }
+  );
+
+
+  const counts =
+    Array.from(
+      packageCounts.values()
+    );
+
+
+  if (!counts.length) {
+    return 0;
+  }
+
+
+  return Math.min(
+    ...counts
+  );
+}
+
+
+function calculateStockValue(
+  items,
+  products,
+  productOwners
+) {
+const currentItems =
+  (items || []).filter(
+    isDashboardStockItem
+  );
+
+
+  const productsById =
+    new Map(
+      (products || []).map(
+        product => [
+          String(product.id),
+          product
+        ]
+      )
+    );
+
+
+  /*
+   * Groepeer fysieke items per product.
+   */
+  const itemsByProduct =
+    new Map();
+
+
+  currentItems.forEach(
+    item => {
+      const productId =
+        getStockProductId(
+          item
+        );
+
+      if (!productId) {
+        return;
+      }
+
+
+      if (
+        !itemsByProduct.has(
+          productId
+        )
+      ) {
+        itemsByProduct.set(
+          productId,
+          []
+        );
+      }
+
+
+      itemsByProduct
+        .get(productId)
+        .push(item);
+    }
+  );
+
+
+  const ownerMap =
+    new Map();
+
+
+  let totalCompleteProducts =
+    0;
+
+  let totalStorage =
+    0;
+
+  let totalAdmin =
+    0;
+
+  let totalHandling =
+    0;
+
+
+  itemsByProduct.forEach(
+    (
+      productItems,
+      productId
+    ) => {
+      const product =
+        productsById.get(
+          productId
+        );
+
+
+      if (!product) {
+        return;
+      }
+
+
+      const completeUnits =
+        calculateCompleteStockUnits(
+          productItems,
+          product
+        );
+
+
+      if (
+        completeUnits <= 0
+      ) {
+        return;
+      }
+
+
+      const storageRate =
+        toNumber(
+          product.storage_tariff,
+          0
+        );
+
+
+      const adminRate =
+        toNumber(
+          product.admin_tariff,
+          0
+        );
+
+
+      const handlingRate =
+        toNumber(
+          product.handling_tariff,
+          0
+        );
+
+
+      const storage =
+        completeUnits *
+        storageRate;
+
+
+      const admin =
+        completeUnits *
+        adminRate;
+
+
+      const handling =
+        completeUnits *
+        handlingRate;
+
+
+      const total =
+        storage +
+        admin +
+        handling;
+
+
+      const owner =
+        getStockOwner(
+          product,
+          productOwners
+        );
+
+
+      const ownerKey =
+        String(
+          owner.id ||
+          owner.key ||
+          owner.customer_code ||
+          owner.name ||
+          "unknown"
+        );
+
+
+      if (
+        !ownerMap.has(
+          ownerKey
+        )
+      ) {
+        ownerMap.set(
+          ownerKey,
+          {
+            key:
+              ownerKey,
+
+            name:
+              owner.name ||
+              "Unknown Product Owner",
+
+            legalName:
+              owner.legal_name ||
+              "",
+
+            customerCode:
+              owner.customer_code ||
+              "",
+
+            productCount:
+              0,
+
+            packages:
+              0,
+
+            units:
+              0,
+
+            storage:
+              0,
+
+            admin:
+              0,
+
+            handling:
+              0,
+
+            total:
+              0,
+
+            products:
+              []
+          }
+        );
+      }
+
+
+      const ownerRow =
+        ownerMap.get(
+          ownerKey
+        );
+
+
+      ownerRow.productCount +=
+        1;
+
+      ownerRow.packages +=
+        productItems.length;
+
+      ownerRow.units +=
+        completeUnits;
+
+      ownerRow.storage +=
+        storage;
+
+      ownerRow.admin +=
+        admin;
+
+      ownerRow.handling +=
+        handling;
+
+      ownerRow.total +=
+        total;
+
+
+      ownerRow.products.push({
+        sku:
+          product.sku_base ||
+          productItems[0]?.sku_base ||
+          "—",
+
+        name:
+          product.name ||
+          product.description ||
+          "Product",
+
+        packages:
+          productItems.length,
+
+        units:
+          completeUnits,
+
+        storageRate,
+        adminRate,
+        handlingRate,
+
+        storage,
+        admin,
+        handling,
+        total
+      });
+
+
+      totalCompleteProducts +=
+        completeUnits;
+
+      totalStorage +=
+        storage;
+
+      totalAdmin +=
+        admin;
+
+      totalHandling +=
+        handling;
+    }
+  );
+
+
+  const owners =
+    Array.from(
+      ownerMap.values()
+    )
+      .map(
+        owner => ({
+          ...owner,
+
+          products:
+            owner.products.sort(
+              (a, b) =>
+                String(
+                  a.sku
+                ).localeCompare(
+                  String(
+                    b.sku
+                  ),
+                  "en-GB",
+                  {
+                    numeric:
+                      true
+                  }
+                )
+            )
+        })
+      )
+      .sort(
+        (a, b) =>
+          b.total -
+          a.total
+      );
+
+
+  return {
+    physicalPackages:
+      currentItems.length,
+
+    completeProducts:
+      totalCompleteProducts,
+
+    ownerCount:
+      owners.length,
+
+    storage:
+      totalStorage,
+
+    admin:
+      totalAdmin,
+
+    handling:
+      totalHandling,
+
+    total:
+      totalStorage +
+      totalAdmin +
+      totalHandling,
+
+    owners
+  };
+}
+
+
+function renderStockValueSummary() {
+  const data =
+    stockValueData;
+
+
+  if (!data) {
+    return;
+  }
+
+
+  setText(
+    "stockValuePhysicalPackages",
+    formatNumber(
+      data.physicalPackages
+    )
+  );
+
+
+  setText(
+    "stockValueCompleteProducts",
+    formatNumber(
+      data.completeProducts
+    )
+  );
+
+
+  setText(
+    "stockValueGrandTotal",
+    formatMoney(
+      data.total
+    )
+  );
+
+
+  setText(
+    "stockValueOwnerCount",
+    formatNumber(
+      data.ownerCount
+    )
+  );
+
+
+  setText(
+    "stockValueTotalProducts",
+    formatNumber(
+      data.owners.reduce(
+        (sum, owner) =>
+          sum +
+          owner.productCount,
+        0
+      )
+    )
+  );
+
+
+  setText(
+    "stockValueTotalUnits",
+    formatNumber(
+      data.completeProducts
+    )
+  );
+
+
+  setText(
+    "stockValueTotalStorage",
+    formatMoney(
+      data.storage
+    )
+  );
+
+
+  setText(
+    "stockValueTotalAdmin",
+    formatMoney(
+      data.admin
+    )
+  );
+
+
+  setText(
+    "stockValueTotalHandling",
+    formatMoney(
+      data.handling
+    )
+  );
+
+
+  setText(
+    "stockValueTotalValue",
+    formatMoney(
+      data.total
+    )
+  );
+
+
+  const body =
+    byId(
+      "stockValueOwnerBody"
+    );
+
+
+  if (body) {
+    if (
+      !data.owners.length
+    ) {
+      body.innerHTML = `
+        <tr>
+          <td colspan="8">
+            No current stock found.
+          </td>
+        </tr>
+      `;
+
+    } else {
+      body.innerHTML =
+        data.owners
+          .map(
+            owner => `
+              <tr>
+                <td>
+                  <strong>
+                    ${escapeHtml(
+                      owner.name
+                    )}
+                  </strong>
+
+                  ${
+                    owner.customerCode
+                      ? `
+                        <div
+                          style="
+                            margin-top:2px;
+                            color:#94a3b8;
+                            font-size:10px;
+                          "
+                        >
+                          ${escapeHtml(
+                            owner.customerCode
+                          )}
+                        </div>
+                      `
+                      : ""
+                  }
+                </td>
+
+                <td class="num">
+                  ${formatNumber(
+                    owner.productCount
+                  )}
+                </td>
+
+                <td class="num">
+                  ${formatNumber(
+                    owner.units
+                  )}
+                </td>
+
+                <td class="num">
+                  ${formatMoney(
+                    owner.storage
+                  )}
+                </td>
+
+                <td class="num">
+                  ${formatMoney(
+                    owner.admin
+                  )}
+                </td>
+
+                <td class="num">
+                  ${formatMoney(
+                    owner.handling
+                  )}
+                </td>
+
+                <td class="num">
+                  <strong>
+                    ${formatMoney(
+                      owner.total
+                    )}
+                  </strong>
+                </td>
+
+                <td class="num">
+                  <button
+                    type="button"
+                    class="stock-value-small-btn"
+                    data-stock-owner-detail="${escapeHtml(
+                      owner.key
+                    )}"
+                  >
+                    View
+                  </button>
+                </td>
+              </tr>
+            `
+          )
+          .join("");
+    }
+  }
+
+
+  setText(
+    "stockValueUpdated",
+    `Calculated ${new Date().toLocaleString(
+      "en-GB"
+    )}`
+  );
+}
+
+
+function renderStockValueOwnerDetail(
+  ownerKey
+) {
+  if (!stockValueData) {
+    return;
+  }
+
+
+  const owner =
+    stockValueData.owners.find(
+      row =>
+        String(
+          row.key
+        ) ===
+        String(
+          ownerKey
+        )
+    );
+
+
+  if (!owner) {
+    return;
+  }
+
+
+  const section =
+    byId(
+      "stockValueDetailSection"
+    );
+
+
+  const body =
+    byId(
+      "stockValueDetailBody"
+    );
+
+
+  setText(
+    "stockValueDetailTitle",
+    owner.name
+  );
+
+
+  setText(
+    "stockValueDetailSub",
+    `Warehouse value by SKU · ${formatNumber(
+      owner.units
+    )} complete products · ${formatMoney(
+      owner.total
+    )}`
+  );
+
+
+  if (body) {
+    body.innerHTML =
+      owner.products
+        .map(
+          product => `
+            <tr>
+
+              <td>
+                <strong>
+                  ${escapeHtml(
+                    product.sku
+                  )}
+                </strong>
+              </td>
+
+              <td>
+                ${escapeHtml(
+                  product.name
+                )}
+              </td>
+
+              <td class="num">
+                ${formatNumber(
+                  product.packages
+                )}
+              </td>
+
+              <td class="num">
+                ${formatNumber(
+                  product.units
+                )}
+              </td>
+
+              <td class="num">
+                ${formatMoney(
+                  product.storage
+                )}
+
+                <div
+                  style="
+                    color:#94a3b8;
+                    font-size:9px;
+                  "
+                >
+                  ${formatMoney(
+                    product.storageRate
+                  )} / unit
+                </div>
+              </td>
+
+              <td class="num">
+                ${formatMoney(
+                  product.admin
+                )}
+
+                <div
+                  style="
+                    color:#94a3b8;
+                    font-size:9px;
+                  "
+                >
+                  ${formatMoney(
+                    product.adminRate
+                  )} / unit
+                </div>
+              </td>
+
+              <td class="num">
+                ${formatMoney(
+                  product.handling
+                )}
+
+                <div
+                  style="
+                    color:#94a3b8;
+                    font-size:9px;
+                  "
+                >
+                  ${formatMoney(
+                    product.handlingRate
+                  )} / unit
+                </div>
+              </td>
+
+              <td class="num">
+                <strong>
+                  ${formatMoney(
+                    product.total
+                  )}
+                </strong>
+              </td>
+
+            </tr>
+          `
+        )
+        .join("");
+  }
+
+
+  if (section) {
+    section.style.display =
+      "block";
+
+    section.scrollIntoView({
+      behavior:
+        "smooth",
+
+      block:
+        "nearest"
+    });
+  }
+}
+
+
+function openStockValueModal() {
+  const modal =
+    byId(
+      "stockValueModal"
+    );
+
+
+  if (!modal) {
+    return;
+  }
+
+
+  const loading =
+    byId(
+      "stockValueLoading"
+    );
+
+
+  const content =
+    byId(
+      "stockValueContent"
+    );
+
+
+  const error =
+    byId(
+      "stockValueError"
+    );
+
+
+  modal.classList.add(
+    "open"
+  );
+
+
+  modal.setAttribute(
+    "aria-hidden",
+    "false"
+  );
+
+
+  document.body.style.overflow =
+    "hidden";
+
+
+  if (error) {
+    error.style.display =
+      "none";
+  }
+
+
+  if (!stockValueData) {
+    if (loading) {
+      loading.style.display =
+        "block";
+    }
+
+    if (content) {
+      content.style.display =
+        "none";
+    }
+
+    return;
+  }
+
+
+  if (loading) {
+    loading.style.display =
+      "none";
+  }
+
+
+  if (content) {
+    content.style.display =
+      "block";
+  }
+
+
+  const detail =
+    byId(
+      "stockValueDetailSection"
+    );
+
+
+  if (detail) {
+    detail.style.display =
+      "none";
+  }
+
+
+  renderStockValueSummary();
+}
+
+
+function closeStockValueModal() {
+  const modal =
+    byId(
+      "stockValueModal"
+    );
+
+
+  if (!modal) {
+    return;
+  }
+
+
+  modal.classList.remove(
+    "open"
+  );
+
+
+  modal.setAttribute(
+    "aria-hidden",
+    "true"
+  );
+
+
+  document.body.style.overflow =
+    "";
+}
 
   function renderKpis(m) {
     setText("kpiOpenOrders", formatNumber(m.openOrders));
@@ -1595,21 +2884,234 @@ list.innerHTML = `
     }
   }
 
-  function bindEvents() {
-    byId("btnRefreshDashboard")?.addEventListener("click", loadDashboard);
-    byId("btnFitDashboardMap")?.addEventListener("click", fitDashboardMap);
+function bindEvents() {
+  /*
+   * Normal dashboard controls
+   */
+  byId(
+    "btnRefreshDashboard"
+  )?.addEventListener(
+    "click",
+    loadDashboard
+  );
 
-    document.querySelectorAll("[data-go]").forEach(card => {
-      card.addEventListener("click", () => {
-        const url = card.getAttribute("data-go");
-        if (url) window.location.href = url;
-      });
-    });
 
-    window.addEventListener("resize", () => {
-      if (dashboardMap) dashboardMap.invalidateSize(true);
-    });
-  }
+  byId(
+    "btnFitDashboardMap"
+  )?.addEventListener(
+    "click",
+    fitDashboardMap
+  );
+
+
+  /*
+   * Normal dashboard navigation cards
+   */
+  document
+    .querySelectorAll(
+      "[data-go]"
+    )
+    .forEach(
+      card => {
+        card.addEventListener(
+          "click",
+          () => {
+            const url =
+              card.getAttribute(
+                "data-go"
+              );
+
+            if (url) {
+              window.location.href =
+                url;
+            }
+          }
+        );
+      }
+    );
+
+
+  /*
+   * =====================================================
+   * STOCK VALUE MODAL
+   * =====================================================
+   */
+
+  const stockCard =
+    byId(
+      "stockValueKpiCard"
+    );
+
+
+  /*
+   * Click Units in Stock
+   */
+  stockCard?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      openStockValueModal();
+    }
+  );
+
+
+  /*
+   * Keyboard accessibility:
+   * Enter / Space also opens modal.
+   */
+  stockCard?.addEventListener(
+    "keydown",
+    event => {
+      if (
+        event.key === "Enter" ||
+        event.key === " "
+      ) {
+        event.preventDefault();
+
+        openStockValueModal();
+      }
+    }
+  );
+
+
+  /*
+   * X button
+   */
+  byId(
+    "stockValueCloseBtn"
+  )?.addEventListener(
+    "click",
+    closeStockValueModal
+  );
+
+
+  /*
+   * Close button in footer
+   */
+  byId(
+    "stockValueModalCloseBtn"
+  )?.addEventListener(
+    "click",
+    closeStockValueModal
+  );
+
+
+  /*
+   * Click dark background
+   */
+  document
+    .querySelectorAll(
+      "[data-stock-value-close]"
+    )
+    .forEach(
+      element => {
+        element.addEventListener(
+          "click",
+          closeStockValueModal
+        );
+      }
+    );
+
+
+  /*
+   * Hide product detail
+   */
+  byId(
+    "stockValueHideDetailBtn"
+  )?.addEventListener(
+    "click",
+    () => {
+      const section =
+        byId(
+          "stockValueDetailSection"
+        );
+
+      if (section) {
+        section.style.display =
+          "none";
+      }
+    }
+  );
+
+
+  /*
+   * Product Owner View buttons.
+   *
+   * These buttons are created dynamically,
+   * so event delegation is used.
+   */
+  byId(
+    "stockValueOwnerBody"
+  )?.addEventListener(
+    "click",
+    event => {
+      const button =
+        event.target.closest(
+          "[data-stock-owner-detail]"
+        );
+
+      if (!button) {
+        return;
+      }
+
+
+      const ownerKey =
+        button.getAttribute(
+          "data-stock-owner-detail"
+        );
+
+
+      if (ownerKey) {
+        renderStockValueOwnerDetail(
+          ownerKey
+        );
+      }
+    }
+  );
+
+
+  /*
+   * ESC closes popup
+   */
+  document.addEventListener(
+    "keydown",
+    event => {
+      if (
+        event.key === "Escape"
+      ) {
+        const modal =
+          byId(
+            "stockValueModal"
+          );
+
+        if (
+          modal?.classList.contains(
+            "open"
+          )
+        ) {
+          closeStockValueModal();
+        }
+      }
+    }
+  );
+
+
+  /*
+   * Existing map resize logic
+   */
+  window.addEventListener(
+    "resize",
+    () => {
+      if (dashboardMap) {
+        dashboardMap.invalidateSize(
+          true
+        );
+      }
+    }
+  );
+}
 
   async function loadDashboard() {
     try {
@@ -1665,10 +3167,43 @@ const rows = {
   deliveryGroups
 };
 
-      const indexes = createIndexes(rows);
-      const metrics = calculateMetrics(rows, indexes);
+const indexes =
+  createIndexes(
+    rows
+  );
 
-      renderKpis(metrics);
+
+const metrics =
+  calculateMetrics(
+    rows,
+    indexes
+  );
+
+
+/*
+ * =====================================================
+ * CALCULATE CURRENT STOCK VALUE
+ * =====================================================
+ *
+ * Uses:
+ * - physical stock items
+ * - products
+ * - product owners
+ *
+ * The result is stored globally so opening
+ * the popup does not need another database query.
+ */
+stockValueData =
+  calculateStockValue(
+    items,
+    products,
+    productOwners
+  );
+
+
+renderKpis(
+  metrics
+);
       renderTodayRoutes(metrics.routeSummariesToday);
       renderFdsPlanning(rows, indexes);
       renderAlerts(metrics);

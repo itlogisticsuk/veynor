@@ -11,11 +11,12 @@
   const MOVEMENT_PAGE_SIZE = 25;
   const DB_PAGE_SIZE = 1000;
 
-  const OUTBOUND_STATUSES = [
-    "shipped",
-    "closed",
-    "manual_outbound"
-  ];
+const OUTBOUND_STATUSES = [
+  "out",
+  "shipped",
+  "closed",
+  "manual_outbound"
+];
 
   const BLOCKED_STATUSES = [
     "missing",
@@ -36,10 +37,12 @@
   let customers = [];
   let warehouses = [];
   let locations = [];
-  let inboundContainerMap = new Map();
-  let userProfiles = [];
+let inboundContainerMap = new Map();
+let userProfiles = [];
 
-  let allItems = [];
+let productStockLedger = new Map();
+
+let allItems = [];
 
   let productGroups = [];
   let filteredProductGroups = [];
@@ -929,86 +932,153 @@
    * ITEMS
    * ======================================================= */
 
-  async function loadItems() {
-    const cid =
-      await getCompanyId();
+async function loadProductStockLedger() {
+  const cid =
+    await getCompanyId();
 
-    allItems =
-      await fetchAllPages(
-        "items",
-        `
-          id,
-          company_id,
-          product_id,
-          warehouse_id,
-          location_id,
-          storage_mutation_id,
-          sku_unique,
-          status,
-          volume_m3,
-          weight_kg,
-          received_at,
-          reserved_at,
-          picked_at,
-          loaded_at,
-          shipped_at,
-          created_at,
-          linked_order_id,
-          shipment_id,
-          inbound_reference,
-          inbound_date,
-          physical_product_id,
-          package_no,
-          package_total,
-          package_label,
-          stock_set_status,
-          stock_set_key,
-          stock_set_id
-        `,
-        query =>
-          query
-            .eq(
-              "company_id",
-              cid
-            )
-            .order(
-              "created_at",
-              {
-                ascending: false
-              }
-            )
-      );
+  const rows =
+    await fetchAllPages(
+      "product_stock_ledger",
+      `
+        product_id,
+        physical_units,
+        reserved_units,
+        committed_units,
+        available_units,
+        movement_count
+      `,
+      query =>
+        query.eq(
+          "company_id",
+          cid
+        )
+    );
 
-    if (
-      isProductOwnerRole() &&
-      currentProfile?.customer_id
-    ) {
-      const allowedProductIds =
-        new Set(
-          products
-            .filter(product =>
-              String(
-                product.customer_id
-              ) ===
-              String(
-                currentProfile.customer_id
+  productStockLedger =
+    new Map(
+      (rows || []).map(
+        row => [
+          String(row.product_id),
+          {
+            physical_units:
+              toNumber(
+                row.physical_units,
+                0
+              ),
+
+            reserved_units:
+              toNumber(
+                row.reserved_units,
+                0
+              ),
+
+            committed_units:
+              toNumber(
+                row.committed_units,
+                0
+              ),
+
+            available_units:
+              toNumber(
+                row.available_units,
+                0
+              ),
+
+            movement_count:
+              toNumber(
+                row.movement_count,
+                0
               )
-            )
-            .map(product =>
-              String(product.id)
-            )
-        );
+          }
+        ]
+      )
+    );
+}
 
-      allItems =
-        allItems.filter(item =>
-          allowedProductIds.has(
+ async function loadItems() {
+  const cid =
+    await getCompanyId();
+
+  allItems =
+    await fetchAllPages(
+      "items",
+      `
+        id,
+        company_id,
+        product_id,
+        warehouse_id,
+        location_id,
+        storage_mutation_id,
+        sku_unique,
+        status,
+        volume_m3,
+        weight_kg,
+        received_at,
+        reserved_at,
+        picked_at,
+        loaded_at,
+        shipped_at,
+        created_at,
+        linked_order_id,
+        shipment_id,
+        inbound_reference,
+        inbound_date,
+        physical_product_id,
+        package_no,
+        package_total,
+        package_label,
+        stock_set_status,
+        stock_set_key,
+        stock_set_id,
+
+        source_system,
+        stock_variant,
+        batch_number
+      `,
+      query =>
+        query
+          .eq(
+            "company_id",
+            cid
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false
+            }
+          )
+    );
+
+  if (
+    isProductOwnerRole() &&
+    currentProfile?.customer_id
+  ) {
+    const allowedProductIds =
+      new Set(
+        products
+          .filter(product =>
             String(
-              item.product_id
+              product.customer_id
+            ) ===
+            String(
+              currentProfile.customer_id
             )
           )
-        );
-    }
+          .map(product =>
+            String(product.id)
+          )
+      );
+
+    allItems =
+      allItems.filter(item =>
+        allowedProductIds.has(
+          String(
+            item.product_id
+          )
+        )
+      );
   }
+}
 
 
   /* =========================================================
@@ -1042,7 +1112,7 @@
     );
   }
 
- function buildProductGroups() {
+function buildProductGroups() {
   const productMap =
     new Map(
       products.map(product => [
@@ -1054,22 +1124,103 @@
   const groupMap =
     new Map();
 
+
+  function physicalKey(item) {
+    if (item.physical_product_id) {
+      return `physical:${item.physical_product_id}`;
+    }
+
+    if (item.stock_set_id) {
+      return `set:${item.stock_set_id}`;
+    }
+
+    return `item:${item.id}`;
+  }
+
+
+  function physicalUnitStatus(items) {
+    if (!items?.length) {
+      return "unknown";
+    }
+
+    const statuses =
+      items.map(item =>
+        normalize(item.status)
+      );
+
+    if (
+      statuses.every(status =>
+        OUTBOUND_STATUSES.includes(status)
+      )
+    ) {
+      return "outbound";
+    }
+
+    if (
+      statuses.every(status =>
+        BLOCKED_STATUSES.includes(status)
+      )
+    ) {
+      return "blocked";
+    }
+
+    if (
+      statuses.some(status =>
+        [
+          "picked",
+          "loaded"
+        ].includes(status)
+      )
+    ) {
+      return "committed";
+    }
+
+    if (
+      statuses.some(status =>
+        status === "reserved"
+      )
+    ) {
+      return "reserved";
+    }
+
+    if (
+      statuses.some(status =>
+        status === "in_stock"
+      )
+    ) {
+      return "available";
+    }
+
+    if (
+      items.some(item =>
+        isPhysical(item)
+      )
+    ) {
+      return "physical";
+    }
+
+    return "unknown";
+  }
+
+
+  // ==========================================================
+  // BUILD PRODUCT GROUPS
+  // ==========================================================
+
   allItems.forEach(item => {
     const product =
       productMap.get(
-        String(
-          item.product_id
-        )
+        String(item.product_id)
       );
 
-    if (!product) return;
+    if (!product) {
+      return;
+    }
 
     const key =
       String(product.id);
 
-    if (
-      !groupMap.has(key)
-    ) {
+    if (!groupMap.has(key)) {
       groupMap.set(
         key,
         {
@@ -1107,8 +1258,10 @@
           reserved: 0,
           committed: 0,
 
-          last_movement:
-            null
+          ledgerManaged: false,
+          ledgerMovementCount: 0,
+
+          last_movement: null
         }
       );
     }
@@ -1117,30 +1270,6 @@
       groupMap.get(key);
 
     group.items.push(item);
-
-    if (
-      isPhysical(item)
-    ) {
-      group.physical += 1;
-    }
-
-    if (
-      isAvailable(item)
-    ) {
-      group.available += 1;
-    }
-
-    if (
-      isReserved(item)
-    ) {
-      group.reserved += 1;
-    }
-
-    if (
-      isCommitted(item)
-    ) {
-      group.committed += 1;
-    }
 
     const movement =
       lastItemMovement(item);
@@ -1160,21 +1289,136 @@
     }
   });
 
+
+  // ==========================================================
+  // CALCULATE PRODUCT TOTALS
+  // ==========================================================
+
+  groupMap.forEach(group => {
+
+    const ledger =
+      productStockLedger.get(
+        String(group.product_id)
+      ) || null;
+
+
+    // ========================================================
+    // LEDGER-MANAGED PRODUCT
+    //
+    // product_stock_ledger is the single source of truth.
+    // ========================================================
+
+    if (
+      ledger &&
+      ledger.movement_count > 0
+    ) {
+      group.ledgerManaged =
+        true;
+
+      group.ledgerMovementCount =
+        ledger.movement_count;
+
+      group.physical =
+        ledger.physical_units;
+
+      group.available =
+        ledger.available_units;
+
+      group.reserved =
+        ledger.reserved_units;
+
+      group.committed =
+        ledger.committed_units;
+
+      return;
+    }
+
+
+    // ========================================================
+    // LEGACY FALLBACK
+    //
+    // Products without ledger history continue to use items.
+    // ========================================================
+
+    group.ledgerManaged =
+      false;
+
+    const physicalMap =
+      new Map();
+
+    group.items.forEach(item => {
+      const key =
+        physicalKey(item);
+
+      if (!physicalMap.has(key)) {
+        physicalMap.set(
+          key,
+          []
+        );
+      }
+
+      physicalMap
+        .get(key)
+        .push(item);
+    });
+
+
+    physicalMap.forEach(
+      unitItems => {
+        const status =
+          physicalUnitStatus(
+            unitItems
+          );
+
+        if (
+          [
+            "available",
+            "reserved",
+            "committed",
+            "physical"
+          ].includes(status)
+        ) {
+          group.physical += 1;
+        }
+
+        if (
+          status === "available"
+        ) {
+          group.available += 1;
+        }
+
+        if (
+          status === "reserved"
+        ) {
+          group.reserved += 1;
+        }
+
+        if (
+          status === "committed"
+        ) {
+          group.committed += 1;
+        }
+      }
+    );
+  });
+
+
   productGroups =
     Array.from(
       groupMap.values()
     )
-    .sort(
-      (a, b) =>
-        String(
-          a.sku_base
-        ).localeCompare(
+      .sort(
+        (a, b) =>
           String(
-            b.sku_base
-          ),
-          "en-GB"
-        )
-    );
+            a.sku_base
+          ).localeCompare(
+            String(
+              b.sku_base
+            ),
+            "en-GB"
+          )
+      );
+
 
   filteredProductGroups =
     [...productGroups];
@@ -2112,16 +2356,17 @@
    * MOVEMENTS TABLE
    * ======================================================= */
 
-  async function loadMovementsForProduct(
-    productId
-  ) {
-    const cid =
-      await getCompanyId();
+ async function loadMovementsForProduct(
+  productId
+) {
+  const cid =
+    await getCompanyId();
 
-    const {
-      data,
-      error
-    } = await ensureClient()
+  const {
+    data,
+    error
+  } =
+    await ensureClient()
       .from("movements")
       .select(`
         id,
@@ -2132,10 +2377,25 @@
         location_id,
         order_id,
         shipment_id,
+
         movement_type,
+
         scan_method,
         scan_device,
         scan_value,
+
+        source_system,
+        batch_reference,
+        stock_variant,
+
+        external_order_number,
+        external_ack_reference,
+
+        quantity_units,
+        quantity_packages,
+
+        migrated_from_legacy,
+
         notes,
         created_at
       `)
@@ -2154,95 +2414,149 @@
         }
       );
 
-    if (error) {
-      console.warn(
-        "Movements skipped:",
-        error.message
-      );
+  if (error) {
+    console.warn(
+      "Movements skipped:",
+      error.message
+    );
 
-      return [];
-    }
-
-    return data || [];
+    return [];
   }
+
+  return data || [];
+}
 
 
   /* =========================================================
    * MOVEMENT BUILDING
    * ======================================================= */
 
-  function movementRecord({
-    date,
-    type,
-    reference = "",
-    secondaryReference = "",
-    warehouseId = null,
-    locationId = null,
-    quantity = 0,
-    user = "",
-    notes = "",
-    source = "",
-    itemId = null
-  }) {
-    return {
-      id:
-        crypto?.randomUUID
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random()}`,
+function movementRecord({
+  date,
+  type,
+  reference = "",
+  secondaryReference = "",
+  warehouseId = null,
+  locationId = null,
 
-      date:
-        date || null,
+  quantity = 0,
+  packageQuantity = null,
 
-      type:
-        type || "adjustment",
+  user = "",
+  notes = "",
+  source = "",
 
-      reference:
-        reference || "",
+  sourceSystem = "",
+  batchReference = "",
+  stockVariant = "",
 
-      secondary_reference:
-        secondaryReference ||
-        "",
+  externalOrderNumber = "",
+  externalAckReference = "",
 
-      warehouse_id:
-        warehouseId ||
-        null,
+  migratedFromLegacy = false,
 
-      location_id:
-        locationId ||
-        null,
+  itemId = null
+}) {
+  return {
+    id:
+      crypto?.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`,
 
-      warehouse_name:
-        warehouseName(
-          warehouseId
-        ),
+    date:
+      date || null,
 
-      location_code:
-        locationCode(
-          locationId
-        ),
+    type:
+      type || "adjustment",
 
-      quantity:
-        toNumber(
-          quantity,
-          0
-        ),
+    reference:
+      reference || "",
 
-      balance:
-        null,
+    secondary_reference:
+      secondaryReference || "",
 
-      user:
-        user || "",
+    warehouse_id:
+      warehouseId || null,
 
-      notes:
-        notes || "",
+    location_id:
+      locationId || null,
 
-      source:
-        source || "",
+    warehouse_name:
+      warehouseName(
+        warehouseId
+      ),
 
-      item_id:
-        itemId || null
-    };
-  }
+    location_code:
+      locationCode(
+        locationId
+      ),
+
+    /*
+     * quantity = PRODUCT / UNIT movement.
+     *
+     * Voor de nieuwe CIN7 / VEYNOR historie
+     * gebruiken we dus bijvoorbeeld:
+     *
+     * +8 CRO808 producten
+     * -1 CRO808 product
+     *
+     * Niet het aantal colli.
+     */
+    quantity:
+      toNumber(
+        quantity,
+        0
+      ),
+
+    /*
+     * Colli worden apart bewaard.
+     *
+     * Voor CRO808:
+     * 1 product = 2 packages.
+     */
+    package_quantity:
+      packageQuantity === null ||
+      packageQuantity === undefined
+        ? null
+        : toNumber(
+            packageQuantity,
+            0
+          ),
+
+    balance:
+      null,
+
+    user:
+      user || "",
+
+    notes:
+      notes || "",
+
+    source:
+      source || "",
+
+    source_system:
+      sourceSystem || "",
+
+    batch_reference:
+      batchReference || "",
+
+    stock_variant:
+      stockVariant || "",
+
+    external_order_number:
+      externalOrderNumber || "",
+
+    external_ack_reference:
+      externalAckReference || "",
+
+    migrated_from_legacy:
+      migratedFromLegacy === true,
+
+    item_id:
+      itemId || null
+  };
+}
 
   function orderMainReference(
     order
@@ -2280,84 +2594,410 @@
     return parts.join(" · ");
   }
 
-  function buildReceiptMovements(
-    productItems
+function buildReceiptMovements(
+  productItems,
+  hasCin7History = false
+) {
+  /*
+   * =========================================================
+   * COMPLETE CIN7 MIGRATION
+   * =========================================================
+   *
+   * Wanneer voor dit product echte historische CIN7
+   * movements aanwezig zijn, gebruiken we uitsluitend
+   * die receipts als historische basis.
+   *
+   * Oude Veynor item-receipts zoals:
+   *
+   * 16/07/2026 Stock Receipt +9
+   * 16/07/2026 Stock Receipt +10
+   *
+   * zijn onderdeel van de oude handmatig opgebouwde
+   * voorraad en mogen dan niet meer naast CIN7 worden
+   * weergegeven.
+   */
+  if (
+    hasCin7History
   ) {
-    const groups =
-      new Map();
+    return [];
+  }
 
-    productItems.forEach(item => {
-      const date =
-        item.received_at ||
-        item.inbound_date ||
-        item.created_at;
 
-      if (!date) return;
+  const groups =
+    new Map();
+
+
+  productItems.forEach(item => {
+    /*
+     * Ook zonder volledige migratie:
+     * een individueel CIN7-item heeft zijn receipt al
+     * in public.movements en wordt nooit opnieuw opgebouwd.
+     */
+    if (
+      normalize(
+        item.source_system
+      ) === "cin7"
+    ) {
+      return;
+    }
+
+
+    const date =
+      item.received_at ||
+      item.inbound_date ||
+      item.created_at;
+
+
+    if (!date) {
+      return;
+    }
+
+
+    const key = [
+      date,
+      item.inbound_reference ||
+        "",
+      item.warehouse_id ||
+        "",
+      item.location_id ||
+        ""
+    ].join("|");
+
+
+    if (
+      !groups.has(key)
+    ) {
+      groups.set(
+        key,
+        {
+          date,
+
+          reference:
+            item.inbound_reference ||
+            "",
+
+          warehouse_id:
+            item.warehouse_id ||
+            null,
+
+          location_id:
+            item.location_id ||
+            null,
+
+          quantity:
+            0,
+
+          item_ids:
+            []
+        }
+      );
+    }
+
+
+    const group =
+      groups.get(key);
+
+
+    group.quantity += 1;
+
+
+    group.item_ids.push(
+      item.id
+    );
+  });
+
+
+  return Array.from(
+    groups.values()
+  ).map(group =>
+    movementRecord({
+      date:
+        group.date,
+
+      type:
+        "receipt",
+
+      reference:
+        getInboundDisplayReference(
+          group.reference
+        ) === "—"
+          ? "Stock Receipt"
+          : getInboundDisplayReference(
+              group.reference
+            ),
+
+      warehouseId:
+        group.warehouse_id,
+
+      locationId:
+        group.location_id,
+
+      quantity:
+        group.quantity,
+
+      packageQuantity:
+        group.quantity,
+
+      user:
+        "",
+
+      notes:
+        `${
+          group.quantity
+        } package${
+          group.quantity === 1
+            ? ""
+            : "s"
+        } received into stock.`,
+
+      source:
+        "items"
+    })
+  );
+}
+
+function buildAllocationMovements(
+  allocations,
+  itemMap
+) {
+  const groups =
+    new Map();
+
+
+  allocations.forEach(
+    allocation => {
+      const item =
+        itemMap.get(
+          String(
+            allocation.item_id
+          )
+        );
+
+
+      const order =
+        allocation.order ||
+        null;
+
+
+      if (!item) {
+        return;
+      }
+
+
+      const status =
+        normalize(
+          allocation
+            .allocation_status
+        );
+
+
+      const orderNumber =
+        cleanText(
+          order?.order_number ||
+          ""
+        );
+
+
+      const externalReference =
+        cleanText(
+          order?.external_reference ||
+          ""
+        );
+
+
+      const purchaseOrder =
+        cleanText(
+          order?.purchase_order ||
+          ""
+        );
+
 
       /*
-       * Items from the same inbound event normally share
-       * received_at + reference + location.
+       * Groeperen per order + allocation moment.
+       *
+       * We gebruiken hier de minuut in plaats van de exacte
+       * milliseconde, omdat meerdere allocations van dezelfde
+       * reserveringsactie praktisch hetzelfde event zijn.
        */
-      const key = [
-        date,
-        item.inbound_reference ||
-          "",
-        item.warehouse_id ||
-          "",
-        item.location_id ||
+      const allocationMinute =
+        String(
+          allocation.allocated_at ||
           ""
+        ).slice(
+          0,
+          16
+        );
+
+
+      const groupKey = [
+        order?.id ||
+          orderNumber ||
+          externalReference ||
+          "no-order",
+
+        allocationMinute,
+
+        status === "cancelled"
+          ? "cancelled"
+          : "reserved"
       ].join("|");
 
+
       if (
-        !groups.has(key)
+        !groups.has(
+          groupKey
+        )
       ) {
         groups.set(
-          key,
+          groupKey,
           {
-            date,
-            reference:
-              item.inbound_reference ||
-              "",
+            date:
+              allocation.allocated_at,
+
+            order,
+
+            order_number:
+              orderNumber,
+
+            external_reference:
+              externalReference,
+
+            purchase_order:
+              purchaseOrder,
+
             warehouse_id:
               item.warehouse_id ||
               null,
+
             location_id:
               item.location_id ||
               null,
-            quantity: 0,
-            item_ids: []
+
+            allocated_by_profile_id:
+              allocation
+                .allocated_by_profile_id ||
+              null,
+
+            status,
+
+            item_ids:
+              new Set(),
+
+            physical_ids:
+              new Set(),
+
+            stock_set_ids:
+              new Set()
           }
         );
       }
 
+
       const group =
-        groups.get(key);
+        groups.get(
+          groupKey
+        );
 
-      group.quantity += 1;
 
-      group.item_ids.push(
-        item.id
+      group.item_ids.add(
+        String(
+          item.id
+        )
       );
-    });
 
-    return Array.from(
-      groups.values()
-    ).map(group =>
+
+      /*
+       * Eén physical_product_id = één product.
+       *
+       * Als beide packages ooit afzonderlijke allocations
+       * hebben, tellen ze hierdoor nog steeds als één product.
+       */
+      if (
+        item.physical_product_id
+      ) {
+        group.physical_ids.add(
+          String(
+            item.physical_product_id
+          )
+        );
+
+      } else if (
+        item.stock_set_id
+      ) {
+        group.stock_set_ids.add(
+          String(
+            item.stock_set_id
+          )
+        );
+      }
+
+
+      /*
+       * Oudste allocationtijd van de gegroepeerde actie
+       * gebruiken voor de history.
+       */
+      if (
+        dateToTime(
+          allocation.allocated_at
+        ) <
+        dateToTime(
+          group.date
+        )
+      ) {
+        group.date =
+          allocation.allocated_at;
+      }
+    }
+  );
+
+
+  return Array.from(
+    groups.values()
+  ).map(group => {
+    /*
+     * Product quantity bepalen.
+     *
+     * Eerst fysieke product-id's,
+     * daarna stock sets,
+     * anders allocations/items.
+     */
+    let reservationQuantity =
+      group.physical_ids.size;
+
+
+    if (
+      reservationQuantity === 0
+    ) {
+      reservationQuantity =
+        group.stock_set_ids.size;
+    }
+
+
+    if (
+      reservationQuantity === 0
+    ) {
+      reservationQuantity =
+        group.item_ids.size;
+    }
+
+
+    const movement =
       movementRecord({
         date:
           group.date,
 
         type:
-          "receipt",
+          "reservation",
 
         reference:
-          getInboundDisplayReference(
-            group.reference
-          ) === "—"
-            ? "Stock Receipt"
-            : getInboundDisplayReference(
-                group.reference
-              ),
+          orderMainReference(
+            group.order
+          ),
+
+        secondaryReference:
+          orderSubReference(
+            group.order
+          ),
 
         warehouseId:
           group.warehouse_id,
@@ -2365,107 +3005,62 @@
         locationId:
           group.location_id,
 
+        /*
+         * Reservation verandert fysieke voorraad niet.
+         */
         quantity:
-          group.quantity,
+          0,
+
+        packageQuantity:
+          null,
 
         user:
-          "",
+          profileName(
+            group
+              .allocated_by_profile_id
+          ),
 
         notes:
-          `${group.quantity} package${
-            group.quantity === 1
-              ? ""
-              : "s"
-          } received into stock.`,
+          group.status ===
+          "cancelled"
+            ? `${
+                reservationQuantity
+              } product${
+                reservationQuantity === 1
+                  ? ""
+                  : "s"
+              } reserved against this order; allocation later cancelled.`
+            : `${
+                reservationQuantity
+              } product${
+                reservationQuantity === 1
+                  ? ""
+                  : "s"
+              } reserved against this order.`,
 
         source:
-          "items"
-      })
-    );
-  }
+          "order_allocations",
 
-  function buildAllocationMovements(
-    allocations,
-    itemMap
-  ) {
-    const rows = [];
+        externalOrderNumber:
+          group.order_number,
 
-    allocations.forEach(
-      allocation => {
-        const item =
-          itemMap.get(
-            String(
-              allocation.item_id
-            )
-          );
+        externalAckReference:
+          group.external_reference
+      });
 
-        const order =
-          allocation.order ||
-          null;
 
-        if (!item) return;
+    /*
+     * Alleen voor presentatie.
+     *
+     * Dit veld telt NIET mee in calculateBalances().
+     */
+    movement.reservation_quantity =
+      reservationQuantity;
 
-        const status =
-          normalize(
-            allocation
-              .allocation_status
-          );
 
-        /*
-         * Allocation represents the reservation point.
-         * Even cancelled allocations are historically useful.
-         */
-        rows.push(
-          movementRecord({
-            date:
-              allocation.allocated_at,
-
-            type:
-              "reservation",
-
-            reference:
-              orderMainReference(
-                order
-              ),
-
-            secondaryReference:
-              orderSubReference(
-                order
-              ),
-
-            warehouseId:
-              item.warehouse_id,
-
-            locationId:
-              item.location_id,
-
-            quantity:
-              0,
-
-            user:
-              profileName(
-                allocation
-                  .allocated_by_profile_id
-              ),
-
-            notes:
-              status ===
-              "cancelled"
-                ? "Stock was reserved against this order and the allocation was later cancelled."
-                : "Stock reserved against this order.",
-
-            source:
-              "order_allocations",
-
-            itemId:
-              item.id
-          })
-        );
-      }
-    );
-
-    return rows;
-  }
+    return movement;
+  });
+}
 
   function eventTypeFromWarehouseEvent(
     event
@@ -2637,131 +3232,250 @@
     return 0;
   }
 
-  function buildWarehouseEventMovements(
-    events,
-    itemMap
-  ) {
-    const rows = [];
+function buildWarehouseEventMovements(
+  events,
+  itemMap,
+  hasCin7History = false
+) {
+  const rows = [];
 
-    events.forEach(event => {
-      /*
-       * Receipts already come from items.
-       * That prevents the same scan-in being shown twice.
-       */
-      if (
-        normalize(
-          event.event_type
-        ) ===
-        "item_received"
-      ) {
-        return;
-      }
 
-      const item =
-        itemMap.get(
-          String(
-            event.entity_id ||
-            ""
-          )
-        );
+  /*
+   * Oude inventory events vóór de nieuwe gereconstrueerde
+   * voorraadbasis.
+   *
+   * Nieuwe inventory checks vanaf 01-09-2026 blijven
+   * zichtbaar.
+   */
+  const migrationInventoryCutoff =
+    new Date(
+      "2026-09-01T00:00:00"
+    ).getTime();
 
-      const payload =
-        event.payload ||
-        {};
 
-      const type =
-        eventTypeFromWarehouseEvent(
-          event
-        );
+  events.forEach(event => {
+    /*
+     * Receipts worden al door items of door de expliciete
+     * CIN7 movements geleverd.
+     *
+     * Hierdoor tonen we dezelfde ontvangst niet dubbel.
+     */
+    if (
+      normalize(
+        event.event_type
+      ) === "item_received"
+    ) {
+      return;
+    }
 
-      let reference =
-        cleanText(
-          payload.order_number ||
-          payload.inbound_reference ||
-          event.reference_no ||
+
+    const item =
+      itemMap.get(
+        String(
+          event.entity_id ||
           ""
-        );
-
-      if (
-        reference.startsWith(
-          "INBOUND:"
         )
-      ) {
-        reference =
-          getInboundDisplayReference(
-            reference
-          );
-      }
-
-      rows.push(
-        movementRecord({
-          date:
-            event.created_at,
-
-          type,
-
-          reference:
-            reference ||
-            event.reference_no ||
-            "Warehouse Event",
-
-          secondaryReference:
-            cleanText(
-              payload.retailer_name ||
-              ""
-            ),
-
-          warehouseId:
-            payload.warehouse_id ||
-            item?.warehouse_id ||
-            null,
-
-          locationId:
-            payload.location_id ||
-            item?.location_id ||
-            null,
-
-          quantity:
-            warehouseEventQuantity(
-              event,
-              type
-            ),
-
-          user:
-            profileName(
-              event.user_profile_id
-            ),
-
-          notes:
-            [
-              cleanText(
-                event.source_module
-                  ? `Source: ${event.source_module}`
-                  : ""
-              ),
-
-              cleanText(
-                event.old_status ||
-                event.new_status
-                  ? `${event.old_status || "—"} → ${event.new_status || "—"}`
-                  : ""
-              )
-            ]
-              .filter(Boolean)
-              .join(" · "),
-
-          source:
-            "warehouse_events",
-
-          itemId:
-            event.entity_id ||
-            null
-        })
       );
-    });
 
-    return rows;
-  }
+
+    const payload =
+      event.payload ||
+      {};
+
+
+    const type =
+      eventTypeFromWarehouseEvent(
+        event
+      );
+
+
+    /*
+     * =========================================================
+     * OLD MIGRATION INVENTORY CHECKS
+     * =========================================================
+     *
+     * Bij een product waarvoor we een volledige historische
+     * CIN7-basis hebben opgebouwd, zijn de oude inventory
+     * checks uit de tijdelijke/handmatige Veynor voorraad
+     * niet meer relevant voor de nieuwe Stock History.
+     *
+     * We verwijderen deze events NIET uit de database.
+     * Ze worden uitsluitend niet meer weergegeven.
+     *
+     * Alles vanaf 01-09-2026 blijft gewoon zichtbaar,
+     * zodat toekomstige inventory checks normaal blijven
+     * functioneren.
+     */
+    if (
+      hasCin7History &&
+      type === "inventory_check" &&
+      dateToTime(
+        event.created_at
+      ) <
+      migrationInventoryCutoff
+    ) {
+      return;
+    }
+
+
+    let reference =
+      cleanText(
+        payload.order_number ||
+        payload.inbound_reference ||
+        event.reference_no ||
+        ""
+      );
+
+
+    /*
+     * Technische INBOUND:<uuid> references omzetten naar
+     * het leesbare containernummer wanneer dat beschikbaar is.
+     */
+    if (
+      reference.startsWith(
+        "INBOUND:"
+      )
+    ) {
+      reference =
+        getInboundDisplayReference(
+          reference
+        );
+    }
+
+
+    /*
+     * Order / ACK informatie uit het payload meenemen
+     * wanneer warehouse_events die informatie bevat.
+     */
+    const externalOrderNumber =
+      cleanText(
+        payload.order_number ||
+        ""
+      );
+
+
+    const externalAckReference =
+      cleanText(
+        payload.ack_reference ||
+        payload.external_reference ||
+        ""
+      );
+
+
+    /*
+     * Indien het event aan een item gekoppeld is kunnen
+     * variant en batch vanuit dat item worden overgenomen.
+     */
+    const stockVariant =
+      cleanText(
+        item?.stock_variant ||
+        ""
+      );
+
+
+    const batchReference =
+      cleanText(
+        item?.batch_number ||
+        ""
+      );
+
+
+    /*
+     * Event omzetten naar één uniforme Stock History movement.
+     */
+    rows.push(
+      movementRecord({
+        date:
+          event.created_at,
+
+        type,
+
+        reference:
+          reference ||
+          event.reference_no ||
+          "Warehouse Event",
+
+        secondaryReference:
+          cleanText(
+            payload.retailer_name ||
+            ""
+          ),
+
+        warehouseId:
+          payload.warehouse_id ||
+          item?.warehouse_id ||
+          null,
+
+        locationId:
+          payload.location_id ||
+          item?.location_id ||
+          null,
+
+        quantity:
+          warehouseEventQuantity(
+            event,
+            type
+          ),
+
+        /*
+         * Oude warehouse_events bevatten meestal geen
+         * betrouwbare package quantity.
+         *
+         * Daarom niet gokken.
+         */
+        packageQuantity:
+          null,
+
+        user:
+          profileName(
+            event.user_profile_id
+          ),
+
+        notes:
+          [
+            cleanText(
+              event.source_module
+                ? `Source: ${event.source_module}`
+                : ""
+            ),
+
+            cleanText(
+              event.old_status ||
+              event.new_status
+                ? `${event.old_status || "—"} → ${event.new_status || "—"}`
+                : ""
+            )
+          ]
+            .filter(Boolean)
+            .join(" · "),
+
+        source:
+          "warehouse_events",
+
+        /*
+         * Warehouse events zijn Veynor-events.
+         */
+        sourceSystem:
+          "VEYNOR",
+
+        stockVariant,
+
+        batchReference,
+
+        externalOrderNumber,
+
+        externalAckReference,
+
+        itemId:
+          event.entity_id ||
+          null
+      })
+    );
+  });
+
+
+  return rows;
+}
 
   function movementTableType(
     movement
@@ -2830,148 +3544,457 @@
     return "adjustment";
   }
 
-  function movementTableQuantity(
-    movement,
-    type
+ function movementTableQuantity(
+  movement,
+  type
+) {
+  /*
+   * Nieuwe movementstructuur heeft altijd voorrang.
+   *
+   * Bijvoorbeeld:
+   * quantity_units = 18
+   *
+   * Dan moet Stock History +18 tonen,
+   * niet +1.
+   */
+  if (
+    movement.quantity_units !== null &&
+    movement.quantity_units !== undefined
   ) {
-    const text =
-      `${movement.movement_type || ""} ${movement.notes || ""}`
-        .toLowerCase();
-
-    const numberMatch =
-      text.match(
-        /(?:qty|quantity|change)\s*[:=]?\s*(-?\d+)/i
+    const explicit =
+      Number(
+        movement.quantity_units
       );
 
-    if (numberMatch) {
-      return toNumber(
-        numberMatch[1],
-        0
-      );
-    }
-
     if (
-      type ===
-      "shipment"
+      Number.isFinite(explicit)
     ) {
-      return -1;
+      return explicit;
     }
-
-    if (
-      type ===
-      "receipt" ||
-      type ===
-      "return"
-    ) {
-      return 1;
-    }
-
-    return 0;
   }
 
-  function buildMovementTableRows(
-    movements
-  ) {
-    return movements.map(
-      movement => {
-        const type =
-          movementTableType(
-            movement
-          );
+  /*
+   * Legacy fallback.
+   *
+   * Oude movements hadden quantity vaak alleen
+   * in notes staan.
+   */
+  const text =
+    `${
+      movement.movement_type || ""
+    } ${
+      movement.notes || ""
+    }`
+      .toLowerCase();
 
-        return movementRecord({
-          date:
-            movement.created_at,
+  const numberMatch =
+    text.match(
+      /(?:qty|quantity|change)\s*[:=]?\s*(-?\d+)/i
+    );
 
-          type,
-
-          reference:
-            movement.scan_value ||
-            movement.order_id ||
-            movement.shipment_id ||
-            movement.movement_type,
-
-          warehouseId:
-            movement.warehouse_id,
-
-          locationId:
-            movement.location_id,
-
-          quantity:
-            movementTableQuantity(
-              movement,
-              type
-            ),
-
-          notes:
-            movement.notes ||
-            movement.movement_type ||
-            "",
-
-          source:
-            "movements",
-
-          itemId:
-            movement.item_id ||
-            null
-        });
-      }
+  if (numberMatch) {
+    return toNumber(
+      numberMatch[1],
+      0
     );
   }
 
-  function buildShipmentFallbackMovements(
-    productItems,
-    allocations
+  if (
+    type === "shipment"
   ) {
-    const allocationByItem =
-      new Map();
+    return -1;
+  }
 
-    allocations.forEach(
-      allocation => {
-        /*
-         * Prefer active/latest allocation for reference.
-         */
-        const key =
-          String(
-            allocation.item_id
-          );
+  if (
+    type === "receipt" ||
+    type === "return"
+  ) {
+    return 1;
+  }
 
-        const current =
-          allocationByItem.get(
-            key
-          );
+  return 0;
+}
 
-        if (
-          !current ||
-          dateToTime(
-            allocation.allocated_at
-          ) >=
-          dateToTime(
-            current.allocated_at
+ function buildMovementTableRows(
+  movements
+) {
+  return movements.map(
+    movement => {
+      const type =
+        movementTableType(
+          movement
+        );
+
+      const sourceSystem =
+        cleanText(
+          movement.source_system ||
+          ""
+        ).toUpperCase();
+
+      const batchReference =
+        cleanText(
+          movement.batch_reference ||
+          ""
+        );
+
+      const stockVariant =
+        cleanText(
+          movement.stock_variant ||
+          ""
+        );
+
+      const externalOrder =
+        cleanText(
+          movement.external_order_number ||
+          ""
+        );
+
+      const externalAck =
+        cleanText(
+          movement.external_ack_reference ||
+          ""
+        );
+
+      /*
+       * Reference:
+       *
+       * VEYNOR:
+       * SO-03544
+       *
+       * CIN7 zonder order:
+       * CIN7
+       *
+       * Oude movements:
+       * bestaande fallback behouden.
+       */
+      let reference =
+        externalOrder ||
+        movement.scan_value ||
+        "";
+
+      if (
+        !reference &&
+        sourceSystem
+      ) {
+        reference =
+          `[${sourceSystem}]`;
+      }
+
+      if (!reference) {
+        reference =
+          movement.order_id ||
+          movement.shipment_id ||
+          movement.movement_type ||
+          "Movement";
+      }
+
+      /*
+       * Tweede regel onder Reference.
+       *
+       * Voorbeeld:
+       *
+       * ACK1453 · Standard · Batch 1
+       */
+      const secondaryParts = [];
+
+      if (externalAck) {
+        secondaryParts.push(
+          externalAck
+        );
+      }
+
+      if (stockVariant) {
+        secondaryParts.push(
+          stockVariant
+        );
+      }
+
+      if (batchReference) {
+        secondaryParts.push(
+          batchReference
+        );
+      }
+
+      const packageQuantity =
+        movement.quantity_packages !== null &&
+        movement.quantity_packages !== undefined
+          ? toNumber(
+              movement.quantity_packages,
+              0
+            )
+          : null;
+
+      /*
+       * Notes netjes uitbreiden zonder historische
+       * notes kwijt te raken.
+       */
+      const noteParts = [];
+
+      if (sourceSystem) {
+        noteParts.push(
+          `Source: ${sourceSystem}`
+        );
+      }
+
+      if (stockVariant) {
+        noteParts.push(
+          `Variant: ${stockVariant}`
+        );
+      }
+
+      if (batchReference) {
+        noteParts.push(
+          `Batch: ${batchReference}`
+        );
+      }
+
+      if (
+        packageQuantity !== null
+      ) {
+        const sign =
+          packageQuantity > 0
+            ? "+"
+            : "";
+
+        noteParts.push(
+          `Packages: ${sign}${packageQuantity}`
+        );
+      }
+
+      if (
+        cleanText(
+          movement.notes
+        )
+      ) {
+        noteParts.push(
+          cleanText(
+            movement.notes
           )
-        ) {
-          allocationByItem.set(
-            key,
-            allocation
-          );
-        }
+        );
       }
+
+      return movementRecord({
+        date:
+          movement.created_at,
+
+        type,
+
+        reference,
+
+        secondaryReference:
+          secondaryParts.join(
+            " · "
+          ),
+
+        warehouseId:
+          movement.warehouse_id,
+
+        locationId:
+          movement.location_id,
+
+        quantity:
+          movementTableQuantity(
+            movement,
+            type
+          ),
+
+        packageQuantity,
+
+        notes:
+          noteParts.join(
+            " · "
+          ),
+
+source:
+  "movements",
+
+sourceSystem,
+
+        batchReference,
+
+        stockVariant,
+
+        externalOrderNumber:
+          externalOrder,
+
+        externalAckReference:
+          externalAck,
+
+        migratedFromLegacy:
+          movement.migrated_from_legacy ===
+          true,
+
+        itemId:
+          movement.item_id ||
+          null
+      });
+    }
+  );
+}
+
+function buildShipmentFallbackMovements(
+  productItems,
+  allocations,
+  explicitMovements = []
+) {
+  const allocationByItem =
+    new Map();
+
+
+  allocations.forEach(
+    allocation => {
+      const key =
+        String(
+          allocation.item_id
+        );
+
+      const current =
+        allocationByItem.get(
+          key
+        );
+
+      if (
+        !current ||
+        dateToTime(
+          allocation.allocated_at
+        ) >=
+        dateToTime(
+          current.allocated_at
+        )
+      ) {
+        allocationByItem.set(
+          key,
+          allocation
+        );
+      }
+    }
+  );
+
+
+  /*
+   * Orders waarvoor al een expliciete VEYNOR shipment
+   * in public.movements bestaat.
+   *
+   * Deze mogen niet nogmaals vanuit items worden
+   * opgebouwd.
+   */
+  const explicitVeynorOrders =
+    new Set(
+      (explicitMovements || [])
+        .filter(
+          movement =>
+            normalize(
+              movement.source_system
+            ) === "veynor" &&
+            movementTableType(
+              movement
+            ) === "shipment"
+        )
+        .map(
+          movement =>
+            cleanText(
+              movement.external_order_number
+            )
+        )
+        .filter(Boolean)
     );
 
-    return productItems
-      .filter(item =>
+
+  /*
+   * Zelfde bescherming op itemniveau.
+   */
+  const explicitItemIds =
+    new Set(
+      (explicitMovements || [])
+        .filter(
+          movement =>
+            movementTableType(
+              movement
+            ) === "shipment" &&
+            movement.item_id
+        )
+        .map(
+          movement =>
+            String(
+              movement.item_id
+            )
+        )
+    );
+
+
+  return productItems
+    .filter(
+      item =>
         item.shipped_at &&
-        isOutboundStatus(item)
-      )
-      .map(item => {
+        isOutboundStatus(
+          item
+        )
+    )
+    .map(
+      item => {
         const allocation =
           allocationByItem.get(
-            String(item.id)
+            String(
+              item.id
+            )
           );
 
         const order =
           allocation?.order ||
           null;
+
+        const orderNumber =
+          cleanText(
+            order?.order_number ||
+            ""
+          );
+
+
+        /*
+         * Expliciete VEYNOR movement bestaat al.
+         */
+        if (
+          orderNumber &&
+          explicitVeynorOrders.has(
+            orderNumber
+          )
+        ) {
+          return null;
+        }
+
+
+        /*
+         * Expliciete movement voor exact item bestaat al.
+         */
+        if (
+          explicitItemIds.has(
+            String(
+              item.id
+            )
+          )
+        ) {
+          return null;
+        }
+
+
+        const reference =
+          order
+            ? orderMainReference(
+                order
+              )
+            : (
+                item.sku_unique ||
+                "Outbound"
+              );
+
+
+        const secondaryReference =
+          order
+            ? orderSubReference(
+                order
+              )
+            : "";
+
 
         return movementRecord({
           date:
@@ -2980,22 +4003,9 @@
           type:
             "shipment",
 
-          reference:
-            order
-              ? orderMainReference(
-                  order
-                )
-              : (
-                  item.sku_unique ||
-                  "Outbound"
-                ),
+          reference,
 
-          secondaryReference:
-            order
-              ? orderSubReference(
-                  order
-                )
-              : "",
+          secondaryReference,
 
           warehouseId:
             item.warehouse_id,
@@ -3003,7 +4013,17 @@
           locationId:
             item.location_id,
 
+          /*
+           * Legacy fallback is item-based.
+           *
+           * Voor nieuwe gereconstrueerde data wordt deze
+           * fallback niet gebruikt als een expliciete
+           * movement aanwezig is.
+           */
           quantity:
+            -1,
+
+          packageQuantity:
             -1,
 
           user:
@@ -3011,44 +4031,115 @@
 
           notes:
             order
-              ? `Stock shipped against ${order.order_number || "order"}.`
+              ? `Stock shipped against ${
+                  order.order_number ||
+                  "order"
+                }.`
               : "Physical package shipped from stock.",
 
           source:
             "items",
 
+          sourceSystem:
+            "VEYNOR",
+
+          batchReference:
+            item.batch_number ||
+            "",
+
+          stockVariant:
+            item.stock_variant ||
+            "",
+
+          externalOrderNumber:
+            order?.order_number ||
+            "",
+
+          externalAckReference:
+            order?.external_reference ||
+            "",
+
           itemId:
             item.id
         });
-      });
-  }
-
+      }
+    )
+    .filter(Boolean);
+}
 
   /* =========================================================
    * DE-DUPLICATION
    * ======================================================= */
 
-  function movementIdentity(
-    movement
-  ) {
-    return [
-      normalize(
-        movement.type
-      ),
-      movement.item_id ||
-        "",
-      String(
-        movement.date ||
-        ""
-      ).slice(
-        0,
-        16
-      ),
-      normalize(
-        movement.reference
+function movementIdentity(
+  movement
+) {
+  return [
+    normalize(
+      movement.type
+    ),
+
+    movement.item_id ||
+      "",
+
+    String(
+      movement.date ||
+      ""
+    ).slice(
+      0,
+      23
+    ),
+
+    normalize(
+      movement.reference
+    ),
+
+    /*
+     * Variant en batch zijn onderdeel van de identiteit.
+     *
+     * Daardoor zijn bijvoorbeeld:
+     *
+     * SO-03650 · Standard · Batch 1 · -4
+     *
+     * en
+     *
+     * SO-03650 · Standard · Batch 3 · -1
+     *
+     * twee verschillende historische movements.
+     */
+    normalize(
+      movement.stock_variant
+    ),
+
+    normalize(
+      movement.batch_reference
+    ),
+
+    /*
+     * Ook quantity meenemen om verschillende bewegingen
+     * binnen dezelfde order/batch niet per ongeluk samen
+     * te voegen.
+     */
+    String(
+      toNumber(
+        movement.quantity,
+        0
       )
-    ].join("|");
-  }
+    ),
+
+    String(
+      movement.package_quantity !==
+        null &&
+      movement.package_quantity !==
+        undefined
+        ? toNumber(
+            movement.package_quantity,
+            0
+          )
+        : ""
+    )
+  ].join("|");
+}
 
   function removeDuplicateMovements(
     movements
@@ -3090,23 +4181,259 @@
    * BALANCE
    * ======================================================= */
 
-  function calculateBalances(
-  movements,
-  currentPhysical = null
+function currentPhysicalUnitsForProduct(
+  productId
 ) {
-  let rows = [...movements]
-    .sort(
+  const productItems =
+    allItems.filter(
+      item =>
+        String(
+          item.product_id
+        ) ===
+          String(
+            productId
+          ) &&
+        isPhysical(
+          item
+        )
+    );
+
+
+  const physicalKeys =
+    new Set();
+
+
+  productItems.forEach(
+    item => {
+
+      /*
+       * Beste identificatie:
+       * één physical_product_id = één fysiek product.
+       *
+       * CRO808:
+       * 1/2 + 2/2 delen hetzelfde physical_product_id
+       * en tellen dus samen als één product.
+       */
+      if (
+        item.physical_product_id
+      ) {
+        physicalKeys.add(
+          `physical:${item.physical_product_id}`
+        );
+
+        return;
+      }
+
+
+      /*
+       * Tweede keuze:
+       * stock_set_id.
+       */
+      if (
+        item.stock_set_id
+      ) {
+        physicalKeys.add(
+          `set:${item.stock_set_id}`
+        );
+
+        return;
+      }
+
+
+      /*
+       * Legacy artikelen zonder setstructuur.
+       * Daar telt ieder item als één fysieke unit.
+       */
+      physicalKeys.add(
+        `item:${item.id}`
+      );
+    }
+  );
+
+
+  return physicalKeys.size;
+}  
+
+function calculateBalances(
+  movements,
+  currentPhysicalUnits = null,
+  hasCin7History = false,
+  ledgerPhysicalUnits = null
+) {
+  /*
+   * =========================================================
+   * SORT HISTORY
+   * =========================================================
+   */
+
+  let rows =
+    [...movements].sort(
       (a, b) =>
         dateToTime(a.date) -
         dateToTime(b.date)
     );
 
+
+  const ledgerManaged =
+    ledgerPhysicalUnits !== null &&
+    ledgerPhysicalUnits !== undefined;
+
+
   /*
-   * Bereken hoeveel fysieke voorraad de bekende historie verklaart.
+   * =========================================================
+   * LEDGER-MANAGED PRODUCTS
+   * =========================================================
    *
-   * Reservation / release wijzigen de fysieke voorraad niet,
-   * dus die hebben quantity = 0.
+   * product_stock_ledger is de actuele waarheid.
+   *
+   * Voorbeeld CRO805:
+   *
+   * Physical = 29
+   *
+   * We rekenen de historie ACHTERWAARTS vanaf 29.
+   *
+   * Daardoor hoeft Stock History niet opnieuw te raden
+   * wat de huidige voorraad is.
+   *
+   * Alleen echte public.movements veranderen de fysieke
+   * voorraad.
+   *
+   * order_allocations:
+   * reservation blijft zichtbaar, maar verandert Physical niet.
+   *
+   * warehouse_events:
+   * blijven zichtbaar, maar veranderen de ledger balance niet
+   * zelfstandig.
+   * =========================================================
    */
+
+  if (ledgerManaged) {
+
+    let balance =
+      toNumber(
+        ledgerPhysicalUnits,
+        0
+      );
+
+
+    /*
+     * Nieuwste gebeurtenis eerst.
+     *
+     * We kennen immers de voorraad VANDAAG en rekenen
+     * vanaf daar terug naar het verleden.
+     */
+    const newestFirst =
+      [...rows].sort(
+        (a, b) =>
+          dateToTime(b.date) -
+          dateToTime(a.date)
+      );
+
+
+    newestFirst.forEach(
+      movement => {
+
+        /*
+         * -----------------------------------------------------
+         * BALANCE OP DEZE REGEL
+         * -----------------------------------------------------
+         *
+         * Balance betekent:
+         *
+         * fysieke voorraad NADAT deze gebeurtenis heeft
+         * plaatsgevonden.
+         *
+         * Voorbeeld:
+         *
+         * huidige voorraad             29
+         *
+         * Reservation                  29
+         * laatste Shipment -1          29
+         * shipment daarvoor -1         30
+         * shipment daarvoor -1         31
+         */
+
+        movement.balance =
+          balance;
+
+
+        /*
+         * -----------------------------------------------------
+         * ALLEEN PUBLIC.MOVEMENTS TERUGREKENEN
+         * -----------------------------------------------------
+         *
+         * Echte database movement:
+         *
+         * source = "movements"
+         *
+         * Reservation:
+         *
+         * source = "order_allocations"
+         *
+         * Warehouse event:
+         *
+         * source = "warehouse_events"
+         *
+         * Alleen de eerste categorie is onderdeel van de
+         * fysieke ledger.
+         */
+
+        const isExplicitMovement =
+          normalize(
+            movement.source
+          ) === "movements";
+
+
+        if (isExplicitMovement) {
+
+          /*
+           * We rekenen ACHTERWAARTS.
+           *
+           * Shipment -1:
+           *
+           * huidige balance 29
+           * vóór shipment = 29 - (-1) = 30
+           *
+           * Receipt +10:
+           *
+           * huidige balance 30
+           * vóór receipt = 30 - 10 = 20
+           */
+
+          balance -=
+            toNumber(
+              movement.quantity,
+              0
+            );
+        }
+      }
+    );
+
+
+    /*
+     * Geen kunstmatige correctie naar Physical.
+     *
+     * De actuele Physical waarmee we begonnen is rechtstreeks
+     * afkomstig uit product_stock_ledger.
+     */
+
+    return newestFirst;
+  }
+
+
+  /*
+   * =========================================================
+   * LEGACY PRODUCTS
+   * =========================================================
+   *
+   * Voor producten die nog NIET via product_stock_ledger
+   * worden beheerd blijft de bestaande methode actief.
+   *
+   * Zo breken we oudere, nog niet gemigreerde SKU's niet.
+   * =========================================================
+   */
+
+
   const knownPhysicalChange =
     rows.reduce(
       (sum, movement) =>
@@ -3118,48 +4445,49 @@
       0
     );
 
+
   /*
-   * Als de bekende historie niet aansluit op de huidige fysieke
-   * voorraad, voegen we een Opening Balance toe.
+   * =========================================================
+   * LEGACY OPENING BALANCE
+   * =========================================================
    *
-   * Voorbeeld:
+   * Alleen gebruiken wanneer:
    *
-   * huidige Physical = 116
-   * bekende receipts/shipments = +57
-   *
-   * Opening Balance = +59
-   *
-   * Daardoor eindigt de historische balance altijd op 116.
+   * - er geen complete CIN7-history is;
+   * - huidige fysieke voorraad bekend is.
    */
+
   if (
-    currentPhysical !== null &&
-    currentPhysical !== undefined
+    !hasCin7History &&
+    currentPhysicalUnits !== null &&
+    currentPhysicalUnits !== undefined
   ) {
+
     const physical =
       toNumber(
-        currentPhysical,
+        currentPhysicalUnits,
         0
       );
+
 
     const openingBalance =
       physical -
       knownPhysicalChange;
 
-    if (
-      openingBalance !== 0
-    ) {
+
+    if (openingBalance !== 0) {
+
       const firstMovementDate =
         rows.length
           ? rows[0].date
           : new Date().toISOString();
 
-      /*
-       * Zet de opening balance vlak vóór het oudste bekende event.
-       */
+
       let openingDate =
         new Date(
           firstMovementDate
         );
+
 
       if (
         Number.isNaN(
@@ -3170,9 +4498,16 @@
           new Date();
       }
 
+
+      /*
+       * Opening Balance één seconde vóór de eerste bekende
+       * movement plaatsen.
+       */
+
       openingDate.setSeconds(
         openingDate.getSeconds() - 1
       );
+
 
       rows.unshift(
         movementRecord({
@@ -3188,11 +4523,14 @@
           quantity:
             openingBalance,
 
+          packageQuantity:
+            null,
+
           user:
             "System",
 
           notes:
-            "Opening stock balance added to reconcile historical movements with the current physical stock.",
+            "Opening stock balance added to reconcile incomplete legacy history with the current physical product quantity.",
 
           source:
             "calculated"
@@ -3201,7 +4539,17 @@
     }
   }
 
+
+  /*
+   * =========================================================
+   * LEGACY RUNNING BALANCE
+   * =========================================================
+   *
+   * Oude producten blijven chronologisch vooruit rekenen.
+   */
+
   let balance = 0;
+
 
   rows
     .sort(
@@ -3211,20 +4559,24 @@
     )
     .forEach(
       movement => {
+
         balance +=
           toNumber(
             movement.quantity,
             0
           );
 
+
         movement.balance =
           balance;
       }
     );
 
+
   /*
-   * Nieuwste bovenaan tonen.
+   * Nieuwste movement bovenaan weergeven.
    */
+
   return rows.sort(
     (a, b) =>
       dateToTime(b.date) -
@@ -3232,35 +4584,50 @@
   );
 }
 
-
-  /* =========================================================
-   * COMPLETE HISTORY LOAD
-   * ======================================================= */
-
-  async function buildHistoryForProduct(
-    productId
-  ) {
-    const productItems =
-      allItems.filter(item =>
+async function buildHistoryForProduct(
+  productId
+) {
+  /*
+   * =========================================================
+   * PRODUCT ITEMS
+   * =========================================================
+   */
+  const productItems =
+    allItems.filter(
+      item =>
         String(
           item.product_id
         ) ===
-        String(productId)
-      );
+        String(
+          productId
+        )
+    );
 
-    const itemMap =
-      new Map(
-        productItems.map(item => [
-          String(item.id),
+
+  const itemMap =
+    new Map(
+      productItems.map(
+        item => [
+          String(
+            item.id
+          ),
           item
-        ])
-      );
+        ]
+      )
+    );
 
-    const [
-      allocations,
-      warehouseEvents,
-      movementRows
-    ] = await Promise.all([
+
+  /*
+   * =========================================================
+   * LOAD ALL HISTORY SOURCES
+   * =========================================================
+   */
+  const [
+    allocations,
+    warehouseEvents,
+    movementRows
+  ] =
+    await Promise.all([
       loadAllocationsForProduct(
         productId
       ),
@@ -3274,72 +4641,263 @@
       )
     ]);
 
-    let rows = [];
 
-    rows = rows.concat(
+  /*
+   * =========================================================
+   * DETECT COMPLETE CIN7 HISTORY
+   * =========================================================
+   *
+   * Een product wordt als historisch gemigreerd beschouwd
+   * wanneer er minimaal één expliciete CIN7 receipt in
+   * public.movements aanwezig is.
+   *
+   * CRO808 heeft zo'n volledige gereconstrueerde basis.
+   *
+   * Daardoor mogen oude item-based receipts en shipments
+   * niet opnieuw als historische movements worden opgebouwd.
+   */
+  const hasCin7History =
+    movementRows.some(
+      movement =>
+        normalize(
+          movement.source_system
+        ) === "cin7" &&
+        movementTableType(
+          movement
+        ) === "receipt"
+    );
+
+
+  let rows = [];
+
+
+  /*
+   * =========================================================
+   * 1. RECEIPTS
+   * =========================================================
+   *
+   * ZONDER CIN7-history:
+   * oude receipts mogen vanuit items worden opgebouwd.
+   *
+   * MET CIN7-history:
+   * buildReceiptMovements() geeft [] terug.
+   *
+   * Daardoor verdwijnen oude tijdelijke Veynor Stock Receipts
+   * zoals de eerdere +9 / +10 van CRO808.
+   */
+  rows =
+    rows.concat(
       buildReceiptMovements(
-        productItems
+        productItems,
+        hasCin7History
       )
     );
 
-    rows = rows.concat(
+
+  /*
+   * =========================================================
+   * 2. RESERVATIONS
+   * =========================================================
+   *
+   * Reservations komen uit order_allocations.
+   *
+   * Deze blijven ook bij een CIN7-gemigreerd product relevant,
+   * omdat dit echte Veynor-orderhistorie is.
+   *
+   * Meerdere allocations van dezelfde reserveringsactie worden
+   * door buildAllocationMovements() gegroepeerd.
+   *
+   * Bijvoorbeeld:
+   *
+   * SO-03650
+   * 5 reserved
+   *
+   * = één historyregel.
+   */
+  rows =
+    rows.concat(
       buildAllocationMovements(
         allocations,
         itemMap
       )
     );
 
-    rows = rows.concat(
+
+  /*
+   * =========================================================
+   * 3. WAREHOUSE EVENTS
+   * =========================================================
+   *
+   * Warehouse events blijven beschikbaar.
+   *
+   * buildWarehouseEventMovements() weet via hasCin7History
+   * dat oude migratie/inventory-check events moeten worden
+   * onderdrukt.
+   *
+   * Nieuwe Veynor warehouse-events blijven gewoon zichtbaar.
+   */
+  rows =
+    rows.concat(
       buildWarehouseEventMovements(
         warehouseEvents,
-        itemMap
+        itemMap,
+        hasCin7History
       )
     );
 
-    rows = rows.concat(
+
+  /*
+   * =========================================================
+   * 4. EXPLICIT MOVEMENTS
+   * =========================================================
+   *
+   * Dit is voor gemigreerde producten de leidende bron.
+   *
+   * Hier komen onder andere vandaan:
+   *
+   * CIN7 Receipt
+   * CIN7 Shipment
+   *
+   * en onze gereconstrueerde:
+   *
+   * VEYNOR Shipment
+   *
+   * met:
+   *
+   * SO
+   * ACK
+   * Standard / Kayflex
+   * Batch
+   * Products
+   * Packages
+   */
+  rows =
+    rows.concat(
       buildMovementTableRows(
         movementRows
       )
     );
 
-    /*
-     * Shipment fallback from items.
-     * This is important because many older items do not have
-     * explicit warehouse_events for shipment.
-     */
-    rows = rows.concat(
-      buildShipmentFallbackMovements(
-        productItems,
-        allocations
-      )
+
+  /*
+   * =========================================================
+   * 5. LEGACY SHIPMENT FALLBACK
+   * =========================================================
+   *
+   * ZEER BELANGRIJK:
+   *
+   * Deze fallback mag ALLEEN worden gebruikt wanneer het
+   * product GEEN volledige CIN7-history heeft.
+   *
+   * Voor CRO808 hebben we de historische Veynor shipments
+   * inmiddels expliciet in public.movements staan.
+   *
+   * Wanneer we hier alsnog de oude shipped items zouden
+   * toevoegen, krijgen we bijvoorbeeld:
+   *
+   * 31/08/2026
+   * CRO808-IN-...-PKG2OF2
+   * -1
+   *
+   * tien keer opnieuw.
+   *
+   * Dat veroorzaakt:
+   *
+   * - dubbele outbound-history;
+   * - technische artikel/itemnummers onder Reference;
+   * - een foutieve balance van 33 naar 23.
+   *
+   * Daarom:
+   *
+   * CIN7-history aanwezig -> GEEN shipment fallback.
+   *
+   * Legacy product -> fallback blijft gewoon beschikbaar.
+   */
+  if (
+    !hasCin7History
+  ) {
+    rows =
+      rows.concat(
+        buildShipmentFallbackMovements(
+          productItems,
+          allocations,
+          movementRows
+        )
+      );
+  }
+
+
+  /*
+   * =========================================================
+   * 6. REMOVE TECHNICAL DUPLICATES
+   * =========================================================
+   */
+  rows =
+    removeDuplicateMovements(
+      rows
     );
 
-    rows =
-      removeDuplicateMovements(
-        rows
-      );
 
-const productGroup =
-  productGroups.find(
-    group =>
-      String(
-        group.product_id
-      ) ===
-      String(productId)
-  );
+  /*
+   * =========================================================
+   * 7. CURRENT PHYSICAL STOCK
+   * =========================================================
+   *
+   * Tellen in fysieke producten, niet in colli.
+   *
+   * CRO808:
+   *
+   * 31 in_stock
+   * 1 reserved
+   *
+   * = 32 physical products.
+   */
+  const currentPhysicalUnits =
+    currentPhysicalUnitsForProduct(
+      productId
+    );
+
+
+  /*
+   * =========================================================
+   * 8. CALCULATE HISTORICAL BALANCE
+   * =========================================================
+   *
+   * Bij volledige CIN7-history:
+   *
+   * - historie begint bij de echte eerste CIN7 receipt;
+   * - geen kunstmatige Opening Balance;
+   * - balance wordt chronologisch opgebouwd.
+   *
+   * Bij legacy-producten:
+   *
+   * - bestaande opening-balance/reconciliation blijft
+   *   beschikbaar.
+   */
+const ledger =
+  productStockLedger.get(
+    String(productId)
+  ) || null;
+
 
 rows =
   calculateBalances(
     rows,
-    productGroup?.physical ?? null
+    currentPhysicalUnits,
+    hasCin7History,
+    ledger &&
+    ledger.movement_count > 0
+      ? ledger.physical_units
+      : null
   );
 
-return rows;  }
 
-
-  /* =========================================================
-   * SELECT PRODUCT
-   * ======================================================= */
+  /*
+   * calculateBalances() retourneert newest first,
+   * zodat de nieuwste movement bovenaan Stock History staat.
+   */
+  return rows;
+}
 
   async function selectProduct(
     productId,
@@ -3666,111 +5224,142 @@ return rows;  }
    * MOVEMENT FILTERS
    * ======================================================= */
 
-  function applyMovementFilters(
-    resetPage = true
-  ) {
-    const search =
-      normalize(
-        byId(
-          "movementSearch"
-        )?.value || ""
-      );
-
-    const type =
-      normalize(
-        byId(
-          "movementTypeFilter"
-        )?.value || ""
-      );
-
-    const from =
+ function applyMovementFilters(
+  resetPage = true
+) {
+  const search =
+    normalize(
       byId(
-        "movementDateFrom"
-      )?.value || "";
+        "movementSearch"
+      )?.value ||
+      ""
+    );
 
-    const to =
+
+  const type =
+    normalize(
       byId(
-        "movementDateTo"
-      )?.value || "";
+        "movementTypeFilter"
+      )?.value ||
+      ""
+    );
 
-    filteredMovements =
-      selectedMovements.filter(
-        movement => {
+
+  const from =
+    byId(
+      "movementDateFrom"
+    )?.value ||
+    "";
+
+
+  const to =
+    byId(
+      "movementDateTo"
+    )?.value ||
+    "";
+
+
+  filteredMovements =
+    selectedMovements.filter(
+      movement => {
+
+        if (
+          type &&
+          normalize(
+            movement.type
+          ) !== type
+        ) {
+          return false;
+        }
+
+
+        const time =
+          dateToTime(
+            movement.date
+          );
+
+
+        if (from) {
+          const fromTime =
+            new Date(
+              `${from}T00:00:00`
+            ).getTime();
+
           if (
-            type &&
-            normalize(
-              movement.type
-            ) !==
-            type
+            time <
+            fromTime
           ) {
             return false;
           }
+        }
 
-          const time =
-            dateToTime(
-              movement.date
-            );
 
-          if (from) {
-            const fromTime =
-              new Date(
-                `${from}T00:00:00`
-              ).getTime();
+        if (to) {
+          const toTime =
+            new Date(
+              `${to}T23:59:59`
+            ).getTime();
 
-            if (
-              time <
-              fromTime
-            ) {
-              return false;
-            }
+          if (
+            time >
+            toTime
+          ) {
+            return false;
           }
+        }
 
-          if (to) {
-            const toTime =
-              new Date(
-                `${to}T23:59:59`
-              ).getTime();
 
-            if (
-              time >
-              toTime
-            ) {
-              return false;
-            }
-          }
-
-          if (search) {
-            const haystack = [
+        if (search) {
+          const haystack =
+            [
               movement.reference,
               movement.secondary_reference,
+
+              movement.external_order_number,
+              movement.external_ack_reference,
+
+              movement.source_system,
+              movement.source,
+
+              movement.stock_variant,
+              movement.batch_reference,
+
               movement.warehouse_name,
               movement.location_code,
+
               movement.user,
               movement.notes,
               movement.type
             ]
+              .filter(Boolean)
               .join(" ")
               .toLowerCase();
 
-            if (
-              !haystack.includes(
-                search
-              )
-            ) {
-              return false;
-            }
+
+          if (
+            !haystack.includes(
+              search
+            )
+          ) {
+            return false;
           }
-
-          return true;
         }
-      );
 
-    if (resetPage) {
-      movementPage = 1;
-    }
 
-    renderMovementTable();
+        return true;
+      }
+    );
+
+
+  if (
+    resetPage
+  ) {
+    movementPage = 1;
   }
+
+
+  renderMovementTable();
+}
 
 
   /* =========================================================
@@ -3906,302 +5495,803 @@ function movementClass(type) {
    * MOVEMENT TABLE
    * ======================================================= */
 
-  function renderMovementTable() {
-    const body =
-      byId(
-        "movementHistoryBody"
-      );
+ function renderMovementTable() {
+  const body =
+    byId(
+      "movementHistoryBody"
+    );
 
-    if (!body) return;
 
-    if (!selectedProduct) {
-      body.innerHTML = `
-        <tr>
-          <td colspan="8">
-            <div class="history-empty">
+  if (!body) {
+    return;
+  }
 
-              <div class="history-empty-icon">
-                ↕
-              </div>
 
-              <strong>
-                Select a product
-              </strong>
+  /*
+   * =========================================================
+   * NO PRODUCT SELECTED
+   * =========================================================
+   */
+  if (
+    !selectedProduct
+  ) {
+    body.innerHTML = `
+      <tr>
+        <td colspan="8">
+          <div class="history-empty">
 
-              <span>
-                The complete stock movement history will appear here.
-              </span>
-
+            <div class="history-empty-icon">
+              ↕
             </div>
-          </td>
-        </tr>
-      `;
 
-      return;
-    }
+            <strong>
+              Select a product
+            </strong>
 
-    const totalPages =
+            <span>
+              The complete stock movement history will appear here.
+            </span>
+
+          </div>
+        </td>
+      </tr>
+    `;
+
+    return;
+  }
+
+
+  /*
+   * =========================================================
+   * PAGINATION
+   * =========================================================
+   */
+  const totalPages =
+    Math.max(
+      1,
+      Math.ceil(
+        filteredMovements.length /
+        MOVEMENT_PAGE_SIZE
+      )
+    );
+
+
+  movementPage =
+    Math.min(
       Math.max(
         1,
-        Math.ceil(
-          filteredMovements.length /
-          MOVEMENT_PAGE_SIZE
-        )
-      );
+        movementPage
+      ),
+      totalPages
+    );
 
-    movementPage =
-      Math.min(
-        Math.max(
-          1,
-          movementPage
-        ),
-        totalPages
-      );
 
-    const start =
-      (
-        movementPage - 1
-      ) *
-      MOVEMENT_PAGE_SIZE;
+  const start =
+    (
+      movementPage - 1
+    ) *
+    MOVEMENT_PAGE_SIZE;
 
-    const visible =
-      filteredMovements.slice(
-        start,
-        start +
-          MOVEMENT_PAGE_SIZE
-      );
 
-    if (!visible.length) {
-      body.innerHTML = `
-        <tr>
-          <td colspan="8">
-            <div class="history-empty">
+  const visible =
+    filteredMovements.slice(
+      start,
+      start +
+      MOVEMENT_PAGE_SIZE
+    );
 
-              <div class="history-empty-icon">
-                ↕
-              </div>
 
-              <strong>
-                No history found
-              </strong>
+  /*
+   * =========================================================
+   * EMPTY RESULT
+   * =========================================================
+   */
+  if (
+    !visible.length
+  ) {
+    body.innerHTML = `
+      <tr>
+        <td colspan="8">
+          <div class="history-empty">
 
-              <span>
-                No movements match the selected filters.
-              </span>
-
+            <div class="history-empty-icon">
+              ↕
             </div>
-          </td>
-        </tr>
-      `;
-    } else {
-      body.innerHTML =
-        visible.map(
-          movement => `
-            <tr>
 
-              <td>
-                <strong>
+            <strong>
+              No history found
+            </strong>
+
+            <span>
+              No movements match the selected filters.
+            </span>
+
+          </div>
+        </td>
+      </tr>
+    `;
+
+  } else {
+
+    /*
+     * =======================================================
+     * MOVEMENT ROWS
+     * =======================================================
+     */
+    body.innerHTML =
+      visible
+        .map(
+          movement => {
+
+            const movementType =
+              normalize(
+                movement.type
+              );
+
+
+            /*
+             * -------------------------------------------------
+             * SOURCE SYSTEM
+             * -------------------------------------------------
+             */
+            const sourceSystem =
+              cleanText(
+                movement.source_system ||
+                ""
+              )
+                .toUpperCase();
+
+
+            const sourceLabel =
+              sourceSystem
+                ? `[${sourceSystem}]`
+                : "";
+
+
+            /*
+             * -------------------------------------------------
+             * REFERENCES
+             * -------------------------------------------------
+             */
+            const reference =
+              cleanText(
+                movement.reference ||
+                "—"
+              );
+
+
+            const orderNumber =
+              cleanText(
+                movement.external_order_number ||
+                ""
+              );
+
+
+            const ack =
+              cleanText(
+                movement.external_ack_reference ||
+                ""
+              );
+
+
+            const existingSecondary =
+              cleanText(
+                movement.secondary_reference ||
+                ""
+              );
+
+
+            const secondaryParts =
+              [];
+
+
+            /*
+             * SO toevoegen wanneer deze nog niet als
+             * hoofdreference wordt weergegeven.
+             */
+            if (
+              orderNumber &&
+              normalize(
+                orderNumber
+              ) !==
+              normalize(
+                reference
+              )
+            ) {
+              secondaryParts.push(
+                orderNumber
+              );
+            }
+
+
+            /*
+             * ACK / externe reference.
+             */
+            if (
+              ack &&
+              normalize(
+                ack
+              ) !==
+              normalize(
+                reference
+              ) &&
+              !secondaryParts.some(
+                value =>
+                  normalize(value) ===
+                  normalize(ack)
+              )
+            ) {
+              secondaryParts.push(
+                ack
+              );
+            }
+
+
+            /*
+             * Bestaande secondary reference kan bijvoorbeeld
+             * bevatten:
+             *
+             * ACK1453
+             * PU-19-08
+             * PO Painting Greg
+             *
+             * Dubbele waarden worden eruit gehaald.
+             */
+            if (
+              existingSecondary
+            ) {
+              existingSecondary
+                .split(" · ")
+                .map(
+                  value =>
+                    cleanText(value)
+                )
+                .filter(Boolean)
+                .forEach(
+                  value => {
+                    if (
+                      normalize(value) !==
+                        normalize(reference) &&
+                      !secondaryParts.some(
+                        existing =>
+                          normalize(existing) ===
+                          normalize(value)
+                      )
+                    ) {
+                      secondaryParts.push(
+                        value
+                      );
+                    }
+                  }
+                );
+            }
+
+
+            const secondaryReference =
+              secondaryParts.join(
+                " · "
+              );
+
+
+            /*
+             * -------------------------------------------------
+             * VARIANT / BATCH
+             * -------------------------------------------------
+             */
+            const variant =
+              cleanText(
+                movement.stock_variant ||
+                ""
+              );
+
+
+            const batch =
+              cleanText(
+                movement.batch_reference ||
+                ""
+              );
+
+
+            const stockParts =
+              [];
+
+
+            if (variant) {
+              stockParts.push(
+                variant
+              );
+            }
+
+
+            if (batch) {
+              stockParts.push(
+                batch
+              );
+            }
+
+
+            const stockReference =
+              stockParts.join(
+                " · "
+              );
+
+
+            /*
+             * -------------------------------------------------
+             * PHYSICAL MOVEMENT QUANTITY
+             * -------------------------------------------------
+             *
+             * Dit is de echte voorraadmutatie.
+             *
+             * Receipt   +8
+             * Shipment  -1
+             * Reservation 0
+             */
+            const unitQuantity =
+              toNumber(
+                movement.quantity,
+                0
+              );
+
+
+            /*
+             * -------------------------------------------------
+             * PACKAGE QUANTITY
+             * -------------------------------------------------
+             *
+             * Bijvoorbeeld CRO808:
+             *
+             * -1 product
+             * -2 packages
+             */
+            const packageQuantity =
+              movement.package_quantity !==
+                null &&
+              movement.package_quantity !==
+                undefined
+                ? toNumber(
+                    movement.package_quantity,
+                    0
+                  )
+                : null;
+
+
+            /*
+             * -------------------------------------------------
+             * RESERVATION QUANTITY
+             * -------------------------------------------------
+             *
+             * Reservation heeft bewust movement.quantity = 0
+             * omdat reserveren de fysieke voorraad niet wijzigt.
+             *
+             * reservation_quantity is alleen de hoeveelheid
+             * producten die aan de order is gereserveerd.
+             *
+             * Bijvoorbeeld:
+             *
+             * SO-03650
+             * 5 reserved
+             */
+            const reservationQuantity =
+              movement.reservation_quantity !==
+                null &&
+              movement.reservation_quantity !==
+                undefined
+                ? toNumber(
+                    movement.reservation_quantity,
+                    0
+                  )
+                : null;
+
+
+            const isReservation =
+              movementType ===
+                "reservation";
+
+
+            const isReservationReleased =
+              movementType ===
+                "reservation_released";
+
+
+            /*
+             * -------------------------------------------------
+             * QUANTITY DISPLAY
+             * -------------------------------------------------
+             */
+            let quantityHtml = "";
+
+
+            if (
+              isReservation &&
+              reservationQuantity !== null &&
+              reservationQuantity > 0
+            ) {
+              quantityHtml = `
+                <span class="qty neutral">
                   ${escapeHtml(
-                    formatDate(
-                      movement.date
+                    formatNumber(
+                      reservationQuantity
                     )
                   )}
-                </strong>
+                </span>
 
                 <span class="subline">
+                  reserved
+                </span>
+              `;
+
+            } else if (
+              isReservationReleased &&
+              reservationQuantity !== null &&
+              reservationQuantity > 0
+            ) {
+              quantityHtml = `
+                <span class="qty neutral">
                   ${escapeHtml(
-                    formatTime(
-                      movement.date
+                    formatNumber(
+                      reservationQuantity
                     )
                   )}
                 </span>
-              </td>
 
-
-              <td>
-                <span class="movement-event ${escapeHtml(
-                  movementClass(
-                    movement.type
-                  )
-                )}">
-                  ${escapeHtml(
-                    movementLabel(
-                      movement.type
-                    )
-                  )}
+                <span class="subline">
+                  released
                 </span>
-              </td>
+              `;
 
-
-              <td>
-
-                <div class="movement-reference">
-
-                  <strong>
-                    ${escapeHtml(
-                      movement.reference ||
-                      "—"
-                    )}
-                  </strong>
-
-                  ${
-                    movement.secondary_reference
-                      ? `
-                        <span>
-                          ${escapeHtml(
-                            movement.secondary_reference
-                          )}
-                        </span>
-                      `
-                      : ""
-                  }
-
-                </div>
-
-              </td>
-
-
-              <td>
-
-                <div class="movement-location">
-
-                  <strong>
-                    ${escapeHtml(
-                      movement.location_code ||
-                      "—"
-                    )}
-                  </strong>
-
-                  ${
-                    movement.warehouse_name
-                      ? `
-                        <span>
-                          ${escapeHtml(
-                            movement.warehouse_name
-                          )}
-                        </span>
-                      `
-                      : ""
-                  }
-
-                </div>
-
-              </td>
-
-
-              <td>
+            } else {
+              quantityHtml = `
                 <span class="qty ${quantityClass(
-                  movement.quantity
+                  unitQuantity
                 )}">
                   ${escapeHtml(
                     quantityDisplay(
-                      movement.quantity
+                      unitQuantity
                     )
                   )}
                 </span>
-              </td>
+              `;
 
 
-              <td>
-                <span class="balance-value">
-                  ${formatNumber(
-                    movement.balance
-                  )}
-                </span>
-              </td>
+              if (
+                packageQuantity !== null &&
+                packageQuantity !== 0
+              ) {
+                quantityHtml += `
+                  <span class="subline">
+                    ${escapeHtml(
+                      quantityDisplay(
+                        packageQuantity
+                      )
+                    )} packages
+                  </span>
+                `;
+              }
+            }
 
 
-              <td>
+            /*
+             * -------------------------------------------------
+             * USER / SOURCE
+             * -------------------------------------------------
+             */
+            const displaySource =
+              sourceSystem ||
+              cleanText(
+                movement.source ||
+                ""
+              );
 
-                <div class="movement-user">
 
+            let displayUser =
+              cleanText(
+                movement.user ||
+                ""
+              );
+
+
+            if (
+              !displayUser
+            ) {
+              if (
+                sourceSystem ===
+                "CIN7"
+              ) {
+                displayUser =
+                  "Cin7";
+
+              } else if (
+                sourceSystem ===
+                "VEYNOR"
+              ) {
+                displayUser =
+                  "Veynor";
+
+              } else {
+                displayUser =
+                  "System";
+              }
+            }
+
+
+            /*
+             * -------------------------------------------------
+             * NOTES
+             * -------------------------------------------------
+             *
+             * buildMovementTableRows() kan nog technische
+             * informatie in notes hebben staan.
+             *
+             * We voorkomen hier in ieder geval dat extra
+             * quantity-informatie opnieuw wordt toegevoegd.
+             */
+            const notes =
+              cleanText(
+                movement.notes ||
+                ""
+              );
+
+
+            /*
+             * -------------------------------------------------
+             * BALANCE
+             * -------------------------------------------------
+             *
+             * Reservation verandert balance niet.
+             * De berekende balance blijft dus bijvoorbeeld:
+             *
+             * vóór reservation 47
+             * reservation 5 -> balance 47
+             */
+            const balance =
+              toNumber(
+                movement.balance,
+                0
+              );
+
+
+            /*
+             * =================================================
+             * HTML ROW
+             * =================================================
+             */
+            return `
+              <tr>
+
+                <td>
                   <strong>
                     ${escapeHtml(
-                      movement.user ||
-                      "System"
+                      formatDate(
+                        movement.date
+                      )
                     )}
                   </strong>
 
+                  <span class="subline">
+                    ${escapeHtml(
+                      formatTime(
+                        movement.date
+                      )
+                    )}
+                  </span>
+                </td>
+
+
+                <td>
+                  <span class="movement-event ${escapeHtml(
+                    movementClass(
+                      movement.type
+                    )
+                  )}">
+                    ${escapeHtml(
+                      movementLabel(
+                        movement.type
+                      )
+                    )}
+                  </span>
+
                   ${
-                    movement.source
+                    sourceLabel
                       ? `
-                        <span>
-                          ${escapeHtml(
-                            movement.source
-                          )}
-                        </span>
-                      `
+                          <span class="subline">
+                            ${escapeHtml(
+                              sourceLabel
+                            )}
+                          </span>
+                        `
                       : ""
                   }
-
-                </div>
-
-              </td>
+                </td>
 
 
-              <td>
-                <div class="movement-notes">
-                  ${escapeHtml(
-                    movement.notes ||
-                    "—"
-                  )}
-                </div>
-              </td>
+                <td>
+                  <div class="movement-reference">
 
-            </tr>
-          `
-        ).join("");
-    }
+                    <strong>
+                      ${escapeHtml(
+                        reference
+                      )}
+                    </strong>
 
-    const from =
-      filteredMovements.length
-        ? start + 1
-        : 0;
+                    ${
+                      secondaryReference
+                        ? `
+                            <span>
+                              ${escapeHtml(
+                                secondaryReference
+                              )}
+                            </span>
+                          `
+                        : ""
+                    }
 
-    const to =
-      Math.min(
-        start +
-          MOVEMENT_PAGE_SIZE,
-        filteredMovements.length
-      );
+                    ${
+                      stockReference
+                        ? `
+                            <span>
+                              ${escapeHtml(
+                                stockReference
+                              )}
+                            </span>
+                          `
+                        : ""
+                    }
 
-    setText(
-      "movementHistoryMeta",
-      `${formatNumber(
-        from
-      )}–${formatNumber(
-        to
-      )} of ${formatNumber(
-        filteredMovements.length
-      )} movement(s)`
-    );
+                  </div>
+                </td>
 
-    setText(
-      "movementPageLabel",
-      `Page ${movementPage} of ${totalPages}`
-    );
 
-    const previous =
-      byId(
-        "btnMovementPreviousPage"
-      );
+                <td>
+                  <div class="movement-location">
 
-    const next =
-      byId(
-        "btnMovementNextPage"
-      );
+                    <strong>
+                      ${escapeHtml(
+                        movement.location_code ||
+                        "—"
+                      )}
+                    </strong>
 
-    if (previous) {
-      previous.disabled =
-        movementPage <= 1;
-    }
+                    ${
+                      movement.warehouse_name
+                        ? `
+                            <span>
+                              ${escapeHtml(
+                                movement.warehouse_name
+                              )}
+                            </span>
+                          `
+                        : ""
+                    }
 
-    if (next) {
-      next.disabled =
-        movementPage >=
-        totalPages;
-    }
+                  </div>
+                </td>
+
+
+                <td>
+                  ${quantityHtml}
+                </td>
+
+
+                <td>
+                  <span class="balance-value">
+                    ${formatNumber(
+                      balance
+                    )}
+                  </span>
+
+                  <span class="subline">
+                    products
+                  </span>
+                </td>
+
+
+                <td>
+                  <div class="movement-user">
+
+                    <strong>
+                      ${escapeHtml(
+                        displayUser
+                      )}
+                    </strong>
+
+                    ${
+                      displaySource
+                        ? `
+                            <span>
+                              ${escapeHtml(
+                                displaySource
+                              )}
+                            </span>
+                          `
+                        : ""
+                    }
+
+                  </div>
+                </td>
+
+
+                <td>
+                  <div class="movement-notes">
+
+                    ${escapeHtml(
+                      notes ||
+                      "—"
+                    )}
+
+                  </div>
+                </td>
+
+              </tr>
+            `;
+          }
+        )
+        .join("");
   }
+
+
+  /*
+   * =========================================================
+   * PAGINATION FOOTER
+   * =========================================================
+   */
+  const from =
+    filteredMovements.length
+      ? start + 1
+      : 0;
+
+
+  const to =
+    Math.min(
+      start +
+        MOVEMENT_PAGE_SIZE,
+      filteredMovements.length
+    );
+
+
+  setText(
+    "movementHistoryMeta",
+    `${formatNumber(
+      from
+    )}–${formatNumber(
+      to
+    )} of ${formatNumber(
+      filteredMovements.length
+    )} movement(s)`
+  );
+
+
+  setText(
+    "movementPageLabel",
+    `Page ${movementPage} of ${totalPages}`
+  );
+
+
+  const previous =
+    byId(
+      "btnMovementPreviousPage"
+    );
+
+
+  const next =
+    byId(
+      "btnMovementNextPage"
+    );
+
+
+  if (previous) {
+    previous.disabled =
+      movementPage <= 1;
+  }
+
+
+  if (next) {
+    next.disabled =
+      movementPage >=
+      totalPages;
+  }
+}
+
 
 async function loadExportHistories(
   groups
@@ -4292,11 +6382,159 @@ async function loadExportHistories(
     );
   }
 
-  function movementExportRows(
-    movements
-  ) {
-    return movements.map(
-      movement => ({
+function movementExportRows(
+  movements
+) {
+  return movements.map(
+    movement => {
+
+      const movementType =
+        normalize(
+          movement.type
+        );
+
+
+      const isReservation =
+        movementType ===
+        "reservation";
+
+
+      const sourceSystem =
+        cleanText(
+          movement.source_system ||
+          ""
+        )
+          .toUpperCase();
+
+
+      const orderNumber =
+        cleanText(
+          movement.external_order_number ||
+          ""
+        );
+
+
+      const ackReference =
+        cleanText(
+          movement.external_ack_reference ||
+          ""
+        );
+
+
+      const stockVariant =
+        cleanText(
+          movement.stock_variant ||
+          ""
+        );
+
+
+      const batchReference =
+        cleanText(
+          movement.batch_reference ||
+          ""
+        );
+
+
+      /*
+       * Echte fysieke productmutatie.
+       *
+       * Receipt:
+       * +8
+       *
+       * Shipment:
+       * -1
+       *
+       * Reservation:
+       * 0
+       */
+      const productQuantity =
+        toNumber(
+          movement.quantity,
+          0
+        );
+
+
+      /*
+       * Packages / colli.
+       */
+      const packageQuantity =
+        movement.package_quantity !==
+          null &&
+        movement.package_quantity !==
+          undefined
+          ? toNumber(
+              movement.package_quantity,
+              0
+            )
+          : null;
+
+
+      /*
+       * Gereserveerd aantal producten.
+       *
+       * Dit beïnvloedt de fysieke balance niet.
+       */
+      const reservationQuantity =
+        movement.reservation_quantity !==
+          null &&
+        movement.reservation_quantity !==
+          undefined
+          ? toNumber(
+              movement.reservation_quantity,
+              0
+            )
+          : null;
+
+
+      /*
+       * Voor Excel willen we een duidelijke quantity.
+       *
+       * Reservation:
+       * 5
+       *
+       * Shipment:
+       * -4
+       *
+       * Receipt:
+       * +8
+       */
+      const displayQuantity =
+        isReservation &&
+        reservationQuantity !== null
+          ? reservationQuantity
+          : productQuantity;
+
+
+      /*
+       * Type van de hoeveelheid duidelijk benoemen.
+       */
+      const quantityMeaning =
+        isReservation
+          ? "Reserved"
+          : (
+              movementType === "receipt"
+                ? "Received"
+                : movementType === "shipment"
+                  ? "Shipped"
+                  : movementType === "return"
+                    ? "Returned"
+                    : "Movement"
+            );
+
+
+      /*
+       * Source voor oude records behouden wanneer
+       * source_system niet aanwezig is.
+       */
+      const source =
+        sourceSystem ||
+        cleanText(
+          movement.source ||
+          ""
+        );
+
+
+      return {
         "Date / Time":
           formatDateTime(
             movement.date
@@ -4307,13 +6545,28 @@ async function loadExportHistories(
             movement.type
           ),
 
+        "Source System":
+          source,
+
         "Reference":
           movement.reference ||
           "",
 
+        "SO Number":
+          orderNumber,
+
+        "ACK / External Reference":
+          ackReference,
+
         "Secondary Reference":
           movement.secondary_reference ||
           "",
+
+        "Variant":
+          stockVariant,
+
+        "Batch":
+          batchReference,
 
         "Warehouse":
           movement.warehouse_name ||
@@ -4324,25 +6577,61 @@ async function loadExportHistories(
           "",
 
         "Quantity":
-          movement.quantity,
+          displayQuantity,
 
-        "Balance":
+        "Quantity Type":
+          quantityMeaning,
+
+        /*
+         * Products is de echte fysieke mutatie.
+         *
+         * Bij een reservation blijft dit dus 0.
+         */
+        "Product Movement":
+          productQuantity,
+
+        /*
+         * Apart veld zodat bijvoorbeeld zichtbaar wordt:
+         *
+         * -1 product
+         * -2 packages
+         */
+        "Packages":
+          packageQuantity === null
+            ? ""
+            : packageQuantity,
+
+        /*
+         * Alleen gevuld bij Reservation.
+         */
+        "Reserved Products":
+          reservationQuantity === null
+            ? ""
+            : reservationQuantity,
+
+        /*
+         * Balance blijft altijd fysieke producten.
+         */
+        "Balance Products":
           movement.balance,
 
         "User":
           movement.user ||
-          "System",
-
-        "Source":
-          movement.source ||
-          "",
+          (
+            sourceSystem === "CIN7"
+              ? "Cin7"
+              : sourceSystem === "VEYNOR"
+                ? "Veynor"
+                : "System"
+          ),
 
         "Notes":
           movement.notes ||
           ""
-      })
-    );
-  }
+      };
+    }
+  );
+}
 
   function setSheetColumnWidths(
     sheet,
@@ -5873,26 +8162,29 @@ function exportSelectedPdf() {
    * LOAD ALL DATA
    * ======================================================= */
 
-  async function loadAllData() {
-    await Promise.all([
-      loadCustomers(),
-      loadWarehouses(),
-      loadLocations(),
-      loadInboundContainers(),
-      loadUserProfiles(),
-      loadProducts()
-    ]);
+async function loadAllData() {
+  await Promise.all([
+    loadCustomers(),
+    loadWarehouses(),
+    loadLocations(),
+    loadInboundContainers(),
+    loadUserProfiles(),
+    loadProducts()
+  ]);
 
-    await loadItems();
+  await Promise.all([
+    loadItems(),
+    loadProductStockLedger()
+  ]);
 
-    buildProductGroups();
+  buildProductGroups();
 
-    renderGlobalKpis();
+  renderGlobalKpis();
 
-    applyProductFilters(
-      false
-    );
-  }
+  applyProductFilters(
+    false
+  );
+}
 
 
   /* =========================================================

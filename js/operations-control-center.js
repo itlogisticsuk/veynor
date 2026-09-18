@@ -156,16 +156,220 @@ function getOrderImportDate(order) {
   );
 }
 
-function getOrderDueDate(order) {
-  const importDate =
-    getOrderImportDate(order);
+function isScotlandOrder(order) {
+  /*
+   * Eerst de expliciete delivery_region gebruiken.
+   */
+  const region =
+    normalize(
+      order?.delivery_region ||
+      ""
+    );
 
-  if (!importDate) {
+
+  if (
+    region.includes("scotland") ||
+    region.includes("scottish") ||
+    region.includes("edinburgh") ||
+    region.includes("glasgow") ||
+    region.includes("highland") ||
+    region.includes("island")
+  ) {
+    return true;
+  }
+
+
+  /*
+   * Fallback op adresgegevens.
+   */
+  const address =
+    normalize(
+      [
+        order?.delivery_address_1,
+        order?.delivery_address_2,
+        order?.delivery_address_3,
+        order?.delivery_address_4,
+        order?.delivery_city,
+        order?.delivery_postcode,
+        order?.delivery_country
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+
+  /*
+   * Expliciete Schotse plaats/regio in adres.
+   */
+  if (
+    address.includes("scotland") ||
+    address.includes("edinburgh") ||
+    address.includes("glasgow") ||
+    address.includes("aberdeen") ||
+    address.includes("dundee") ||
+    address.includes("inverness") ||
+    address.includes("perth")
+  ) {
+    return true;
+  }
+
+
+  /*
+   * Schotse postcodegebieden.
+   *
+   * AB = Aberdeen
+   * DD = Dundee
+   * DG = Dumfries
+   * EH = Edinburgh
+   * FK = Falkirk
+   * G  = Glasgow
+   * HS = Outer Hebrides
+   * IV = Inverness
+   * KA = Kilmarnock
+   * KW = Kirkwall
+   * KY = Kirkcaldy
+   * ML = Motherwell
+   * PA = Paisley
+   * PH = Perth
+   * TD = Borders (deels Scotland)
+   * ZE = Shetland
+   */
+  const postcode =
+    String(
+      order?.delivery_postcode ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+
+  return /^(AB|DD|DG|EH|FK|G|HS|IV|KA|KW|KY|ML|PA|PH|TD|ZE)\d/.test(
+    postcode
+  );
+}
+
+function getOrderStockCompleteDate(order) {
+  /*
+   * Zoek alle stock_complete activiteiten.
+   */
+  const activities =
+    Array.isArray(
+      order?.order_activity_log
+    )
+      ? order.order_activity_log
+      : [];
+
+
+  const stockCompleteActivities =
+    activities
+      .filter(activity => {
+        const type =
+          normalize(
+            activity?.activity_type
+          );
+
+        const newStatus =
+          normalize(
+            activity?.new_status
+          );
+
+        return (
+          type === "stock_complete" ||
+          newStatus === "stock_complete"
+        );
+      })
+      .filter(activity =>
+        Boolean(
+          activity?.created_at
+        )
+      )
+      .sort((a, b) => {
+        return (
+          new Date(
+            a.created_at
+          ).getTime() -
+          new Date(
+            b.created_at
+          ).getTime()
+        );
+      });
+
+
+  /*
+   * De EERSTE keer dat de order compleet werd
+   * is de start van de levertermijn.
+   */
+  if (
+    stockCompleteActivities.length
+  ) {
+    return (
+      stockCompleteActivities[0]
+        .created_at
+    );
+  }
+
+
+  /*
+   * Fallback voor bestaande orders.
+   *
+   * Als een bestaande order al compleet is maar
+   * er historisch geen stock_complete activity
+   * bestaat, gebruiken we voorlopig created/imported.
+   *
+   * Hiermee verdwijnen bestaande complete orders
+   * niet ineens zonder Due Date.
+   */
+  const completeness =
+    order?.product_completeness ||
+    getProductCompleteness(order);
+
+
+  if (
+    completeness?.status ===
+    "complete"
+  ) {
+    return (
+      order.stock_complete_at ||
+      order.updated_at ||
+      getOrderImportDate(order) ||
+      null
+    );
+  }
+
+
+  return null;
+}
+
+function getOrderDueDate(order) {
+  /*
+   * Een Due Date bestaat pas zodra de order
+   * fysiek compleet is.
+   */
+  const completeness =
+    order?.product_completeness ||
+    getProductCompleteness(order);
+
+  if (
+    completeness?.status !== "complete"
+  ) {
     return null;
   }
 
+
+  /*
+   * Zoek de datum waarop de order voor het eerst
+   * Stock Complete werd.
+   */
+  const stockCompleteDate =
+    getOrderStockCompleteDate(order);
+
+  if (!stockCompleteDate) {
+    return null;
+  }
+
+
   const date =
-    new Date(importDate);
+    new Date(stockCompleteDate);
 
   if (
     Number.isNaN(
@@ -175,9 +379,25 @@ function getOrderDueDate(order) {
     return null;
   }
 
+
+  /*
+   * Normale UK-order:
+   * 3 weken vanaf Stock Complete.
+   *
+   * Schotland:
+   * 4 weken vanaf Stock Complete.
+   */
+  const deliveryDays =
+    isScotlandOrder(order)
+      ? 28
+      : 21;
+
+
   date.setDate(
-    date.getDate() + 21
+    date.getDate() +
+    deliveryDays
   );
+
 
   return date;
 }
@@ -202,46 +422,71 @@ function getOccDeliveryDeadline(order) {
 }
 
 function getOrderAgeClass(order) {
-  const importDate =
-    getOrderImportDate(order);
+  /*
+   * Geen deadline zolang voorraad
+   * niet compleet is.
+   */
+  const dueDate =
+    getOrderDueDate(order);
 
-  if (!importDate) {
+  if (!dueDate) {
     return "";
   }
 
-  const imported =
-    new Date(importDate);
+
+  const due =
+    new Date(dueDate);
 
   if (
     Number.isNaN(
-      imported.getTime()
+      due.getTime()
     )
   ) {
     return "";
   }
 
+
   const now =
     new Date();
 
-  imported.setHours(0, 0, 0, 0);
-  now.setHours(0, 0, 0, 0);
+  due.setHours(
+    0, 0, 0, 0
+  );
 
-  const ageDays =
-    Math.floor(
+  now.setHours(
+    0, 0, 0, 0
+  );
+
+
+  const daysRemaining =
+    Math.ceil(
       (
-        now.getTime() -
-        imported.getTime()
+        due.getTime() -
+        now.getTime()
       ) /
       86400000
     );
 
-  if (ageDays > 21) {
+
+  /*
+   * Deadline voorbij.
+   */
+  if (
+    daysRemaining < 0
+  ) {
     return "overdue";
   }
 
-  if (ageDays >= 15) {
+
+  /*
+   * Laatste 7 dagen voor deadline.
+   */
+  if (
+    daysRemaining <= 7
+  ) {
     return "warning";
   }
+
 
   return "good";
 }
@@ -7946,14 +8191,19 @@ if (!filteredOrders.length) {
     )}
   </strong>
 
-  <span class="subline">
-    Due:
-    ${escapeHtml(
-      formatDate(
-        getOrderDueDate(order)
-      )
-    )}
-  </span>
+<span class="subline">
+  ${
+    getOrderDueDate(order)
+      ? (
+          `Due: ${escapeHtml(
+            formatDate(
+              getOrderDueDate(order)
+            )
+          )}`
+        )
+      : "Waiting for stock"
+  }
+</span>
 </td>
 
       <td>
@@ -11396,76 +11646,301 @@ async function saveManualDeliveryDate() {
     showToast(`${files.length} POD photo(s) uploaded.`, "ok");
   }
 
-  async function uploadManualSignedPod() {
-    const order = getManualOpsOrder();
-    const file = byId("manualSignedPodFile")?.files?.[0] || null;
-    const signedBy = byId("manualSignedBy")?.value || "";
+async function mergePodPdfFiles(files, order) {
+  if (!window.PDFLib?.PDFDocument) {
+    throw new Error("PDF library is not available.");
+  }
 
-    if (!file) {
-      throw new Error("Choose a signed POD PDF first.");
+  if (!files?.length) {
+    throw new Error("No PDF files selected.");
+  }
+
+  // Bij één bestand hoeven we niets samen te voegen.
+  if (files.length === 1) {
+    return files[0];
+  }
+
+  const { PDFDocument } = window.PDFLib;
+  const mergedPdf = await PDFDocument.create();
+
+  for (const file of files) {
+    const isPdf =
+      String(file.type || "").toLowerCase().includes("pdf") ||
+      String(file.name || "").toLowerCase().endsWith(".pdf");
+
+    if (!isPdf) {
+      throw new Error(`${file.name} is not a PDF file.`);
     }
 
-    if (!String(file.type || "").includes("pdf") && !String(file.name || "").toLowerCase().endsWith(".pdf")) {
-      throw new Error("Signed POD must be a PDF file.");
+    const sourceBytes = await file.arrayBuffer();
+
+    let sourcePdf;
+
+    try {
+      sourcePdf = await PDFDocument.load(sourceBytes);
+    } catch (error) {
+      throw new Error(
+        `${file.name} could not be opened as a PDF. ` +
+        `The file may be damaged or password protected.`
+      );
     }
 
-    const cid = await getCompanyId();
-    const uploaded = await uploadToPodBucket(order, file, "signed-pod");
+    const pageIndices = sourcePdf.getPageIndices();
 
-    const documentNumber = `POD-${order.order_number || order.id}`;
-
-    const { error: docError } = await client
-      .from("order_documents")
-      .insert({
-        company_id: cid,
-        customer_id: order.customer_id || null,
-        order_id: order.id,
-        document_type: "pod",
-        document_number: documentNumber,
-        document_status: "signed",
-        file_url: uploaded.file_url,
-        storage_path: uploaded.storage_path,
-        customer_visible: true,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      });
-
-    if (docError) throw docError;
-
-    const { error: assetError } = await client
-      .from("order_pod_assets")
-      .insert({
-        company_id: cid,
-        order_id: order.id,
-       asset_type: "signed_delivery_note",
-        file_name: uploaded.file_name,
-        file_url: uploaded.file_url,
-        storage_path: uploaded.storage_path,
-        mime_type: uploaded.mime_type || "application/pdf",
-        notes: signedBy ? `Signed by: ${signedBy}` : "",
-        captured_at: new Date().toISOString(),
-        captured_by_name: currentProfile?.full_name || currentUser?.email || "Sofa2U"
-      });
-
-    if (assetError) throw assetError;
-
-    await safeUpdateOrder(order.id, {
-      pod_status: "signed",
-      pod_document_url: uploaded.file_url,
-      pod_signed_by: signedBy || null,
-      pod_signed_at: new Date().toISOString(),
-      last_activity_at: new Date().toISOString()
-    });
-
-    await insertOrderActivity(
-      order.id,
-      `Signed POD PDF uploaded manually${signedBy ? `, signed by ${signedBy}` : ""}.`,
-      "manual_signed_pod"
+    const copiedPages = await mergedPdf.copyPages(
+      sourcePdf,
+      pageIndices
     );
 
-    await loadOrders();
-    showToast("Signed POD uploaded and made visible for Bellstone.", "ok");
+    copiedPages.forEach(page => {
+      mergedPdf.addPage(page);
+    });
   }
+
+  const mergedBytes = await mergedPdf.save();
+
+  const orderNumber = safeFileName(
+    order?.order_number ||
+    order?.id ||
+    "order"
+  );
+
+  return new File(
+    [mergedBytes],
+    `POD-${orderNumber}.pdf`,
+    {
+      type: "application/pdf"
+    }
+  );
+}
+
+async function uploadManualSignedPod() {
+  const order = getManualOpsOrder();
+
+  const files = Array.from(
+    byId("manualSignedPodFile")?.files || []
+  );
+
+  const signedBy =
+    byId("manualSignedBy")?.value || "";
+
+  if (!files.length) {
+    throw new Error(
+      "Choose one or more signed POD PDF files first."
+    );
+  }
+
+  // Maximaal 10 losse PDF-bestanden per POD.
+  if (files.length > 10) {
+    throw new Error(
+      "You can upload a maximum of 10 PDF files per POD."
+    );
+  }
+
+  // Controleer eerst alle geselecteerde bestanden.
+  for (const file of files) {
+    const isPdf =
+      String(file.type || "")
+        .toLowerCase()
+        .includes("pdf") ||
+      String(file.name || "")
+        .toLowerCase()
+        .endsWith(".pdf");
+
+    if (!isPdf) {
+      throw new Error(
+        `${file.name} is not a PDF file.`
+      );
+    }
+  }
+
+  showToast(
+    files.length > 1
+      ? `Combining ${files.length} POD PDF files...`
+      : "Preparing POD PDF...",
+    "ok"
+  );
+
+  /*
+   * Eén bestand:
+   * originele PDF gebruiken.
+   *
+   * Meerdere bestanden:
+   * alle pagina's samenvoegen tot één PDF.
+   */
+  const podFile =
+    await mergePodPdfFiles(
+      files,
+      order
+    );
+
+  const cid =
+    await getCompanyId();
+
+  /*
+   * Vanaf hier blijft de bestaande Veynor-structuur
+   * hetzelfde: er wordt maar ÉÉN bestand naar
+   * Supabase geüpload.
+   */
+  const uploaded =
+    await uploadToPodBucket(
+      order,
+      podFile,
+      "signed-pod"
+    );
+
+  const documentNumber =
+    `POD-${order.order_number || order.id}`;
+
+  const now =
+    new Date().toISOString();
+
+  const {
+    error: docError
+  } = await client
+    .from("order_documents")
+    .insert({
+      company_id: cid,
+      customer_id:
+        order.customer_id || null,
+      order_id:
+        order.id,
+
+      document_type:
+        "pod",
+
+      document_number:
+        documentNumber,
+
+      document_status:
+        "signed",
+
+      file_url:
+        uploaded.file_url,
+
+      storage_path:
+        uploaded.storage_path,
+
+      customer_visible:
+        true,
+
+      created_at:
+        now,
+
+      updated_at:
+        now
+    });
+
+  if (docError) {
+    throw docError;
+  }
+
+  const {
+    error: assetError
+  } = await client
+    .from("order_pod_assets")
+    .insert({
+      company_id:
+        cid,
+
+      order_id:
+        order.id,
+
+      asset_type:
+        "signed_delivery_note",
+
+      file_name:
+        uploaded.file_name,
+
+      file_url:
+        uploaded.file_url,
+
+      storage_path:
+        uploaded.storage_path,
+
+      mime_type:
+        "application/pdf",
+
+      notes:
+        [
+          signedBy
+            ? `Signed by: ${signedBy}`
+            : "",
+
+          files.length > 1
+            ? `${files.length} PDF files combined into one POD document.`
+            : ""
+        ]
+          .filter(Boolean)
+          .join(" "),
+
+      captured_at:
+        now,
+
+      captured_by_name:
+        currentProfile?.full_name ||
+        currentUser?.email ||
+        "Sofa2U"
+    });
+
+  if (assetError) {
+    throw assetError;
+  }
+
+  await safeUpdateOrder(
+    order.id,
+    {
+      pod_status:
+        "signed",
+
+      pod_document_url:
+        uploaded.file_url,
+
+      pod_signed_by:
+        signedBy || null,
+
+      pod_signed_at:
+        now,
+
+      last_activity_at:
+        now
+    }
+  );
+
+  await insertOrderActivity(
+    order.id,
+
+    files.length > 1
+      ? `${files.length} signed POD PDF files combined and uploaded manually${
+          signedBy
+            ? `, signed by ${signedBy}`
+            : ""
+        }.`
+      : `Signed POD PDF uploaded manually${
+          signedBy
+            ? `, signed by ${signedBy}`
+            : ""
+        }.`,
+
+    "manual_signed_pod"
+  );
+
+  /*
+   * Uploadveld leegmaken na succesvolle upload.
+   */
+  if (byId("manualSignedPodFile")) {
+    byId("manualSignedPodFile").value = "";
+  }
+
+  await loadOrders();
+
+  showToast(
+    files.length > 1
+      ? `${files.length} POD PDF files combined and uploaded successfully.`
+      : "Signed POD uploaded and made visible for Bellstone.",
+    "ok"
+  );
+}
 
  async function manualMarkDelivered() {
   const order = getManualOpsOrder();
