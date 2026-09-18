@@ -297,45 +297,92 @@
     return "info";
   }
 
-  function getPodDocument(orderData) {
-    const documents = orderData?.order_documents || [];
-    const assets = orderData?.order_pod_assets || [];
+ function getPodDocument(orderData) {
+  const documents = Array.isArray(orderData?.order_documents)
+    ? orderData.order_documents
+    : [];
 
-    const document = documents.find(item => {
+  const assets = Array.isArray(orderData?.order_pod_assets)
+    ? orderData.order_pod_assets
+    : [];
+
+  /*
+   * Zoek alle geldige POD-documenten en pak altijd
+   * de nieuwste op basis van updated_at / created_at.
+   *
+   * Supabase garandeert bij nested relations niet dat
+   * de nieuwste record als eerste wordt teruggegeven.
+   */
+  const document = documents
+    .filter(item => {
       const type = normalize(item.document_type);
 
       return (
-        ["pod", "signed_delivery_note"].includes(type) &&
+        [
+          "pod",
+          "signed_delivery_note",
+          "signed_pod_pdf"
+        ].includes(type) &&
         item.file_url
       );
-    });
+    })
+    .sort((a, b) => {
+      const aTime = new Date(
+        a.updated_at ||
+        a.created_at ||
+        0
+      ).getTime();
 
-    if (document?.file_url) {
-      return {
-        url: document.file_url,
-        fileName:
-          document.document_number
-            ? `${safeFileName(document.document_number)}.pdf`
-            : `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
-        createdAt:
-          document.updated_at ||
-          document.created_at ||
-          null
-      };
-    }
+      const bTime = new Date(
+        b.updated_at ||
+        b.created_at ||
+        0
+      ).getTime();
 
-    if (orderData?.pod_document_url) {
-      return {
-        url: orderData.pod_document_url,
-        fileName: `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
-        createdAt:
-          orderData.pod_signed_at ||
-          orderData.pod_completed_at ||
-          null
-      };
-    }
+      return bTime - aTime;
+    })[0];
 
-    const asset = assets.find(item => {
+  if (document?.file_url) {
+    return {
+      url: document.file_url,
+
+      fileName:
+        document.document_number
+          ? `${safeFileName(document.document_number)}.pdf`
+          : `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
+
+      createdAt:
+        document.updated_at ||
+        document.created_at ||
+        null
+    };
+  }
+
+  /*
+   * Als er geen order_documents POD bestaat,
+   * gebruik de URL die rechtstreeks op de order staat.
+   */
+  if (orderData?.pod_document_url) {
+    return {
+      url: orderData.pod_document_url,
+
+      fileName:
+        `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
+
+      createdAt:
+        orderData.pod_signed_at ||
+        orderData.pod_completed_at ||
+        null
+    };
+  }
+
+  /*
+   * Laatste fallback:
+   * zoek in order_pod_assets en pak ook daar
+   * altijd het nieuwste PDF-bestand.
+   */
+  const asset = assets
+    .filter(item => {
       const type = normalize(item.asset_type);
 
       return (
@@ -346,22 +393,38 @@
         ].includes(type) &&
         item.file_url
       );
-    });
+    })
+    .sort((a, b) => {
+      const aTime = new Date(
+        a.captured_at ||
+        0
+      ).getTime();
 
-    if (asset?.file_url) {
-      return {
-        url: asset.file_url,
-        fileName:
-          asset.file_name ||
-          `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
-        createdAt:
-          asset.captured_at ||
-          null
-      };
-    }
+      const bTime = new Date(
+        b.captured_at ||
+        0
+      ).getTime();
 
-    return null;
+      return bTime - aTime;
+    })[0];
+
+  if (asset?.file_url) {
+    return {
+      url: asset.file_url,
+
+      fileName:
+        asset.file_name ||
+        `${safeFileName(getOrderNumber(orderData))}-POD.pdf`,
+
+      createdAt:
+        asset.captured_at ||
+        null
+    };
   }
+
+  return null;
+}
+
 
   function getPodPhotos(orderData) {
     return (orderData?.order_pod_assets || [])

@@ -1032,25 +1032,76 @@ async function loadPodDownloadStatus() {
       .map(asset => asset.file_url);
   }
 
-  function getPodDocumentUrl(order) {
-    const docs = Array.isArray(order.order_documents) ? order.order_documents : [];
-    const assets = getPodAssets(order);
+function getPodDocumentUrl(order) {
+  const docs = Array.isArray(order.order_documents)
+    ? order.order_documents
+    : [];
 
-    const podDoc = docs.find(doc =>
-      ["pod", "signed_delivery_note", "signed_pod_pdf"].includes(normalize(doc.document_type)) &&
+  const assets = getPodAssets(order);
+
+  /*
+   * Pak altijd de NIEUWSTE POD.
+   * Supabase garandeert bij nested records geen volgorde,
+   * dus eerst zelf sorteren.
+   */
+  const podDoc = docs
+    .filter(doc =>
+      [
+        "pod",
+        "signed_delivery_note",
+        "signed_pod_pdf"
+      ].includes(normalize(doc.document_type)) &&
       doc.file_url
-    );
+    )
+    .sort((a, b) => {
+      const aTime = new Date(
+        a.updated_at ||
+        a.created_at ||
+        0
+      ).getTime();
 
-    if (podDoc?.file_url) return podDoc.file_url;
-    if (order.pod_document_url) return order.pod_document_url;
+      const bTime = new Date(
+        b.updated_at ||
+        b.created_at ||
+        0
+      ).getTime();
 
-    const signedAsset = assets.find(asset =>
-      ["signed_delivery_note", "pod_pdf", "signed_pod_pdf"].includes(normalize(asset.asset_type)) &&
-      asset.file_url
-    );
+      return bTime - aTime;
+    })[0];
 
-    return signedAsset?.file_url || "";
+  if (podDoc?.file_url) {
+    return podDoc.file_url;
   }
+
+  if (order.pod_document_url) {
+    return order.pod_document_url;
+  }
+
+  const signedAsset = assets
+    .filter(asset =>
+      [
+        "signed_delivery_note",
+        "pod_pdf",
+        "signed_pod_pdf"
+      ].includes(normalize(asset.asset_type)) &&
+      asset.file_url
+    )
+    .sort((a, b) => {
+      const aTime = new Date(
+        a.captured_at ||
+        0
+      ).getTime();
+
+      const bTime = new Date(
+        b.captured_at ||
+        0
+      ).getTime();
+
+      return bTime - aTime;
+    })[0];
+
+  return signedAsset?.file_url || "";
+}
 
   function getRouteStop(order) {
     const stops = Array.isArray(order.route_stops) ? order.route_stops : [];
