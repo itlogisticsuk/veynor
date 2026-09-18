@@ -286,91 +286,34 @@
   };
 }
 
-  function calculateOrderRevenue(order) {
-  const lines = Array.isArray(order?.order_lines)
-    ? order.order_lines
-    : [];
+function calculateOrderRevenue(order) {
+  /*
+   * Billing gebruikt de definitieve ordertotalen als bron.
+   *
+   * Dit voorkomt:
+   * - dubbele telling bij manual orders
+   * - oude line tariffs na een handmatige wijziging
+   * - afrondingsverschillen tussen order_lines en order totals
+   *
+   * De total_*_tariff velden zijn dezelfde definitieve bedragen
+   * die voor de order/facturatie worden gebruikt.
+   */
 
-  const linePick = round2(
-    lines.reduce(
-      (sum, line) =>
-        sum + toNumber(line.tariff_handling, 0),
-      0
-    )
+  const pick = round2(
+    toNumber(order?.total_handling_tariff, 0)
   );
 
-  const lineWarehouse = round2(
-    lines.reduce(
-      (sum, line) =>
-        sum + toNumber(line.tariff_storage, 0),
-      0
-    )
+  const warehouse = round2(
+    toNumber(order?.total_storage_tariff, 0)
   );
 
-  const lineAdmin = round2(
-    lines.reduce(
-      (sum, line) =>
-        sum + toNumber(line.tariff_admin, 0),
-      0
-    )
+  const admin = round2(
+    toNumber(order?.total_admin_tariff, 0)
   );
 
-const lineTransport = round2(
-  lines.reduce(
-    (sum, line) => {
-      const transport =
-        toNumber(line.tariff_transport, 0);
-
-      const manual =
-        normalize(line.line_type) === "manual"
-          ? toNumber(line.manual_amount_gbp, 0)
-          : 0;
-
-      return sum + transport + manual;
-    },
-    0
-  )
-);
-
-  const pick =
-    linePick !== 0
-      ? linePick
-      : round2(
-          toNumber(
-            order?.total_handling_tariff,
-            0
-          )
-        );
-
-  const warehouse =
-    lineWarehouse !== 0
-      ? lineWarehouse
-      : round2(
-          toNumber(
-            order?.total_storage_tariff,
-            0
-          )
-        );
-
-  const admin =
-    lineAdmin !== 0
-      ? lineAdmin
-      : round2(
-          toNumber(
-            order?.total_admin_tariff,
-            0
-          )
-        );
-
-  const transport =
-    lineTransport !== 0
-      ? lineTransport
-      : round2(
-          toNumber(
-            order?.total_transport_tariff,
-            0
-          )
-        );
+  const transport = round2(
+    toNumber(order?.total_transport_tariff, 0)
+  );
 
   const net = round2(
     pick +
@@ -417,7 +360,6 @@ const lineTransport = round2(
       )
   };
 }
-
   function nearestCardForId(id) {
     const el = byId(id);
     if (!el) return null;
