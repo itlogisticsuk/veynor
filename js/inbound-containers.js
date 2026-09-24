@@ -268,22 +268,29 @@ activeReceiveContainerId: null,
     );
   }
 
-  function getProductLabel(product) {
-    const sku =
-      product?.sku_base ||
-      product?.sku ||
-      product?.product_code ||
-      "Unknown SKU";
+function getProductLabel(product) {
+  const sku =
+    product?.sku_base ||
+    product?.sku ||
+    product?.product_code ||
+    "Unknown SKU";
 
-    const name =
-      product?.name ||
-      product?.description ||
-      "";
+  const productCode =
+    product?.name ||
+    "";
 
-    return name
-      ? `${sku} · ${name}`
-      : sku;
-  }
+  const description =
+    product?.description ||
+    "";
+
+  return [
+    sku,
+    productCode,
+    description
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
   function statusLabel(status) {
     const labels = {
