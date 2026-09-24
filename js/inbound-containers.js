@@ -2329,6 +2329,32 @@ function renderContainerDetailShell(
               </strong>
             </div>
 
+
+            ${
+              container.notes
+                ? `
+                  <div class="summary-line">
+                    <span>
+                      Memo
+                    </span>
+
+                    <strong
+                      style="
+                        max-width:220px;
+                        text-align:right;
+                        white-space:normal;
+                        line-height:1.4;
+                      "
+                    >
+                      ${escapeHtml(
+                        container.notes
+                      )}
+                    </strong>
+                  </div>
+                `
+                : ""
+            }
+
           </div>
         </aside>
 
