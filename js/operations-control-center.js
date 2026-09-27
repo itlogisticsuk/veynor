@@ -4816,15 +4816,17 @@ function renderDeliveryCell(order) {
 
   if (isFdsOrder) {
 
+    /*
+     * Heeft FDS inmiddels een echte leverdatum bevestigd?
+     *
+     * Dan tonen we de daadwerkelijke expected delivery date
+     * in plaats van de voorlopige leverweek.
+     */
     const confirmedByFds =
       normalize(order.fds_status) === "delivery_confirmed" &&
       !!order.expected_delivery_date;
 
 
-    /*
-     * Zodra FDS een echte delivery date heeft bevestigd,
-     * krijgt die altijd voorrang.
-     */
     if (confirmedByFds) {
 
       return `
@@ -4855,24 +4857,17 @@ function renderDeliveryCell(order) {
 
 
     /*
-     * Nog geen echte FDS delivery date.
+     * Nog geen echte leverdatum van FDS.
      *
-     * Toon daarom:
-     * - collection date
-     * - FDS badge
-     * - opgeslagen delivery week
+     * Gebruik uitsluitend de verwachte leverweek.
      *
-     * Er wordt bewust GEEN fictieve delivery date gemaakt.
+     * fds_collection_date wordt hier bewust NIET getoond:
+     * dit is de datum waarop FDS bij het warehouse ophaalt,
+     * niet de datum waarop de klant geleverd krijgt.
      */
-    const collectionDate =
-      order.fds_collection_date ||
-      null;
 
     const deliveryWeek =
-      cleanText(
-        order.fds_eta_label ||
-        ""
-      ) ||
+      cleanText(order.fds_eta_label || "") ||
       getFdsWeekLabel(order);
 
 
@@ -4880,25 +4875,11 @@ function renderDeliveryCell(order) {
       <div class="delivery-cell">
 
         <strong>
-          ${
-            collectionDate
-              ? escapeHtml(
-                  formatDate(collectionDate)
-                )
-              : "—"
-          }
+          ${escapeHtml(deliveryWeek || "—")}
         </strong>
 
         <span class="status-pill blue">
           FDS
-        </span>
-
-        <span class="subline">
-          ${
-            collectionDate
-              ? `FDS Collection · ${escapeHtml(deliveryWeek)}`
-              : escapeHtml(deliveryWeek)
-          }
         </span>
 
       </div>
@@ -4908,7 +4889,7 @@ function renderDeliveryCell(order) {
 
   /*
    * ==========================================================
-   * NORMALE DELIVERY
+   * NORMALE DELIVERY / EIGEN TRANSPORT
    * ==========================================================
    */
 
@@ -4958,7 +4939,6 @@ function renderDeliveryCell(order) {
     </div>
   `;
 }
-
 function getOrderType(order) {
   return normalize(order.order_type || "standard");
 }
