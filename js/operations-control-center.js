@@ -4691,11 +4691,7 @@ function renderDeliveryCell(order) {
    * ==========================================================
    */
 
-  if (
-    normalize(
-      order.order_type
-    ) === "legacy"
-  ) {
+  if (normalize(order.order_type) === "legacy") {
 
     const deliveredDate =
       order.confirmed_delivery_date ||
@@ -4703,16 +4699,11 @@ function renderDeliveryCell(order) {
       order.updated_at ||
       order.created_at;
 
-
     return `
       <div class="delivery-cell">
 
         <strong>
-          ${escapeHtml(
-            formatDate(
-              deliveredDate
-            )
-          )}
+          ${escapeHtml(formatDate(deliveredDate))}
         </strong>
 
         ${pill(
@@ -4735,19 +4726,12 @@ function renderDeliveryCell(order) {
    * ==========================================================
    */
 
-  if (
-    isCollectionOrder(
-      order
-    )
-  ) {
+  if (isCollectionOrder(order)) {
 
     const collectionDate =
       order.fds_collection_date ||
-      getOccDeliveryDate(
-        order
-      ) ||
+      getOccDeliveryDate(order) ||
       null;
-
 
     return `
       <div class="delivery-cell">
@@ -4756,9 +4740,7 @@ function renderDeliveryCell(order) {
           ${escapeHtml(
             formatDate(
               collectionDate ||
-              getOccDeliveryDeadline(
-                order
-              )
+              getOccDeliveryDeadline(order)
             )
           )}
         </strong>
@@ -4786,17 +4768,10 @@ function renderDeliveryCell(order) {
    * ==========================================================
    */
 
-  if (
-    isWarehousePickupOrder(
-      order
-    )
-  ) {
+  if (isWarehousePickupOrder(order)) {
 
     const pickupDate =
-      getOccDeliveryDate(
-        order
-      );
-
+      getOccDeliveryDate(order);
 
     return `
       <div class="delivery-cell">
@@ -4805,9 +4780,7 @@ function renderDeliveryCell(order) {
           ${escapeHtml(
             formatDate(
               pickupDate ||
-              getOccDeliveryDeadline(
-                order
-              )
+              getOccDeliveryDeadline(order)
             )
           )}
         </strong>
@@ -4831,73 +4804,128 @@ function renderDeliveryCell(order) {
 
   /*
    * ==========================================================
+   * FDS / CHARTER
+   * ==========================================================
+   */
+
+  const isFdsOrder =
+    normalize(order.transport_type) === "charter" ||
+    normalize(order.transport_type) === "fds" ||
+    normalize(order.status) === "export_for_charter";
+
+
+  if (isFdsOrder) {
+
+    const confirmedByFds =
+      normalize(order.fds_status) === "delivery_confirmed" &&
+      !!order.expected_delivery_date;
+
+
+    /*
+     * Zodra FDS een echte delivery date heeft bevestigd,
+     * krijgt die altijd voorrang.
+     */
+    if (confirmedByFds) {
+
+      return `
+        <div class="delivery-cell">
+
+          <strong>
+            ${escapeHtml(
+              formatDate(
+                order.expected_delivery_date
+              )
+            )}
+          </strong>
+
+          <span
+            class="status-pill green"
+            title="Expected delivery date confirmed from FDS planning"
+          >
+            Confirmed by FDS
+          </span>
+
+          <span class="subline">
+            Expected delivery date
+          </span>
+
+        </div>
+      `;
+    }
+
+
+    /*
+     * Nog geen echte FDS delivery date.
+     *
+     * Toon daarom:
+     * - collection date
+     * - FDS badge
+     * - opgeslagen delivery week
+     *
+     * Er wordt bewust GEEN fictieve delivery date gemaakt.
+     */
+    const collectionDate =
+      order.fds_collection_date ||
+      null;
+
+    const deliveryWeek =
+      cleanText(
+        order.fds_eta_label ||
+        ""
+      ) ||
+      getFdsWeekLabel(order);
+
+
+    return `
+      <div class="delivery-cell">
+
+        <strong>
+          ${
+            collectionDate
+              ? escapeHtml(
+                  formatDate(collectionDate)
+                )
+              : "—"
+          }
+        </strong>
+
+        <span class="status-pill blue">
+          FDS
+        </span>
+
+        <span class="subline">
+          ${
+            collectionDate
+              ? `FDS Collection · ${escapeHtml(deliveryWeek)}`
+              : escapeHtml(deliveryWeek)
+          }
+        </span>
+
+      </div>
+    `;
+  }
+
+
+  /*
+   * ==========================================================
    * NORMALE DELIVERY
    * ==========================================================
    */
 
   const plannedDate =
-    getOccDeliveryDate(
-      order
-    );
-
+    getOccDeliveryDate(order);
 
   const dueDate =
-    getOccDeliveryDeadline(
-      order
-    );
-
+    getOccDeliveryDeadline(order);
 
   const displayDate =
     plannedDate ||
     dueDate;
 
-
-  /*
-   * Is deze verwachte leverdatum via
-   * onze nieuwe FDS-import bevestigd?
-   */
-  const confirmedByFds =
-    normalize(
-      order.fds_status
-    ) ===
-      "delivery_confirmed" &&
-    !!order.expected_delivery_date;
-
-
-  /*
-   * Oude FDS assignment badge behouden voor
-   * orders die aan FDS zijn toegewezen maar
-   * nog geen delivery-confirmed datum hebben.
-   */
-  const isFdsAssignment =
-    (
-      normalize(
-        order.transport_type
-      ) === "charter" ||
-
-      normalize(
-        order.transport_type
-      ) === "fds" ||
-
-      normalize(
-        order.status
-      ) === "export_for_charter"
-    ) &&
-    isFdsOrderLocked(
-      order
-    );
-
-
-  let dateLabel =
+  const dateLabel =
     plannedDate
       ? "Provisional delivery date"
       : "Latest delivery date";
-
-
-  if (confirmedByFds) {
-    dateLabel =
-      "Expected delivery date";
-  }
 
 
   return `
@@ -4905,63 +4933,26 @@ function renderDeliveryCell(order) {
 
       <strong>
         ${escapeHtml(
-          formatDate(
-            displayDate
-          )
+          formatDate(displayDate)
         )}
       </strong>
 
-
       ${
-        confirmedByFds
+        plannedDate
           ? `
-              <span
-                class="status-pill green"
-                title="Expected delivery date confirmed from FDS planning"
-              >
-                Confirmed by FDS
+              <span class="status-pill blue">
+                Planned
               </span>
             `
-          : plannedDate
-            ? `
-                <span class="status-pill blue">
-                  Planned
-                </span>
-              `
-            : `
-                <span class="status-pill gray">
-                  Due
-                </span>
-              `
-      }
-
-
-      ${
-        isFdsAssignment &&
-        !confirmedByFds
-          ? `
-              <button
-                type="button"
-                class="fds-info-badge"
-                data-fds-info-order-id="${escapeHtml(
-                  order.id
-                )}"
-                title="Click for FDS planning information"
-              >
-                FDS
-                <span class="fds-info-icon">
-                  i
-                </span>
-              </button>
+          : `
+              <span class="status-pill gray">
+                Due
+              </span>
             `
-          : ""
       }
-
 
       <span class="subline">
-        ${escapeHtml(
-          dateLabel
-        )}
+        ${escapeHtml(dateLabel)}
       </span>
 
     </div>
