@@ -191,12 +191,46 @@ function isChargeableOrder(order) {
  * teruggegeven, zelfs wanneer op oude orderregels
  * nog tarieven aanwezig zouden zijn.
  */
+
 function getOrderWarehouseTotal(order) {
   if (!isChargeableOrder(order)) {
     return 0;
   }
 
-  const fromLines = round2(
+  /*
+   * De actuele tarieven op de order zijn leidend.
+   *
+   * Tarieven kunnen na het importeren van een order
+   * worden aangepast. De order_lines kunnen daardoor
+   * nog oude tarieven bevatten.
+   */
+  const hasOrderLevelTariffs =
+    order.total_storage_tariff != null ||
+    order.total_admin_tariff != null ||
+    order.total_handling_tariff != null;
+
+  if (hasOrderLevelTariffs) {
+    return round2(
+      toNumber(
+        order.total_storage_tariff,
+        0
+      ) +
+      toNumber(
+        order.total_admin_tariff,
+        0
+      ) +
+      toNumber(
+        order.total_handling_tariff,
+        0
+      )
+    );
+  }
+
+  /*
+   * Alleen fallback voor oudere orders waarbij
+   * geen actuele ordertotalen beschikbaar zijn.
+   */
+  return round2(
     (order.order_lines || []).reduce(
       (sum, line) => {
         return (
@@ -204,33 +238,6 @@ function getOrderWarehouseTotal(order) {
           getLineWarehouseCost(line)
         );
       },
-      0
-    )
-  );
-
-  /*
-   * De orderregels zijn leidend wanneer daar
-   * een bedrag op staat.
-   */
-  if (fromLines !== 0) {
-    return fromLines;
-  }
-
-  /*
-   * Fallback voor oudere orders waarbij alleen
-   * de totalen op orders zijn opgeslagen.
-   */
-  return round2(
-    toNumber(
-      order.total_storage_tariff,
-      0
-    ) +
-    toNumber(
-      order.total_admin_tariff,
-      0
-    ) +
-    toNumber(
-      order.total_handling_tariff,
       0
     )
   );
