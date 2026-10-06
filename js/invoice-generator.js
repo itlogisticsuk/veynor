@@ -311,6 +311,30 @@ function getOrderTotal(order) {
  * Maakt een lijst met de ordernummers die op
  * deze factuur chargeable zijn.
  */
+
+// ============================================================
+// WAREHOUSE-ONLY / EXTERNAL FDS TRANSPORT
+// ============================================================
+
+function isWarehouseOnlyFdsOrder(order) {
+  const note = normalize(
+    order?.internal_billing_note || ""
+  );
+
+  return (
+    note === normalize(
+      "Warehouse services only. Transport is invoiced separately by FDS."
+    )
+  );
+}
+
+
+function hasWarehouseOnlyFdsOrders(orders) {
+  return (orders || []).some(order =>
+    isWarehouseOnlyFdsOrder(order)
+  );
+}
+
 function getChargeableOrderNumbers(orders) {
   return new Set(
     (orders || [])
@@ -1167,32 +1191,177 @@ function getInvoiceMode(productOwner) {
     });
   }
 
-  function drawPageOne(doc, orders, invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl) {
-    const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
-
-    drawHeader(doc, "Invoice", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
-    drawBillTo(doc, 92, ctx.productOwner);
-    drawCostSummaryBox(doc, 110, 86, 86, 70, orders, totals, ctx);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    setDark(doc);
-    doc.text("Invoice Notes", 14, 170);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-   doc.text("A detailed order specification is attached on the next page.", 14, 179);
-
-if (totals.minimumDeliverySurcharge > 0) {
-  doc.setFontSize(8);
-  doc.text(
-    "* Fuel surcharge is calculated on transport charges only and is not applied to warehouse costs or any Minimum Delivery Charge.",
-    14,
-    186
+ function drawPageOne(
+  doc,
+  orders,
+  invoiceNumber,
+  invoiceDate,
+  dueDate,
+  ctx,
+  logoDataUrl
+) {
+  const totals = getTotals(
+    orders,
+    ctx.vatRate,
+    ctx.fuelSurchargePercent,
+    ctx
   );
+
+  const hasExternalFdsTransport =
+    hasWarehouseOnlyFdsOrders(orders);
+
+  drawHeader(
+    doc,
+    "Invoice",
+    invoiceNumber,
+    invoiceDate,
+    dueDate,
+    ctx,
+    logoDataUrl
+  );
+
+  drawBillTo(
+    doc,
+    92,
+    ctx.productOwner
+  );
+
+  drawCostSummaryBox(
+    doc,
+    110,
+    86,
+    86,
+    70,
+    orders,
+    totals,
+    ctx
+  );
+
+
+  // ==========================================================
+  // INVOICE NOTES
+  // ==========================================================
+
+  doc.setFont(
+    "helvetica",
+    "bold"
+  );
+
+  doc.setFontSize(11);
+
+  setDark(doc);
+
+  doc.text(
+    "Invoice Notes",
+    14,
+    170
+  );
+
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
   doc.setFontSize(9);
+
+  doc.text(
+    "A detailed order specification is attached on the next page.",
+    14,
+    179
+  );
+
+
+  let noteY = 186;
+
+
+  // ==========================================================
+  // FDS WAREHOUSE-ONLY NOTE
+  // ==========================================================
+
+  if (hasExternalFdsTransport) {
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.setFontSize(8.5);
+
+    doc.text(
+      "Warehouse services only:",
+      14,
+      noteY
+    );
+
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(8.5);
+
+    const fdsNote =
+      "For the applicable orders, transport is invoiced separately by FDS. " +
+      "Please see the specification for details.";
+
+    const fdsNoteLines =
+      splitText(
+        doc,
+        fdsNote,
+        170
+      );
+
+    doc.text(
+      fdsNoteLines,
+      14,
+      noteY + 5
+    );
+
+    noteY +=
+      5 +
+      (fdsNoteLines.length * 4) +
+      3;
+  }
+
+
+  // ==========================================================
+  // FUEL SURCHARGE NOTE
+  // ==========================================================
+
+  if (
+    totals.minimumDeliverySurcharge > 0
+  ) {
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(8);
+
+    const fuelNote =
+      "* Fuel surcharge is calculated on transport charges only " +
+      "and is not applied to warehouse costs or any Minimum Delivery Charge.";
+
+    const fuelNoteLines =
+      splitText(
+        doc,
+        fuelNote,
+        170
+      );
+
+    doc.text(
+      fuelNoteLines,
+      14,
+      noteY
+    );
+
+    doc.setFontSize(9);
+  }
 }
-}
+
 
  function drawSpecificationHeader(
   doc,
@@ -1620,139 +1789,413 @@ ${postcode}`,
   return y;
 }
 
-  function drawSpecificationPage(doc, orders, invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl) {
+  function drawSpecificationPage(
+  doc,
+  orders,
+  invoiceNumber,
+  invoiceDate,
+  dueDate,
+  ctx,
+  logoDataUrl
+) {
+
   doc.addPage();
 
-  drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
+
+  drawHeader(
+    doc,
+    "Specification",
+    invoiceNumber,
+    invoiceDate,
+    dueDate,
+    ctx,
+    logoDataUrl
+  );
+
 
   let y = 88;
-  y = drawSpecificationHeader(
-  doc,
-  y,
-  ctx
-);
 
-  doc.setFont("helvetica", "normal");
+
+  y = drawSpecificationHeader(
+    doc,
+    y,
+    ctx
+  );
+
+
+  doc.setFont(
+    "helvetica",
+    "normal"
+  );
+
   doc.setFontSize(6.5);
 
+
   orders.forEach(order => {
+
     if (y > 258) {
+
       doc.addPage();
-      drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
+
+      drawHeader(
+        doc,
+        "Specification",
+        invoiceNumber,
+        invoiceDate,
+        dueDate,
+        ctx,
+        logoDataUrl
+      );
+
       y = drawSpecificationHeader(
-  doc,
-  88,
-  ctx
-);
-      doc.setFont("helvetica", "normal");
+        doc,
+        88,
+        ctx
+      );
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
       doc.setFontSize(6.5);
     }
 
-    const orderNo = getOrderNumber(order);
-    const supplierRef = getSupplierReference(order);
-const orderRefLines = supplierRef
-  ? [orderNo, supplierRef]
-  : [orderNo];
-      const retailer = getRetailerName(order);
-      const address = getDeliveryAddress(order);
-      const deliveryDate = formatDate(getDeliveryDate(order));
-      const amount = getDeliveredColli(order);
-      const warehouse = getOrderWarehouseTotal(order);
-      const transport = getOrderTransportTotal(order);
-      const total = getOrderTotal(order);
 
-      const retailerLines = splitText(doc, retailer, 23);
-      const addressLines = splitText(doc, address, 54);
+    const orderNo =
+      getOrderNumber(order);
 
-      const rowHeight = Math.max(8, retailerLines.length * 3.8, addressLines.length * 3.8);
+    const supplierRef =
+      getSupplierReference(order);
 
-      setDark(doc);
-doc.setFont("helvetica", "bold");
-doc.text(orderRefLines[0], COL.order, y);
+    const orderRefLines =
+      supplierRef
+        ? [
+            orderNo,
+            supplierRef
+          ]
+        : [
+            orderNo
+          ];
 
-if (orderRefLines[1]) {
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(5.8);
-  doc.text(orderRefLines[1], COL.order, y + 4);
-  doc.setFontSize(6.5);
-}
 
-doc.setFont("helvetica", "normal");
+    const retailer =
+      getRetailerName(order);
 
-if (orderRefLines[1]) {
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(5.8);
-  doc.text(orderRefLines[1], COL.order, y + 4);
-  doc.setFontSize(6.5);
-}
-      doc.text(retailerLines, COL.retailer, y);
-      doc.text(addressLines, COL.address, y);
-      doc.text(deliveryDate, COL.date, y);
-      doc.text(String(amount), COL.amount, y);
-if (ctx.invoiceMode === "zoy") {
-  const logisticsServices = round2(
-    warehouse +
-    transport
-  );
+    const address =
+      getDeliveryAddress(order);
 
-  doc.text(
-    formatMoney(logisticsServices),
-    COL.transport - 8,
-    y
-  );
+    const deliveryDate =
+      formatDate(
+        getDeliveryDate(order)
+      );
 
-  doc.text(
-    formatMoney(total),
-    COL.total,
-    y
-  );
-} else {
-  doc.text(
-    formatMoney(warehouse),
-    COL.warehouse,
-    y
-  );
+    const amount =
+      getDeliveredColli(order);
 
-  doc.text(
-    formatMoney(transport),
-    COL.transport,
-    y
-  );
+    const warehouse =
+      getOrderWarehouseTotal(order);
 
-  doc.text(
-    formatMoney(total),
-    COL.total,
-    y
-  );
-}
+    const transport =
+      getOrderTransportTotal(order);
 
-      y += rowHeight;
-       });
+    const total =
+      getOrderTotal(order);
 
-    y = drawMinimumDeliverySurchargeRows(
-  doc,
-  y,
-  ctx,
-  orders
-);
 
-    y += 7;
+    const warehouseOnlyFds =
+      isWarehouseOnlyFdsOrder(order);
 
-    const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
 
-    if (y > 230) {
-      doc.addPage();
-      drawHeader(doc, "Specification", invoiceNumber, invoiceDate, dueDate, ctx, logoDataUrl);
-      y = 82;
+    const retailerLines =
+      splitText(
+        doc,
+        retailer,
+        23
+      );
+
+    const addressLines =
+      splitText(
+        doc,
+        address,
+        54
+      );
+
+
+    /*
+     * Warehouse-only FDS orders gebruiken twee regels
+     * in de transportkolom:
+     *
+     * FDS
+     * Separate
+     */
+    const transportLineCount =
+      warehouseOnlyFds
+        ? 2
+        : 1;
+
+
+    const rowHeight =
+      Math.max(
+        8,
+        retailerLines.length * 3.8,
+        addressLines.length * 3.8,
+        transportLineCount * 3.8
+      );
+
+
+    // ========================================================
+    // ORDER / REFERENCE
+    // ========================================================
+
+    setDark(doc);
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.setFontSize(6.5);
+
+    doc.text(
+      orderRefLines[0],
+      COL.order,
+      y
+    );
+
+
+    if (orderRefLines[1]) {
+
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setFontSize(5.8);
+
+      doc.text(
+        orderRefLines[1],
+        COL.order,
+        y + 4
+      );
+
+      doc.setFontSize(6.5);
     }
 
-    drawSpecificationTotalsBlock(
-  doc,
-  y,
-  totals,
-  ctx
-);
+
+    // ========================================================
+    // ORDER INFORMATION
+    // ========================================================
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.setFontSize(6.5);
+
+
+    doc.text(
+      retailerLines,
+      COL.retailer,
+      y
+    );
+
+    doc.text(
+      addressLines,
+      COL.address,
+      y
+    );
+
+    doc.text(
+      deliveryDate,
+      COL.date,
+      y
+    );
+
+    doc.text(
+      String(amount),
+      COL.amount,
+      y
+    );
+
+
+    // ========================================================
+    // ZOY
+    // ========================================================
+
+    if (
+      ctx.invoiceMode === "zoy"
+    ) {
+
+      const logisticsServices =
+        round2(
+          warehouse +
+          transport
+        );
+
+      doc.text(
+        formatMoney(
+          logisticsServices
+        ),
+        COL.transport - 8,
+        y
+      );
+
+      doc.text(
+        formatMoney(total),
+        COL.total,
+        y
+      );
+
+    }
+
+
+    // ========================================================
+    // STANDARD / BELLSTONE
+    // ========================================================
+
+    else {
+
+      // Warehouse
+      doc.text(
+        formatMoney(warehouse),
+        COL.warehouse,
+        y
+      );
+
+
+      /*
+       * Wanneer deze order expliciet als
+       * warehouse-only / FDS is gemarkeerd,
+       * tonen we geen £0.00.
+       *
+       * Daarmee is voor Bellstone duidelijk dat
+       * transport niet gratis is, maar afzonderlijk
+       * door FDS wordt gefactureerd.
+       */
+      if (warehouseOnlyFds) {
+
+        doc.setFont(
+          "helvetica",
+          "bold"
+        );
+
+        doc.setFontSize(6.2);
+
+        doc.text(
+          "FDS",
+          COL.transport,
+          y
+        );
+
+
+        doc.setFont(
+          "helvetica",
+          "normal"
+        );
+
+        doc.setFontSize(5.4);
+
+        doc.text(
+          "Separate",
+          COL.transport,
+          y + 3.6
+        );
+
+
+        doc.setFontSize(6.5);
+
+      } else {
+
+        doc.setFont(
+          "helvetica",
+          "normal"
+        );
+
+        doc.setFontSize(6.5);
+
+        doc.text(
+          formatMoney(transport),
+          COL.transport,
+          y
+        );
+      }
+
+
+      // Total
+      doc.setFont(
+        "helvetica",
+        "normal"
+      );
+
+      doc.setFontSize(6.5);
+
+      doc.text(
+        formatMoney(total),
+        COL.total,
+        y
+      );
+    }
+
+
+    y += rowHeight;
+  });
+
+
+  // ==========================================================
+  // MINIMUM DELIVERY SURCHARGES
+  // ==========================================================
+
+  y = drawMinimumDeliverySurchargeRows(
+    doc,
+    y,
+    ctx,
+    orders
+  );
+
+
+  y += 7;
+
+
+  // ==========================================================
+  // TOTALS
+  // ==========================================================
+
+  const totals =
+    getTotals(
+      orders,
+      ctx.vatRate,
+      ctx.fuelSurchargePercent,
+      ctx
+    );
+
+
+  if (y > 230) {
+
+    doc.addPage();
+
+    drawHeader(
+      doc,
+      "Specification",
+      invoiceNumber,
+      invoiceDate,
+      dueDate,
+      ctx,
+      logoDataUrl
+    );
+
+    y = 82;
   }
+
+
+  drawSpecificationTotalsBlock(
+    doc,
+    y,
+    totals,
+    ctx
+  );
+}
 
   async function createPdfBlob(orders, invoiceNumber, ctx) {
     if (!window.jspdf?.jsPDF) {
@@ -2047,6 +2490,183 @@ async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
     .in("id", ids);
 
   if (error) throw error;
+}
+
+async function generateTestInvoice(
+  orders,
+  client,
+  companyId
+) {
+  if (
+    !Array.isArray(orders) ||
+    !orders.length
+  ) {
+    throw new Error(
+      "No orders selected for test invoice."
+    );
+  }
+
+
+  if (!client) {
+    throw new Error(
+      "Supabase client is missing."
+    );
+  }
+
+
+  if (!companyId) {
+    throw new Error(
+      "Company ID is missing."
+    );
+  }
+
+
+  /*
+   * Controleer dat alle geselecteerde orders
+   * van dezelfde product owner zijn.
+   */
+  const productOwnerId =
+    validateSingleProductOwner(
+      orders
+    );
+
+
+  /*
+   * Alleen instellingen ophalen.
+   * Er wordt niets opgeslagen.
+   */
+  const ctx =
+    await loadCompanySettings(
+      client,
+      companyId
+    );
+
+
+  ctx.productOwner =
+    await loadProductOwnerProfile(
+      client,
+      productOwnerId
+    );
+
+
+  ctx.invoiceMode =
+    getInvoiceMode(
+      ctx.productOwner
+    );
+
+
+  /*
+   * Zelfde surcharge-logica als echte factuur,
+   * zodat de test-PDF financieel exact dezelfde
+   * berekening gebruikt.
+   */
+  if (
+    ctx.invoiceMode === "zoy"
+  ) {
+
+    ctx.fuelSurchargePercent = 0;
+    ctx.deliverySurcharges = [];
+
+  } else {
+
+    ctx.deliverySurcharges =
+      await loadApprovedDeliverySurcharges(
+        client,
+        companyId,
+        orders
+      );
+  }
+
+
+  /*
+   * GEEN reserveNextInvoiceNumber().
+   *
+   * Daardoor wordt het echte factuurnummer
+   * niet opgehoogd.
+   */
+  const now =
+    new Date();
+
+
+  const testInvoiceNumber =
+    "TEST-" +
+    now
+      .toISOString()
+      .replace(
+        /[-:TZ.]/g,
+        ""
+      )
+      .slice(
+        0,
+        14
+      );
+
+
+  /*
+   * Maak exact dezelfde PDF als bij
+   * een echte factuur.
+   */
+  const blob =
+    await createPdfBlob(
+      orders,
+      testInvoiceNumber,
+      ctx
+    );
+
+
+  /*
+   * Alleen lokaal downloaden.
+   *
+   * Geen Storage upload.
+   * Geen invoices record.
+   * Geen invoice_orders.
+   * Geen order update.
+   * Geen notification.
+   */
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
+
+  const link =
+    document.createElement(
+      "a"
+    );
+
+
+  link.href = url;
+
+  link.download =
+    `${testInvoiceNumber}.pdf`;
+
+
+  document.body.appendChild(
+    link
+  );
+
+
+  link.click();
+
+
+  link.remove();
+
+
+  setTimeout(
+    () => {
+      URL.revokeObjectURL(
+        url
+      );
+    },
+    1000
+  );
+
+
+  return {
+    test: true,
+    invoiceNumber:
+      testInvoiceNumber
+  };
 }
 
   async function generate(orders, client, companyId) {
@@ -2566,6 +3186,8 @@ async function generateClaimInvoice(
 }
 window.InvoiceGenerator = {
   generate,
+  generateTestInvoice,
   generateClaimInvoice
 };
+
 })();

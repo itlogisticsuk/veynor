@@ -587,6 +587,1718 @@ function getOrderAgeClass(order) {
     return isTenantRole();
   }
 
+function canDeleteOccDocuments() {
+  /*
+   * Permanent verwijderen van documenten en POD-assets
+   * is uitsluitend toegestaan voor Veynor Admin.
+   *
+   * Dit is bewust strenger dan isTenantRole(),
+   * omdat tenant_admin en tenant_user geen documenten
+   * permanent uit Supabase mogen verwijderen.
+   */
+  return normalize(currentProfile?.role) === "veynor_admin";
+}
+
+function getOccDocumentStorageBucket(record, fallbackType = "") {
+  /*
+   * Bepaal uit welk Supabase Storage bucket
+   * het daadwerkelijke bestand verwijderd moet worden.
+   */
+
+  const type = normalize(
+    record?.asset_type ||
+    record?.document_type ||
+    fallbackType ||
+    ""
+  );
+
+  const fileUrl = String(
+    record?.file_url || ""
+  );
+
+  /*
+   * POD-bestanden en delivery photos staan
+   * in de bucket "pod-assets".
+   */
+  if (
+    [
+      "pod",
+      "photo",
+      "signed_delivery_note",
+      "pod_pdf",
+      "signed_pod_pdf"
+    ].includes(type)
+  ) {
+    return POD_BUCKET;
+  }
+
+  /*
+   * Extra controle op de URL.
+   * Dit vangt oudere records op waarvan het type
+   * eventueel anders is opgeslagen.
+   */
+  if (
+    fileUrl.includes(
+      "/storage/v1/object/public/pod-assets/"
+    )
+  ) {
+    return POD_BUCKET;
+  }
+
+  /*
+   * Normale orderdocumenten:
+   *
+   * - ACK
+   * - Legacy ACK
+   * - Packing Slip
+   * - Delivery Note
+   * - Delivery Labels
+   *
+   * staan in order-documents.
+   */
+  return "order-documents";
+}
+
+async function deleteOccStorageFile(record, fallbackType = "") {
+  /*
+   * Verwijdert het daadwerkelijke bestand uit Supabase Storage.
+   *
+   * BELANGRIJK:
+   * Deze functie verwijdert GEEN database-record.
+   * Dat doen we straks pas nadat Storage succesvol is opgeschoond.
+   */
+
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to permanently delete documents."
+    );
+  }
+
+  if (!record) {
+    throw new Error("No document or asset supplied.");
+  }
+
+  const storagePath = String(
+    record.storage_path || ""
+  ).trim();
+
+  /*
+   * Zonder storage_path verwijderen we bewust niets.
+   * Een public URL alleen is niet betrouwbaar genoeg om
+   * permanent een object uit Storage te verwijderen.
+   */
+  if (!storagePath) {
+    throw new Error(
+      "This document has no storage path. The file cannot be safely deleted from Supabase Storage."
+    );
+  }
+
+  const bucket = getOccDocumentStorageBucket(
+    record,
+    fallbackType
+  );
+
+  if (!bucket) {
+    throw new Error(
+      "Could not determine the Supabase Storage bucket."
+    );
+  }
+
+  const { data, error } = await client.storage
+    .from(bucket)
+    .remove([storagePath]);
+
+  if (error) {
+    console.error(
+      "Supabase Storage delete failed:",
+      {
+        bucket,
+        storagePath,
+        error
+      }
+    );
+
+    throw new Error(
+      error.message ||
+      "The file could not be deleted from Supabase Storage."
+    );
+  }
+
+  console.info(
+    "Supabase Storage file deleted:",
+    {
+      bucket,
+      storagePath,
+      data
+    }
+  );
+
+  return {
+    bucket,
+    storagePath,
+    data
+  };
+}
+
+async function deleteOccOrderDocument(documentRecord) {
+  /*
+   * Verwijdert een normaal OCC-document volledig:
+   *
+   * 1. Controleer rechten
+   * 2. Verwijder fysiek bestand uit Supabase Storage
+   * 3. Verwijder record uit order_documents
+   *
+   * Gebruik deze functie voor bijvoorbeeld:
+   * - acknowledgement
+   * - delivery_note
+   * - delivery_labels
+   * - supplier_packing_slip
+   *
+   * POD behandelen we straks apart omdat daarbij ook
+   * orders en order_pod_assets moeten worden opgeschoond.
+   */
+
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to permanently delete documents."
+    );
+  }
+
+  if (!documentRecord?.id) {
+    throw new Error(
+      "No valid document record supplied."
+    );
+  }
+
+  const documentId = String(
+    documentRecord.id
+  );
+
+  const documentType = normalize(
+    documentRecord.document_type || ""
+  );
+
+  /*
+   * POD hier bewust blokkeren.
+   * Daarvoor maken we een aparte functie omdat een POD
+   * op meerdere plaatsen in de database geregistreerd staat.
+   */
+  if (documentType === "pod") {
+    throw new Error(
+      "POD documents must be deleted using the POD delete function."
+    );
+  }
+
+  /*
+   * STAP 1:
+   * Eerst daadwerkelijk bestand uit Storage verwijderen.
+   *
+   * Als dit mislukt, stopt de functie en blijft het
+   * database-record gewoon bestaan.
+   */
+  await deleteOccStorageFile(
+    documentRecord,
+    documentType
+  );
+
+  /*
+   * STAP 2:
+   * Nu pas database-record verwijderen.
+   */
+  const { error: deleteError } = await client
+    .from("order_documents")
+    .delete()
+    .eq(
+      "id",
+      documentId
+    );
+
+  if (deleteError) {
+    console.error(
+      "order_documents delete failed:",
+      {
+        documentId,
+        documentType,
+        deleteError
+      }
+    );
+
+    throw new Error(
+      deleteError.message ||
+      "The document record could not be deleted."
+    );
+  }
+
+  console.info(
+    "OCC document permanently deleted:",
+    {
+      documentId,
+      documentType
+    }
+  );
+
+  return true;
+}
+
+async function deleteOccPodDocument(order) {
+  /*
+   * Verwijdert de POD / signed delivery note volledig.
+   *
+   * Verwijdert:
+   * - fysieke POD PDF uit Supabase Storage
+   * - POD records uit order_documents
+   * - POD PDF assets uit order_pod_assets
+   * - POD velden op orders
+   *
+   * Verwijdert NIET:
+   * - delivery photos
+   *
+   * Foto's krijgen straks hun eigen delete-functie.
+   */
+
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to permanently delete POD documents."
+    );
+  }
+
+  if (!order?.id) {
+    throw new Error(
+      "No valid order supplied."
+    );
+  }
+
+  const orderId = String(order.id);
+
+
+  // =========================================================
+  // 1. Zoek POD records in order_documents
+  // =========================================================
+
+  const {
+    data: podDocuments,
+    error: podDocumentsError
+  } = await client
+    .from("order_documents")
+    .select(`
+      id,
+      order_id,
+      document_type,
+      document_number,
+      file_url,
+      storage_path
+    `)
+    .eq("order_id", orderId)
+    .eq("document_type", "pod");
+
+
+  if (podDocumentsError) {
+    throw new Error(
+      podDocumentsError.message ||
+      "Could not load POD document records."
+    );
+  }
+
+
+  // =========================================================
+  // 2. Zoek POD PDF assets
+  // =========================================================
+
+  const {
+    data: podAssets,
+    error: podAssetsError
+  } = await client
+    .from("order_pod_assets")
+    .select(`
+      id,
+      order_id,
+      asset_type,
+      file_name,
+      file_url,
+      storage_path
+    `)
+    .eq("order_id", orderId)
+    .in(
+      "asset_type",
+      [
+        "signed_delivery_note",
+        "pod_pdf",
+        "signed_pod_pdf"
+      ]
+    );
+
+
+  if (podAssetsError) {
+    throw new Error(
+      podAssetsError.message ||
+      "Could not load POD assets."
+    );
+  }
+
+
+  // =========================================================
+  // 3. Verzamel unieke fysieke bestanden
+  // =========================================================
+
+  const storageFiles = new Map();
+
+
+  for (const documentRecord of podDocuments || []) {
+
+    const storagePath = String(
+      documentRecord.storage_path || ""
+    ).trim();
+
+    if (!storagePath) {
+      continue;
+    }
+
+    const bucket =
+      getOccDocumentStorageBucket(
+        documentRecord,
+        "pod"
+      );
+
+    storageFiles.set(
+      `${bucket}|${storagePath}`,
+      {
+        bucket,
+        storagePath
+      }
+    );
+  }
+
+
+  for (const asset of podAssets || []) {
+
+    const storagePath = String(
+      asset.storage_path || ""
+    ).trim();
+
+    if (!storagePath) {
+      continue;
+    }
+
+    const bucket =
+      getOccDocumentStorageBucket(
+        asset,
+        asset.asset_type
+      );
+
+    storageFiles.set(
+      `${bucket}|${storagePath}`,
+      {
+        bucket,
+        storagePath
+      }
+    );
+  }
+
+
+  /*
+   * Fallback:
+   * als alleen orders.pod_document_url bestaat en de andere
+   * records ontbreken, verwijderen we niet blind een Storage
+   * object op basis van alleen de URL.
+   *
+   * De orderkoppeling wordt onderaan wel gewist.
+   */
+
+
+  // =========================================================
+  // 4. Verwijder fysieke POD bestanden
+  // =========================================================
+
+  for (const file of storageFiles.values()) {
+
+    const {
+      error: storageError
+    } = await client.storage
+      .from(file.bucket)
+      .remove([
+        file.storagePath
+      ]);
+
+
+    if (storageError) {
+
+      console.error(
+        "POD Storage delete failed:",
+        {
+          bucket: file.bucket,
+          storagePath: file.storagePath,
+          storageError
+        }
+      );
+
+      throw new Error(
+        storageError.message ||
+        "The POD file could not be deleted from Supabase Storage."
+      );
+    }
+  }
+
+
+  // =========================================================
+  // 5. Verwijder POD uit order_documents
+  // =========================================================
+
+  const {
+    error: deleteDocumentError
+  } = await client
+    .from("order_documents")
+    .delete()
+    .eq("order_id", orderId)
+    .eq("document_type", "pod");
+
+
+  if (deleteDocumentError) {
+    throw new Error(
+      deleteDocumentError.message ||
+      "The POD document record could not be deleted."
+    );
+  }
+
+
+  // =========================================================
+  // 6. Verwijder POD PDF assets
+  // =========================================================
+
+  const {
+    error: deleteAssetsError
+  } = await client
+    .from("order_pod_assets")
+    .delete()
+    .eq("order_id", orderId)
+    .in(
+      "asset_type",
+      [
+        "signed_delivery_note",
+        "pod_pdf",
+        "signed_pod_pdf"
+      ]
+    );
+
+
+  if (deleteAssetsError) {
+    throw new Error(
+      deleteAssetsError.message ||
+      "The POD asset records could not be deleted."
+    );
+  }
+
+
+  // =========================================================
+  // 7. Reset POD gegevens op orders
+  // =========================================================
+
+  const {
+    error: orderUpdateError
+  } = await client
+    .from("orders")
+    .update({
+      pod_status: null,
+      pod_completed_at: null,
+      pod_signed_at: null,
+      pod_signed_by: null,
+      pod_document_url: null
+    })
+    .eq("id", orderId);
+
+
+  if (orderUpdateError) {
+    throw new Error(
+      orderUpdateError.message ||
+      "The POD status on the order could not be reset."
+    );
+  }
+
+
+  // =========================================================
+  // 8. Lokale OCC data direct bijwerken
+  // =========================================================
+
+  order.pod_status = null;
+  order.pod_completed_at = null;
+  order.pod_signed_at = null;
+  order.pod_signed_by = null;
+  order.pod_document_url = null;
+
+
+  console.info(
+    "POD permanently deleted:",
+    {
+      orderId,
+      orderNumber:
+        order.order_number,
+      deletedFiles:
+        storageFiles.size,
+      deletedDocumentRecords:
+        (podDocuments || []).length,
+      deletedAssetRecords:
+        (podAssets || []).length
+    }
+  );
+
+
+  return true;
+}
+
+async function deleteOccPodPhoto(order, photoAsset) {
+  /*
+   * Verwijdert één specifieke POD / delivery photo volledig.
+   *
+   * 1. Verwijder fysieke foto uit Supabase Storage
+   * 2. Verwijder record uit order_pod_assets
+   * 3. Tel resterende foto's opnieuw
+   * 4. Werk orders.pod_photo_count bij
+   */
+
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to permanently delete POD photos."
+    );
+  }
+
+  if (!order?.id) {
+    throw new Error(
+      "No valid order supplied."
+    );
+  }
+
+  if (!photoAsset?.id) {
+    throw new Error(
+      "No valid photo supplied."
+    );
+  }
+
+  const orderId = String(order.id);
+  const photoId = String(photoAsset.id);
+
+  const assetType = normalize(
+    photoAsset.asset_type || ""
+  );
+
+  /*
+   * Extra beveiliging:
+   * deze functie mag uitsluitend echte photo-assets verwijderen.
+   */
+  if (assetType !== "photo") {
+    throw new Error(
+      "The selected asset is not a POD photo."
+    );
+  }
+
+
+  // =========================================================
+  // 1. Verwijder daadwerkelijk bestand uit Storage
+  // =========================================================
+
+  await deleteOccStorageFile(
+    photoAsset,
+    "photo"
+  );
+
+
+  // =========================================================
+  // 2. Verwijder database-record
+  // =========================================================
+
+  const {
+    error: deleteError
+  } = await client
+    .from("order_pod_assets")
+    .delete()
+    .eq("id", photoId)
+    .eq("order_id", orderId)
+    .eq("asset_type", "photo");
+
+
+  if (deleteError) {
+    console.error(
+      "POD photo database delete failed:",
+      {
+        orderId,
+        photoId,
+        deleteError
+      }
+    );
+
+    throw new Error(
+      deleteError.message ||
+      "The POD photo record could not be deleted."
+    );
+  }
+
+
+  // =========================================================
+  // 3. Tel hoeveel foto's werkelijk over zijn
+  // =========================================================
+
+  const {
+    count: remainingPhotoCount,
+    error: countError
+  } = await client
+    .from("order_pod_assets")
+    .select(
+      "id",
+      {
+        count: "exact",
+        head: true
+      }
+    )
+    .eq("order_id", orderId)
+    .eq("asset_type", "photo");
+
+
+  if (countError) {
+    console.error(
+      "Could not recount POD photos:",
+      countError
+    );
+
+    throw new Error(
+      countError.message ||
+      "The remaining POD photos could not be counted."
+    );
+  }
+
+
+  const newPhotoCount =
+    Number(remainingPhotoCount || 0);
+
+
+  // =========================================================
+  // 4. Update orders.pod_photo_count
+  // =========================================================
+
+  const {
+    error: updateError
+  } = await client
+    .from("orders")
+    .update({
+      pod_photo_count: newPhotoCount
+    })
+    .eq("id", orderId);
+
+
+  if (updateError) {
+    console.error(
+      "Could not update pod_photo_count:",
+      {
+        orderId,
+        newPhotoCount,
+        updateError
+      }
+    );
+
+    throw new Error(
+      updateError.message ||
+      "The POD photo count could not be updated."
+    );
+  }
+
+
+  // =========================================================
+  // 5. Lokale OCC order direct bijwerken
+  // =========================================================
+
+  order.pod_photo_count =
+    newPhotoCount;
+
+
+  console.info(
+    "POD photo permanently deleted:",
+    {
+      orderId,
+      orderNumber:
+        order.order_number,
+      photoId,
+      remainingPhotos:
+        newPhotoCount
+    }
+  );
+
+
+  return {
+    deletedPhotoId:
+      photoId,
+
+    remainingPhotos:
+      newPhotoCount
+  };
+}
+
+function confirmOccPermanentDelete({
+  title = "Delete document?",
+  itemName = "this item",
+  message = ""
+} = {}) {
+  /*
+   * Algemene bevestigingspopup voor permanent verwijderen.
+   *
+   * Resultaat:
+   * true  = Yes, delete
+   * false = No, go back
+   */
+
+  return new Promise((resolve) => {
+
+    // ---------------------------------------------------------
+    // Overlay
+    // ---------------------------------------------------------
+
+    const overlay = document.createElement("div");
+
+    overlay.style.position = "fixed";
+    overlay.style.inset = "0";
+    overlay.style.zIndex = "99999";
+    overlay.style.background = "rgba(15, 23, 42, 0.55)";
+    overlay.style.display = "flex";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.padding = "20px";
+
+
+    // ---------------------------------------------------------
+    // Modal
+    // ---------------------------------------------------------
+
+    const modal = document.createElement("div");
+
+    modal.style.width = "100%";
+    modal.style.maxWidth = "460px";
+    modal.style.background = "#ffffff";
+    modal.style.borderRadius = "14px";
+    modal.style.boxShadow =
+      "0 24px 60px rgba(15, 23, 42, 0.28)";
+    modal.style.overflow = "hidden";
+
+
+    // ---------------------------------------------------------
+    // Content
+    // ---------------------------------------------------------
+
+    const content = document.createElement("div");
+
+    content.style.padding = "24px";
+
+
+    const heading = document.createElement("h3");
+
+    heading.textContent = title;
+    heading.style.margin = "0 0 14px 0";
+    heading.style.fontSize = "20px";
+    heading.style.fontWeight = "700";
+
+
+    const intro = document.createElement("div");
+
+    intro.textContent =
+      "Are you sure you want to permanently delete:";
+
+    intro.style.fontSize = "14px";
+    intro.style.marginBottom = "8px";
+
+
+    const item = document.createElement("div");
+
+    item.textContent = itemName;
+    item.style.fontSize = "15px";
+    item.style.fontWeight = "700";
+    item.style.marginBottom = "14px";
+
+
+    const warning = document.createElement("div");
+
+    warning.textContent =
+      message ||
+      "This will permanently remove the item and its file from Supabase Storage.";
+
+    warning.style.fontSize = "13px";
+    warning.style.lineHeight = "1.5";
+    warning.style.padding = "12px";
+    warning.style.borderRadius = "8px";
+    warning.style.background = "#fef2f2";
+    warning.style.color = "#991b1b";
+
+
+    content.appendChild(heading);
+    content.appendChild(intro);
+    content.appendChild(item);
+    content.appendChild(warning);
+
+
+    // ---------------------------------------------------------
+    // Buttons
+    // ---------------------------------------------------------
+
+    const footer = document.createElement("div");
+
+    footer.style.display = "flex";
+    footer.style.justifyContent = "flex-end";
+    footer.style.gap = "10px";
+    footer.style.padding = "16px 24px";
+    footer.style.borderTop = "1px solid #e5e7eb";
+    footer.style.background = "#f8fafc";
+
+
+    const cancelButton =
+      document.createElement("button");
+
+    cancelButton.type = "button";
+    cancelButton.textContent = "No, go back";
+
+    cancelButton.style.padding = "9px 15px";
+    cancelButton.style.borderRadius = "8px";
+    cancelButton.style.border = "1px solid #cbd5e1";
+    cancelButton.style.background = "#ffffff";
+    cancelButton.style.cursor = "pointer";
+    cancelButton.style.fontWeight = "600";
+
+
+    const deleteButton =
+      document.createElement("button");
+
+    deleteButton.type = "button";
+    deleteButton.textContent = "Yes, delete";
+
+    deleteButton.style.padding = "9px 15px";
+    deleteButton.style.borderRadius = "8px";
+    deleteButton.style.border = "1px solid #dc2626";
+    deleteButton.style.background = "#dc2626";
+    deleteButton.style.color = "#ffffff";
+    deleteButton.style.cursor = "pointer";
+    deleteButton.style.fontWeight = "700";
+
+
+    footer.appendChild(cancelButton);
+    footer.appendChild(deleteButton);
+
+    modal.appendChild(content);
+    modal.appendChild(footer);
+
+    overlay.appendChild(modal);
+
+    document.body.appendChild(overlay);
+
+
+    // ---------------------------------------------------------
+    // Close helper
+    // ---------------------------------------------------------
+
+    let finished = false;
+
+    function finish(result) {
+
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+
+      document.removeEventListener(
+        "keydown",
+        handleKeyDown
+      );
+
+      overlay.remove();
+
+      resolve(result);
+    }
+
+
+    // ---------------------------------------------------------
+    // Events
+    // ---------------------------------------------------------
+
+    cancelButton.addEventListener(
+      "click",
+      () => finish(false)
+    );
+
+
+    deleteButton.addEventListener(
+      "click",
+      () => finish(true)
+    );
+
+
+    /*
+     * Klik buiten de popup = annuleren.
+     */
+    overlay.addEventListener(
+      "click",
+      (event) => {
+
+        if (event.target === overlay) {
+          finish(false);
+        }
+
+      }
+    );
+
+
+    /*
+     * Escape = annuleren.
+     */
+    function handleKeyDown(event) {
+
+      if (event.key === "Escape") {
+        finish(false);
+      }
+
+    }
+
+    document.addEventListener(
+      "keydown",
+      handleKeyDown
+    );
+
+
+    /*
+     * Voor de duidelijkheid krijgt de veilige knop
+     * standaard focus, niet Delete.
+     */
+    cancelButton.focus();
+
+  });
+}
+
+async function handleOccDocumentDelete({
+  order,
+  documentRecord = null,
+  type = ""
+} = {}) {
+
+  if (!canDeleteOccDocuments()) {
+    alert("You do not have permission to delete documents.");
+    return false;
+  }
+
+  if (!order?.id) {
+    alert("Order could not be determined.");
+    return false;
+  }
+
+  const deleteType = normalize(
+    type ||
+    documentRecord?.document_type ||
+    ""
+  );
+
+  const orderNumber =
+    order.order_number ||
+    "Unknown order";
+
+
+  // =========================================================
+  // 1. Bepaal wat er verwijderd gaat worden
+  // =========================================================
+
+  let title = "Delete document?";
+  let itemName = `Document – ${orderNumber}`;
+  let warning =
+    "This will permanently remove the document and its file from Supabase Storage.";
+
+
+  if (deleteType === "pod") {
+
+    title = "Delete POD?";
+
+    itemName =
+      `POD – ${orderNumber}`;
+
+    warning =
+      "This will permanently remove the POD document and its file from Supabase Storage. Delivery photos will not be deleted.";
+
+  } else {
+
+    const labels = {
+      acknowledgement: "Acknowledgement",
+      legacy_acknowledgement: "Legacy ACK",
+      supplier_packing_slip: "Packing Slip",
+      delivery_note: "Delivery Note",
+      delivery_labels: "Delivery Labels"
+    };
+
+    const label =
+      labels[deleteType] ||
+      documentRecord?.document_number ||
+      "Document";
+
+    itemName =
+      `${label} – ${orderNumber}`;
+  }
+
+
+  // =========================================================
+  // 2. Bevestiging
+  // =========================================================
+
+  const confirmed =
+    await confirmOccPermanentDelete({
+      title,
+      itemName,
+      message: warning
+    });
+
+
+  if (!confirmed) {
+    return false;
+  }
+
+
+  // =========================================================
+  // 3. Verwijderen
+  // =========================================================
+
+  try {
+
+    if (deleteType === "pod") {
+
+      await deleteOccPodDocument(order);
+
+    } else {
+
+      if (!documentRecord?.id) {
+        throw new Error(
+          "The document record could not be determined."
+        );
+      }
+
+      await deleteOccOrderDocument(
+        documentRecord
+      );
+    }
+
+
+    // =======================================================
+    // 4. Lokale caches leegmaken
+    // =======================================================
+
+    /*
+     * POD-documenten worden op meerdere plaatsen gecachet.
+     * Daarom gooien we de relevante order-cache weg.
+     *
+     * Alleen uitvoeren wanneer de betreffende Map bestaat.
+     */
+
+    if (
+      typeof podAssetsCache !== "undefined" &&
+      podAssetsCache instanceof Map
+    ) {
+      podAssetsCache.delete(order.id);
+    }
+
+    if (
+      typeof podDocsCache !== "undefined" &&
+      podDocsCache instanceof Map
+    ) {
+      podDocsCache.delete(order.id);
+    }
+
+
+    // =======================================================
+    // 5. OCC opnieuw laden
+    // =======================================================
+
+    /*
+     * We gebruiken hier de bestaande OCC refreshfunctie
+     * wanneer die aanwezig is.
+     */
+
+    if (typeof loadOrders === "function") {
+
+      await loadOrders();
+
+    } else {
+
+      /*
+       * Fallback als jouw huidige bestand een andere
+       * refreshstructuur gebruikt.
+       */
+      window.location.reload();
+
+      return true;
+    }
+
+
+    console.info(
+      "OCC document delete completed:",
+      {
+        orderId: order.id,
+        orderNumber,
+        deleteType
+      }
+    );
+
+    return true;
+
+
+  } catch (error) {
+
+    console.error(
+      "OCC document delete failed:",
+      error
+    );
+
+    alert(
+      "The document could not be deleted.\n\n" +
+      (
+        error?.message ||
+        "Unknown error"
+      )
+    );
+
+    return false;
+  }
+}
+
+async function openOccPodPhotosManager(order) {
+  /*
+   * Toont alle POD / delivery photos van één order.
+   *
+   * Per foto:
+   * - View
+   * - rood kruisje voor Veynor Admin
+   *
+   * Bij verwijderen:
+   * - bevestigingspopup
+   * - fysiek bestand uit Supabase Storage
+   * - record uit order_pod_assets
+   * - pod_photo_count opnieuw berekenen
+   */
+
+  if (!order?.id) {
+    alert("Order could not be determined.");
+    return;
+  }
+
+  const orderId = String(order.id);
+  const orderNumber =
+    order.order_number ||
+    "Unknown order";
+
+
+  // =========================================================
+  // 1. Foto's ophalen
+  // =========================================================
+
+  const {
+    data: photos,
+    error
+  } = await client
+    .from("order_pod_assets")
+    .select(`
+      id,
+      order_id,
+      asset_type,
+      file_name,
+      file_url,
+      storage_path,
+      captured_at
+    `)
+    .eq("order_id", orderId)
+    .eq("asset_type", "photo")
+    .order(
+      "captured_at",
+      {
+        ascending: true
+      }
+    );
+
+
+  if (error) {
+
+    console.error(
+      "Could not load POD photos:",
+      error
+    );
+
+    alert(
+      "The delivery photos could not be loaded.\n\n" +
+      (
+        error.message ||
+        "Unknown error"
+      )
+    );
+
+    return;
+  }
+
+
+  const photoList =
+    Array.isArray(photos)
+      ? photos
+      : [];
+
+
+  // =========================================================
+  // 2. Overlay
+  // =========================================================
+
+  const overlay =
+    document.createElement("div");
+
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.zIndex = "99998";
+  overlay.style.background =
+    "rgba(15, 23, 42, 0.55)";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.padding = "20px";
+
+
+  // =========================================================
+  // 3. Modal
+  // =========================================================
+
+  const modal =
+    document.createElement("div");
+
+  modal.style.width = "100%";
+  modal.style.maxWidth = "720px";
+  modal.style.maxHeight = "80vh";
+  modal.style.background = "#ffffff";
+  modal.style.borderRadius = "14px";
+  modal.style.boxShadow =
+    "0 24px 60px rgba(15, 23, 42, 0.28)";
+  modal.style.overflow = "hidden";
+  modal.style.display = "flex";
+  modal.style.flexDirection = "column";
+
+
+  // =========================================================
+  // 4. Header
+  // =========================================================
+
+  const header =
+    document.createElement("div");
+
+  header.style.display = "flex";
+  header.style.alignItems = "center";
+  header.style.justifyContent =
+    "space-between";
+  header.style.gap = "12px";
+  header.style.padding = "18px 22px";
+  header.style.borderBottom =
+    "1px solid #e5e7eb";
+
+
+  const titleWrap =
+    document.createElement("div");
+
+
+  const title =
+    document.createElement("h3");
+
+  title.textContent =
+    `Delivery Photos – ${orderNumber}`;
+
+  title.style.margin = "0";
+  title.style.fontSize = "19px";
+  title.style.fontWeight = "700";
+
+
+  const subtitle =
+    document.createElement("div");
+
+  subtitle.textContent =
+    `${photoList.length} photo${
+      photoList.length === 1
+        ? ""
+        : "s"
+    }`;
+
+  subtitle.style.marginTop = "3px";
+  subtitle.style.fontSize = "12px";
+  subtitle.style.color = "#64748b";
+
+
+  titleWrap.appendChild(title);
+  titleWrap.appendChild(subtitle);
+
+
+  const closeX =
+    document.createElement("button");
+
+  closeX.type = "button";
+  closeX.textContent = "×";
+  closeX.title = "Close";
+
+  closeX.style.border = "0";
+  closeX.style.background = "transparent";
+  closeX.style.fontSize = "26px";
+  closeX.style.lineHeight = "1";
+  closeX.style.cursor = "pointer";
+  closeX.style.color = "#64748b";
+
+
+  header.appendChild(titleWrap);
+  header.appendChild(closeX);
+
+
+  // =========================================================
+  // 5. Body
+  // =========================================================
+
+  const body =
+    document.createElement("div");
+
+  body.style.padding = "16px 22px";
+  body.style.overflowY = "auto";
+  body.style.flex = "1";
+
+
+  if (!photoList.length) {
+
+    const empty =
+      document.createElement("div");
+
+    empty.textContent =
+      "No delivery photos are available for this order.";
+
+    empty.style.padding = "22px";
+    empty.style.textAlign = "center";
+    empty.style.color = "#64748b";
+
+    body.appendChild(empty);
+
+  } else {
+
+    photoList.forEach(
+      (photo, index) => {
+
+        const row =
+          document.createElement("div");
+
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.justifyContent =
+          "space-between";
+        row.style.gap = "16px";
+        row.style.padding = "12px 4px";
+
+        if (index > 0) {
+          row.style.borderTop =
+            "1px solid #e5e7eb";
+        }
+
+
+        // -----------------------------------------------
+        // Foto informatie
+        // -----------------------------------------------
+
+        const info =
+          document.createElement("div");
+
+        info.style.minWidth = "0";
+        info.style.flex = "1";
+
+
+        const photoTitle =
+          document.createElement("div");
+
+        photoTitle.textContent =
+          `Photo ${index + 1}`;
+
+        photoTitle.style.fontWeight = "700";
+        photoTitle.style.fontSize = "14px";
+
+
+        const fileName =
+          document.createElement("div");
+
+        fileName.textContent =
+          photo.file_name ||
+          "Delivery photo";
+
+        fileName.style.fontSize = "12px";
+        fileName.style.color = "#64748b";
+        fileName.style.marginTop = "2px";
+        fileName.style.whiteSpace = "nowrap";
+        fileName.style.overflow = "hidden";
+        fileName.style.textOverflow =
+          "ellipsis";
+
+
+        info.appendChild(photoTitle);
+        info.appendChild(fileName);
+
+
+        // -----------------------------------------------
+        // Acties
+        // -----------------------------------------------
+
+        const actions =
+          document.createElement("div");
+
+        actions.style.display = "flex";
+        actions.style.alignItems = "center";
+        actions.style.gap = "8px";
+
+
+        const viewButton =
+          document.createElement("button");
+
+        viewButton.type = "button";
+        viewButton.textContent = "View";
+
+        viewButton.style.padding = "7px 12px";
+        viewButton.style.borderRadius = "7px";
+        viewButton.style.border =
+          "1px solid #cbd5e1";
+        viewButton.style.background =
+          "#ffffff";
+        viewButton.style.cursor = "pointer";
+        viewButton.style.fontWeight = "600";
+
+
+        viewButton.addEventListener(
+          "click",
+          () => {
+
+            if (!photo.file_url) {
+              alert(
+                "No file URL is available for this photo."
+              );
+              return;
+            }
+
+            window.open(
+              photo.file_url,
+              "_blank",
+              "noopener,noreferrer"
+            );
+          }
+        );
+
+
+        actions.appendChild(
+          viewButton
+        );
+
+
+        // -----------------------------------------------
+        // Delete alleen voor Veynor Admin
+        // -----------------------------------------------
+
+        if (canDeleteOccDocuments()) {
+
+          const deleteButton =
+            document.createElement("button");
+
+          deleteButton.type = "button";
+          deleteButton.textContent = "×";
+          deleteButton.title =
+            "Permanently delete photo";
+
+          deleteButton.style.width = "32px";
+          deleteButton.style.height = "32px";
+          deleteButton.style.display = "flex";
+          deleteButton.style.alignItems =
+            "center";
+          deleteButton.style.justifyContent =
+            "center";
+          deleteButton.style.borderRadius =
+            "7px";
+          deleteButton.style.border =
+            "1px solid #fecaca";
+          deleteButton.style.background =
+            "#fef2f2";
+          deleteButton.style.color =
+            "#dc2626";
+          deleteButton.style.fontSize =
+            "20px";
+          deleteButton.style.fontWeight =
+            "700";
+          deleteButton.style.cursor =
+            "pointer";
+
+
+          deleteButton.addEventListener(
+            "click",
+            async () => {
+
+              const confirmed =
+                await confirmOccPermanentDelete({
+                  title:
+                    "Delete delivery photo?",
+
+                  itemName:
+                    `Photo ${index + 1} – ${orderNumber}`,
+
+                  message:
+                    "This will permanently remove the photo and its file from Supabase Storage."
+                });
+
+
+              if (!confirmed) {
+                return;
+              }
+
+
+              deleteButton.disabled = true;
+              deleteButton.textContent = "…";
+
+
+              try {
+
+                await deleteOccPodPhoto(
+                  order,
+                  photo
+                );
+
+
+                /*
+                 * Huidige popup sluiten.
+                 */
+                overlay.remove();
+
+
+                /*
+                 * Daarna opnieuw openen zodat de lijst
+                 * direct het juiste aantal foto's toont.
+                 */
+                await openOccPodPhotosManager(
+                  order
+                );
+
+
+              } catch (deleteError) {
+
+                console.error(
+                  "Delivery photo delete failed:",
+                  deleteError
+                );
+
+                deleteButton.disabled = false;
+                deleteButton.textContent = "×";
+
+                alert(
+                  "The delivery photo could not be deleted.\n\n" +
+                  (
+                    deleteError?.message ||
+                    "Unknown error"
+                  )
+                );
+              }
+            }
+          );
+
+
+          actions.appendChild(
+            deleteButton
+          );
+        }
+
+
+        row.appendChild(info);
+        row.appendChild(actions);
+
+        body.appendChild(row);
+      }
+    );
+  }
+
+
+  // =========================================================
+  // 6. Footer
+  // =========================================================
+
+  const footer =
+    document.createElement("div");
+
+  footer.style.display = "flex";
+  footer.style.justifyContent = "flex-end";
+  footer.style.padding = "14px 22px";
+  footer.style.borderTop =
+    "1px solid #e5e7eb";
+  footer.style.background = "#f8fafc";
+
+
+  const closeButton =
+    document.createElement("button");
+
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+
+  closeButton.style.padding = "8px 14px";
+  closeButton.style.borderRadius = "8px";
+  closeButton.style.border =
+    "1px solid #cbd5e1";
+  closeButton.style.background = "#ffffff";
+  closeButton.style.cursor = "pointer";
+  closeButton.style.fontWeight = "600";
+
+
+  footer.appendChild(closeButton);
+
+
+  modal.appendChild(header);
+  modal.appendChild(body);
+  modal.appendChild(footer);
+
+  overlay.appendChild(modal);
+
+  document.body.appendChild(overlay);
+
+
+  // =========================================================
+  // 7. Sluiten
+  // =========================================================
+
+  function closeModal() {
+
+    document.removeEventListener(
+      "keydown",
+      handleEscape
+    );
+
+    overlay.remove();
+  }
+
+
+  closeX.addEventListener(
+    "click",
+    closeModal
+  );
+
+
+  closeButton.addEventListener(
+    "click",
+    closeModal
+  );
+
+
+  overlay.addEventListener(
+    "click",
+    (event) => {
+
+      if (event.target === overlay) {
+        closeModal();
+      }
+    }
+  );
+
+
+  function handleEscape(event) {
+
+    if (event.key === "Escape") {
+      closeModal();
+    }
+  }
+
+
+  document.addEventListener(
+    "keydown",
+    handleEscape
+  );
+}
+
   function canSeeFinance() {
     return isTenantRole() || isProductOwnerRole();
   }
@@ -3496,14 +5208,23 @@ function updateSelectionUi() {
     `${formatNumber(selectedCount)} selected`
   );
 
-  const btnInvoice =
+const btnInvoice =
     byId("btnGenerateCombinedInvoice");
 
-  if (btnInvoice) {
+if (btnInvoice) {
     btnInvoice.disabled =
-      selectedCount === 0 ||
-      !canSelectOrders();
-  }
+        selectedCount === 0 ||
+        !canSelectOrders();
+}
+
+const btnTestInvoice =
+    byId("btnTestCombinedInvoice");
+
+if (btnTestInvoice) {
+    btnTestInvoice.disabled =
+        selectedCount === 0 ||
+        !canSelectOrders();
+}
 
   const selectAll =
     byId("selectAllVisibleOrders");
@@ -5582,25 +7303,151 @@ function renderDocumentAction(order, type, label) {
     normalizedType === "pod" &&
     isPodDownloaded(order);
 
+
+  // =========================================================
+  // DELETE BUTTON
+  // Alleen zichtbaar voor Veynor Admin én als document bestaat
+  // =========================================================
+
+  const canDelete =
+    canDeleteOccDocuments() &&
+    !!url &&
+    (
+      normalizedType === "pod" ||
+      !!doc?.id
+    );
+
+  const deleteButton = canDelete
+    ? `
+        <button
+          type="button"
+          class="occ-document-delete"
+          data-occ-delete-document="1"
+          data-order-id="${escapeHtml(order.id)}"
+          data-document-id="${escapeHtml(doc?.id || "")}"
+          data-document-type="${escapeHtml(normalizedType)}"
+          title="Permanently delete ${escapeHtml(label)}"
+          aria-label="Permanently delete ${escapeHtml(label)}"
+          style="
+            flex:0 0 30px;
+            width:30px;
+            height:30px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            margin-left:6px;
+            padding:0;
+            border:1px solid #fecaca;
+            border-radius:7px;
+            background:#fef2f2;
+            color:#dc2626;
+            font-size:19px;
+            font-weight:700;
+            line-height:1;
+            cursor:pointer;
+          "
+        >
+          ×
+        </button>
+      `
+    : "";
+
+
+  // =========================================================
+  // BESTAAND DOCUMENT
+  // =========================================================
+
   if (url) {
-    /*
-     * De POD-knop opent de volledige POD-pagina.
-     *
-     * Belangrijk:
-     * deze knop registreert zelf GEEN download.
-     * Alleen de echte Download-knop in pod.js
-     * mag het event pod_downloaded opslaan.
-     */
+
+    // -------------------------------------------------------
+    // POD
+    // -------------------------------------------------------
+
     if (normalizedType === "pod") {
+
       return `
+        <div
+          style="
+            display:flex;
+            align-items:center;
+            width:100%;
+          "
+        >
+          <a
+            class="
+              quick-action
+              ${podDownloaded ? "pod-downloaded" : ""}
+            "
+            href="./pod.html?order_id=${escapeHtml(order.id)}"
+            target="_blank"
+            rel="noopener"
+            style="flex:1;"
+          >
+            <span>
+              ${escapeHtml(label)}
+            </span>
+
+            <span>
+              ${
+                podDownloaded
+                  ? "⬇ Downloaded"
+                  : "Open POD"
+              }
+            </span>
+          </a>
+
+          ${deleteButton}
+        </div>
+      `;
+    }
+
+
+    // -------------------------------------------------------
+    // ALLE ANDERE DOCUMENTEN
+    // -------------------------------------------------------
+
+    return `
+      <div
+        style="
+          display:flex;
+          align-items:center;
+          width:100%;
+        "
+      >
         <a
           class="
             quick-action
-            ${podDownloaded ? "pod-downloaded" : ""}
+            ${ackDownloaded ? "ack-downloaded" : ""}
           "
-          href="./pod.html?order_id=${escapeHtml(order.id)}"
-          target="_blank"
-          rel="noopener"
+          href="${escapeHtml(url)}"
+
+          ${
+            [
+              "delivery_note",
+              "delivery_labels",
+              "supplier_packing_slip"
+            ].includes(normalizedType)
+              ? `
+                target="_blank"
+                rel="noopener"
+                download="${escapeHtml(
+                  `${label}-${order.order_number || "order"}.pdf`
+                )}"
+              `
+              : `
+                target="_blank"
+                rel="noopener"
+              `
+          }
+
+          ${renderPortalDocAttrs(
+            order,
+            type,
+            "downloaded",
+            url
+          )}
+
+          style="flex:1;"
         >
           <span>
             ${escapeHtml(label)}
@@ -5608,71 +7455,28 @@ function renderDocumentAction(order, type, label) {
 
           <span>
             ${
-              podDownloaded
-                ? "⬇ Downloaded"
-                : "Open POD"
+              ackDownloaded
+                ? "Downloaded"
+                : "Download"
             }
           </span>
         </a>
-      `;
-    }
 
-    /*
-     * Alle andere bestaande documenten.
-     */
-    return `
-      <a
-        class="
-          quick-action
-          ${ackDownloaded ? "ack-downloaded" : ""}
-        "
-        href="${escapeHtml(url)}"
-
-        ${
-          [
-            "delivery_note",
-            "delivery_labels",
-            "supplier_packing_slip"
-          ].includes(normalizedType)
-            ? `
-              target="_blank"
-              rel="noopener"
-              download="${escapeHtml(
-                `${label}-${order.order_number || "order"}.pdf`
-              )}"
-            `
-            : `
-              target="_blank"
-              rel="noopener"
-            `
-        }
-
-        ${renderPortalDocAttrs(
-          order,
-          type,
-          "downloaded",
-          url
-        )}
-      >
-        <span>
-          ${escapeHtml(label)}
-        </span>
-
-        <span>
-          ${
-            ackDownloaded
-              ? "Downloaded"
-              : "Download"
-          }
-        </span>
-      </a>
+        ${deleteButton}
+      </div>
     `;
   }
+
+
+  // =========================================================
+  // LEGACY ACK NOG NIET GEÜPLOAD
+  // =========================================================
 
   if (
     normalizedType === "legacy_acknowledgement" &&
     canGenerateDocuments()
   ) {
+
     return `
       <button
         class="quick-action"
@@ -5690,11 +7494,17 @@ function renderDocumentAction(order, type, label) {
     `;
   }
 
+
+  // =========================================================
+  // DOCUMENT KAN WORDEN GEGENEREERD
+  // =========================================================
+
   if (
     canGenerateDocuments() &&
     normalizedType !== "supplier_packing_slip" &&
     normalizedType !== "pod"
   ) {
+
     return `
       <button
         class="quick-action"
@@ -5716,6 +7526,11 @@ function renderDocumentAction(order, type, label) {
     `;
   }
 
+
+  // =========================================================
+  // NIET BESCHIKBAAR
+  // =========================================================
+
   return `
     <div
       class="quick-action"
@@ -5731,17 +7546,24 @@ function renderDocumentAction(order, type, label) {
     </div>
   `;
 }
+
 function renderDocumentsPanel(order) {
   const docs = getVisibleDocumentTypes(order);
   const photos = getPodPhotos(order);
 
   return `
     <div class="quick-action-list">
+
       ${docs
         .map(([type, label]) => {
-          return renderDocumentAction(order, type, label);
+          return renderDocumentAction(
+            order,
+            type,
+            label
+          );
         })
         .join("")}
+
 
       ${
         canSeeDocumentType("pod")
@@ -5750,15 +7572,39 @@ function renderDocumentsPanel(order) {
               <button
                 class="quick-action"
                 type="button"
-                data-open-pod-photos="${escapeHtml(order.id)}"
+
+                data-occ-manage-pod-photos="1"
+                data-order-id="${escapeHtml(order.id)}"
+
                 ${renderPortalDocAttrs(
                   order,
                   "pod_photos",
                   "viewed"
                 )}
               >
-                <span>Delivery Photos</span>
-                <span>${photos.length}/5</span>
+                <span>
+                  Delivery Photos
+                </span>
+
+                <span>
+                  ${photos.length}/5
+                  ${
+                    canDeleteOccDocuments()
+                      ? `
+                        <span
+                          style="
+                            margin-left:6px;
+                            color:#dc2626;
+                            font-weight:700;
+                          "
+                          title="Manage or delete delivery photos"
+                        >
+                          ×
+                        </span>
+                      `
+                      : ""
+                  }
+                </span>
               </button>
             `
             : `
@@ -5766,12 +7612,18 @@ function renderDocumentsPanel(order) {
                 class="quick-action"
                 style="opacity:.7;"
               >
-                <span>Delivery Photos</span>
-                <span>No photos</span>
+                <span>
+                  Delivery Photos
+                </span>
+
+                <span>
+                  No photos
+                </span>
               </div>
             `
           : ""
       }
+
 
       ${
         isTenantRole()
@@ -5781,8 +7633,13 @@ function renderDocumentsPanel(order) {
               type="button"
               data-manual-ops-order-id="${escapeHtml(order.id)}"
             >
-              <span>Manual delivery / POD</span>
-              <span>Open</span>
+              <span>
+                Manual delivery / POD
+              </span>
+
+              <span>
+                Open
+              </span>
             </button>
 
             <button
@@ -5790,12 +7647,18 @@ function renderDocumentsPanel(order) {
               type="button"
               data-open-tariff-modal="${escapeHtml(order.id)}"
             >
-              <span>Finance / Tariffs</span>
-              <span>Edit</span>
+              <span>
+                Finance / Tariffs
+              </span>
+
+              <span>
+                Edit
+              </span>
             </button>
           `
           : ""
       }
+
     </div>
   `;
 }
@@ -8831,26 +10694,193 @@ tbody.querySelectorAll("[data-upload-legacy-ack]").forEach(button => {
   });
 
 
+// ===========================================================
+// OCC DOCUMENT PERMANENT DELETE
+// ===========================================================
+
 tbody
   .querySelectorAll(
-    "[data-open-pod-photos]"
+    "[data-occ-delete-document]"
   )
   .forEach(button => {
 
     button.addEventListener(
       "click",
-      event => {
+      async event => {
 
+        event.preventDefault();
         event.stopPropagation();
 
-        openPhotoModal(
-          button.dataset.openPodPhotos
-        );
+        const orderId =
+          String(
+            button.getAttribute(
+              "data-order-id"
+            ) || ""
+          );
+
+        const documentId =
+          String(
+            button.getAttribute(
+              "data-document-id"
+            ) || ""
+          );
+
+        const documentType =
+          normalize(
+            button.getAttribute(
+              "data-document-type"
+            ) || ""
+          );
+
+
+        const order =
+          getOrderById(orderId);
+
+
+        if (!order) {
+
+          showToast(
+            "Order could not be found.",
+            "err"
+          );
+
+          return;
+        }
+
+
+        /*
+         * POD is speciaal:
+         * daarvoor is geen documentRecord nodig omdat
+         * deleteOccPodDocument() zelf alle POD records
+         * en assets opnieuw uit Supabase ophaalt.
+         */
+        if (documentType === "pod") {
+
+          await handleOccDocumentDelete({
+            order,
+            type: "pod"
+          });
+
+          return;
+        }
+
+
+        /*
+         * Voor normale documenten pakken we het document
+         * uit de reeds geladen order_documents.
+         */
+        const documentRecord =
+          getDoc(
+            order,
+            documentType
+          );
+
+
+        if (!documentRecord) {
+
+          showToast(
+            "Document record could not be found.",
+            "err"
+          );
+
+          return;
+        }
+
+
+        /*
+         * Extra controle:
+         * het ID van de knop moet overeenkomen met
+         * het gevonden database-record.
+         */
+        if (
+          documentId &&
+          String(documentRecord.id) !==
+            documentId
+        ) {
+
+          showToast(
+            "Document record has changed. Refresh the page and try again.",
+            "err"
+          );
+
+          return;
+        }
+
+
+        await handleOccDocumentDelete({
+          order,
+          documentRecord,
+          type: documentType
+        });
       }
     );
 
   });
 
+
+// ===========================================================
+// DELIVERY PHOTOS MANAGER
+// ===========================================================
+
+tbody
+  .querySelectorAll(
+    "[data-occ-manage-pod-photos]"
+  )
+  .forEach(button => {
+
+    button.addEventListener(
+      "click",
+      async event => {
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const orderId =
+          String(
+            button.getAttribute(
+              "data-order-id"
+            ) || ""
+          );
+
+
+        const order =
+          getOrderById(orderId);
+
+
+        if (!order) {
+
+          showToast(
+            "Order could not be found.",
+            "err"
+          );
+
+          return;
+        }
+
+
+        try {
+
+          await openOccPodPhotosManager(
+            order
+          );
+
+        } catch (error) {
+
+          console.error(
+            "Could not open Delivery Photos manager:",
+            error
+          );
+
+          showToast(
+            error?.message ||
+              "Could not open Delivery Photos.",
+            "err"
+          );
+        }
+      }
+    );
+
+  });
 
 /*
  * FDS information badge
@@ -14375,6 +16405,82 @@ function bindEvents() {
     renderTable();
     showToast("Selection cleared.", "ok");
   });
+
+byId("btnTestCombinedInvoice")?.addEventListener("click", async () => {
+  const selectedOrders = getSelectedOrders();
+
+  if (!selectedOrders.length) {
+    showToast(
+      "Select at least one order first.",
+      "err"
+    );
+    return;
+  }
+
+  if (
+    !window.InvoiceGenerator ||
+    typeof window.InvoiceGenerator.generateTestInvoice !== "function"
+  ) {
+    showToast(
+      "Test invoice generator is not available.",
+      "err"
+    );
+    return;
+  }
+
+  const button =
+    byId("btnTestCombinedInvoice");
+
+  const originalText =
+    button?.textContent || "Test Invoice PDF";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent =
+        "Generating test...";
+    }
+
+    showToast(
+      "Generating test invoice PDF...",
+      "info"
+    );
+
+const cid = await getCompanyId();
+
+const result =
+  await window.InvoiceGenerator.generateTestInvoice(
+    selectedOrders,
+    client,
+    cid
+  );
+
+    showToast(
+      `Test invoice ${result.invoiceNumber} generated. No data was changed.`,
+      "ok"
+    );
+
+  } catch (error) {
+    console.error(
+      "Test invoice generation failed:",
+      error
+    );
+
+    showToast(
+      error?.message ||
+        "Could not generate test invoice.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.textContent =
+        originalText;
+    }
+
+    updateSelectionUi();
+  }
+});
 
   byId("btnGenerateCombinedInvoice")?.addEventListener("click", async () => {
     try {
