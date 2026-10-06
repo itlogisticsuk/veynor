@@ -2228,28 +2228,57 @@ ${postcode}`,
     return doc.output("blob");
   }
 
-  async function uploadPdf(client, companyId, invoiceNumber, blob) {
-    const fileName = `${safeFilePart(invoiceNumber)}.pdf`;
-    const storagePath = `${companyId}/invoices/${fileName}`;
+ async function uploadPdf(
+  client,
+  companyId,
+  invoiceNumber,
+  blob
+) {
+  const now = new Date();
 
-    const { error } = await client.storage
+  const day =
+    String(now.getDate()).padStart(2, "0");
+
+  const month =
+    String(now.getMonth() + 1).padStart(2, "0");
+
+  const dateSuffix =
+    `${day}-${month}`;
+
+  const fileName =
+    `${safeFilePart(invoiceNumber)}-${dateSuffix}.pdf`;
+
+  const storagePath =
+    `${companyId}/invoices/${fileName}`;
+
+  const { error } =
+    await client.storage
       .from(DOCUMENT_BUCKET)
-      .upload(storagePath, blob, {
-        contentType: "application/pdf",
-        upsert: true
-      });
+      .upload(
+        storagePath,
+        blob,
+        {
+          contentType: "application/pdf",
+          upsert: true,
+          cacheControl: "0"
+        }
+      );
 
-    if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
-    const { data } = client.storage
+  const { data } =
+    client.storage
       .from(DOCUMENT_BUCKET)
       .getPublicUrl(storagePath);
 
-    return {
-      storagePath,
-      fileUrl: data?.publicUrl || ""
-    };
-  }
+  return {
+    storagePath,
+    fileUrl:
+      data?.publicUrl || ""
+  };
+}
 
   async function createInvoiceRecord(client, companyId, orders, invoiceNumber, uploaded, ctx) {
     const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
