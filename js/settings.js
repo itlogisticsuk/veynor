@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const COMPANY_ASSETS_BUCKET = "company-assets";
   const OWNER_PROFILES_KEY = "product_owner_profiles";
 
@@ -13,112 +12,25 @@
 let vehiclesCache = [];
 let driverUsersCache = [];
 let portalUsersCache = [];
-
-  const DEFAULT_OWNER_PROFILES = [
-    {
-      key: "bellstone",
-      name: "Bellstone Furniture Distributors Ltd",
-      trading_name: "Bellstone",
-customer_code: "BELLSTONE",
-display_code: "BS",
-vat: "503290623",
-      address1: "2ND FLOOR, RAINHAM HOUSE",
-      address2: "NEW ROAD",
-      city: "Rainham",
-      postcode: "RM13 8RH",
-      country: "United Kingdom",
-      logo_url: "",
-      logo_storage_path: "",
-      invoice_email: "",
-      ack_email: "",
-      pod_email: "",
-      ops_email: "",
-      payment_terms_days: "14",
-      invoice_frequency: "batch",
-      default_source_name: "Bellstone",
-auto_ack: false,
-auto_invoice: false,
-
-minimum_delivery_enabled: true,
-minimum_delivery_volume_m3: "1.25",
-minimum_delivery_transport_tariff_per_m3: "55.20",
-minimum_delivery_requires_approval: true,
-minimum_delivery_owner_can_approve: true,
-minimum_delivery_manual_override: true,
-minimum_delivery_invoice_label: "Minimum Delivery Charge",
-
-regional_surcharge_enabled: true,
-surcharge_edinburgh_glasgow_percent: "20",
-surcharge_highlands_islands_percent: "40",
-pricing_ireland_mode: "price_on_request",
-
-fuel_surcharge_enabled: true,
-fuel_surcharge_percent: "8.5",
-
-pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
-pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
-
-notes: ""
-    },
-    {
-      key: "zoy",
-      name: "Zoy",
-      trading_name: "Zoy",
-customer_code: "ZOY",
-display_code: "ZY",
-vat: "",
-      address1: "",
-      address2: "",
-      city: "",
-      postcode: "",
-      country: "United Kingdom",
-      logo_url: "",
-      logo_storage_path: "",
-      invoice_email: "",
-      ack_email: "",
-      pod_email: "",
-      ops_email: "",
-      payment_terms_days: "14",
-      invoice_frequency: "batch",
-      default_source_name: "Zoy",
-auto_ack: false,
-auto_invoice: false,
-
-minimum_delivery_enabled: true,
-minimum_delivery_volume_m3: "1.25",
-minimum_delivery_transport_tariff_per_m3: "55.20",
-minimum_delivery_requires_approval: true,
-minimum_delivery_owner_can_approve: true,
-minimum_delivery_manual_override: true,
-minimum_delivery_invoice_label: "Minimum Delivery Charge",
-
-regional_surcharge_enabled: true,
-surcharge_edinburgh_glasgow_percent: "20",
-surcharge_highlands_islands_percent: "40",
-pricing_ireland_mode: "price_on_request",
-
-fuel_surcharge_enabled: false,
-fuel_surcharge_percent: "0",
-
-pricing_ack_note: "",
-pricing_invoice_note: "",
-
-notes: ""
-    }
-  ];
+let ownerProfilesLoaded = false;
 
   const DEFAULT_SETTINGS = {
-    main_company_name: "Sofa2U Ltd",
-    main_display_name: "Sofa2U",
-    main_trading_name: "Sofa2U",
+
+emission_alert_delivery: "true",
+emission_alert_route: "true",
+emission_display_map: "true",
+
+    main_company_name: "",
+    main_display_name: "",
+    main_trading_name: "",
     main_company_registration: "",
-    main_email: "sales@sofa2u.co.uk",
-    main_phone: "+44 (0) 7894 469947",
-    main_address: "860-862 Garratt Lane, London, SW17 0NB",
+    main_email: "",
+    main_phone: "",
+    main_address: "",
     main_registered_address: "",
-    main_vat: "GB 368 665 249",
+    main_vat: "",
     main_country: "United Kingdom",
-    main_website: "https://www.sofa2u.co.uk",
+    main_website: "",
     main_default_currency: "GBP",
 
     main_logo_url: "",
@@ -129,23 +41,23 @@ notes: ""
     document_show_company_details: "true",
 
     finance_contact_name: "",
-    finance_email: "sales@sofa2u.co.uk",
-    finance_phone: "+44 (0) 7894 469947",
-    invoice_email: "sales@sofa2u.co.uk",
+    finance_email: "",
+    finance_phone: "",
+    invoice_email: "",
 
     operations_contact_name: "",
-    operations_email: "sales@sofa2u.co.uk",
-    operations_phone: "+44 (0) 7894 469947",
-    pod_email: "sales@sofa2u.co.uk",
+    operations_email: "",
+    operations_phone: "",
+    pod_email: "",
 
     claims_contact_name: "",
-    claims_email: "sales@sofa2u.co.uk",
+    claims_email: "",
     claims_phone: "",
 
-    bank_company_name: "Sofa2U Ltd",
-    bank_name: "NatWest",
-    bank_sort_code: "51-61-11",
-    bank_account_no: "7797 5170",
+    bank_company_name: "",
+    bank_name: "",
+    bank_sort_code: "",
+    bank_account_no: "",
     bank_iban: "",
     bank_bic: "",
     bank_payment_reference_format: "Invoice number + product owner code",
@@ -160,17 +72,17 @@ notes: ""
     delivery_note_next_number: "",
     pod_next_number: "",
 
-    invoice_payment_note: "Please make payments via bank transfer using the details shown on this invoice.",
-    doc_damage_note: "All goods must be checked for damage and reported within 5 days of delivery.",
+    invoice_payment_note: "",
+    doc_damage_note: "",
     document_footer_text: "",
     delivery_disclaimer: "",
     pod_confirmation_text: "",
     terms_conditions_note: "",
     storage_terms_note: "",
 
-    default_payment_terms_days: "14",
-    default_ack_lead_days: "21",
-    damage_reporting_days: "5",
+    default_payment_terms_days: "",
+    default_ack_lead_days: "",
+    damage_reporting_days: "",
     storage_starts_after_days: "",
 
     tax_default_vat_rate: "0.20",
@@ -188,14 +100,19 @@ warehouse_storage_per_m3_gbp: "0.00",
 warehouse_repack_per_colli_gbp: "0.00",
 warehouse_qc_per_colli_gbp: "0.00",
 
-    home_depot_name: "Sofa2U",
-    home_depot_postcode: "SY4 4UD",
-    home_depot_city: "Shrewsbury",
+    home_depot_name: "",
+    home_depot_postcode: "",
+    home_depot_city: "",
     home_depot_country: "United Kingdom",
-    home_depot_lat: "52.6981200",
-    home_depot_lng: "-2.6530400",
+    home_depot_lat: "",
+    home_depot_lng: "",
     average_speed_kmh: "50",
-    stop_time_minutes: "15",
+stop_time_minutes: "15",
+unloading_time_mode: "fixed",
+unloading_extra_minutes_per_order: "5",
+unloading_volume_threshold_m3: "1.5",
+unloading_extra_minutes_per_m3: "5",
+unloading_volume_rounding: "proportional",
     distance_factor: "1.25",
     max_route_volume_m3: "45",
     max_route_stops: "12",
@@ -206,24 +123,44 @@ warehouse_qc_per_colli_gbp: "0.00",
 vehicle_cost_per_hour_gbp: "8.50",
 diesel_price_per_litre_gbp_inc_vat: "1.55",
 
-   doc_default_payment_terms: "14",
+   doc_default_payment_terms: "",
 doc_vat_rate: "0.20",
 doc_ack_lead_days: "21",
 doc_bucket: "order-documents",
 
-fuel_surcharge_percent: "8.5",
-surcharge_edinburgh_glasgow_percent: "20",
-surcharge_highlands_islands_percent: "40",
+
+fuel_surcharge_enabled: "",
+fuel_surcharge_percent: "",
+
+regional_surcharge_enabled: "",
+surcharge_edinburgh_glasgow_percent: "",
+surcharge_highlands_islands_percent: "",
+
+regional_pricing_zones: "",
+
 pricing_ireland_mode: "price_on_request",
-pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
-pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
+pricing_invoice_note: "",
+pricing_ack_note: "",
+
+london_ulez_enabled: "false",
+london_ulez_charge: "",
+
+london_lez_enabled: "false",
+london_lez_charge: "",
+
+london_congestion_enabled: "false",
+london_congestion_charge: "",
+
+london_charge_method: "per_delivery",
+london_vehicle_applicability: "non_compliant",
+
 
 sales_order_prefix: "SO-",
 sales_order_padding: "5",
 next_sales_order_number: "3246",
 
-    email_sender_name: "Sofa2U",
-    email_sender_address: "sales@sofa2u.co.uk",
+    email_sender_name: "",
+    email_sender_address: "",
     email_auto_ack_default: "false",
     email_auto_invoice_default: "false",
     email_auto_pod_default: "false",
@@ -231,7 +168,7 @@ next_sales_order_number: "3246",
     email_footer: "",
 
     system_default_country: "United Kingdom",
-    system_default_product_owner: "Bellstone",
+    system_default_product_owner: "",
     system_default_import_status: "imported",
     system_default_source_type: "manual_import"
   };
@@ -343,22 +280,76 @@ next_sales_order_number: "3246",
   }
 
   async function getCompanyId() {
-    if (companyId) return companyId;
+  const db = ensureClient();
 
-    const db = ensureClient();
+  const { data: authData, error: authError } = await db.auth.getUser();
 
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
+  if (authError) throw authError;
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Tenant "${TENANT_NAME}" not found in companies.`);
+  const userId = authData?.user?.id;
 
-    companyId = data.id;
-    return companyId;
+  if (!userId) {
+    throw new Error("You are not signed in. Please sign in again.");
   }
+
+  // Ondersteun beide bestaande koppelingen met het loginaccount.
+  const { data: profiles, error: profileError } = await db
+    .from("user_profiles")
+    .select("id, auth_user_id, company_id, role, is_active")
+    .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+    .eq("is_active", true);
+
+  if (profileError) throw profileError;
+
+  if (!profiles || profiles.length === 0) {
+    throw new Error("No active user profile was found for your account.");
+  }
+
+  if (profiles.length !== 1) {
+    throw new Error(
+      "Multiple active profiles were found. Please contact your administrator."
+    );
+  }
+
+  const profile = profiles[0];
+  const role = String(profile.role || "").trim().toLowerCase();
+
+  if (!["tenant_admin", "veynor_admin"].includes(role)) {
+    throw new Error(
+      "You do not have permission to manage company settings."
+    );
+  }
+
+  if (!profile.company_id) {
+    throw new Error(
+      "No company is assigned to your account. Please contact your administrator."
+    );
+  }
+
+  // Voorkom opslaan voor een ander bedrijf met nog oude schermgegevens.
+  if (companyId && companyId !== profile.company_id) {
+    throw new Error(
+      "Your active company has changed. Reload this page before continuing."
+    );
+  }
+
+  const { data: company, error: companyError } = await db
+    .from("companies")
+    .select("id, is_active")
+    .eq("id", profile.company_id)
+    .maybeSingle();
+
+  if (companyError) throw companyError;
+
+  if (!company || company.is_active !== true) {
+    throw new Error(
+      "Your company could not be found or is inactive."
+    );
+  }
+
+  companyId = company.id;
+  return companyId;
+}
 
   function getFieldValue(id, fallback = "") {
     const el = byId(id);
@@ -383,41 +374,347 @@ next_sales_order_number: "3246",
     el.value = value ?? "";
   }
 
-  function getSetting(key, fallback = "") {
-    const direct = settingsMap.get(key);
+function getSetting(key, fallback = "") {
+  // Een opgeslagen waarde heeft voorrang, ook als deze leeg is.
+  if (settingsMap.has(key)) {
+    return settingsMap.get(key) ?? "";
+  }
 
-    if (direct !== undefined && direct !== null && String(direct).trim() !== "") {
-      return direct;
+  // Gebruik een alternatieve naam alleen als de hoofdinstelling ontbreekt.
+  const aliases = ALIASES[key] || [];
+
+  for (const alias of aliases) {
+    if (settingsMap.has(alias)) {
+      return settingsMap.get(alias) ?? "";
+    }
+  }
+
+  // Alleen bij ontbrekende instellingen een standaardwaarde gebruiken.
+  return DEFAULT_SETTINGS[key] ?? fallback ?? "";
+}
+
+function isGeneralSettingsField(el) {
+  if (!el?.id) return false;
+
+  // Bestanden en wachtwoorden zijn geen algemene instellingen.
+  if (["file", "password", "button", "submit", "reset"].includes(el.type)) {
+    return false;
+  }
+
+  // Deze formulieren hebben hun eigen opslagfuncties.
+  if (
+    el.id.startsWith("owner_") ||
+    el.id.startsWith("newOwner") ||
+    el.id.startsWith("newVehicle") ||
+    el.id.startsWith("newDriver") ||
+    el.id.startsWith("newUser")
+  ) {
+    return false;
+  }
+
+  // Dit is een berekende weergave, geen opgeslagen instelling.
+  if (el.id === "next_sales_order_preview") {
+    return false;
+  }
+
+  return true;
+}
+
+function collectFieldsInside(containerId) {
+  const container = byId(containerId);
+  if (!container) return [];
+
+  return Array.from(
+    container.querySelectorAll("input[id], select[id], textarea[id]")
+  )
+    .filter(isGeneralSettingsField)
+    .map(el => el.id);
+}
+
+function collectAllSettingsFields() {
+  return Array.from(
+    document.querySelectorAll(
+      ".settings-panel input[id], " +
+      ".settings-panel select[id], " +
+      ".settings-panel textarea[id]"
+    )
+  )
+    .filter(isGeneralSettingsField)
+    .map(el => el.id);
+}
+
+
+function validateUnloadingSettings() {
+  const mode = getFieldValue("unloading_time_mode");
+
+  const allowedModes = [
+    "fixed",
+    "orders",
+    "volume",
+    "combined"
+  ];
+
+  if (!allowedModes.includes(mode)) {
+    throw new Error(
+      "Select a valid unloading calculation method."
+    );
+  }
+
+  const rounding = getFieldValue(
+    "unloading_volume_rounding"
+  );
+
+  if (!["proportional", "round_up"].includes(rounding)) {
+    throw new Error(
+      "Select a valid volume rounding method."
+    );
+  }
+
+  const numericFields = [
+    "stop_time_minutes",
+    "unloading_extra_minutes_per_order",
+    "unloading_volume_threshold_m3",
+    "unloading_extra_minutes_per_m3"
+  ];
+
+  for (const id of numericFields) {
+    const element = byId(id);
+
+    if (!element) {
+      throw new Error(`Required setting is missing: ${id}`);
     }
 
-    const aliases = ALIASES[key] || [];
+    const raw = getFieldValue(id);
 
-    for (const alias of aliases) {
-      const val = settingsMap.get(alias);
-      if (val !== undefined && val !== null && String(val).trim() !== "") {
-        return val;
+    if (raw === "") {
+      throw new Error(`Enter a value for ${id}.`);
+    }
+
+    const value = Number(raw.replace(",", "."));
+
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`Invalid unloading setting: ${id}.`);
+    }
+  }
+
+  return true;
+}
+
+function validatePricingSettings() {
+  const requiredBooleans = [
+    "fuel_surcharge_enabled",
+    "regional_surcharge_enabled"
+  ];
+
+  for (const id of requiredBooleans) {
+    if (!byId(id)) {
+      throw new Error(`Required field missing: ${id}`);
+    }
+
+    if (!["true", "false"].includes(getFieldValue(id))) {
+      throw new Error(
+        `Select Enabled or Disabled for ${id}.`
+      );
+    }
+  }
+
+  const percentages = [
+    ["fuel_surcharge_enabled", "fuel_surcharge_percent"],
+    [
+      "regional_surcharge_enabled",
+      "surcharge_edinburgh_glasgow_percent"
+    ],
+    [
+      "regional_surcharge_enabled",
+      "surcharge_highlands_islands_percent"
+    ]
+  ];
+
+  for (const [enabledId, percentId] of percentages) {
+    const enabled = getFieldValue(enabledId) === "true";
+    const raw = getFieldValue(percentId);
+
+    if (enabled && raw === "") {
+      throw new Error(
+        `Enter a percentage for ${percentId}.`
+      );
+    }
+
+    if (raw !== "") {
+      const value = Number(raw.replace(",", "."));
+
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(
+          `Invalid percentage for ${percentId}.`
+        );
       }
     }
-
-    return DEFAULT_SETTINGS[key] ?? fallback ?? "";
   }
 
-  function collectFieldsInside(containerId) {
-    const container = byId(containerId);
-    if (!container) return [];
+  const londonCharges = [
+    ["london_ulez_enabled", "london_ulez_charge"],
+    ["london_lez_enabled", "london_lez_charge"],
+    ["london_congestion_enabled", "london_congestion_charge"]
+  ];
 
-    return Array.from(container.querySelectorAll("input[id], select[id], textarea[id]"))
-      .filter(el => el.id)
-      .filter(el => el.type !== "file")
-      .map(el => el.id);
+  for (const [enabledId, amountId] of londonCharges) {
+    if (!byId(enabledId) || !byId(amountId)) {
+      throw new Error(
+        `Required London pricing field missing: ${enabledId} / ${amountId}`
+      );
+    }
+
+    const enabledValue = getFieldValue(enabledId);
+
+    if (!["true", "false"].includes(enabledValue)) {
+      throw new Error(
+        `Invalid Enabled/Disabled value for ${enabledId}.`
+      );
+    }
+
+    const raw = getFieldValue(amountId);
+
+    if (enabledValue === "true" && raw === "") {
+      throw new Error(
+        `Enter a charge for ${amountId}.`
+      );
+    }
+
+    if (raw !== "") {
+      const amount = Number(raw.replace(",", "."));
+
+      if (!Number.isFinite(amount) || amount < 0) {
+        throw new Error(
+          `Invalid charge amount for ${amountId}.`
+        );
+      }
+    }
   }
 
-  function collectAllSettingsFields() {
-    return Array.from(document.querySelectorAll(".settings-panel input[id], .settings-panel select[id], .settings-panel textarea[id]"))
-      .filter(el => el.id)
-      .filter(el => el.type !== "file")
-      .map(el => el.id);
+  const chargeMethod = getFieldValue("london_charge_method");
+
+  if (!["per_delivery", "per_route", "per_day"].includes(chargeMethod)) {
+    throw new Error("Invalid London charging method.");
   }
+
+  const vehicleApplicability =
+    getFieldValue("london_vehicle_applicability");
+
+  if (!["all", "non_compliant"].includes(vehicleApplicability)) {
+    throw new Error("Invalid London vehicle applicability.");
+  }
+
+  const zoneRaw = getFieldValue("regional_pricing_zones");
+  const regionalEnabled =
+    getFieldValue("regional_surcharge_enabled") === "true";
+
+  if (regionalEnabled && !zoneRaw) {
+    throw new Error(
+      "Regional Postcode Rules are required when regional surcharges are enabled."
+    );
+  }
+
+  if (zoneRaw) {
+    let zones;
+
+    try {
+      zones = JSON.parse(zoneRaw);
+    } catch {
+      throw new Error(
+        "Regional Postcode Rules must contain valid JSON."
+      );
+    }
+
+    if (!Array.isArray(zones) || zones.length === 0) {
+      throw new Error(
+        "Regional Postcode Rules must contain at least one zone."
+      );
+    }
+
+    const ids = new Set();
+
+    for (const zone of zones) {
+      if (
+        !zone ||
+        typeof zone !== "object" ||
+        Array.isArray(zone) ||
+        typeof zone.id !== "string" ||
+        !zone.id.trim() ||
+        typeof zone.name !== "string" ||
+        !zone.name.trim() ||
+        typeof zone.enabled !== "boolean" ||
+        !Number.isInteger(zone.priority) ||
+        zone.priority < 0 ||
+        typeof zone.surcharge_setting_key !== "string" ||
+        !/^[a-z][a-z0-9_]*$/.test(
+          zone.surcharge_setting_key
+        ) ||
+        !Array.isArray(zone.postcode_rules) ||
+        zone.postcode_rules.length === 0 ||
+        !Array.isArray(zone.unknown_district_areas)
+      ) {
+        throw new Error(
+          "Invalid Regional Pricing Zone configuration."
+        );
+      }
+
+      if (ids.has(zone.id)) {
+        throw new Error(
+          `Duplicate Regional Pricing Zone ID: ${zone.id}`
+        );
+      }
+
+      ids.add(zone.id);
+
+      for (const rule of zone.postcode_rules) {
+        if (
+          typeof rule !== "string" ||
+          !/^[A-Z]{1,2}(?:\d{1,2}\+)?$/.test(rule)
+        ) {
+          throw new Error(
+            `Invalid postcode rule "${rule}" in ${zone.name}.`
+          );
+        }
+      }
+
+      for (const area of zone.unknown_district_areas) {
+        if (
+          typeof area !== "string" ||
+          !/^[A-Z]{1,2}$/.test(area)
+        ) {
+          throw new Error(
+            `Invalid unknown district area in ${zone.name}.`
+          );
+        }
+      }
+
+      if (zone.enabled) {
+        const percentKey = zone.surcharge_setting_key;
+
+        if (!byId(percentKey)) {
+          throw new Error(
+            `Pricing field "${percentKey}" is missing.`
+          );
+        }
+
+        const raw = getFieldValue(percentKey);
+
+        if (
+          raw === "" ||
+          !Number.isFinite(Number(raw.replace(",", "."))) ||
+          Number(raw.replace(",", ".")) < 0
+        ) {
+          throw new Error(
+            `Invalid surcharge percentage for ${zone.name}.`
+          );
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
 
   function getDriverName(driver) {
     return driver?.full_name || driver?.email || "Driver";
@@ -845,36 +1142,44 @@ updateSalesOrderPreview();
 updateSummary();
   }
 
-  async function saveSettingsByIds(ids, successMessage = "Settings saved.") {
-    const db = ensureClient();
-    const cid = await getCompanyId();
+async function saveSettingsByIds(
+  ids,
+  successMessage = "Settings saved."
+) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const uniqueIds = [...new Set(ids || [])]
-      .filter(id => byId(id))
-      .filter(id => byId(id).type !== "file");
+  const uniqueIds = [...new Set(ids || [])]
+    .filter(id => typeof id === "string")
+    .filter(id => isGeneralSettingsField(byId(id)));
 
-    if (!uniqueIds.length) {
-      showToast("No matching fields found to save.", "err");
-      return;
-    }
-
-    const rows = uniqueIds.map(id => ({
-      company_id: cid,
-      setting_key: id,
-      setting_value: getFieldValue(id, DEFAULT_SETTINGS[id] ?? "")
-    }));
-
-    const { error } = await db
-      .from("settings")
-      .upsert(rows, { onConflict: "company_id,setting_key" });
-
-    if (error) throw error;
-
-    rows.forEach(row => settingsMap.set(row.setting_key, row.setting_value));
-
-    showToast(successMessage, "ok");
-    updateSummary();
+  if (!uniqueIds.length) {
+    showToast("No matching settings found to save.", "err");
+    return;
   }
+
+  const rows = uniqueIds.map(id => ({
+    company_id: cid,
+    setting_key: id,
+    setting_value: getFieldValue(id)
+  }));
+
+  const { error } = await db
+    .from("settings")
+    .upsert(rows, {
+      onConflict: "company_id,setting_key"
+    });
+
+  if (error) throw error;
+
+  // Werk de lokale waarden pas bij na succesvol opslaan.
+  rows.forEach(row => {
+    settingsMap.set(row.setting_key, row.setting_value);
+  });
+
+  showToast(successMessage, "ok");
+  updateSummary();
+}
 
   async function saveSettingValue(key, value) {
     const db = ensureClient();
@@ -957,42 +1262,72 @@ updateSummary();
     if (box) box.classList.add("has-logo");
   }
 
-  async function uploadMainLogoIfSelected() {
-    const file = getSelectedLogoFile();
-    if (!file) return null;
+async function uploadMainLogoIfSelected() {
+  const file = getSelectedLogoFile();
+  if (!file) return null;
 
-    const db = ensureClient();
-    await getCompanyId();
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const ext = getFileExtension(file);
-    const path = `sofa2u/main-logo.${ext}`;
+  const ext = getFileExtension(file);
 
-    const { error: uploadError } = await db.storage
-      .from(COMPANY_ASSETS_BUCKET)
-      .upload(path, file, {
-        cacheControl: "3600",
-        upsert: true,
-        contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`
-      });
+  // Een eigen map per tenant en een nieuw bestand per upload.
+  const path = `${cid}/main-logo-${crypto.randomUUID()}.${ext}`;
 
-    if (uploadError) throw uploadError;
+  const { error: uploadError } = await db.storage
+    .from(COMPANY_ASSETS_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`
+    });
 
-    const { data } = db.storage
-      .from(COMPANY_ASSETS_BUCKET)
-      .getPublicUrl(path);
+  if (uploadError) throw uploadError;
 
-    const publicUrl = data?.publicUrl || "";
+  const { data } = db.storage
+    .from(COMPANY_ASSETS_BUCKET)
+    .getPublicUrl(path);
 
-    setFieldValue("main_logo_url", publicUrl);
-    setFieldValue("main_logo_storage_path", path);
+  const publicUrl = data?.publicUrl;
 
-    await saveSettingValue("main_logo_url", publicUrl);
-    await saveSettingValue("main_logo_storage_path", path);
-
-    renderLogoPreview(publicUrl);
-
-    return { publicUrl, path };
+  if (!publicUrl) {
+    throw new Error("Could not determine the uploaded logo URL.");
   }
+
+  // Controleer vóór opslaan opnieuw het actieve bedrijf.
+  await getCompanyId();
+
+  // Sla de URL en het opslagpad samen op.
+  const { error: saveError } = await db
+    .from("settings")
+    .upsert(
+      [
+        {
+          company_id: cid,
+          setting_key: "main_logo_url",
+          setting_value: publicUrl
+        },
+        {
+          company_id: cid,
+          setting_key: "main_logo_storage_path",
+          setting_value: path
+        }
+      ],
+      { onConflict: "company_id,setting_key" }
+    );
+
+  if (saveError) throw saveError;
+
+  settingsMap.set("main_logo_url", publicUrl);
+  settingsMap.set("main_logo_storage_path", path);
+
+  setFieldValue("main_logo_url", publicUrl);
+  setFieldValue("main_logo_storage_path", path);
+
+  renderLogoPreview(publicUrl);
+
+  return { publicUrl, path };
+}
 
   function getSelectedOwnerLogoFile() {
     const input = byId("owner_logo_file");
@@ -1042,335 +1377,705 @@ updateSummary();
     box.classList.add("has-logo");
   }
 
-  async function uploadOwnerLogoIfSelected() {
-    const file = getSelectedOwnerLogoFile();
-    const owner = getSelectedOwner();
+async function uploadOwnerLogoIfSelected() {
+  const file = getSelectedOwnerLogoFile();
+  if (!file) return null;
 
-    if (!file || !owner?.key) return null;
-
-    const db = ensureClient();
-    await getCompanyId();
-
-    const ext = getFileExtension(file);
-    const safeOwnerKey = String(owner.key)
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]/g, "_")
-      .replace(/_+/g, "_")
-      .replace(/^_+|_+$/g, "");
-
-    const path = `product-owners/${safeOwnerKey}/logo.${ext}`;
-
-    const { error: uploadError } = await db.storage
-      .from(COMPANY_ASSETS_BUCKET)
-      .upload(path, file, {
-        cacheControl: "3600",
-        upsert: true,
-        contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`
-      });
-
-    if (uploadError) throw uploadError;
-
-    const { data } = db.storage
-      .from(COMPANY_ASSETS_BUCKET)
-      .getPublicUrl(path);
-
-    const publicUrl = data?.publicUrl || "";
-
-    setFieldValue("owner_logo_url", publicUrl);
-    setFieldValue("owner_logo_storage_path", path);
-
-    renderOwnerLogoPreview(publicUrl);
-
-    return { publicUrl, path };
+  if (!ownerProfilesLoaded) {
+    throw new Error(
+      "Product owners have not been loaded successfully. Reload the page."
+    );
   }
 
-  function loadOwnerProfiles() {
-    const raw = settingsMap.get(OWNER_PROFILES_KEY);
+  const owner = getSelectedOwner();
 
-    if (!raw) {
-      ownerProfiles = DEFAULT_OWNER_PROFILES.map(row => ({ ...row }));
-      selectedOwnerKey = ownerProfiles[0]?.key || "";
-      return;
-    }
+  if (!owner?.key) {
+    throw new Error("Select a product owner before uploading a logo.");
+  }
 
+  const ownerKey = owner.key;
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const ext = getFileExtension(file);
+  const safeOwnerKey = String(ownerKey)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (!safeOwnerKey) {
+    throw new Error("The product owner key cannot be used for a logo upload.");
+  }
+
+  const path =
+    `${cid}/product-owners/${safeOwnerKey}/logo-${crypto.randomUUID()}.${ext}`;
+
+  const { error: uploadError } = await db.storage
+    .from(COMPANY_ASSETS_BUCKET)
+    .upload(path, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || `image/${ext === "jpg" ? "jpeg" : ext}`
+    });
+
+  if (uploadError) throw uploadError;
+
+  const { data } = db.storage
+    .from(COMPANY_ASSETS_BUCKET)
+    .getPublicUrl(path);
+
+  const publicUrl = data?.publicUrl;
+
+  if (!publicUrl) {
+    throw new Error("Could not determine the uploaded logo URL.");
+  }
+
+  await getCompanyId();
+
+  // Voorkom dat het logo bij een ander geselecteerd profiel terechtkomt.
+  if (getSelectedOwner()?.key !== ownerKey) {
+    throw new Error(
+      "The selected product owner changed during upload. Select the correct owner and try again."
+    );
+  }
+
+  setFieldValue("owner_logo_url", publicUrl);
+  setFieldValue("owner_logo_storage_path", path);
+
+  renderOwnerLogoPreview(publicUrl);
+
+  // De bestaande opslagfunctie bewaart deze velden bij het profiel.
+  return { publicUrl, path };
+}
+
+function loadOwnerProfiles() {
+  ownerProfilesLoaded = false;
+
+  const raw = settingsMap.get(OWNER_PROFILES_KEY);
+  let parsed;
+
+  // Geen opgeslagen profielen: begin met een lege lijst.
+  if (raw == null || String(raw).trim() === "") {
+    parsed = [];
+  } else {
     try {
-      const parsed = JSON.parse(raw);
-      ownerProfiles = Array.isArray(parsed) && parsed.length
-        ? parsed.map(owner => ({
-            ...owner,
-            logo_url: owner.logo_url || "",
-            logo_storage_path: owner.logo_storage_path || ""
-          }))
-        : DEFAULT_OWNER_PROFILES.map(row => ({ ...row }));
+      parsed = JSON.parse(raw);
     } catch {
-      ownerProfiles = DEFAULT_OWNER_PROFILES.map(row => ({ ...row }));
-    }
-
-    if (!selectedOwnerKey || !ownerProfiles.some(p => p.key === selectedOwnerKey)) {
-      selectedOwnerKey = ownerProfiles[0]?.key || "";
+      throw new Error(
+        "Product owner settings could not be read. Saving product owners is blocked to protect existing data."
+      );
     }
   }
 
-  async function saveOwnerProfiles() {
-    await saveSettingValue(OWNER_PROFILES_KEY, JSON.stringify(ownerProfiles));
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      "Product owner settings must contain a list. Saving product owners is blocked to protect existing data."
+    );
   }
+
+  const keys = new Set();
+
+  for (const owner of parsed) {
+    if (
+      !owner ||
+      typeof owner !== "object" ||
+      Array.isArray(owner) ||
+      typeof owner.key !== "string" ||
+      owner.key.trim() === ""
+    ) {
+      throw new Error(
+        "A saved product owner is invalid or has no key. Saving product owners is blocked to protect existing data."
+      );
+    }
+
+    if (keys.has(owner.key)) {
+      throw new Error(
+        "Duplicate product owner keys were found. Saving product owners is blocked to protect existing data."
+      );
+    }
+
+    keys.add(owner.key);
+  }
+
+  // Behoud alle opgeslagen velden, ook onbekende of later toegevoegde.
+  const loadedProfiles = parsed.map(owner => ({
+    ...owner,
+    logo_url: owner.logo_url ?? "",
+    logo_storage_path: owner.logo_storage_path ?? ""
+  }));
+
+  ownerProfiles = loadedProfiles;
+
+  if (!ownerProfiles.some(owner => owner.key === selectedOwnerKey)) {
+    selectedOwnerKey = ownerProfiles[0]?.key || "";
+  }
+
+  ownerProfilesLoaded = true;
+}
+
+async function saveOwnerProfiles() {
+  if (!ownerProfilesLoaded) {
+    throw new Error(
+      "Product owners have not been loaded successfully. Reload the page. Saving is blocked to protect existing data."
+    );
+  }
+
+  await saveSettingValue(
+    OWNER_PROFILES_KEY,
+    JSON.stringify(ownerProfiles)
+  );
+}
+
+
+function updateSelectedOwnerBillingUI() {
+  const owner = getSelectedOwner();
+
+  const warehouseInput = byId(
+    "owner_invoice_warehouse_enabled"
+  );
+
+  const transportInput = byId(
+    "owner_invoice_transport_enabled"
+  );
+
+  if (warehouseInput) {
+    warehouseInput.checked = owner
+      ? parseBool(owner.invoice_warehouse_enabled, true)
+      : false;
+  }
+
+  if (transportInput) {
+    transportInput.checked = owner
+      ? parseBool(owner.invoice_transport_enabled, true)
+      : false;
+  }
+
+  if (typeof window.updateOwnerTransportDependencies === "function") {
+    window.updateOwnerTransportDependencies();
+  }
+
+  const avatar = byId("ownerProfileAvatar");
+
+  if (avatar) {
+    const name = String(
+      owner?.trading_name || owner?.name || ""
+    ).trim();
+
+    const initials = name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(word => word.charAt(0).toUpperCase())
+      .join("");
+
+    avatar.textContent = initials || "PO";
+  }
+}
+
 
   function getSelectedOwner() {
     return ownerProfiles.find(p => p.key === selectedOwnerKey) || ownerProfiles[0] || null;
   }
 
-  function renderOwnerList() {
-    const mount = byId("ownerList");
-    if (!mount) return;
 
-    if (!ownerProfiles.length) {
-      mount.innerHTML = `<div class="note-box">No product owners configured yet.</div>`;
-      return;
-    }
 
-    mount.innerHTML = ownerProfiles.map(owner => `
-      <button class="owner-btn ${owner.key === selectedOwnerKey ? "active" : ""}" type="button" data-owner-key="${escapeHtml(owner.key)}">
-        <strong>${escapeHtml(owner.trading_name || owner.name || "Product Owner")}</strong>
-        <span>${escapeHtml(owner.name || "")}</span>
-      </button>
-    `).join("");
+function renderOwnerList() {
+  updateTenantHeader();
 
-    mount.querySelectorAll("[data-owner-key]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        selectedOwnerKey = btn.getAttribute("data-owner-key");
-        renderOwnerList();
-        renderOwnerEditor();
-      });
+  const mount = byId("ownerList");
+  if (!mount) return;
+
+  if (!ownerProfiles.length) {
+    mount.innerHTML = `
+      <div class="note-box">
+        No product owners configured yet.
+      </div>
+    `;
+    return;
+  }
+
+  mount.innerHTML = ownerProfiles.map(owner => `
+    <button
+      class="owner-btn ${
+        owner.key === selectedOwnerKey ? "active" : ""
+      }"
+      type="button"
+      data-owner-key="${escapeHtml(owner.key)}"
+    >
+      <strong>
+        ${escapeHtml(
+          owner.trading_name || owner.name || "Product Owner"
+        )}
+      </strong>
+
+      <span>
+        ${escapeHtml(owner.name || "")}
+      </span>
+    </button>
+  `).join("");
+
+  mount.querySelectorAll("[data-owner-key]").forEach(button => {
+    button.addEventListener("click", () => {
+      const nextKey = button.getAttribute("data-owner-key");
+
+      if (!nextKey || nextKey === selectedOwnerKey) {
+        return;
+      }
+
+      const currentOwner = getSelectedOwner();
+
+      if (currentOwner) {
+        let editedOwner;
+
+        try {
+          editedOwner = readOwnerEditor();
+        } catch (error) {
+          showToast(
+            error.message || "Could not read current settings.",
+            "err"
+          );
+          return;
+        }
+
+        // Compare each property by value rather than JSON
+        // property order or differences between string
+        // and boolean representations.
+        const changed = Object.keys(editedOwner).some(key => {
+          const original = currentOwner[key];
+          const edited = editedOwner[key];
+
+          if (original === edited) return false;
+
+          const booleanKeys = [
+            "invoice_warehouse_enabled",
+            "invoice_transport_enabled",
+            "auto_ack",
+            "auto_invoice",
+            "minimum_delivery_enabled",
+            "minimum_delivery_requires_approval",
+            "minimum_delivery_owner_can_approve",
+            "minimum_delivery_manual_override",
+            "regional_surcharge_enabled",
+            "fuel_surcharge_enabled"
+          ];
+
+          if (booleanKeys.includes(key)) {
+            const fallback = [
+              "invoice_warehouse_enabled",
+              "invoice_transport_enabled"
+            ].includes(key);
+
+            return parseBool(original, fallback) !==
+                   parseBool(edited, fallback);
+          }
+
+          return String(original ?? "") !==
+                 String(edited ?? "");
+        });
+
+        const pendingLogo = !!getSelectedOwnerLogoFile();
+
+        if (changed || pendingLogo) {
+          const confirmed = window.confirm(
+            "You have unsaved changes.\n\n" +
+            "Switch product owner and discard these changes?"
+          );
+
+          if (!confirmed) return;
+        }
+      }
+
+      selectedOwnerKey = nextKey;
+
+      renderOwnerList();
+      renderOwnerEditor();
     });
+  });
+}
+
+function renderOwnerEditor() {
+  const owner = getSelectedOwner();
+
+  const title = byId("ownerEditorTitle");
+
+  if (title) {
+    title.textContent = owner
+      ? (owner.trading_name || owner.name || "Product Owner")
+      : "Select product owner";
   }
 
-  function renderOwnerEditor() {
-    const owner = getSelectedOwner();
+  const fields = [
+    "name",
+    "trading_name",
+    "customer_code",
+    "display_code",
+    "vat",
+    "address1",
+    "address2",
+    "city",
+    "postcode",
+    "country",
+    "logo_url",
+    "logo_storage_path",
+    "invoice_email",
+    "ack_email",
+    "pod_email",
+    "ops_email",
+    "payment_terms_days",
+    "invoice_frequency",
+    "default_source_name",
+    "auto_ack",
+    "auto_invoice",
+    "minimum_delivery_enabled",
+    "minimum_delivery_volume_m3",
+    "minimum_delivery_transport_tariff_per_m3",
+    "minimum_delivery_requires_approval",
+    "minimum_delivery_owner_can_approve",
+    "minimum_delivery_manual_override",
+    "minimum_delivery_invoice_label",
+    "regional_surcharge_enabled",
+    "surcharge_edinburgh_glasgow_percent",
+    "surcharge_highlands_islands_percent",
+    "pricing_ireland_mode",
+    "fuel_surcharge_enabled",
+    "fuel_surcharge_percent",
+    "pricing_ack_note",
+    "pricing_invoice_note",
+    "notes"
+  ];
 
-    if (byId("ownerEditorTitle")) {
-      byId("ownerEditorTitle").textContent = owner
-        ? (owner.trading_name || owner.name)
-        : "Select product owner";
-    }
+  fields.forEach(field => {
+    setFieldValue(
+      `owner_${field}`,
+      owner?.[field] ?? ""
+    );
+  });
 
- [
-  "name",
-  "trading_name",
-  "customer_code",
-  "display_code",
-  "vat",
-  "address1",
-  "address2",
-  "city",
-  "postcode",
-  "country",
-  "logo_url",
-  "logo_storage_path",
-  "invoice_email",
-  "ack_email",
-  "pod_email",
-  "ops_email",
-  "payment_terms_days",
-  "invoice_frequency",
-  "default_source_name",
-"auto_ack",
-"auto_invoice",
-"minimum_delivery_enabled",
-"minimum_delivery_volume_m3",
-"minimum_delivery_transport_tariff_per_m3",
-"minimum_delivery_requires_approval",
-"minimum_delivery_owner_can_approve",
-"minimum_delivery_manual_override",
-"minimum_delivery_invoice_label",
+  setFieldValue(
+    "owner_auto_ack",
+    String(parseBool(owner?.auto_ack, false))
+  );
 
-"regional_surcharge_enabled",
-"surcharge_edinburgh_glasgow_percent",
-"surcharge_highlands_islands_percent",
-"pricing_ireland_mode",
-"fuel_surcharge_enabled",
-"fuel_surcharge_percent",
-"pricing_ack_note",
-"pricing_invoice_note",
+  setFieldValue(
+    "owner_auto_invoice",
+    String(parseBool(owner?.auto_invoice, false))
+  );
 
-"notes"
-].forEach(field => {
-  setFieldValue(`owner_${field}`, owner?.[field] ?? "");
-});
+  renderOwnerLogoPreview(owner?.logo_url || "");
 
-    setFieldValue("owner_auto_ack", String(owner?.auto_ack || false));
-    setFieldValue("owner_auto_invoice", String(owner?.auto_invoice || false));
-    renderOwnerLogoPreview(owner?.logo_url || "");
+  const logoInput = byId("owner_logo_file");
+
+  if (logoInput) {
+    logoInput.value = "";
   }
 
-  function readOwnerEditor() {
-    const owner = getSelectedOwner();
-    if (!owner) return null;
+  updateSelectedOwnerBillingUI();
+}
 
-    return {
-      ...owner,
-      name: getFieldValue("owner_name"),
-      trading_name: getFieldValue("owner_trading_name"),
-customer_code: getFieldValue("owner_customer_code"),
 
-display_code: getFieldValue("owner_display_code")
-  .trim()
-  .toUpperCase()
-  .slice(0, 3),
+function readOwnerEditor() {
+  const owner = getSelectedOwner();
 
-vat: getFieldValue("owner_vat"),
-      address1: getFieldValue("owner_address1"),
-      address2: getFieldValue("owner_address2"),
-      city: getFieldValue("owner_city"),
-      postcode: getFieldValue("owner_postcode"),
-      country: getFieldValue("owner_country", "United Kingdom"),
-      logo_url: getFieldValue("owner_logo_url"),
-      logo_storage_path: getFieldValue("owner_logo_storage_path"),
-      invoice_email: getFieldValue("owner_invoice_email"),
-      ack_email: getFieldValue("owner_ack_email"),
-      pod_email: getFieldValue("owner_pod_email"),
-      ops_email: getFieldValue("owner_ops_email"),
-      payment_terms_days: getFieldValue("owner_payment_terms_days", "14"),
-      invoice_frequency: getFieldValue("owner_invoice_frequency", "batch"),
-      default_source_name: getFieldValue("owner_default_source_name"),
-auto_ack: parseBool(getFieldValue("owner_auto_ack"), false),
-auto_invoice: parseBool(getFieldValue("owner_auto_invoice"), false),
+  if (!owner) return null;
 
-minimum_delivery_enabled: parseBool(getFieldValue("owner_minimum_delivery_enabled", "true"), true),
-minimum_delivery_volume_m3: getFieldValue("owner_minimum_delivery_volume_m3", "1.25"),
-minimum_delivery_transport_tariff_per_m3: getFieldValue("owner_minimum_delivery_transport_tariff_per_m3", "55.20"),
-minimum_delivery_requires_approval: parseBool(getFieldValue("owner_minimum_delivery_requires_approval", "true"), true),
-minimum_delivery_owner_can_approve: parseBool(getFieldValue("owner_minimum_delivery_owner_can_approve", "true"), true),
-minimum_delivery_manual_override: parseBool(getFieldValue("owner_minimum_delivery_manual_override", "true"), true),
-minimum_delivery_invoice_label: getFieldValue("owner_minimum_delivery_invoice_label", "Minimum Delivery Charge"),
+  // Preserve existing properties, including unknown fields.
+  const updatedOwner = { ...owner };
 
-regional_surcharge_enabled: parseBool(getFieldValue("owner_regional_surcharge_enabled", "true"), true),
-surcharge_edinburgh_glasgow_percent: getFieldValue("owner_surcharge_edinburgh_glasgow_percent", "20"),
-surcharge_highlands_islands_percent: getFieldValue("owner_surcharge_highlands_islands_percent", "40"),
-pricing_ireland_mode: getFieldValue("owner_pricing_ireland_mode", "price_on_request"),
+  const textFields = [
+    "name",
+    "trading_name",
+    "customer_code",
+    "display_code",
+    "vat",
+    "address1",
+    "address2",
+    "city",
+    "postcode",
+    "country",
+    "logo_url",
+    "logo_storage_path",
+    "invoice_email",
+    "ack_email",
+    "pod_email",
+    "ops_email",
+    "payment_terms_days",
+    "invoice_frequency",
+    "default_source_name",
+    "minimum_delivery_volume_m3",
+    "minimum_delivery_transport_tariff_per_m3",
+    "minimum_delivery_invoice_label",
+    "surcharge_edinburgh_glasgow_percent",
+    "surcharge_highlands_islands_percent",
+    "pricing_ireland_mode",
+    "fuel_surcharge_percent",
+    "pricing_ack_note",
+    "pricing_invoice_note",
+    "notes"
+  ];
 
-fuel_surcharge_enabled: parseBool(getFieldValue("owner_fuel_surcharge_enabled", "true"), true),
-fuel_surcharge_percent: getFieldValue("owner_fuel_surcharge_percent", "8.5"),
+  for (const field of textFields) {
+    const id = `owner_${field}`;
 
-pricing_ack_note: getFieldValue("owner_pricing_ack_note", ""),
-pricing_invoice_note: getFieldValue("owner_pricing_invoice_note", ""),
+    if (!byId(id)) continue;
 
-notes: getFieldValue("owner_notes")
-    };
+    updatedOwner[field] = getFieldValue(id);
   }
 
-  async function saveSelectedOwnerProfile() {
-    let owner = readOwnerEditor();
+  if (byId("owner_display_code")) {
+    updatedOwner.display_code = String(
+      updatedOwner.display_code || ""
+    ).toUpperCase().slice(0, 3);
+  }
 
-    if (!owner) {
-      showToast("Select a product owner first.", "err");
-      return;
+  const booleanFields = [
+    "auto_ack",
+    "auto_invoice",
+    "minimum_delivery_enabled",
+    "minimum_delivery_requires_approval",
+    "minimum_delivery_owner_can_approve",
+    "minimum_delivery_manual_override",
+    "regional_surcharge_enabled",
+    "fuel_surcharge_enabled"
+  ];
+
+  for (const field of booleanFields) {
+    const id = `owner_${field}`;
+
+    if (!byId(id)) continue;
+
+    const value = getFieldValue(id).toLowerCase();
+
+    if (["true", "1", "yes", "ja", "on"].includes(value)) {
+      updatedOwner[field] = true;
+    } else if (
+      ["false", "0", "no", "nee", "off"].includes(value)
+    ) {
+      updatedOwner[field] = false;
+    } else {
+      throw new Error(
+        `Please select a valid value for "${field}" before saving.`
+      );
     }
+  }
 
-    if (!owner.name && !owner.trading_name) {
-      showToast("Product owner name is required.", "err");
-      return;
-    }
+  // New independent service billing settings.
+  const warehouseInput = byId(
+    "owner_invoice_warehouse_enabled"
+  );
 
-    await uploadOwnerLogoIfSelected();
+  const transportInput = byId(
+    "owner_invoice_transport_enabled"
+  );
 
-    owner = readOwnerEditor();
-    ownerProfiles = ownerProfiles.map(row => row.key === owner.key ? owner : row);
+  if (!warehouseInput || !transportInput) {
+    throw new Error(
+      "Billing configuration fields are missing. Reload the settings page."
+    );
+  }
 
+  updatedOwner.invoice_warehouse_enabled =
+    warehouseInput.checked;
+
+  updatedOwner.invoice_transport_enabled =
+    transportInput.checked;
+
+  // Do not overwrite surcharge values when transport
+  // invoicing is disabled. Preserve their saved values.
+  if (!transportInput.checked) {
+    updatedOwner.regional_surcharge_enabled =
+      parseBool(owner.regional_surcharge_enabled, false);
+
+    updatedOwner.fuel_surcharge_enabled =
+      parseBool(owner.fuel_surcharge_enabled, false);
+  }
+
+  return updatedOwner;
+}
+
+  
+async function saveSelectedOwnerProfile() {
+  if (!ownerProfilesLoaded) {
+    throw new Error(
+      "Product owners have not been loaded successfully. Reload the page."
+    );
+  }
+
+  let owner = readOwnerEditor();
+
+  if (!owner) {
+    showToast("Select a product owner first.", "err");
+    return;
+  }
+
+  if (!owner.name && !owner.trading_name) {
+    showToast("Product owner name is required.", "err");
+    return;
+  }
+
+  // Keep the original owner key unchanged.
+  const originalOwner = getSelectedOwner();
+
+  if (!originalOwner || originalOwner.key !== owner.key) {
+    throw new Error(
+      "Selected product owner changed. Reload and try again."
+    );
+  }
+
+  // Upload the logo if a new file was selected.
+  await uploadOwnerLogoIfSelected();
+
+  // Read again after the upload so the new logo URL
+  // and storage path are included.
+  owner = readOwnerEditor();
+
+  if (!owner || owner.key !== originalOwner.key) {
+    throw new Error(
+      "Product owner changed during saving."
+    );
+  }
+
+  const previousProfiles = ownerProfiles;
+
+  const updatedProfiles = ownerProfiles.map(row =>
+    row.key === owner.key ? owner : row
+  );
+
+  ownerProfiles = updatedProfiles;
+
+  try {
     await saveOwnerProfiles();
-
-    renderOwnerList();
-    renderOwnerEditor();
-
-    const logoInput = byId("owner_logo_file");
-    if (logoInput) logoInput.value = "";
-
-    showToast("Product owner profile saved.", "ok");
+  } catch (error) {
+    // Restore the previous local data if saving fails.
+    ownerProfiles = previousProfiles;
+    throw error;
   }
 
-  async function addOwnerProfile() {
-    const name = getFieldValue("newOwnerName");
+  renderOwnerList();
+  renderOwnerEditor();
 
-    if (!name) {
-      showToast("Enter a product owner name first.", "err");
-      return;
-    }
+  showToast(
+    "Product owner profile and billing configuration saved.",
+    "ok"
+  );
+}
 
-    const key = name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
 
-    if (ownerProfiles.some(row => row.key === key)) {
-      showToast("This product owner already exists.", "err");
-      return;
-    }
+  
+async function addOwnerProfile() {
+  if (!ownerProfilesLoaded) {
+    throw new Error(
+      "Product owners have not been loaded successfully. Reload the page."
+    );
+  }
 
-    ownerProfiles.push({
-      key,
-      name,
-      trading_name: name,
-customer_code: key.toUpperCase(),
+  const name = getFieldValue("newOwnerName").trim();
 
-display_code: name
-  .trim()
-  .split(/\s+/)
-  .filter(Boolean)
-  .slice(0, 2)
-  .map(word => word.charAt(0).toUpperCase())
-  .join("")
-  .slice(0, 3),
+  if (!name) {
+    showToast("Enter a product owner name first.", "err");
+    return;
+  }
 
-vat: "",
-      address1: "",
-      address2: "",
-      city: "",
-      postcode: "",
-      country: "United Kingdom",
-      logo_url: "",
-      logo_storage_path: "",
-      invoice_email: "",
-      ack_email: "",
-      pod_email: "",
-      ops_email: "",
-      payment_terms_days: "14",
-      invoice_frequency: "batch",
-      default_source_name: name,
-auto_ack: false,
-auto_invoice: false,
+  const key = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
-minimum_delivery_enabled: true,
-minimum_delivery_volume_m3: "1.25",
-minimum_delivery_transport_tariff_per_m3: "55.20",
-minimum_delivery_requires_approval: true,
-minimum_delivery_owner_can_approve: true,
-minimum_delivery_manual_override: true,
-minimum_delivery_invoice_label: "Minimum Delivery Charge",
+  if (!key) {
+    throw new Error("Invalid product owner name.");
+  }
 
-regional_surcharge_enabled: true,
-surcharge_edinburgh_glasgow_percent: "20",
-surcharge_highlands_islands_percent: "40",
-pricing_ireland_mode: "price_on_request",
+  if (ownerProfiles.some(row => row.key === key)) {
+    showToast("This product owner already exists.", "err");
+    return;
+  }
 
-fuel_surcharge_enabled: true,
-fuel_surcharge_percent: "8.5",
+  const displayCode = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(word => word.charAt(0).toUpperCase())
+    .join("")
+    .slice(0, 3);
 
-pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.",
-pricing_invoice_note: "Fuel surcharge is calculated over the subtotal excluding VAT.",
+  const newOwner = {
+    key,
+    name,
+    trading_name: name,
+    customer_code: key.toUpperCase(),
+    display_code: displayCode,
 
-notes: ""
-    });
+    vat: "",
+    address1: "",
+    address2: "",
+    city: "",
+    postcode: "",
+    country: "United Kingdom",
 
-    selectedOwnerKey = key;
-    setFieldValue("newOwnerName", "");
+    logo_url: "",
+    logo_storage_path: "",
 
+    invoice_email: "",
+    ack_email: "",
+    pod_email: "",
+    ops_email: "",
+
+    payment_terms_days: "",
+    invoice_frequency: "batch",
+    default_source_name: name,
+
+    // Independent service invoicing.
+    invoice_warehouse_enabled: true,
+    invoice_transport_enabled: true,
+
+    auto_ack: false,
+    auto_invoice: false,
+
+    minimum_delivery_enabled: false,
+    minimum_delivery_volume_m3: "",
+    minimum_delivery_transport_tariff_per_m3: "",
+    minimum_delivery_requires_approval: true,
+    minimum_delivery_owner_can_approve: false,
+    minimum_delivery_manual_override: false,
+    minimum_delivery_invoice_label:
+      "Minimum Delivery Charge",
+
+    regional_surcharge_enabled: false,
+    surcharge_edinburgh_glasgow_percent: "",
+    surcharge_highlands_islands_percent: "",
+    pricing_ireland_mode: "price_on_request",
+
+    fuel_surcharge_enabled: false,
+    fuel_surcharge_percent: "",
+
+    pricing_ack_note: "",
+    pricing_invoice_note: "",
+
+    notes: ""
+  };
+
+  const previousProfiles = ownerProfiles;
+  const previousSelectedKey = selectedOwnerKey;
+
+  ownerProfiles = [...ownerProfiles, newOwner];
+  selectedOwnerKey = key;
+
+  try {
     await saveOwnerProfiles();
-
-    renderOwnerList();
-    renderOwnerEditor();
-
-    showToast("Product owner added.", "ok");
+  } catch (error) {
+    ownerProfiles = previousProfiles;
+    selectedOwnerKey = previousSelectedKey;
+    throw error;
   }
+
+  setFieldValue("newOwnerName", "");
+
+  renderOwnerList();
+  renderOwnerEditor();
+
+  showToast("Product owner added successfully.", "ok");
+}
+
 
   function vehicleIsActive(vehicle) {
     if (!vehicle) return false;
@@ -1397,22 +2102,129 @@ function updateSalesOrderPreview() {
   );
 }
 
- function updateSummary() {
-  const labour = toNumber(getFieldValue("labour_cost_per_hour_gbp"), 38.5);
-const vehicle = toNumber(getFieldValue("vehicle_cost_per_hour_gbp"), 8.5);
-  const diesel = toNumber(getFieldValue("diesel_price_per_litre_gbp_inc_vat"), 1.55);
-  const speed = toNumber(getFieldValue("average_speed_kmh"), 50);
-  const stopTime = toNumber(getFieldValue("stop_time_minutes"), 15);
-  const maxHours = toNumber(getFieldValue("max_route_duration_hours"), 9);
-  const activeCount = vehiclesCache.filter(vehicleIsActive).length;
+function updateTenantHeader() {
+  const tenantElement = byId("tenantFlowName");
+  const ownersElement = byId("tenantFlowOwners");
 
-  if (byId("summaryLabour")) byId("summaryLabour").textContent = `${formatMoney(labour)} / hour`;
-if (byId("summaryVehicle")) byId("summaryVehicle").textContent = `${formatMoney(vehicle)} / hour`;
-  if (byId("summaryDiesel")) byId("summaryDiesel").textContent = `£${diesel.toFixed(3)} / litre`;
-  if (byId("summarySpeed")) byId("summarySpeed").textContent = `${formatNumber(speed, 0)} km/h`;
-  if (byId("summaryStopTime")) byId("summaryStopTime").textContent = `${formatNumber(stopTime, 0)} min`;
-  if (byId("summaryMaxHours")) byId("summaryMaxHours").textContent = `${formatNumber(maxHours, 1)} h`;
-  if (byId("summaryActiveVehicles")) byId("summaryActiveVehicles").textContent = formatNumber(activeCount);
+  if (tenantElement) {
+    const tenantName = [
+      settingsMap.get("main_display_name"),
+      settingsMap.get("main_trading_name"),
+      settingsMap.get("main_company_name")
+    ]
+      .map(value => String(value ?? "").trim())
+      .find(value => value !== "");
+
+    tenantElement.textContent =
+      tenantName || "Company name not configured";
+  }
+
+  if (ownersElement) {
+    ownersElement.removeAttribute("title");
+
+    if (!ownerProfilesLoaded) {
+      ownersElement.textContent = "Product owners not loaded";
+      return;
+    }
+
+    const names = ownerProfiles.map(owner =>
+      String(owner.trading_name || "").trim() ||
+      String(owner.name || "").trim() ||
+      "Unnamed product owner"
+    );
+
+    if (!names.length) {
+      ownersElement.textContent = "No product owners configured";
+      return;
+    }
+
+    const maxVisible = 2;
+    const visibleNames = names.slice(0, maxVisible).join(" / ");
+    const remaining = names.length - maxVisible;
+
+    ownersElement.textContent = remaining > 0
+      ? `${visibleNames} (+${remaining} more)`
+      : visibleNames;
+
+    ownersElement.title =
+      `${names.length} product owners. View all in the Product Owners tab.`;
+  }
+}
+
+function updateSummary() {
+  updateTenantHeader();
+
+  const labour = toNumber(
+    getFieldValue("labour_cost_per_hour_gbp"), 38.5
+  );
+
+  const vehicle = toNumber(
+    getFieldValue("vehicle_cost_per_hour_gbp"), 8.5
+  );
+
+  const diesel = toNumber(
+    getFieldValue("diesel_price_per_litre_gbp_inc_vat"), 1.55
+  );
+
+  const speed = toNumber(
+    getFieldValue("average_speed_kmh"), 50
+  );
+
+  const stopTime = toNumber(
+    getFieldValue("stop_time_minutes"), 15
+  );
+
+  const maxHours = toNumber(
+    getFieldValue("max_route_duration_hours"), 9
+  );
+
+  const activeCount = vehiclesCache.filter(
+    vehicleIsActive
+  ).length;
+
+  if (byId("summaryLabour")) {
+    byId("summaryLabour").textContent =
+      `${formatMoney(labour)} / hour`;
+  }
+
+  if (byId("summaryVehicle")) {
+    byId("summaryVehicle").textContent =
+      `${formatMoney(vehicle)} / hour`;
+  }
+
+  if (byId("summaryDiesel")) {
+    byId("summaryDiesel").textContent =
+      `£${diesel.toFixed(3)} / litre`;
+  }
+
+  if (byId("summarySpeed")) {
+    byId("summarySpeed").textContent =
+      `${formatNumber(speed, 0)} km/h`;
+  }
+
+  if (byId("summaryStopTime")) {
+    const mode = getFieldValue("unloading_time_mode");
+
+    const labels = {
+      fixed: "fixed",
+      orders: "+ orders",
+      volume: "+ volume",
+      combined: "+ orders + volume"
+    };
+
+    byId("summaryStopTime").textContent =
+      `${formatNumber(stopTime, 0)} min ${labels[mode] || "fixed"}`;
+  }
+
+  if (byId("summaryMaxHours")) {
+    byId("summaryMaxHours").textContent =
+      `${formatNumber(maxHours, 1)} h`;
+  }
+
+  if (byId("summaryActiveVehicles")) {
+    byId("summaryActiveVehicles").textContent =
+      formatNumber(activeCount);
+  }
 }
 
   async function loadVehicles() {
@@ -3254,8 +4066,444 @@ async function loadShops() {
     });
   }
 
+
+// ================================================
+// VEYNOR - EMISSION ZONE SETTINGS
+// ================================================
+
+let emissionZonesCache = [];
+
+const EMISSION_PREF_KEY =
+  "emission_zone_preferences";
+
+function readEmissionPreferences() {
+  const raw = settingsMap.get(EMISSION_PREF_KEY);
+
+  if (!raw) return {};
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(
+      "Invalid saved emission-zone preferences."
+    );
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error(
+      "Invalid emission-zone preference format."
+    );
+  }
+
+  return parsed;
+}
+
+// Load zones from the central Supabase database
+
+
+async function loadEmissionZones() {
+  const mount = byId("emissionZoneList");
+  const status = byId("emissionZoneStatus");
+
+  if (!mount) return;
+
+  if (status) status.textContent = "Loading emission zones...";
+
+  const { data, error } = await ensureClient()
+    .from("emission_zones")
+    .select("zone_code, zone_name, status")
+    .order("zone_name");
+
+  if (error) {
+    emissionZonesCache = [];
+    mount.replaceChildren();
+
+    if (status) {
+      status.textContent = `Cannot load zones: ${error.message}`;
+    }
+    return;
+  }
+
+  emissionZonesCache = data || [];
+  const preferences = readEmissionPreferences();
+
+  const imageFiles = {
+    BATH_CAZ: "bath-caz.png",
+    BIRMINGHAM_CAZ: "birmingham-caz.png",
+    BRADFORD_CAZ: "bradford-caz.png",
+    BRISTOL_CAZ: "bristol-caz.png",
+    NEWCASTLE_CAZ: "newcastle-caz.png",
+    OXFORD_ZEZ: "oxford-zez.png",
+    PORTSMOUTH_CAZ: "portsmouth-caz.png",
+    SHEFFIELD_CAZ: "sheffield-caz.png"
+  };
+
+  const londonCodes = [
+    "LONDON_CONGESTION",
+    "LONDON_LEZ",
+    "LONDON_ULEZ"
+  ];
+
+  const londonZones = londonCodes
+    .map(code => emissionZonesCache.find(z => z.zone_code === code))
+    .filter(Boolean);
+
+  const otherZones = emissionZonesCache.filter(
+    zone => !londonCodes.includes(zone.zone_code)
+  );
+
+  // Keep unsaved checkbox changes when refreshing the list.
+  const currentInputs = mount.querySelectorAll(
+    "[data-emission-zone]"
+  );
+
+  currentInputs.forEach(input => {
+    if (!input.disabled) {
+      preferences[input.dataset.emissionZone] = input.checked;
+    }
+  });
+
+  function renderOption(zone) {
+    const active = zone.status === "active";
+    const enabled = preferences[zone.zone_code] !== false;
+
+    return `
+      <label class="emission-zone-option">
+        <span>
+          <strong>${escapeHtml(zone.zone_name)}</strong>
+          <span class="transport-zone-description"
+                style="display:block">
+            ${escapeHtml(zone.zone_code)}
+          </span>
+          <span class="subline">
+            ${active ? "Active zone" : escapeHtml(zone.status)}
+          </span>
+        </span>
+
+        <span style="white-space:nowrap">
+          <input
+            type="checkbox"
+            data-emission-zone="${escapeHtml(zone.zone_code)}"
+            ${enabled && active ? "checked" : ""}
+            ${!active ? "disabled" : ""}
+          >
+          Alerts
+        </span>
+      </label>
+    `;
+  }
+
+  function renderAccordion(title, zones, imageFile, groupKey) {
+    const imagePath = imageFile
+      ? `/assets/emission-zones/${imageFile}`
+      : "";
+
+    const activeCount = zones.filter(
+      zone => zone.status === "active"
+    ).length;
+
+    const enabledCount = zones.filter(
+      zone => zone.status === "active" &&
+        preferences[zone.zone_code] !== false
+    ).length;
+
+    const isLondon = groupKey === "london";
+    const icon = isLondon ? "◆" : "◉";
+
+    return `
+      <details
+        class="emission-zone-accordion"
+        data-emission-group="${escapeHtml(groupKey)}"
+      >
+        <summary>
+          <div class="emission-header-main">
+            <span class="emission-header-icon">${icon}</span>
+
+            <span class="emission-header-text">
+              <strong>${escapeHtml(title)}</strong>
+              <small>
+                ${isLondon
+                  ? "ULEZ · LEZ · Congestion Charge"
+                  : escapeHtml(zones[0].zone_code)}
+              </small>
+            </span>
+          </div>
+
+          <div class="emission-header-meta">
+            <span class="emission-status-pill">
+              ${activeCount} active
+            </span>
+
+            <span
+              class="emission-alert-count"
+              data-alert-count
+            >
+              ${enabledCount}/${activeCount} alerts
+            </span>
+
+            <span class="emission-chevron">⌄</span>
+          </div>
+        </summary>
+
+        <div class="emission-zone-content">
+          <div class="emission-map-panel">
+            ${imagePath ? `
+              <img
+                src="${escapeHtml(imagePath)}"
+                alt="${escapeHtml(title)} illustrative map"
+                class="emission-zone-image"
+                loading="lazy"
+                tabindex="0"
+                role="button"
+                title="Click to enlarge map"
+              >
+
+              <button
+                type="button"
+                class="mini-btn emission-enlarge-button"
+                data-enlarge-emission-map
+              >
+                ⛶ Enlarge map
+              </button>
+            ` : `
+              <div class="note-box">
+                No illustration configured.
+              </div>
+            `}
+          </div>
+
+          <div class="emission-settings-panel">
+            <div class="emission-settings-heading">
+              <strong>Zone Settings</strong>
+              <span class="subline">
+                Configure individual alerts
+              </span>
+            </div>
+
+            <div class="emission-zone-options">
+              ${zones.map(renderOption).join("")}
+            </div>
+
+            <div class="emission-info-panel">
+              <strong>Route Detection</strong>
+              <p>
+                Geographic boundaries are managed centrally
+                in Supabase. Illustrative maps do not
+                determine route detection.
+              </p>
+              <p>
+                Vehicle eligibility and official charges
+                depend on the vehicle and zone rules.
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
+    `;
+  }
+
+  const html = [];
+
+  if (londonZones.length) {
+    html.push(
+      renderAccordion(
+        "London Emission & Charging Zones",
+        londonZones,
+        "london-emission-zones.png",
+        "london"
+      )
+    );
+  }
+
+  otherZones.forEach(zone => {
+    html.push(
+      renderAccordion(
+        zone.zone_name,
+        [zone],
+        imageFiles[zone.zone_code] || "",
+        zone.zone_code
+      )
+    );
+  });
+
+  mount.innerHTML = html.join("");
+
+  // Only one accordion may be open at a time.
+  const accordions = Array.from(
+    mount.querySelectorAll(".emission-zone-accordion")
+  );
+
+  accordions.forEach(accordion => {
+    accordion.addEventListener("toggle", () => {
+      if (!accordion.open) return;
+
+      accordions.forEach(other => {
+        if (other !== accordion && other.open) {
+          other.open = false;
+        }
+      });
+    });
+  });
+
+  // Image enlargement using the existing Settings dialog.
+  function enlargeMap(image) {
+    if (!image) return;
+
+    if (typeof openPricingImage === "function") {
+      openPricingImage(image.src, image.alt);
+    }
+  }
+
+  mount.querySelectorAll(".emission-zone-image")
+    .forEach(img => {
+      img.addEventListener("click", () => enlargeMap(img));
+
+      img.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          enlargeMap(img);
+        }
+      });
+    });
+
+  mount.querySelectorAll("[data-enlarge-emission-map]")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        const image = button
+          .closest(".emission-map-panel")
+          ?.querySelector(".emission-zone-image");
+
+        enlargeMap(image);
+      });
+    });
+
+  // Update alert counters immediately when a checkbox changes.
+  mount.querySelectorAll("[data-emission-zone]")
+    .forEach(input => {
+      input.addEventListener("change", () => {
+        const accordion = input.closest(
+          ".emission-zone-accordion"
+        );
+
+        if (!accordion) return;
+
+        const inputs = Array.from(
+          accordion.querySelectorAll("[data-emission-zone]")
+        ).filter(item => !item.disabled);
+
+        const enabled = inputs.filter(
+          item => item.checked
+        ).length;
+
+        const counter = accordion.querySelector(
+          "[data-alert-count]"
+        );
+
+        if (counter) {
+          counter.textContent =
+            `${enabled}/${inputs.length} alerts`;
+        }
+      });
+    });
+
+  if (status) {
+    const activeCount = emissionZonesCache.filter(
+      zone => zone.status === "active"
+    ).length;
+
+    status.textContent =
+      `${activeCount} active zones · ` +
+      `${emissionZonesCache.length} total · ` +
+      `${html.length} regions`;
+  }
+}
+
+async function saveEmissionZones() {
+  if (!emissionZonesCache.length) {
+    throw new Error(
+      "Load the zone list before saving."
+    );
+  }
+
+  const preferences = readEmissionPreferences();
+
+  const inputs = byId("emissionZoneList")
+    .querySelectorAll("[data-emission-zone]");
+
+  inputs.forEach(input => {
+    if (!input.disabled) {
+      preferences[input.dataset.emissionZone] =
+        input.checked;
+    }
+  });
+
+  await saveSettingsByIds(
+    [
+      "emission_alert_delivery",
+      "emission_alert_route",
+      "emission_display_map"
+    ],
+    "Emission alert preferences saved."
+  );
+
+  await saveSettingValue(
+    EMISSION_PREF_KEY,
+    JSON.stringify(preferences)
+  );
+
+  showToast(
+    "Emission zone preferences saved.",
+    "ok"
+  );
+}
+
+
   function bindEvents() {
     bindTabs();
+
+
+// Refresh emission zones
+
+byId("btnRefreshEmissionZones")
+  ?.addEventListener("click", async () => {
+    try {
+      await loadEmissionZones();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message, "err");
+    }
+  });
+
+// Save emission zone preferences
+
+byId("btnSaveEmissionZones")
+  ?.addEventListener("click", async () => {
+    try {
+      await saveEmissionZones();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message, "err");
+    }
+  });
+
+
+[
+  "stop_time_minutes",
+  "unloading_time_mode",
+  "unloading_extra_minutes_per_order",
+  "unloading_volume_threshold_m3",
+  "unloading_extra_minutes_per_m3",
+  "unloading_volume_rounding"
+].forEach(id => {
+  byId(id)?.addEventListener("input", updateSummary);
+  byId(id)?.addEventListener("change", updateSummary);
+});
 
 byId("main_logo_file")?.addEventListener("change", previewSelectedLogoFile);
 byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile);
@@ -3274,14 +4522,26 @@ byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile
       }
     });
 
-    byId("btnSaveTransport")?.addEventListener("click", async () => {
-      try {
-        await saveSettingsByIds(collectFieldsInside("tab-transport"), "Transport settings saved.");
-      } catch (error) {
-        console.error(error);
-        showToast(error.message || "Could not save transport settings.", "err");
-      }
-    });
+byId("btnSaveTransport")?.addEventListener("click", async () => {
+  try {
+    // Controleer eerst de nieuwe lostijdinstellingen.
+    validateUnloadingSettings();
+
+    // Sla alle transportinstellingen op in Supabase.
+    await saveSettingsByIds(
+      collectFieldsInside("tab-transport"),
+      "Transport and unloading settings saved."
+    );
+
+  } catch (error) {
+    console.error("Transport settings error:", error);
+
+    showToast(
+      error.message || "Could not save transport settings.",
+      "err"
+    );
+  }
+});
 
 byId("btnSaveWarehouse")?.addEventListener("click", async () => {
   try {
@@ -3304,17 +4564,26 @@ byId("btnSaveWarehouse")?.addEventListener("click", async () => {
       }
     });
 
+
 byId("btnSavePricing")?.addEventListener("click", async () => {
   try {
+    validatePricingSettings();
+
     await saveSettingsByIds(
       collectFieldsInside("tab-pricing"),
       "Pricing settings saved."
     );
+
   } catch (error) {
-    console.error(error);
-    showToast(error.message || "Could not save pricing settings.", "err");
+    console.error("Pricing settings error:", error);
+
+    showToast(
+      error.message || "Could not save pricing settings.",
+      "err"
+    );
   }
 });
+
 
     byId("btnSaveAutomation")?.addEventListener("click", async () => {
       try {
@@ -3483,27 +4752,40 @@ byId("btnRefreshPortalUsers")?.addEventListener("click", async () => {
     });
   }
 
-  async function init() {
-    try {
-      ensureClient();
-      bindEvents();
+async function init() {
+  try {
+    ensureClient();
 
-      await getCompanyId();
+
+await getCompanyId();
 await loadSettings();
+await loadEmissionZones();
 await loadVehicles();
-await loadPortalUsers();
-await loadDriverUsers();
-await loadShops();
 
-renderDriverDropdowns();
-renderDriversTable();
+    await loadPortalUsers();
+    await loadDriverUsers();
+    await loadShops();
 
-      console.log("Veynor tenant settings loaded for:", TENANT_NAME);
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Settings page failed to load.", "err");
-    }
+    renderDriverDropdowns();
+    renderDriversTable();
+
+    // Koppel de algemene knoppen pas na succesvol laden.
+    bindEvents();
+
+    console.log(
+      "Veynor tenant settings loaded for company:",
+      companyId
+    );
+  } catch (error) {
+    console.error("Settings page failed to load:", error);
+
+    showToast(
+      error.message ||
+        "Settings could not be loaded. Reload the page before making changes.",
+      "err"
+    );
   }
+}
 
   document.addEventListener("DOMContentLoaded", init);
 })();

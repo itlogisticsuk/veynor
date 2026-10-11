@@ -11,10 +11,25 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
-  <script src="/js/supabase.js"></script>
-  <script src="/js/page-guard.js" defer></script>
-  <script src="/js/layout.js" defer></script>
-  <script src="/js/order-import.js" defer></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/page-guard.js" defer></script>
+<script src="/js/layout.js" defer></script>
+<script src="/js/veynor-progress.js"></script>
+
+<!-- PDF generation -->
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
+  defer>
+</script>
+
+<!-- Central pricing engine -->
+<script src="/js/pricing-engine.js" defer></script>
+
+<!-- Acknowledgement generator -->
+<script src="/js/acknowledgement-generator.js" defer></script>
+
+<!-- Order import -->
+<script src="/js/order-import.js" defer></script>
 
   <style>
     .import-page{display:grid;gap:14px}
@@ -283,14 +298,45 @@
           </div>
         </div>
 
-        <div class="upload-box">
-          <div class="custom-file">
-            <input id="ordersImportFile" type="file" accept=".xlsx,.xls,.csv"/>
-            <div class="custom-file-row">
-              <label for="ordersImportFile" class="btn" role="button">Choose File</label>
-              <span class="custom-file-name" id="excelFileStatus">No file selected</span>
-            </div>
-          </div>
+
+<div class="upload-box">
+
+  <!-- PRODUCT OWNER SELECTIE -->
+  <div class="field">
+    <label for="productOwnerName">Product Owner</label>
+    <select id="productOwnerName" class="select" required>
+      <option value="">Loading product owners...</option>
+    </select>
+    <span class="subline">
+      Select the product owner for this import.
+      Products and billing details will be linked to this owner.
+    </span>
+  </div>
+
+  <!-- EXCEL BESTAND SELECTEREN -->
+  <div class="custom-file">
+    <input
+      id="ordersImportFile"
+      type="file"
+      accept=".xlsx,.xls,.csv"
+    />
+
+    <div class="custom-file-row">
+      <label
+        for="ordersImportFile"
+        class="btn"
+        role="button">
+        Choose File
+      </label>
+
+      <span
+        class="custom-file-name"
+        id="excelFileStatus">
+        No file selected
+      </span>
+    </div>
+  </div>
+
 
           <div class="field">
             <label for="excelSourceType">Excel Source Type</label>

@@ -1,30 +1,12 @@
+
 (function () {
   "use strict";
 
+  // Supabase Storage bucket.
   const DOCUMENT_BUCKET = "order-documents";
-  const DEFAULT_VAT_RATE = 0.20;
-  const DEFAULT_ACK_LEAD_DAYS = 21;
 
-  const FALLBACK_COMPANY = {
-    name: "Sofa2U Ltd",
-    displayName: "Sofa2U",
-    address: "860-862 Garratt Lane, London, SW17 0NB",
-    phone: "+44 (0) 7894 469947",
-    email: "sales@sofa2u.co.uk",
-    vat: "GB 368 665 249",
-    logoUrl: "",
-    footerText: ""
-  };
-
-  const DEFAULT_PRICING = {
-    fuel_surcharge_percent: "8.5",
-    surcharge_edinburgh_glasgow_percent: "20",
-    surcharge_highlands_islands_percent: "40",
-    pricing_ireland_mode: "price_on_request",
-    pricing_ack_note: "Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice."
-  };
-
-  const DAMAGE_NOTE = "All goods must be checked for damage and reported within 5 days of delivery.";
+  // Pricing is configured centrally in Tenant Settings.
+  // No hardcoded rates, surcharges or pricing notes.
 
   const PAGE = {
     left: 14,
@@ -35,20 +17,29 @@
   };
 
   function toNumber(value, fallback = 0) {
-    const num = Number(String(value ?? "").replace(",", "."));
+    const num = Number(
+      String(value ?? "").replace(",", ".")
+    );
+
     return Number.isFinite(num) ? num : fallback;
   }
 
   function round2(value) {
-    return Math.round((toNumber(value, 0) + Number.EPSILON) * 100) / 100;
+    return Math.round(
+      (toNumber(value, 0) + Number.EPSILON) * 100
+    ) / 100;
   }
 
   function cleanText(value) {
-    return String(value ?? "").replace(/\s+/g, " ").trim();
+    return String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   function normalize(value) {
-    return String(value ?? "").trim().toLowerCase();
+    return String(value ?? "")
+      .trim()
+      .toLowerCase();
   }
 
 function isCollectionOrder(order) {
@@ -439,7 +430,7 @@ function isChargeableOrder(order) {
   return order?.is_chargeable !== false;
 }
 
-function calculatePricing(order, settings) {
+function calculatePricing(order, settings, currentProductOwner = {}) {
   /*
    * Een expliciet gratis order moet altijd
    * volledig £0.00 blijven.
@@ -474,16 +465,18 @@ function calculatePricing(order, settings) {
    * Gebruik bij voorkeur de centrale
    * pricing engine.
    */
-  if (
-    window.VeynorPricing
-      ?.calculateOrderPricing
-  ) {
-    return window.VeynorPricing
-      .calculateOrderPricing(
-        order,
-        settings
-      );
-  }
+
+if (
+  window.VeynorPricing
+    ?.calculateOrderPricing
+) {
+  return window.VeynorPricing
+    .calculateOrderPricing(
+      order,
+      settings,
+      currentProductOwner
+    );
+}
 
   /*
    * Fallback wanneer pricing-engine.js
@@ -647,46 +640,124 @@ function calculatePricing(order, settings) {
     }
   }
 
-  async function loadCompanySettings(client, companyId) {
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
 
-    if (error) {
-      console.warn("ACK company settings skipped:", error.message);
-      return {
-        settings: { ...DEFAULT_PRICING },
-        company: { ...FALLBACK_COMPANY },
-        vatRate: DEFAULT_VAT_RATE,
-        ackLeadDays: DEFAULT_ACK_LEAD_DAYS,
-        pricingAckNote: DEFAULT_PRICING.pricing_ack_note
-      };
+
+async function loadCompanySettings(client, companyId) {
+  if (!companyId) {
+    throw new Error(
+      "Cannot generate ACK: companyId is missing."
+    );
+  }
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
+
+  if (error) {
+    throw new Error(
+      "Cannot generate ACK: company settings could not be loaded. " +
+      error.message
+    );
+  }
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
+
+  const getRequiredText = (key, label) => {
+    const value = cleanText(map.get(key));
+
+    if (!value) {
+      throw new Error(
+        `Cannot generate ACK: ${label} is missing. ` +
+        "Configure it in Tenant Settings."
+      );
     }
 
-    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
-    const settings = {
-      ...DEFAULT_PRICING,
-      ...getSettingsObject(map)
-    };
+    return value;
+  };
 
-    return {
-      settings,
-      company: {
-        name: map.get("main_company_name") || FALLBACK_COMPANY.name,
-        displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
-        address: map.get("main_address") || FALLBACK_COMPANY.address,
-        phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
-        email: map.get("main_email") || FALLBACK_COMPANY.email,
-        vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
-        logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
-        footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
-      },
-      vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
-      ackLeadDays: Math.round(toNumber(map.get("ack_lead_days") || map.get("default_ack_lead_days") || map.get("doc_ack_lead_days"), DEFAULT_ACK_LEAD_DAYS)),
-      pricingAckNote: map.get("pricing_ack_note") || DEFAULT_PRICING.pricing_ack_note
-    };
+  const getRequiredNumber = (key, label) => {
+    const raw = getRequiredText(key, label);
+    const value = Number(raw.replace(",", "."));
+
+    if (!Number.isFinite(value)) {
+      throw new Error(
+        `Cannot generate ACK: ${label} must be a valid number.`
+      );
+    }
+
+    return value;
+  };
+
+  const companyName = getRequiredText(
+    "main_company_name",
+    "Tenant Company Name"
+  );
+
+  const damageNote = getRequiredText(
+    "doc_damage_note",
+    "Damage Note"
+  );
+
+  const ackLeadDays = getRequiredNumber(
+    "doc_ack_lead_days",
+    "ACK Lead Days"
+  );
+
+  if (!Number.isInteger(ackLeadDays) || ackLeadDays < 0) {
+    throw new Error(
+      "ACK Lead Days must be a non-negative whole number."
+    );
   }
+
+  const vatRate = getRequiredNumber(
+    "doc_vat_rate",
+    "VAT Rate"
+  );
+
+  if (vatRate < 0 || vatRate > 1) {
+    throw new Error(
+      "VAT Rate must be entered as a decimal, e.g. 0.20."
+    );
+  }
+
+  // Preserve all tenant settings for the pricing engine.
+  // No hardcoded tariff defaults.
+  const settings = getSettingsObject(map);
+
+  return {
+    settings,
+
+    company: {
+      name: companyName,
+      displayName:
+        cleanText(map.get("main_display_name")) ||
+        companyName,
+      address: cleanText(map.get("main_address")),
+      phone: cleanText(map.get("main_phone")),
+      email: cleanText(map.get("main_email")),
+      vat: cleanText(map.get("main_vat")),
+      logoUrl: cleanText(map.get("main_logo_url")),
+      footerText: cleanText(
+        map.get("document_footer_text")
+      )
+    },
+
+    vatRate,
+    ackLeadDays,
+    damageNote,
+
+    pricingAckNote: String(
+      map.get("pricing_ack_note") ?? ""
+    )
+  };
+}
+
 
 async function loadProductOwnerProfile(client, customerId, order, settings = {}) {
   const ownerName = normalize(getProductOwnerName(order));
@@ -828,7 +899,7 @@ unit_volume_m3,
   function drawHeader(doc, order, ctx, logoDataUrl, compact = false) {
     const company = ctx.company;
     const ackDate = new Date();
-    const expectedDate = addDays(ackDate, ctx.ackLeadDays || DEFAULT_ACK_LEAD_DAYS);
+    const expectedDate = addDays(ackDate, ctx.ackLeadDays);
     const supplierRef = getSupplierReference(order);
 
     const logoAdded = addLogo(doc, logoDataUrl, 14, 9, 35, 18);
@@ -2232,20 +2303,52 @@ const normalSubtotal =
   return y + 2;
 }
 
-function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
-  y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+
+function drawMemoAndDamageNote(
+  doc,
+  y,
+  order,
+  ctx,
+  logoDataUrl
+) {
+  y = maybeAddNewPage(
+    doc,
+    y + 1,
+    order,
+    ctx,
+    logoDataUrl,
+    false
+  );
 
   const memo = getMemo(order);
 
   if (memo) {
-    const memoLines = splitText(doc, memo, 170).slice(0, 3);
-    const boxHeight = Math.max(10, memoLines.length * 3.5 + 6);
+    const memoLines = splitText(
+      doc,
+      memo,
+      170
+    ).slice(0, 3);
+
+    const boxHeight = Math.max(
+      10,
+      memoLines.length * 3.5 + 6
+    );
 
     doc.setFillColor(248, 248, 248);
     doc.setDrawColor(210, 210, 210);
-    doc.roundedRect(14, y - 4, 182, boxHeight, 1.6, 1.6, "FD");
+
+    doc.roundedRect(
+      14,
+      y - 4,
+      182,
+      boxHeight,
+      1.6,
+      1.6,
+      "FD"
+    );
 
     setDark(doc);
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.2);
     doc.text("Memo", 17, y + 1);
@@ -2257,31 +2360,42 @@ function drawMemoAndDamageNote(doc, y, order, ctx, logoDataUrl) {
     y += boxHeight + 2;
   }
 
-  y = maybeAddNewPage(doc, y + 1, order, ctx, logoDataUrl, false);
+  // Use the centrally configured Damage Note
+  // for both delivery and collection ACKs.
+  const noteText = cleanText(ctx.damageNote);
 
-  setDark(doc);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7.2);
+  if (!noteText) {
+    return y;
+  }
 
-const noteText =
-  isCollectionOrder(order)
-    ? "Goods must be checked for damage or discrepancies at the time of collection."
-    : DAMAGE_NOTE;
-
-const noteLines =
-  splitText(
+  const noteLines = splitText(
     doc,
     noteText,
     180
   );
 
-doc.text(
-  noteLines.slice(0, 2),
-  14,
-  y
-);
+  const lineHeight = 3.6;
 
-  return y + 5;
+  for (const line of noteLines) {
+    y = maybeAddNewPage(
+      doc,
+      y + 1,
+      order,
+      ctx,
+      logoDataUrl,
+      false
+    );
+
+    setDark(doc);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.2);
+
+    doc.text(line, 14, y);
+
+    y += lineHeight;
+  }
+
+  return y + 2;
 }
 
   function drawBusinessFooter(doc, company) {
@@ -2380,7 +2494,7 @@ async function createPdfBlob(order, ctx) {
     fuel_surcharge_percent:
       ctx.productOwner?.fuel_surcharge_percent ??
       ctx.settings?.fuel_surcharge_percent
-  });
+}, ctx.productOwner || {});
 
 ctx.pricing = pricing;
 

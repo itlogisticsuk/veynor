@@ -2901,8 +2901,11 @@ async function insertExpectedAllocations(
 
 async function updateOrders(
   client,
-  updates
+  updates,
+  onProgress = null
 ) {
+  let completed = 0;
+
   for (const row of updates) {
     const summary =
       row.summary;
@@ -2966,13 +2969,27 @@ async function updateOrders(
     if (error) {
       throw error;
     }
+
+    completed++;
+
+    if (typeof onProgress === "function") {
+      onProgress({
+        stage: "orders",
+        completed,
+        total: updates.length,
+        orderNumber: row.summary?.order_number || ""
+      });
+    }
   }
 }
 
-  async function updateOrderLines(
+async function updateOrderLines(
   client,
-  updates
+  updates,
+  onProgress = null
 ) {
+  let completed = 0;
+
   for (const row of updates) {
     for (
       const line
@@ -3066,13 +3083,27 @@ async function updateOrders(
               line.order_line_id
             );
 
+
         if (fallback.error) {
           throw fallback.error;
         }
       }
     }
+
+    // All order lines for this order have been processed.
+    completed++;
+
+    if (typeof onProgress === "function") {
+      onProgress({
+        stage: "lines",
+        completed,
+        total: updates.length,
+        orderNumber: row.summary?.order_number || ""
+      });
+    }
   }
 }
+
 
 
   function buildEventRows(companyId, allocationRows, orderUpdates) {
@@ -3156,6 +3187,27 @@ async function updateOrders(
   }
 
 async function run(options = {}) {
+  const onProgress =
+    typeof options.onProgress === "function"
+      ? options.onProgress
+      : null;
+
+  function reportProgress(stage, completed = 0, total = 0) {
+    if (!onProgress) return;
+
+    try {
+      onProgress({
+        stage,
+        completed,
+        total
+      });
+    } catch (error) {
+      console.warn(
+        "[AllocationEngine] Progress callback failed:",
+        error
+      );
+    }
+  }
   const client =
     sbClient();
 
@@ -3167,6 +3219,8 @@ async function run(options = {}) {
 
   const dryRun =
     Boolean(options.dryRun);
+
+  reportProgress("loading");
 
   const fetchedOrders =
     await fetchOrders(
@@ -3224,6 +3278,8 @@ async function run(options = {}) {
       companyId
     )
   ]);
+
+  reportProgress("stock_loaded");
 
   console.log(
     "EXPECTED STOCK",
@@ -3296,6 +3352,8 @@ console.log(
       expectedAllocationRows
     );
 
+  reportProgress("allocations_calculated");
+
   if (!dryRun) {
     await insertAllocations(
       client,
@@ -3315,12 +3373,36 @@ console.log(
 
     await updateOrders(
       client,
-      orderUpdates
+      orderUpdates,
+      onProgress
+        ? info => {
+            try {
+              onProgress(info);
+            } catch (error) {
+              console.warn(
+                "[AllocationEngine] Progress callback failed:",
+                error
+              );
+            }
+          }
+        : null
     );
 
     await updateOrderLines(
       client,
-      orderUpdates
+      orderUpdates,
+      onProgress
+        ? info => {
+            try {
+              onProgress(info);
+            } catch (error) {
+              console.warn(
+                "[AllocationEngine] Progress callback failed:",
+                error
+              );
+            }
+          }
+        : null
     );
 
     const events =
@@ -3332,6 +3414,12 @@ console.log(
 
     await logEvents(events);
   }
+
+  reportProgress(
+    "finished",
+    orders.length,
+    orders.length
+  );
 
   return {
     dryRun,

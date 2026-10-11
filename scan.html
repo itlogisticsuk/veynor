@@ -7,7 +7,10 @@
 
   <link rel="stylesheet" href="/css/theme.css"/>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <script src="/js/supabase.js"></script>
   <script src="/js/page-guard.js?v=2" defer></script>
   <script src="/js/event-log.js"></script>
@@ -80,6 +83,143 @@
     @media(max-width:760px){
       .scan-form-grid,.scan-kpi-grid,.scan-state{grid-template-columns:1fr}
     }
+
+
+/* =====================================================
+   VEYNOR — BULK STOCK IMPORT
+   ===================================================== */
+
+.bulk-stock-panel {
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.bulk-stock-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 15px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.bulk-stock-summary::-webkit-details-marker {
+  display: none;
+}
+
+.bulk-stock-summary:hover {
+  background: #f8fafc;
+}
+
+.bulk-stock-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bulk-stock-heading strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.bulk-stock-heading small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.bulk-stock-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  background: #eff6ff;
+  color: #2563eb;
+  border-radius: 9px;
+  font-size: 19px;
+}
+
+.bulk-stock-arrow {
+  font-size: 18px;
+  color: #64748b;
+  transition: transform .2s ease;
+}
+
+.bulk-stock-panel[open] .bulk-stock-arrow {
+  transform: rotate(180deg);
+}
+
+.bulk-stock-content {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.bulk-stock-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bulk-stock-progress {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.bulk-stock-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #1e40af;
+}
+
+.bulk-stock-progress-track {
+  width: 100%;
+  height: 10px;
+  background: #dbeafe;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.bulk-stock-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #2563eb;
+  border-radius: 999px;
+  transition: width .2s ease;
+}
+
+@media (max-width: 900px) {
+  .bulk-stock-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .bulk-stock-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bulk-stock-content {
+    padding: 11px;
+  }
+}
+
   </style>
 </head>
 
@@ -220,18 +360,288 @@
                 <button id="btnRefreshScanData" class="btn" type="button">Refresh Data</button>
               </div>
 
+
               <div class="note-box">
-                Inbound flow: scan warehouse → scan location → scan one or more SKUs. If a new warehouse is scanned, the current location is cleared and must be scanned again.
+                Inbound flow: scan warehouse → scan location → scan one or more SKUs.
+                If a new warehouse is scanned, the current location is cleared
+                and must be scanned again.
               </div>
+
             </section>
+
+            <!-- =====================================================
+                 VEYNOR — BULK STOCK IMPORT
+                 ===================================================== -->
+
+            <section class="card scan-card" style="box-shadow:none;">
+
+              <details id="bulkStockImportPanel" class="bulk-stock-panel">
+
+                <summary class="bulk-stock-summary">
+                  <span class="bulk-stock-heading">
+                    <span class="bulk-stock-icon">▤</span>
+                    <span>
+                      <strong>Bulk Stock Import</strong>
+                      <small>Import stock from Excel or CSV</small>
+                    </span>
+                  </span>
+
+                  <span class="bulk-stock-arrow">⌄</span>
+                </summary>
+
+                <div class="bulk-stock-content">
+
+                  <p class="section-sub">
+                    Import complete products into a warehouse location.
+                    Products are matched by SKU and Product Owner.
+                    Preview and validate all rows before booking stock.
+                  </p>
+
+                  <!-- PRODUCT OWNER / WAREHOUSE / LOCATION -->
+
+                  <div class="scan-form-grid">
+
+                    <div class="field">
+                      <label for="bulkStockOwner">Product Owner</label>
+                      <select id="bulkStockOwner" class="select">
+                        <option value="">Select product owner</option>
+                      </select>
+                    </div>
+
+                    <div class="field">
+                      <label for="bulkStockWarehouse">Warehouse</label>
+                      <select id="bulkStockWarehouse" class="select">
+                        <option value="">Select warehouse</option>
+                      </select>
+                    </div>
+
+                    <div class="field">
+                      <label for="bulkStockLocation">Location</label>
+                      <select id="bulkStockLocation" class="select">
+                        <option value="">Select location</option>
+                      </select>
+                    </div>
+
+                  </div>
+
+                  <!-- REFERENCE / FILE / TEMPLATE -->
+
+                  <div class="scan-form-grid">
+
+                    <div class="field">
+                      <label for="bulkStockReference">
+                        Reference / Batch / Container
+                      </label>
+                      <input
+                        id="bulkStockReference"
+                        class="input"
+                        type="text"
+                        placeholder="e.g. TEST-STOCK-20261011"
+                      />
+                    </div>
+
+                    <div class="field">
+                      <label for="bulkStockFile">Excel / CSV File</label>
+                      <input
+                        id="bulkStockFile"
+                        class="input"
+                        type="file"
+                        accept=".xlsx,.xls,.csv"
+                      />
+                    </div>
+
+                    <div class="field">
+                      <label>Import Template</label>
+                      <button
+                        id="btnDownloadBulkStockTemplate"
+                        class="btn"
+                        type="button"
+                      >
+                        Download Excel Template
+                      </button>
+                    </div>
+
+                  </div>
+
+                  <!-- ACTION BUTTONS -->
+
+                  <div class="scan-actions">
+
+                    <button
+                      id="btnPreviewBulkStock"
+                      class="btn btn-primary"
+                      type="button"
+                    >
+                      Preview Stock Import
+                    </button>
+
+                    <button
+                      id="btnClearBulkStock"
+                      class="btn"
+                      type="button"
+                    >
+                      Clear
+                    </button>
+
+                  </div>
+
+                  <!-- IMPORT SUMMARY -->
+
+                  <div
+                    id="bulkStockSummary"
+                    class="bulk-stock-summary-grid"
+                    style="display:none;"
+                  >
+
+                    <div class="state-box">
+                      <div class="state-label">Excel Rows</div>
+                      <div id="bulkStockTotalRows" class="state-value">0</div>
+                    </div>
+
+                    <div class="state-box">
+                      <div class="state-label">Valid Rows</div>
+                      <div id="bulkStockValidRows" class="state-value">0</div>
+                    </div>
+
+                    <div class="state-box">
+                      <div class="state-label">Errors</div>
+                      <div id="bulkStockErrorRows" class="state-value">0</div>
+                    </div>
+
+                    <div class="state-box">
+                      <div class="state-label">Total Units</div>
+                      <div id="bulkStockTotalUnits" class="state-value">0</div>
+                    </div>
+
+                  </div>
+
+                  <!-- IMPORT PREVIEW -->
+
+                  <div
+                    id="bulkStockPreview"
+                    style="display:none;"
+                  >
+
+                    <div class="section-head">
+                      <div>
+                        <h3 class="section-title">Import Preview</h3>
+                        <p class="section-sub">
+                          Check all products, quantities, warehouse
+                          and location before confirming the import.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div class="table-wrap">
+
+                      <table class="scan-table">
+                        <thead>
+                          <tr>
+                            <th>Row</th>
+                            <th>SKU</th>
+                            <th>Product</th>
+                            <th>Owner</th>
+                            <th>Quantity</th>
+                            <th>Packages</th>
+                            <th>Volume (m³)</th>
+                            <th>Warehouse</th>
+                            <th>Location</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+
+                        <tbody id="bulkStockPreviewBody">
+                          <tr>
+                            <td colspan="10">
+                              No import preview available.
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                    </div>
+
+                    <div class="scan-actions">
+
+                      <button
+                        id="btnConfirmBulkStock"
+                        class="btn btn-primary"
+                        type="button"
+                        disabled
+                      >
+                        Confirm &amp; Book Stock
+                      </button>
+
+                      <button
+                        id="btnCancelBulkStock"
+                        class="btn"
+                        type="button"
+                      >
+                        Cancel Preview
+                      </button>
+
+                    </div>
+
+                  </div>
+
+                  <!-- IMPORT PROGRESS -->
+
+                  <div
+                    id="bulkStockProgress"
+                    class="bulk-stock-progress"
+                    style="display:none;"
+                  >
+
+                    <div class="bulk-stock-progress-header">
+                      <strong id="bulkStockProgressTitle">
+                        Importing stock...
+                      </strong>
+                      <span id="bulkStockProgressPercent">0%</span>
+                    </div>
+
+                    <div class="bulk-stock-progress-track">
+                      <div
+                        id="bulkStockProgressBar"
+                        class="bulk-stock-progress-fill"
+                      ></div>
+                    </div>
+
+                    <p
+                      id="bulkStockProgressText"
+                      class="section-sub"
+                    >
+                      Preparing stock import...
+                    </p>
+
+                  </div>
+
+                  <div class="note-box">
+                    Bulk imports create physical stock items and complete
+                    stock sets using the same rules as manual Scan In.
+                    Unknown SKUs, invalid quantities and duplicate batches
+                    must be checked before importing.
+                  </div>
+
+                </div>
+
+              </details>
+
+            </section>
+
+            <!-- =====================================================
+                 INBOUND HISTORY — EXISTING SECTION
+                 ===================================================== -->
 
             <section class="card scan-card" style="box-shadow:none;">
               <div class="section-head">
                 <div>
                   <h2 class="section-title">Inbound history</h2>
-                  <p class="section-sub">Latest inbound scans during this session.</p>
+                  <p class="section-sub">
+                    Latest inbound scans during this session.
+                  </p>
                 </div>
               </div>
+
 
               <div class="table-wrap">
                 <table class="scan-table">

@@ -7,12 +7,16 @@
 
   <link rel="stylesheet" href="/css/theme.css"/>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBH...="
-    crossorigin=""
-  />
+<link
+  rel="stylesheet"
+  href="/js/planning-engine/route-workspace.css"
+/>
+
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  crossorigin=""
+/>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/supabase.js"></script>
@@ -23,19 +27,31 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js" defer></script>
 
-<script src="/js/planning-engine.js" defer></script>
+<script src="/js/planning-engine/planning-engine.js" defer></script>
+<script src="/js/planning-engine/route-workspace.js" defer></script>
+<script src="/js/planning-engine/route-workspace-ui.js" defer></script>
+<script src="/js/planning-engine/route-workspace-stops.js" defer></script>
+<script src="/js/planning-engine/route-workspace-settings.js" defer></script>
+<script src="/js/planning-engine/route-workspace-map.js" defer></script>
+<script src="/js/planning-engine/route-workspace-suggestions.js" defer></script>
 
 <script
   src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
   crossorigin=""
 ></script>
 
+
 <script src="/js/orders-map.js" defer></script>
 <script src="/js/occ-tools/fds-notice-generator.js?v=20260710-3" defer></script>
 <script src="/js/delivery-note-generator.js" defer></script>
 <script src="/js/occ-tools/delivery-label-generator.js" defer></script>
+
+<!-- Universal Veynor Progress Popup -->
+<script src="/js/veynor-progress.js" defer></script>
+
 <script src="/js/available-vehicles.js" defer></script>
 <script src="/js/orders.js" defer></script>
+
 
 <style>
     .planner-page{display:grid;gap:14px;padding-bottom:24px}
@@ -68,7 +84,79 @@
     .controls-actions,.map-actions,.vehicle-row-actions,.detail-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
     .planner-meta{font-size:11.5px;color:var(--muted);font-weight:800}
 
-    .filters-grid{display:grid;grid-template-columns:1.15fr .75fr .75fr .75fr .75fr;gap:12px;align-items:end}
+
+/* =====================================================
+   VEYNOR — COMPACT PLANNER FILTERS
+   ===================================================== */
+
+.filters-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 1.4fr)
+    minmax(140px, 1fr)
+    minmax(140px, 1fr)
+    minmax(140px, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.planner-more-filters {
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.planner-more-filters summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #334155;
+  list-style: none;
+  user-select: none;
+}
+
+.planner-more-filters summary::-webkit-details-marker {
+  display: none;
+}
+
+.planner-more-filters summary:hover {
+  background: #eef4ff;
+}
+
+.planner-more-filter-arrow {
+  font-size: 16px;
+  transition: transform .2s ease;
+}
+
+.planner-more-filters[open] .planner-more-filter-arrow {
+  transform: rotate(180deg);
+}
+
+.planner-more-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid #dce5ef;
+}
+
+@media (max-width: 1100px) {
+  .filters-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 650px) {
+  .filters-grid,
+  .planner-more-filters-grid {
+    grid-template-columns: 1fr;
+  }
+}
     .assignment-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end}
     .field{display:grid;gap:6px}
     .field label{font-size:11.5px;font-weight:800;color:#374151}
@@ -202,8 +290,7 @@
 
     @media (max-width:1480px){
       .planner-layout{grid-template-columns:1fr}
-      .filters-grid,.assignment-grid{grid-template-columns:1fr}
-      .map-box{min-height:540px}
+.assignment-grid{grid-template-columns:repeat(2,minmax(0,1fr))}      .map-box{min-height:540px}
     }
 
     @media (max-width:920px){
@@ -302,63 +389,106 @@
             </div>
 
             <div class="planner-panel-body">
-              <div class="filters-grid">
-                <div class="field">
-                  <label for="orderSearch">Search</label>
-                  <div class="search-wrap">
-                    <input id="orderSearch" class="input" type="text" placeholder="Order, product owner, retailer, city, postcode or driver..."/>
-                    <span class="search-icon">⌕</span>
-                  </div>
-                </div>
 
-                <div class="field">
-                  <label for="filterStatus">Order Status</label>
-                  <select id="filterStatus" class="select">
-                    <option value="">All statuses</option>
-                    <option value="ready_for_planning">ready_for_planning</option>
-                    <option value="ready_for_picking">ready_for_picking</option>
-                    <option value="planned">planned</option>
-                    <option value="sent_to_driver">sent_to_driver</option>
-                    <option value="out_for_delivery">out_for_delivery</option>
-                    <option value="loaded">loaded</option>
-                    <option value="delivered">delivered</option>
-                    <option value="delivery_issue">delivery_issue</option>
-                    <option value="partial_delivery">partial_delivery</option>
-                    <option value="failed_delivery">failed_delivery</option>
-                    <option value="not_delivered">not_delivered</option>
-                    <option value="returned">returned</option>
-                    <option value="export_for_charter">export_for_charter</option>
-                  </select>
-                </div>
+<!-- =====================================================
+     VEYNOR — COMPACT ORDER FILTERS
+     ===================================================== -->
 
-                <div class="field">
-                  <label for="filterCompletion">Completion</label>
-                  <select id="filterCompletion" class="select">
-                    <option value="">All completion</option>
-                    <option value="open">Open / not completed</option>
-                    <option value="stock_complete">Stock complete only</option>
-                    <option value="delivered">Delivered</option>
-                    <option value="issue">Delivery issue / partial</option>
-                    <option value="failed">Failed / not delivered</option>
-                  </select>
-                </div>
+<div class="filters-grid">
 
-                <div class="field">
-                  <label for="filterRoute">Route Assignment</label>
-                  <select id="filterRoute" class="select">
-                    <option value="">All orders</option>
-                    <option value="unplanned">Unplanned only</option>
-                    <option value="planned">Planned only</option>
-                  </select>
-                </div>
+  <div class="field">
+    <label for="orderSearch">Search</label>
+    <div class="search-wrap">
+      <input
+        id="orderSearch"
+        class="input"
+        type="text"
+        placeholder="Order, city, postcode..."
+      />
+      <span class="search-icon">⌕</span>
+    </div>
+  </div>
 
-                <div class="field">
-                  <label for="filterDriver">Driver</label>
-                  <select id="filterDriver" class="select">
-                    <option value="">All drivers</option>
-                  </select>
-                </div>
-              </div>
+  <div class="field">
+    <label for="filterProductOwner">Product Owner</label>
+    <select id="filterProductOwner" class="select">
+      <option value="">All customers</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="filterStatus">Order Status</label>
+    <select id="filterStatus" class="select">
+      <option value="">All active statuses</option>
+      <option value="ready_for_planning">Ready for Planning</option>
+      <option value="ready_for_picking">Ready for Picking</option>
+      <option value="planned">Planned</option>
+      <option value="sent_to_driver">Sent to Driver</option>
+      <option value="out_for_delivery">Out for Delivery</option>
+      <option value="loaded">Loaded</option>
+      <option value="delivered">Delivered</option>
+      <option value="delivery_issue">Delivery Issue</option>
+      <option value="partial_delivery">Partial Delivery</option>
+      <option value="failed_delivery">Failed Delivery</option>
+      <option value="not_delivered">Not Delivered</option>
+      <option value="returned">Returned</option>
+      <option value="export_for_charter">Export for Charter</option>
+      <option value="awaiting_pickup">Awaiting Pickup</option>
+      <option value="pickup_confirmed">Pickup Confirmed</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label for="filterEmissionZones">Emission Zones</label>
+    <select id="filterEmissionZones" class="select">
+      <option value="">All orders</option>
+      <option value="inside">Inside emission zone</option>
+      <option value="outside">Outside emission zone</option>
+    </select>
+  </div>
+
+</div>
+
+<details class="planner-more-filters" id="plannerMoreFilters">
+  <summary>
+    <span>More Filters</span>
+    <span class="planner-more-filter-arrow">⌄</span>
+  </summary>
+
+  <div class="planner-more-filters-grid">
+
+    <div class="field">
+      <label for="filterCompletion">Completion</label>
+      <select id="filterCompletion" class="select">
+        <option value="">All completion</option>
+        <option value="open">Open / Not Completed</option>
+        <option value="stock_complete">Stock Complete</option>
+        <option value="delivered">Delivered</option>
+        <option value="issue">Delivery Issue / Partial</option>
+        <option value="failed">Failed / Not Delivered</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="filterRoute">Route Assignment</label>
+      <select id="filterRoute" class="select">
+        <option value="">All orders</option>
+        <option value="unplanned">Unplanned Only</option>
+        <option value="planned">Planned Only</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="filterDriver">Driver</label>
+      <select id="filterDriver" class="select">
+        <option value="">All drivers</option>
+      </select>
+    </div>
+
+  </div>
+</details>
+
+<!-- END COMPACT ORDER FILTERS -->
 
               <div class="assignment-grid">
                 <div class="field">
@@ -388,7 +518,6 @@
                   <label class="toggle-chip"><input id="toggleCharterOnly" type="checkbox"/> Charter only</label>
                   <label class="toggle-chip"><input id="checkAllOrders" type="checkbox"/> Select all visible orders</label>
                   <label class="toggle-chip"><input id="manualFinalizeEta" type="checkbox"/> Confirm ETA window now</label>
-                  <label class="toggle-chip"><input id="toggleHideCompleted" type="checkbox"/> Hide completed</label>
                 </div>
 
                 <div class="options-right">

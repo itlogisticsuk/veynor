@@ -17,6 +17,8 @@ let allProducts = [];
 let deliveryDateHistoryMap =
   new Map();
 let ownerProfiles = [];
+let occPricingSettings = new Map();
+let occInvoiceSnapshots = new Map();
 let deliveryGroupsMap = new Map();
 let closedDeliveryGroupOrderIds = new Set();
 let showDeliveryGroups = false;
@@ -3046,137 +3048,347 @@ function getLineRevenue(line) {
   );
 }
 
-function getOrderBaseRevenue(order) {
-  /*
-   * Een gratis serviceorder moet altijd
-   * £0.00 tonen, ook wanneer oude orderregels
-   * nog bedragen bevatten.
-   */
-  if (order.is_chargeable === false) {
-    return 0;
+
+/* ==========================================================
+   VEYNOR — OCC INVOICE PROTECTION
+   Prevent editing tariffs on invoiced orders
+   ========================================================== */
+
+function isOccOrderInvoiced(order) {
+  if (!order) return false;
+
+  const status = normalize(
+    order.finance_status ||
+    order.derived_finance_status ||
+    ""
+  );
+
+  if (
+    [
+      "invoice_generated",
+      "invoice_sent",
+      "invoiced",
+      "paid",
+      "partially_paid",
+      "overdue"
+    ].includes(status)
+  ) {
+    return true;
   }
 
-  const direct =
-    toNumber(
-      order.total_customer_charge,
-      0
-    );
+  const documents = Array.isArray(order.order_documents)
+    ? order.order_documents
+    : [];
 
-  if (direct !== 0) {
-    return round2(direct);
-  }
-
-  return round2(
-    (order.order_lines || []).reduce(
-      (sum, line) => {
-        return (
-          sum +
-          getLineRevenue(line)
-        );
-      },
-      0
+  return documents.some(doc =>
+    ["invoice", "credit_note"].includes(
+      normalize(doc.document_type)
+    ) && (
+      !!doc.file_url ||
+      ["generated", "sent", "paid"].includes(
+        normalize(doc.document_status)
+      )
     )
   );
 }
 
-function getOrderTransportRevenue(order) {
-  if (order.is_chargeable === false) {
-    return 0;
+
+/* ==========================================================
+   VEYNOR — OCC CENTRAL FINANCIAL CALCULATIONS
+   Pricing Engine v2.0
+   ========================================================== */
+
+function getOccCentralPricing(order) {
+  if (!order) {
+    throw new Error("Order missing for OCC pricing.");
   }
 
-  const direct =
-    toNumber(
-      order.total_transport_tariff,
-      0
+  // Already invoiced orders must never be repriced.
+  if (isOccOrderInvoiced(order)) {
+    return null;
+  }
+
+  const engine = window.VeynorPricing;
+
+  if (!engine?.calculateOrderPricing) {
+    throw new Error(
+      "Veynor Pricing Engine v2.0 is unavailable."
     );
-
-  if (direct !== 0) {
-    return round2(direct);
   }
 
-  return round2(
-    (order.order_lines || []).reduce(
-      (sum, line) => {
-        const qty =
-          getLineRequiredQty(line) ||
-          1;
+  if (!occPricingSettings?.size) {
+    throw new Error(
+      "OCC pricing settings have not been loaded."
+    );
+  }
 
-        return (
-          sum +
-          (
-            toNumber(
-              line.tariff_transport,
-              0
-            ) * qty
-          )
-        );
-      },
-      0
-    )
+  const owner = getOwnerProfileForOrder(order);
+
+if (!owner) {
+  console.warn(
+    "OCC: Product Owner pricing profile missing:",
+    order.order_number || order.id
+  );
+
+  return {
+    pricingUnavailable: true,
+    priceOnRequest: true,
+    warehouse: 0,
+    baseTransport: 0,
+    regionalSurcharge: 0,
+    regional: {
+      percent: 0,
+      label: "Unknown"
+    },
+    subtotalExFuel: 0
+  };
+}
+  return engine.calculateOrderPricing(
+    order,
+    occPricingSettings,
+    owner
   );
 }
 
-function getRegionalSurchargeRate(order) {
-  const region =
-    normalize(
-      order.delivery_region ||
-      ""
-    );
 
-  /*
-   * Bellstone-regels:
-   *
-   * Edinburgh / Glasgow:
-   * 20% over de transportkosten.
-   *
-   * Highlands & Islands:
-   * 40% over de transportkosten.
-   */
+/* ==========================================================
+   HISTORICAL OCC DISPLAY
+   Preserve previous OCC calculations until invoice
+   snapshots are loaded per order.
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — OCC FINAL INVOICE SNAPSHOT LOOKUP
+   ========================================================== */
+
+function getOccInvoiceSnapshot(order) {
+  if (!order?.id || !isOccOrderInvoiced(order)) {
+    return null;
+  }
+
+  return occInvoiceSnapshots.get(String(order.id)) || null;
+}
+
+
+function getOccHistoricalPricing(order) {
+  if (order.is_chargeable === false) {
+    return {
+      base: 0,
+      transport: 0,
+      regional: 0,
+      total: 0
+    };
+  }
+
+  const lines = Array.isArray(order.order_lines)
+    ? order.order_lines
+    : [];
+
+  const directBase = toNumber(
+    order.total_customer_charge,
+    0
+  );
+
+  const base = directBase !== 0
+    ? round2(directBase)
+    : round2(
+        lines.reduce(
+          (sum, line) => sum + getLineRevenue(line),
+          0
+        )
+      );
+
+  const directTransport = toNumber(
+    order.total_transport_tariff,
+    0
+  );
+
+  const transport = directTransport !== 0
+    ? round2(directTransport)
+    : round2(
+        lines.reduce((sum, line) => {
+          const qty = getLineRequiredQty(line) || 1;
+
+          return sum +
+            toNumber(line.tariff_transport, 0) * qty;
+        }, 0)
+      );
+
+  const region = normalize(
+    order.delivery_region || ""
+  );
+
+  let rate = 0;
+
   if (
     region.includes("highland") ||
     region.includes("island")
   ) {
-    return 0.40;
-  }
-
-  if (
+    rate = 0.40;
+  } else if (
     region.includes("edinburgh") ||
     region.includes("glasgow")
   ) {
-    return 0.20;
+    rate = 0.20;
   }
 
-  return 0;
+  const regional = round2(transport * rate);
+
+  return {
+    base,
+    transport,
+    regional,
+    total: round2(base + regional)
+  };
 }
 
-function getOrderRegionalSurcharge(order) {
-  if (order.is_chargeable === false) {
+
+/* ==========================================================
+   BASE REVENUE
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — OCC FINANCIAL REVENUE
+   Pricing Engine v2.0 + Final Invoice Snapshots
+   ========================================================== */
+
+function getOrderBaseRevenue(order) {
+  const snapshot = getOccInvoiceSnapshot(order);
+
+  if (snapshot) {
+    return round2(
+      toNumber(snapshot.warehouse_amount, 0) +
+      toNumber(snapshot.transport_base_amount, 0)
+    );
+  }
+
+  if (isOccOrderInvoiced(order)) {
+    return getOccHistoricalPricing(order).base;
+  }
+
+  const pricing = getOccCentralPricing(order);
+
+  if (pricing.pricingUnavailable || pricing.priceOnRequest) {
+    return null;
+  }
+
+  return round2(
+    pricing.warehouse + pricing.baseTransport
+  );
+}
+
+/* ==========================================================
+   TRANSPORT REVENUE
+   ========================================================== */
+
+function getOrderTransportRevenue(order) {
+  const snapshot = getOccInvoiceSnapshot(order);
+
+  if (snapshot) {
+    return round2(
+      toNumber(snapshot.transport_base_amount, 0)
+    );
+  }
+
+  if (isOccOrderInvoiced(order)) {
+    return getOccHistoricalPricing(order).transport;
+  }
+
+  const pricing = getOccCentralPricing(order);
+
+  if (pricing.pricingUnavailable || pricing.priceOnRequest) {
+    return null;
+  }
+
+  return round2(pricing.baseTransport);
+}
+
+/* ==========================================================
+   REGIONAL SURCHARGE RATE
+   ========================================================== */
+
+function getRegionalSurchargeRate(order) {
+  const snapshot = getOccInvoiceSnapshot(order);
+
+  if (snapshot) {
+    return toNumber(
+      snapshot.regional_surcharge_pct,
+      0
+    ) / 100;
+  }
+
+  if (isOccOrderInvoiced(order)) {
+    const historical = getOccHistoricalPricing(order);
+
+    return historical.transport !== 0
+      ? historical.regional / historical.transport
+      : 0;
+  }
+
+  const pricing = getOccCentralPricing(order);
+
+  if (pricing.pricingUnavailable || pricing.priceOnRequest) {
     return 0;
   }
 
-  const transportRevenue =
-    getOrderTransportRevenue(order);
-
-  const regionalRate =
-    getRegionalSurchargeRate(order);
-
-  return round2(
-    transportRevenue *
-    regionalRate
-  );
+  return toNumber(pricing.regional?.percent, 0) / 100;
 }
 
+/* ==========================================================
+   REGIONAL SURCHARGE
+   ========================================================== */
+
+function getOrderRegionalSurcharge(order) {
+  const snapshot = getOccInvoiceSnapshot(order);
+
+  if (snapshot) {
+    return round2(
+      toNumber(snapshot.regional_surcharge_amount, 0)
+    );
+  }
+
+  if (isOccOrderInvoiced(order)) {
+    return getOccHistoricalPricing(order).regional;
+  }
+
+  const pricing = getOccCentralPricing(order);
+
+  if (pricing.pricingUnavailable || pricing.priceOnRequest) {
+    return 0;
+  }
+
+  return round2(pricing.regionalSurcharge);
+}
+
+/* ==========================================================
+   TOTAL ORDER REVENUE BEFORE FUEL
+   ========================================================== */
+
 function getOrderRevenue(order) {
-  const baseRevenue =
-    getOrderBaseRevenue(order);
+  const snapshot = getOccInvoiceSnapshot(order);
 
-  const regionalSurcharge =
-    getOrderRegionalSurcharge(order);
+  if (snapshot) {
+    return round2(
+      toNumber(snapshot.warehouse_amount, 0) +
+      toNumber(snapshot.transport_base_amount, 0) +
+      toNumber(snapshot.regional_surcharge_amount, 0) +
+      toNumber(snapshot.minimum_delivery_charge_amount, 0)
+    );
+  }
 
-  return round2(
-    baseRevenue +
-    regionalSurcharge
-  );
+  if (isOccOrderInvoiced(order)) {
+    return getOccHistoricalPricing(order).total;
+  }
+
+  const pricing = getOccCentralPricing(order);
+
+  if (pricing.pricingUnavailable || pricing.priceOnRequest) {
+    return null;
+  }
+
+  return round2(pricing.subtotalExFuel);
 }
 
 function getProductPackageCount(product) {
@@ -3409,6 +3621,53 @@ function getLineMatchedQty(line) {
 
 function getProductCompleteness(order) {
 
+
+  // Manual completion: planning approval without physical stock allocation.
+  if (order?.manual_completion_override === true) {
+    const lines = Array.isArray(order.order_lines)
+      ? order.order_lines.filter(line =>
+          normalize(line.line_type) !== "manual"
+        )
+      : [];
+
+    const required = lines.reduce(
+      (sum, line) => sum + getLineRequiredPackages(line),
+      0
+    );
+
+    const matched = lines.reduce(
+      (sum, line) => sum + Math.min(
+        getLineMatchedQty(line),
+        getLineRequiredPackages(line)
+      ),
+      0
+    );
+
+    return {
+      required,
+      matched,
+      missing: Math.max(0, required - matched),
+pct: required > 0 ? Math.min(100, Math.round((matched / required) * 100)) : 0,
+      status: "complete",
+      manualOverride: true,
+      lines: lines.map(line => ({
+        id: line.id,
+        sku: getLineSku(line),
+        description: getLineDescription(line),
+        required: getLineRequiredPackages(line),
+        matched: getLineMatchedQty(line),
+        missing: Math.max(
+          0,
+          getLineRequiredPackages(line) - getLineMatchedQty(line)
+        ),
+        orderedProducts: getLineRequiredQty(line),
+        complete: false,
+        revenue: getLineRevenue(line)
+      }))
+    };
+  }
+
+
   if (normalize(order.order_type) === "legacy") {
     const lines = Array.isArray(order.order_lines)
       ? order.order_lines
@@ -3549,6 +3808,12 @@ function deriveLifecycleStatus(order) {
     return "planned";
   }
 
+
+  if (completeness.manualOverride === true) {
+    return "stock_complete";
+  }
+
+
   if (completeness.required > 0 && completeness.missing <= 0) return "stock_complete";
   if (completeness.required > 0 && completeness.missing > 0) return "awaiting_goods";
 
@@ -3650,15 +3915,64 @@ function makeStoredDeliveryGroupKey(
   return `${baseKey}|C${cycleNumber}`;
 }
 
-function getOwnerProfileForOrder(order) {
-  const ownerCode = normalize(order.customers?.customer_code || order.customer_code || "");
-  const ownerName = normalize(getProductOwnerName(order));
 
-  return ownerProfiles.find(owner =>
-    normalize(owner.customer_code) === ownerCode ||
-    normalize(owner.trading_name) === ownerName ||
-    normalize(owner.name) === ownerName
-  ) || null;
+function getOwnerProfileForOrder(order) {
+  if (!order) return null;
+
+  const customerId = String(
+    order.customer_id ||
+    order.customers?.id ||
+    ""
+  );
+
+  const ownerCode = normalize(
+    order.customers?.customer_code ||
+    order.customer_code ||
+    ""
+  );
+
+  const ownerName = normalize(
+    getProductOwnerName(order)
+  );
+
+  return ownerProfiles.find(owner => {
+    const profileCustomerId = String(
+      owner.customer_id ||
+      owner.customerId ||
+      ""
+    );
+
+    const profileCode = normalize(
+      owner.key ||
+      owner.customer_code ||
+      owner.code ||
+      ""
+    );
+
+    const profileName = normalize(
+      owner.trading_name ||
+      owner.name ||
+      ""
+    );
+
+    return (
+      (
+        customerId &&
+        profileCustomerId &&
+        customerId === profileCustomerId
+      ) ||
+      (
+        ownerCode &&
+        profileCode &&
+        ownerCode === profileCode
+      ) ||
+      (
+        ownerName &&
+        profileName &&
+        ownerName === profileName
+      )
+    );
+  }) || null;
 }
 
 function getMinimumRulesForOrder(order) {
@@ -3841,6 +4155,7 @@ getStoredGroup(group) {
     };
   }
 
+
 async function loadOwnerProfilesForMinimumRules() {
   const cid = await getCompanyId();
 
@@ -3851,14 +4166,115 @@ async function loadOwnerProfilesForMinimumRules() {
     .eq("setting_key", "product_owner_profiles")
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    throw new Error(
+      "Unable to load Product Owner settings: " +
+      error.message
+    );
+  }
+
+  if (!data?.setting_value) {
+    ownerProfiles = [];
+    return;
+  }
+
+  let parsed;
 
   try {
-    ownerProfiles = JSON.parse(data?.setting_value || "[]");
-  } catch {
-    ownerProfiles = [];
+    parsed = typeof data.setting_value === "string"
+      ? JSON.parse(data.setting_value)
+      : data.setting_value;
+  } catch (error) {
+    throw new Error(
+      "Invalid Product Owner settings JSON: " +
+      error.message
+    );
   }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      "Product Owner settings must contain an array."
+    );
+  }
+
+  ownerProfiles = parsed.map(profile => ({
+    ...profile,
+
+    invoice_warehouse_enabled:
+      profile.invoice_warehouse_enabled ?? true,
+
+    invoice_transport_enabled:
+      profile.invoice_transport_enabled ?? true
+  }));
 }
+
+
+/* ==========================================================
+   VEYNOR — OCC CENTRAL PRICING SETTINGS
+   ========================================================== */
+
+async function loadOccPricingSettings() {
+  const cid = await getCompanyId();
+
+  if (!window.VeynorPricing?.calculateOrderPricing) {
+    throw new Error(
+      "Pricing Engine v2.0 is not available. " +
+      "Check that pricing-engine.js loads before OCC."
+    );
+  }
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", cid);
+
+  if (error) {
+    throw new Error(
+      "Unable to load OCC pricing settings: " +
+      error.message
+    );
+  }
+
+  const settings = new Map();
+
+  for (const row of data || []) {
+    if (!row.setting_key) continue;
+
+    settings.set(
+      row.setting_key,
+      row.setting_value
+    );
+  }
+
+  const requiredSettings = [
+    "regional_surcharge_enabled",
+    "regional_pricing_zones"
+  ];
+
+  for (const key of requiredSettings) {
+    const value = settings.get(key);
+
+    if (
+      value === null ||
+      value === undefined ||
+      value === ""
+    ) {
+      throw new Error(
+        `Missing OCC pricing setting: ${key}`
+      );
+    }
+  }
+
+  occPricingSettings = settings;
+
+  console.info(
+    "OCC Pricing Engine v2.0 settings loaded:",
+    settings.size
+  );
+
+  return settings;
+}
+
 
 async function loadStoredDeliveryGroups() {
   const cid = await getCompanyId();
@@ -4019,12 +4435,279 @@ async function loadDeliveryDateHistory() {
   });
 }
 
-async function loadOrders() {
-  const cid =
-    await getCompanyId();
 
-  await loadOwnerProfilesForMinimumRules();
-  await loadStoredDeliveryGroups();
+let occLoadingCount = 0;
+
+function showOccLoading() {
+  occLoadingCount++;
+
+  if (document.getElementById("occLoadingOverlay")) return;
+
+  if (!document.getElementById("occLoadingStyles")) {
+    const style = document.createElement("style");
+    style.id = "occLoadingStyles";
+    style.textContent = `
+      #occLoadingOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 99990;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(7, 21, 47, .48);
+        backdrop-filter: blur(3px);
+      }
+
+      .occ-loading-card {
+        width: min(420px, 100%);
+        background: #fff;
+        border-radius: 16px;
+        overflow: hidden;
+        box-shadow: 0 24px 65px rgba(7,21,47,.24);
+        font-family: inherit;
+      }
+
+.occ-loading-header {
+  background: linear-gradient(120deg, #071b3b, #103b79);
+  color: white;
+ padding: 10px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.occ-loading-logo {
+  display: block;
+  width: 230px;
+  height: 48px;
+  max-height: none;
+  object-fit: contain;
+  object-position: left center;
+  transform: scale(1.15);
+  transform-origin: left center;
+}
+
+      .occ-loading-header small {
+        font-size: 9px;
+        letter-spacing: 1.4px;
+        color: #bfdbfe;
+      }
+
+      .occ-loading-body {
+        padding: 24px;
+      }
+
+      .occ-loading-main {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+
+      .occ-loading-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: #eff6ff;
+        color: #1267ff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 25px;
+        flex-shrink: 0;
+      }
+
+      .occ-loading-title {
+        font-size: 18px;
+        font-weight: 850;
+        color: #071b3b;
+        margin-bottom: 5px;
+      }
+
+      .occ-loading-subtitle {
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.5;
+      }
+
+      .occ-loading-track {
+        height: 7px;
+        background: #e2e8f0;
+        border-radius: 99px;
+        overflow: hidden;
+      }
+
+      .occ-loading-bar {
+        height: 100%;
+        width: 35%;
+        border-radius: 99px;
+        background: linear-gradient(90deg,#1267ff,#38bdf8);
+        animation: occLoadingMove 1.2s ease-in-out infinite alternate;
+      }
+
+      @keyframes occLoadingMove {
+        from { transform: translateX(0); }
+        to { transform: translateX(185%); }
+      }
+
+      .occ-loading-footer {
+        margin-top: 11px;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        font-size: 10px;
+        color: #64748b;
+      }
+
+      .occ-loading-footer strong {
+        color: #1267ff;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .occ-loading-bar { animation: none; width: 100%; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "occLoadingOverlay";
+  overlay.setAttribute("role", "status");
+  overlay.setAttribute("aria-live", "polite");
+
+  overlay.innerHTML = `
+    <div class="occ-loading-card">
+      <div class="occ-loading-header">
+        <img
+  src="/assets/branding/veynor-logo-header.png"
+  alt="Veynor"
+  class="occ-loading-logo"
+/>
+        <small>OPERATIONS CONTROL</small>
+      </div>
+      <div class="occ-loading-body">
+        <div class="occ-loading-main">
+          <div class="occ-loading-icon">▤</div>
+          <div>
+            <div class="occ-loading-title">Loading orders</div>
+            <div class="occ-loading-subtitle">
+              Retrieving the latest order information...
+            </div>
+          </div>
+        </div>
+        <div class="occ-loading-track">
+          <div class="occ-loading-bar"></div>
+        </div>
+        <div class="occ-loading-footer">
+          <span>Preparing Operations Control Center</span>
+          <strong>Loading...</strong>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+}
+
+function hideOccLoading() {
+  occLoadingCount = Math.max(0, occLoadingCount - 1);
+
+  if (occLoadingCount === 0) {
+    document.getElementById("occLoadingOverlay")?.remove();
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR — LOAD FINAL INVOICE SNAPSHOTS
+   Existing historical pricing remains unchanged.
+   ========================================================== */
+
+async function loadOccInvoiceSnapshots() {
+  const cid = await getCompanyId();
+
+  const snapshots = new Map();
+  const pageSize = 500;
+
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await client
+      .from("invoice_order_snapshots")
+      .select(`
+        id,
+        invoice_id,
+        order_id,
+        warehouse_amount,
+        transport_base_amount,
+        regional_surcharge_amount,
+        fuel_surcharge_amount,
+        minimum_delivery_charge_amount,
+        subtotal_ex_vat,
+        vat_amount,
+        total_inc_vat,
+        regional_surcharge_pct,
+        fuel_surcharge_pct,
+        pricing_version
+      `)
+      .eq("company_id", cid)
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(
+        "Could not load OCC invoice snapshots: " +
+        error.message
+      );
+    }
+
+    for (const snapshot of data || []) {
+      const orderId = String(snapshot.order_id || "");
+
+      if (!orderId) continue;
+
+      if (snapshots.has(orderId)) {
+        throw new Error(
+          "Multiple financial snapshots found for order " +
+          orderId
+        );
+      }
+
+      snapshots.set(orderId, snapshot);
+    }
+
+    if (!data || data.length < pageSize) {
+      break;
+    }
+
+    offset += pageSize;
+  }
+
+  occInvoiceSnapshots = snapshots;
+
+  console.info(
+    "OCC financial invoice snapshots loaded:",
+    snapshots.size
+  );
+
+  return snapshots;
+}
+
+
+
+async function loadOrders() {
+  showOccLoading();
+
+  try {
+    const cid =
+      await getCompanyId();
+
+await loadOwnerProfilesForMinimumRules();
+await loadOccPricingSettings();
+await loadOccInvoiceSnapshots();
+await loadStoredDeliveryGroups();
   await loadAckDownloadStatus();
   await loadPodDownloadStatus();
 
@@ -4278,8 +4961,12 @@ async function loadOrders() {
     }
   });
 
-  applyFilters();
-  renderAll();
+    applyFilters();
+    renderAll();
+
+  } finally {
+    hideOccLoading();
+  }
 }
 
 function sortValue(order, key) {
@@ -5997,6 +6684,19 @@ function renderCompletenessDonut(order) {
       )
     );
 
+
+  if (completeness.manualOverride === true) {
+    return `
+      <div class="colli-wrap"
+           title="Manually approved without physical stock matching">
+        <span class="status-pill green">
+          Manual Complete
+        </span>
+      </div>
+    `;
+  }
+
+
   const physicallyComplete =
     completeness.status ===
     "complete";
@@ -6862,36 +7562,36 @@ function renderOrderTypeBadge(order) {
   return `<span class="status-pill blue">Standard</span>`;
 }
 
-function renderFinanceCell(order) {
-  const totalRevenue =
-    getOrderRevenue(order);
 
-  const regionalSurcharge =
-    getOrderRegionalSurcharge(order);
+function renderFinanceCell(order) {
+  const totalRevenue = getOrderRevenue(order);
+  const priceOnRequest = totalRevenue === null;
+
+  const regionalSurcharge = priceOnRequest
+    ? 0
+    : getOrderRegionalSurcharge(order);
 
   return `
     <div class="finance-metric">
-      ${pill(
-        order.derived_finance_status
-      )}
+      ${pill(order.derived_finance_status)}
 
       ${
         canSeeInternalPlanningData()
           ? `
             <strong>
-              ${formatMoney(
-                totalRevenue
-              )}
+              ${
+                priceOnRequest
+                  ? "Price on Request"
+                  : formatMoney(totalRevenue)
+              }
             </strong>
 
             ${
-              regionalSurcharge > 0
+              !priceOnRequest && regionalSurcharge > 0
                 ? `
                   <span class="subline">
                     Includes regional surcharge:
-                    ${formatMoney(
-                      regionalSurcharge
-                    )}
+                    ${formatMoney(regionalSurcharge)}
                   </span>
                 `
                 : ""
@@ -7883,9 +8583,11 @@ function renderFinanceActivityPanel(
                 </span>
 
                 <span class="detail-value">
-                  ${formatMoney(
-                    getOrderRevenue(order)
-                  )}
+                  ${
+  getOrderRevenue(order) === null
+    ? "Price on Request"
+    : formatMoney(getOrderRevenue(order))
+}
                 </span>
               </div>
             `
@@ -12793,6 +13495,41 @@ async function saveTariffModal(orderId) {
     );
   }
 
+
+  // Never modify financial tariffs on invoiced orders.
+  if (isOccOrderInvoiced(order)) {
+    throw new Error(
+      "This order has already been invoiced. " +
+      "Its financial tariffs are locked to protect " +
+      "the original invoice."
+    );
+  }
+
+  // Recheck the current database status before saving.
+  const { data: currentOrder, error: statusError } =
+    await client
+      .from("orders")
+      .select("finance_status")
+      .eq("id", order.id)
+      .eq("company_id", await getCompanyId())
+      .single();
+
+  if (statusError) {
+    throw statusError;
+  }
+
+  if (
+    isOccOrderInvoiced({
+      finance_status: currentOrder.finance_status
+    })
+  ) {
+    throw new Error(
+      "This order has been invoiced since opening " +
+      "the editor. Tariff changes were cancelled."
+    );
+  }
+
+
   const rows = Array.from(
     document.querySelectorAll(
       "#tariffModalBody tr[data-line-id]"
@@ -16696,25 +17433,48 @@ showToast(`${action} save function is not connected yet.`, "ok");
 
 }
 
+
 async function init() {
+  showOccLoading();
+
   try {
     ensureClient();
     ensurePageStyles();
 
     await loadCurrentProfile();
-    bindEvents();
-    await loadOrders();
-      showToast("Operations loaded.", "ok");
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Operations Control Center failed to load.", "err");
 
-      const tbody = byId("ordersBody");
-      if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="14">${escapeHtml(error.message || "Operations Control Center failed to load.")}</td></tr>`;
-      }
+    bindEvents();
+
+    await loadOrders();
+
+  } catch (error) {
+    console.error(error);
+
+    showToast(
+      error.message ||
+      "Operations Control Center failed to load.",
+      "err"
+    );
+
+    const tbody = byId("ordersBody");
+
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="14">
+            ${escapeHtml(
+              error.message ||
+              "Operations Control Center failed to load."
+            )}
+          </td>
+        </tr>
+      `;
     }
+
+  } finally {
+    hideOccLoading();
   }
+}
 
 window.OCCReloadOrders = async function () {
   await loadOrders();

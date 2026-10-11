@@ -13,6 +13,8 @@
   let invoiceRows = [];
   let documentRows = [];
   let ordersById = new Map();
+let invoiceOrderLinks = [];
+let invoiceSnapshots = new Map();
 
   let allInvoices = [];
   let filteredInvoices = [];
@@ -286,19 +288,75 @@
   };
 }
 
-function calculateOrderRevenue(order) {
-  /*
-   * Billing gebruikt de definitieve ordertotalen als bron.
-   *
-   * Dit voorkomt:
-   * - dubbele telling bij manual orders
-   * - oude line tariffs na een handmatige wijziging
-   * - afrondingsverschillen tussen order_lines en order totals
-   *
-   * De total_*_tariff velden zijn dezelfde definitieve bedragen
-   * die voor de order/facturatie worden gebruikt.
-   */
 
+/* ==========================================================
+   VEYNOR — BILLING ORDER REVENUE
+   Final snapshots + historical fallback
+   ========================================================== */
+
+function calculateOrderRevenue(order, invoiceId = null) {
+  const snapshotKey = invoiceId && order?.id
+    ? `${invoiceId}:${order.id}`
+    : null;
+
+  const snapshot = snapshotKey
+    ? invoiceSnapshots.get(snapshotKey)
+    : null;
+
+  const colli =
+    toNumber(order?.total_order_colli, 0) ||
+    toNumber(order?.planning_colli, 0);
+
+  const volume =
+    toNumber(order?.total_order_volume_m3, 0) ||
+    toNumber(order?.planning_volume_m3, 0);
+
+  if (snapshot) {
+    const warehouse = round2(
+      toNumber(snapshot.warehouse_amount, 0)
+    );
+
+    const transportBase = round2(
+      toNumber(snapshot.transport_base_amount, 0)
+    );
+
+    const regional = round2(
+      toNumber(snapshot.regional_surcharge_amount, 0)
+    );
+
+    const fuel = round2(
+      toNumber(snapshot.fuel_surcharge_amount, 0)
+    );
+
+    const minimum = round2(
+      toNumber(snapshot.minimum_delivery_charge_amount, 0)
+    );
+
+    return {
+      pick: 0,
+      warehouse,
+      admin: 0,
+
+      transport: round2(
+        transportBase + regional + fuel + minimum
+      ),
+
+      net: round2(snapshot.subtotal_ex_vat),
+      vat: round2(snapshot.vat_amount),
+      gross: round2(snapshot.total_inc_vat),
+
+      colli,
+      volume,
+
+      hasSnapshot: true,
+      transportBase,
+      regional,
+      fuel,
+      minimum
+    };
+  }
+
+  // Historical invoices: preserve existing order tariffs.
   const pick = round2(
     toNumber(order?.total_handling_tariff, 0)
   );
@@ -316,19 +374,10 @@ function calculateOrderRevenue(order) {
   );
 
   const net = round2(
-    pick +
-    warehouse +
-    admin +
-    transport
+    pick + warehouse + admin + transport
   );
 
-  const vat = round2(
-    net * VAT_RATE
-  );
-
-  const gross = round2(
-    net + vat
-  );
+  const vat = round2(net * VAT_RATE);
 
   return {
     pick,
@@ -337,29 +386,17 @@ function calculateOrderRevenue(order) {
     transport,
     net,
     vat,
-    gross,
-
-    colli:
-      toNumber(
-        order?.total_order_colli,
-        0
-      ) ||
-      toNumber(
-        order?.planning_colli,
-        0
-      ),
-
-    volume:
-      toNumber(
-        order?.total_order_volume_m3,
-        0
-      ) ||
-      toNumber(
-        order?.planning_volume_m3,
-        0
-      )
+    gross: round2(net + vat),
+    colli,
+    volume,
+    hasSnapshot: false,
+    transportBase: transport,
+    regional: 0,
+    fuel: 0,
+    minimum: 0
   };
 }
+
   function nearestCardForId(id) {
     const el = byId(id);
     if (!el) return null;
@@ -670,98 +707,178 @@ function getSupplierReference(order) {
     documentRows = data || [];
   }
 
-  async function loadOrdersForDocuments() {
-    const orderIds = [...new Set(
-      documentRows
-        .map(doc => doc.order_id)
-        .filter(Boolean)
-    )];
 
-    ordersById = new Map();
+/* ==========================================================
+   VEYNOR — LOAD INVOICE ORDER RELATIONSHIPS
+   ========================================================== */
 
-    if (!orderIds.length) return;
+async function loadBillingInvoiceOrderLinks() {
+  const db = ensureClient();
 
-    const db = ensureClient();
-    const cid = await getCompanyId();
+  const invoiceIds = invoiceRows
+    .map(invoice => invoice.id)
+    .filter(Boolean);
+
+  invoiceOrderLinks = [];
+
+  if (!invoiceIds.length) return;
+
+  const pageSize = 500;
+
+  for (let start = 0; start < invoiceIds.length; start += 100) {
+    const batch = invoiceIds.slice(start, start + 100);
+    let offset = 0;
+
+    while (true) {
+      const { data, error } = await db
+        .from("invoice_orders")
+        .select("id, invoice_id, order_id")
+        .in("invoice_id", batch)
+        .order("id", { ascending: true })
+        .range(offset, offset + pageSize - 1);
+
+      if (error) {
+        throw new Error(
+          "Could not load invoice order links: " +
+          error.message
+        );
+      }
+
+      invoiceOrderLinks.push(...(data || []));
+
+      if ((data || []).length < pageSize) break;
+
+      offset += pageSize;
+    }
+  }
+
+  console.info(
+    "Billing invoice order links loaded:",
+    invoiceOrderLinks.length
+  );
+}
+
+/* ==========================================================
+   VEYNOR — LOAD FINAL FINANCIAL INVOICE SNAPSHOTS
+   ========================================================== */
+
+async function loadBillingInvoiceSnapshots() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const snapshots = new Map();
+  const pageSize = 500;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await db
+      .from("invoice_order_snapshots")
+      .select(`
+        id,
+        invoice_id,
+        order_id,
+        warehouse_amount,
+        transport_base_amount,
+        regional_surcharge_amount,
+        fuel_surcharge_amount,
+        minimum_delivery_charge_amount,
+        subtotal_ex_vat,
+        vat_amount,
+        total_inc_vat,
+        regional_surcharge_pct,
+        fuel_surcharge_pct,
+        pricing_version
+      `)
+      .eq("company_id", cid)
+      .order("id", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw new Error(
+        "Could not load financial invoice snapshots: " +
+        error.message
+      );
+    }
+
+    for (const snapshot of data || []) {
+      if (!snapshot.invoice_id || !snapshot.order_id) {
+        throw new Error(
+          "Invoice snapshot has missing invoice or order ID."
+        );
+      }
+
+      const key =
+        String(snapshot.invoice_id) + ":" +
+        String(snapshot.order_id);
+
+      if (snapshots.has(key)) {
+        throw new Error(
+          "Duplicate financial invoice snapshot: " + key
+        );
+      }
+
+      snapshots.set(key, snapshot);
+    }
+
+    if ((data || []).length < pageSize) break;
+
+    offset += pageSize;
+  }
+
+  invoiceSnapshots = snapshots;
+
+  console.info(
+    "Billing financial snapshots loaded:",
+    invoiceSnapshots.size
+  );
+}
+
+
+
+/* ==========================================================
+   VEYNOR — LOAD ORDERS FOR BILLING
+   Historical documents + definitive invoice relationships
+   ========================================================== */
+
+async function loadOrdersForDocuments() {
+  const orderIds = [
+    ...new Set([
+      ...documentRows.map(doc => doc.order_id),
+      ...invoiceOrderLinks.map(link => link.order_id)
+    ].filter(Boolean).map(String))
+  ];
+
+  ordersById = new Map();
+
+  if (!orderIds.length) return;
+
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const results = [];
+
+  for (let start = 0; start < orderIds.length; start += 100) {
+    const batch = orderIds.slice(start, start + 100);
 
     let query = db
       .from("orders")
       .select(`
-        id,
-        company_id,
-        customer_id,
-        order_number,
-        external_reference,
-        source_type,
-        order_date,
-        requested_delivery_date,
-        status,
-        delivery_city,
-        delivery_postcode,
-        notes,
-        imported_at,
-        created_at,
-        delivery_country,
-        delivery_region,
-        delivery_lat,
-        delivery_lng,
-        transport_type,
-        charter_name,
-        planning_colli,
-        planning_volume_m3,
-        import_mode,
-        planning_only,
-        route_id,
-        planning_release,
-        released_to_planning_at,
-        released_to_planning_by,
-        requires_low_emission,
-        volume_m3,
-        weight_kg,
-        requires_ulez,
-        requires_small_vehicle,
-        city_tonnage_limit,
-        service_minutes,
-        delivery_address_1,
-        delivery_address_2,
-        purchase_order,
-        retail_name,
-        warehouse_status,
-        transport_status,
-        finance_status,
-        overall_status,
-        last_activity_at,
-        confirmed_delivery_date,
-        total_order_colli,
-        total_order_volume_m3,
-        total_order_weight_kg,
-        matched_colli,
-        matched_volume_m3,
-        matched_weight_kg,
-        total_storage_tariff,
-        total_admin_tariff,
-        total_handling_tariff,
-        total_transport_tariff,
-total_s2u_fees,
-total_customer_charge,
-memo,
-
-order_lines (
-  id,
-  order_id,
-  line_type,
-  manual_description,
-  manual_quantity,
-  manual_unit,
-  manual_rate_gbp,
-  manual_amount_gbp,
-  tariff_storage,
-  tariff_admin,
-  tariff_handling,
-  tariff_transport
-),
-
-customers (
+        *,
+        order_lines (
+          id,
+          order_id,
+          line_type,
+          manual_description,
+          manual_quantity,
+          manual_unit,
+          manual_rate_gbp,
+          manual_amount_gbp,
+          tariff_storage,
+          tariff_admin,
+          tariff_handling,
+          tariff_transport
+        ),
+        customers (
           id,
           name,
           customer_code,
@@ -771,17 +888,39 @@ customers (
         )
       `)
       .eq("company_id", cid)
-      .in("id", orderIds);
+      .in("id", batch);
 
     if (isProductOwnerRole() && getProfileCustomerId()) {
-      query = query.eq("customer_id", getProfileCustomerId());
+      query = query.eq(
+        "customer_id",
+        getProfileCustomerId()
+      );
     }
 
     const { data, error } = await query;
-    if (error) throw error;
 
-    ordersById = new Map((data || []).map(order => [String(order.id), order]));
+    if (error) {
+      throw new Error(
+        "Could not load billing orders: " +
+        error.message
+      );
+    }
+
+    results.push(...(data || []));
   }
+
+  ordersById = new Map(
+    results.map(order => [
+      String(order.id),
+      order
+    ])
+  );
+
+  console.info(
+    "Billing linked orders loaded:",
+    ordersById.size
+  );
+}
 
   function invoiceDocumentMatchesInvoice(doc, invoice) {
     const docNo = normalize(doc.document_number || "");
@@ -797,101 +936,120 @@ customers (
     return false;
   }
 
-  function buildInvoicesFromInvoiceRows() {
-    const groups = [];
 
-    invoiceRows.forEach(inv => {
-      const key = String(inv.invoice_number || inv.id);
-      const docs = documentRows.filter(doc => invoiceDocumentMatchesInvoice(doc, inv));
+/* ==========================================================
+   VEYNOR — BUILD INVOICES FROM DATABASE RECORDS
+   Final snapshots + historical invoices
+   ========================================================== */
 
-      const orders = docs
-        .map(doc => ordersById.get(String(doc.order_id)))
-        .filter(Boolean)
-        .filter((order, index, arr) => arr.findIndex(o => String(o.id) === String(order.id)) === index);
+function buildInvoicesFromInvoiceRows() {
+  const groups = [];
 
-      let totals = emptyTotals();
+  invoiceRows.forEach(inv => {
+    const key = String(inv.invoice_number || inv.id);
 
-      orders.forEach(order => {
-        totals = addTotals(totals, calculateOrderRevenue(order));
-      });
+    const docs = documentRows.filter(doc =>
+      invoiceDocumentMatchesInvoice(doc, inv)
+    );
 
-     const subtotal = round2(
-  toNumber(inv.subtotal, 0)
-);
+    const links = invoiceOrderLinks.filter(link =>
+      String(link.invoice_id) === String(inv.id)
+    );
 
-const vatAmount = round2(
-  toNumber(inv.vat_amount, 0)
-);
+    const linkedOrderIds = new Set([
+      ...links.map(link => String(link.order_id)),
+      ...docs.map(doc => String(doc.order_id || ""))
+    ].filter(Boolean));
 
-const totalAmount = round2(
-  toNumber(inv.total_amount, 0)
-);
+    const orders = [...linkedOrderIds]
+      .map(id => ordersById.get(id))
+      .filter(Boolean);
 
-/*
- * De invoice-record is leidend voor:
- * - totaal excl. VAT
- * - VAT
- * - totaal incl. VAT
- *
- * Deze bedragen bevatten ook de fuel surcharge
- * en eventuele Minimum Delivery Charges.
- */
-if (subtotal !== 0) {
-  totals.net = subtotal;
-} else {
-  totals.net = round2(
-    totals.pick +
-    totals.warehouse +
-    totals.admin +
-    totals.transport
-  );
-}
+    let totals = emptyTotals();
+    let snapshotCount = 0;
 
-if (vatAmount !== 0) {
-  totals.vat = vatAmount;
-} else {
-  totals.vat = round2(
-    totals.net * VAT_RATE
-  );
-}
+    orders.forEach(order => {
+      const revenue = calculateOrderRevenue(order, inv.id);
 
-if (totalAmount !== 0) {
-  totals.gross = totalAmount;
-} else {
-  totals.gross = round2(
-    totals.net + totals.vat
-  );
-}
+      if (revenue.hasSnapshot) {
+        snapshotCount++;
+      }
 
-      const firstOrder = orders[0] || null;
-      const customerId = inv.customer_id || firstOrder?.customer_id || docs[0]?.customer_id || "";
-
-      groups.push({
-        key,
-        source: "invoices",
-        invoice_id: inv.id,
-        invoice_number: inv.invoice_number || "Invoice",
-        invoice_date: inv.invoice_date || inv.created_at,
-        due_date: inv.due_date || "",
-        status: normalizeStatus(inv.status || docs[0]?.document_status || "generated"),
-        file_url: inv.file_url || inv.pdf_url || docs[0]?.file_url || "",
-        pdf_url: inv.pdf_url || inv.file_url || docs[0]?.file_url || "",
-        storage_path: inv.storage_path || docs[0]?.storage_path || "",
-        created_at: inv.created_at,
-        customer_id: customerId,
-        customer_name: firstOrder
-          ? getProductOwnerName(firstOrder, customerId)
-          : getProductOwnerNameById(customerId),
-        invoices: [inv],
-        docs,
-        orders,
-        order_count: orders.length,
-        totals
-      });
+      totals = addTotals(totals, revenue);
     });
 
-    return groups;
-  }
+    /*
+     * The invoice database record is authoritative.
+     * Zero is also a valid final invoice amount.
+     */
+    totals.net = round2(toNumber(inv.subtotal, 0));
+    totals.vat = round2(toNumber(inv.vat_amount, 0));
+    totals.gross = round2(toNumber(inv.total_amount, 0));
+
+    /*
+     * If the invoice has snapshots, all linked orders
+     * must have a snapshot before using the breakdown.
+     * Never combine incomplete snapshot totals with
+     * historical tariffs.
+     */
+    if (snapshotCount > 0 && snapshotCount !== orders.length) {
+      console.warn(
+        "Billing: incomplete invoice snapshots",
+        inv.invoice_number,
+        snapshotCount,
+        orders.length
+      );
+
+      // Preserve the authoritative invoice totals.
+      // Do not display a misleading cost breakdown.
+      totals.pick = 0;
+      totals.warehouse = 0;
+      totals.admin = 0;
+      totals.transport = 0;
+    }
+
+    const firstOrder = orders[0] || null;
+
+    const customerId =
+      inv.customer_id ||
+      firstOrder?.customer_id ||
+      docs[0]?.customer_id ||
+      "";
+
+    groups.push({
+      key,
+      source: "invoices",
+      invoice_id: inv.id,
+      invoice_number: inv.invoice_number || "Invoice",
+      invoice_date: inv.invoice_date || inv.created_at,
+      due_date: inv.due_date || "",
+      status: normalizeStatus(
+        inv.status || docs[0]?.document_status || "generated"
+      ),
+      file_url:
+        inv.file_url || inv.pdf_url || docs[0]?.file_url || "",
+      pdf_url:
+        inv.pdf_url || inv.file_url || docs[0]?.file_url || "",
+      storage_path:
+        inv.storage_path || docs[0]?.storage_path || "",
+      created_at: inv.created_at,
+      customer_id: customerId,
+      customer_name: firstOrder
+        ? getProductOwnerName(firstOrder, customerId)
+        : getProductOwnerNameById(customerId),
+      invoices: [inv],
+      docs,
+      orders,
+      order_count: orders.length,
+      snapshot_count: snapshotCount,
+      snapshot_incomplete:
+        snapshotCount > 0 && snapshotCount !== orders.length,
+      totals
+    });
+  });
+
+  return groups;
+}
 
   function buildInvoicesFromUnmatchedDocuments(existingKeys) {
     const groups = [];
@@ -955,26 +1113,37 @@ if (totalAmount !== 0) {
     }
   }
 
-  async function loadBilling() {
-    ensureClient();
 
-    await getCompanyId();
-    await loadCustomers();
+/* ==========================================================
+   VEYNOR — LOAD BILLING
+   Invoice records + links + financial snapshots
+   ========================================================== */
 
-    await Promise.all([
-      loadInvoicesRows(),
-      loadInvoiceDocuments()
-    ]);
+async function loadBilling() {
+  ensureClient();
 
-    await loadOrdersForDocuments();
+  await getCompanyId();
+  await loadCustomers();
 
-    buildBillingRows();
-    applyFilters(false);
-    sortInvoices();
-    renderAll();
+  await Promise.all([
+    loadInvoicesRows(),
+    loadInvoiceDocuments()
+  ]);
 
-    showToast("Billing refreshed.", "ok");
-  }
+  await Promise.all([
+    loadBillingInvoiceOrderLinks(),
+    loadBillingInvoiceSnapshots()
+  ]);
+
+  await loadOrdersForDocuments();
+
+  buildBillingRows();
+  applyFilters(false);
+  sortInvoices();
+  renderAll();
+
+  showToast("Billing refreshed.", "ok");
+}
 
   function getSearchText(invoice) {
     return [
@@ -1104,122 +1273,205 @@ getProductOwnerName(order),
   applyRoleVisibility();
 }
 
-  function renderInvoiceDetail(invoice) {
-    const totals = getDisplayTotals(invoice.totals);
 
-    const ordersHtml = invoice.orders.length
-      ? invoice.orders.map(order => {
-          const raw = calculateOrderRevenue(order);
-          const t = getDisplayTotals(raw);
+/* ==========================================================
+   VEYNOR — BILLING INVOICE DETAIL
+   Snapshot breakdown with historical fallback
+   ========================================================== */
 
-          const internalCostsHtml = isCustomerView()
-            ? ""
-            : `
-              <div class="money-cell">
-                ${formatMoney(raw.pick)}
-                <span class="subline">Pick</span>
-              </div>
+function renderInvoiceDetail(invoice) {
+  const totals = getDisplayTotals(invoice.totals);
 
-              <div class="money-cell">
-                ${formatMoney(raw.admin)}
-                <span class="subline">Admin</span>
-              </div>
-            `;
+  const ordersHtml = invoice.orders.length
+    ? invoice.orders.map(order => {
+        const raw = calculateOrderRevenue(
+          order,
+          invoice.invoice_id
+        );
 
-          return `
-            <div class="order-line">
-              <div>
-                <div class="order-line-title">${escapeHtml(getOrderNumber(order))}</div>
-${
-  getSupplierReference(order)
-    ? `<div class="order-line-sub">Supplier Ref: ${escapeHtml(getSupplierReference(order))}</div>`
-    : ""
-}
-<div class="order-line-sub">PO: ${escapeHtml(order.purchase_order || "—")}</div>
-                <div class="order-line-sub">
-                  Product Owner: ${escapeHtml(getProductOwnerName(order, invoice.customer_id))}
-                </div>
-                <div class="order-line-sub">
-                  Retailer / Ship To: ${escapeHtml(getRetailerName(order))}
-                </div>
-                <div class="order-line-sub">${escapeHtml(getAddressText(order))}</div>
-              </div>
+        const t = getDisplayTotals(raw);
 
-              ${internalCostsHtml}
+        const internalCostsHtml = isCustomerView()
+          ? ""
+          : `
+            <div class="money-cell">
+              ${formatMoney(raw.pick)}
+              <span class="subline">Pick</span>
+            </div>
 
-              <div class="money-cell">
-                ${formatMoney(t.warehouse)}
-                <span class="subline">Warehouse</span>
-              </div>
-
-              <div class="money-cell">
-                ${formatMoney(t.transport)}
-                <span class="subline">Transport</span>
-              </div>
-
-              <div class="total-cell">
-                ${formatMoney(t.net)}
-                <span class="subline">Excl. VAT</span>
-              </div>
+            <div class="money-cell">
+              ${formatMoney(raw.admin)}
+              <span class="subline">Admin</span>
             </div>
           `;
-        }).join("")
-      : `<div class="order-line"><div>No linked orders found.</div></div>`;
 
-    return `
-      <tr class="invoice-detail-row ${expandedInvoiceKeys.has(invoice.key) ? "open" : ""}" data-detail-key="${escapeHtml(invoice.key)}">
-        <td class="invoice-detail-cell" colspan="14">
-          <div class="invoice-detail">
-            <div class="detail-grid">
-              <div class="detail-box">
-                <div class="detail-label">Invoice</div>
-                <div class="detail-value">${escapeHtml(invoice.invoice_number)}</div>
+        const breakdownHtml = raw.hasSnapshot
+          ? `
+            <div class="order-line-sub">
+              Base transport: ${formatMoney(raw.transportBase)}
+            </div>
+            ${raw.regional !== 0 ? `
+              <div class="order-line-sub">
+                Regional surcharge: ${formatMoney(raw.regional)}
+              </div>
+            ` : ""}
+            ${raw.fuel !== 0 ? `
+              <div class="order-line-sub">
+                Fuel surcharge: ${formatMoney(raw.fuel)}
+              </div>
+            ` : ""}
+            ${raw.minimum !== 0 ? `
+              <div class="order-line-sub">
+                Minimum delivery charge: ${formatMoney(raw.minimum)}
+              </div>
+            ` : ""}
+          `
+          : "";
+
+        return `
+          <div class="order-line">
+            <div>
+              <div class="order-line-title">
+                ${escapeHtml(getOrderNumber(order))}
               </div>
 
-              <div class="detail-box">
-                <div class="detail-label">Product Owner</div>
-                <div class="detail-value">${escapeHtml(invoice.customer_name || "—")}</div>
-              </div>
-
-              <div class="detail-box">
-                <div class="detail-label">Orders</div>
-                <div class="detail-value">${formatNumber(invoice.order_count)}</div>
-              </div>
-
-              <div class="detail-box">
-                <div class="detail-label">Colli</div>
-                <div class="detail-value">${formatNumber(totals.colli)}</div>
-              </div>
-
-              <div class="detail-box">
-                <div class="detail-label">Volume</div>
-                <div class="detail-value">${formatNumber(totals.volume, 2)} m³</div>
-              </div>
-
-              <div class="detail-box">
-                <div class="detail-label">Due Date</div>
-                <div class="detail-value">${escapeHtml(formatDate(invoice.due_date))}</div>
-              </div>
-
-              ${isTenantRole() ? `
-                <div class="detail-box">
-                  <div class="detail-label">Storage Path</div>
-                  <div class="detail-value">${escapeHtml(invoice.storage_path || "—")}</div>
+              ${getSupplierReference(order) ? `
+                <div class="order-line-sub">
+                  Supplier Ref:
+                  ${escapeHtml(getSupplierReference(order))}
                 </div>
               ` : ""}
+
+              <div class="order-line-sub">
+                PO: ${escapeHtml(order.purchase_order || "—")}
+              </div>
+
+              <div class="order-line-sub">
+                Product Owner:
+                ${escapeHtml(
+                  getProductOwnerName(order, invoice.customer_id)
+                )}
+              </div>
+
+              <div class="order-line-sub">
+                Retailer / Ship To:
+                ${escapeHtml(getRetailerName(order))}
+              </div>
+
+              <div class="order-line-sub">
+                ${escapeHtml(getAddressText(order))}
+              </div>
+
+              ${breakdownHtml}
             </div>
 
-            <div>
-              <div class="detail-label" style="margin-bottom:8px;">Linked orders</div>
-              <div class="orders-list">
-                ${ordersHtml}
-              </div>
+            ${internalCostsHtml}
+
+            <div class="money-cell">
+              ${formatMoney(t.warehouse)}
+              <span class="subline">Warehouse</span>
+            </div>
+
+            <div class="money-cell">
+              ${formatMoney(t.transport)}
+              <span class="subline">Transport</span>
+            </div>
+
+            <div class="total-cell">
+              ${formatMoney(t.net)}
+              <span class="subline">Excl. VAT</span>
             </div>
           </div>
-        </td>
-      </tr>
+        `;
+      }).join("")
+    : `
+      <div class="order-line">
+        <div>No linked orders found.</div>
+      </div>
     `;
-  }
+
+  return `
+    <tr class="invoice-detail-row ${
+      expandedInvoiceKeys.has(invoice.key) ? "open" : ""
+    }" data-detail-key="${escapeHtml(invoice.key)}">
+      <td class="invoice-detail-cell" colspan="14">
+        <div class="invoice-detail">
+
+          <div class="detail-grid">
+            <div class="detail-box">
+              <div class="detail-label">Invoice</div>
+              <div class="detail-value">
+                ${escapeHtml(invoice.invoice_number)}
+              </div>
+            </div>
+
+            <div class="detail-box">
+              <div class="detail-label">Product Owner</div>
+              <div class="detail-value">
+                ${escapeHtml(invoice.customer_name || "—")}
+              </div>
+            </div>
+
+            <div class="detail-box">
+              <div class="detail-label">Orders</div>
+              <div class="detail-value">
+                ${formatNumber(invoice.order_count)}
+              </div>
+            </div>
+
+            <div class="detail-box">
+              <div class="detail-label">Colli</div>
+              <div class="detail-value">
+                ${formatNumber(totals.colli)}
+              </div>
+            </div>
+
+            <div class="detail-box">
+              <div class="detail-label">Volume</div>
+              <div class="detail-value">
+                ${formatNumber(totals.volume, 2)} m³
+              </div>
+            </div>
+
+            <div class="detail-box">
+              <div class="detail-label">Due Date</div>
+              <div class="detail-value">
+                ${escapeHtml(formatDate(invoice.due_date))}
+              </div>
+            </div>
+
+            ${isTenantRole() ? `
+              <div class="detail-box">
+                <div class="detail-label">Storage Path</div>
+                <div class="detail-value">
+                  ${escapeHtml(invoice.storage_path || "—")}
+                </div>
+              </div>
+            ` : ""}
+          </div>
+
+          ${invoice.snapshot_incomplete ? `
+            <div class="billing-payment-note overdue">
+              Financial breakdown incomplete.
+              Invoice totals remain authoritative.
+            </div>
+          ` : ""}
+
+          <div>
+            <div class="detail-label" style="margin-bottom:8px;">
+              Linked orders
+            </div>
+
+            <div class="orders-list">
+              ${ordersHtml}
+            </div>
+          </div>
+
+        </div>
+      </td>
+    </tr>
+  `;
+}
 
   function renderTable() {
     const tbody = byId("billingBody");

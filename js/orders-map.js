@@ -11,6 +11,14 @@
   let selectionLayer = null;
   let vertexLayer = null;
 let driverLocationLayer = null;
+// UK emission zones
+let emissionZoneLayer = null;
+let emissionZonesGeoJson = null;
+let emissionZonesLoading = null;
+
+// Tenant-specific map visibility
+let emissionZonesVisible = true;
+let emissionSettingsLoading = null;
 
   let topControl = null;
   let panelControl = null;
@@ -2073,6 +2081,244 @@ function renderDriverLocations() {
     document.head.appendChild(style);
   }
 
+
+/* ==========================================================
+   VEYNOR — UK EMISSION ZONES
+   Load official stored boundaries from Supabase
+   ========================================================== */
+
+
+async function loadEmissionMapSettings() {
+  if (emissionSettingsLoading) {
+    return emissionSettingsLoading;
+  }
+
+  emissionSettingsLoading = (async () => {
+    if (typeof sb !== "function") {
+      throw new Error("Supabase client is unavailable.");
+    }
+
+    const db = sb();
+
+    const { data: authData, error: authError } =
+      await db.auth.getUser();
+
+    if (authError) throw authError;
+
+    const userId = authData?.user?.id;
+    if (!userId) {
+      throw new Error("No authenticated user.");
+    }
+
+    // Resolve the active tenant from the signed-in user.
+    const { data: profiles, error: profileError } = await db
+      .from("user_profiles")
+      .select("company_id")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+    if (profileError) throw profileError;
+
+    const companyIds = [
+      ...new Set(
+        (profiles || [])
+          .map(row => row.company_id)
+          .filter(Boolean)
+      )
+    ];
+
+    if (companyIds.length !== 1) {
+      throw new Error(
+        "Cannot determine a unique active company."
+      );
+    }
+
+    const { data, error } = await db
+      .from("settings")
+      .select("setting_value")
+      .eq("company_id", companyIds[0])
+      .eq("setting_key", "emission_display_map")
+      .maybeSingle();
+
+    if (error) throw error;
+
+    // Enabled by default if the setting is not saved yet.
+    emissionZonesVisible =
+      String(data?.setting_value ?? "true")
+        .trim()
+        .toLowerCase() !== "false";
+
+    applyEmissionZoneVisibility();
+
+    console.info(
+      "[orders-map.js] Emission zone visibility:",
+      emissionZonesVisible
+    );
+  })();
+
+  try {
+    await emissionSettingsLoading;
+  } finally {
+    emissionSettingsLoading = null;
+  }
+}
+
+function applyEmissionZoneVisibility() {
+  if (!map || !emissionZoneLayer) return;
+
+  if (emissionZonesVisible) {
+    if (!map.hasLayer(emissionZoneLayer)) {
+      emissionZoneLayer.addTo(map);
+    }
+  } else if (map.hasLayer(emissionZoneLayer)) {
+    map.removeLayer(emissionZoneLayer);
+  }
+}
+
+
+function getEmissionZoneStyle(feature) {
+  const code = String(
+    feature?.properties?.zone_code || ""
+  ).toUpperCase();
+
+  const type = String(
+    feature?.properties?.zone_type || ""
+  ).toUpperCase();
+
+  // London Congestion Charge
+  if (code === "LONDON_CONGESTION") {
+    return {
+      color: "#dc2626",
+      weight: 2,
+      opacity: 0.95,
+      fillColor: "#ef4444",
+      fillOpacity: 0.25
+    };
+  }
+
+  // London ULEZ
+  if (code === "LONDON_ULEZ") {
+    return {
+      color: "#2563eb",
+      weight: 2,
+      opacity: 0.9,
+      fillColor: "#3b82f6",
+      fillOpacity: 0.10
+    };
+  }
+
+  // London LEZ
+  if (code === "LONDON_LEZ") {
+    return {
+      color: "#0891b2",
+      weight: 2,
+      opacity: 0.9,
+      fillColor: "#06b6d4",
+      fillOpacity: 0.08
+    };
+  }
+
+  // Zero Emission Zones
+  if (type === "ZEZ" || code.endsWith("_ZEZ")) {
+    return {
+      color: "#1d4ed8",
+      weight: 3,
+      opacity: 1,
+      fillColor: "#60a5fa",
+      fillOpacity: 0.28
+    };
+  }
+
+  // Other Clean Air Zones
+  return {
+    color: "#15803d",
+    weight: 2,
+    opacity: 0.95,
+    fillColor: "#22c55e",
+    fillOpacity: 0.17
+  };
+}
+
+function renderEmissionZones() {
+  if (!map || !emissionZoneLayer) return;
+
+  emissionZoneLayer.clearLayers();
+
+  if (
+    !emissionZonesGeoJson ||
+    emissionZonesGeoJson.type !== "FeatureCollection"
+  ) {
+    return;
+  }
+
+const geoJsonLayer = L.geoJSON(
+  emissionZonesGeoJson,
+  {
+    pane: "emissionZonesPane",
+    style: getEmissionZoneStyle,
+    interactive: false
+  }
+);
+
+  emissionZoneLayer.addLayer(geoJsonLayer);
+}
+
+async function loadEmissionZones() {
+  if (!map || !emissionZoneLayer) return;
+
+  // Avoid duplicate Supabase requests.
+  if (emissionZonesLoading) {
+    return emissionZonesLoading;
+  }
+
+  emissionZonesLoading = (async () => {
+    try {
+      if (typeof sb !== "function") {
+        throw new Error(
+          "Supabase client is not available."
+        );
+      }
+
+      const { data, error } = await sb()
+        .rpc("get_emission_zones_geojson");
+
+      if (error) throw error;
+
+      if (
+        !data ||
+        data.type !== "FeatureCollection" ||
+        !Array.isArray(data.features)
+      ) {
+        throw new Error(
+          "Invalid emission zones GeoJSON response."
+        );
+      }
+
+      emissionZonesGeoJson = data;
+
+      renderEmissionZones();
+
+      console.log(
+        "[orders-map.js] Emission zones loaded:",
+        data.features.length
+      );
+
+    } catch (error) {
+      console.error(
+        "[orders-map.js] Could not load emission zones:",
+        error
+      );
+    }
+  })();
+
+  try {
+    await emissionZonesLoading;
+  } finally {
+    emissionZonesLoading = null;
+  }
+}
+
+
   function fitUk() {
     if (map) map.fitBounds(UK_BOUNDS);
   }
@@ -2500,146 +2746,321 @@ refreshSelectionPanel();
     `;
   }
 
+
 function buildSelectionPanelHtml(preview) {
   const vehicles = getActiveVehicles();
-  const fdsSummary = getSelectedFdsSummary();
+  const fds = getSelectedFdsSummary();
+  const selectedCount = selectedOrderIds.size;
 
   const vehicleOptions = [
-      `<option value="">Best available vehicle</option>`,
-      ...vehicles.map(vehicle => `
-        <option value="${escapeHtml(vehicle.id)}" ${String(selectedVehicleId) === String(vehicle.id) ? "selected" : ""}>
-          ${escapeHtml(vehicle.name || vehicle.vehicle_name || "Vehicle")} · ${escapeHtml(vehicle.registration || vehicle.vehicle_code || "—")}
-        </option>
-      `)
-    ].join("");
+    `<option value="">Best available vehicle</option>`,
+    ...vehicles.map(vehicle => `
+      <option
+        value="${escapeHtml(vehicle.id)}"
+        ${String(selectedVehicleId) === String(vehicle.id) ? "selected" : ""}
+      >
+        ${escapeHtml(vehicle.name || vehicle.vehicle_name || "Vehicle")}
+        · ${escapeHtml(vehicle.registration || vehicle.vehicle_code || "—")}
+      </option>
+    `)
+  ].join("");
 
-    if (panelMinimized) {
-      return `
-        <div class="orders-map-title-row">
-          <h4 class="orders-map-title">Manual Selection</h4>
-          <button id="mapTogglePanelBtn" class="orders-map-btn" type="button">Open</button>
-        </div>
-      `;
-    }
+  const button = (id, text, primary = false, disabled = false) => `
+    <button
+      id="${id}"
+      type="button"
+      class="orders-map-btn ${primary ? "primary" : ""}"
+      ${disabled ? "disabled" : ""}
+    >${text}</button>
+  `;
 
-    const selectedCount = selectedOrderIds.size;
+  const header = `
+    <div class="orders-map-title-row">
+      <h4 class="orders-map-title">Route Preview</h4>
+      ${button(
+        "mapTogglePanelBtn",
+        panelMinimized ? "Open" : "Minimize"
+      )}
+    </div>
+  `;
 
-    if (!preview) {
-      return `
-        <div class="orders-map-title-row">
-          <h4 class="orders-map-title">Manual Selection</h4>
-          <button id="mapTogglePanelBtn" class="orders-map-btn" type="button">Minimize</button>
-        </div>
+  if (panelMinimized) return header;
 
-        <p class="orders-map-text">
-          Select orders on the map. Use <strong>Preview Selection</strong> to calculate volume, hours, cost and suggested vehicle.
-        </p>
+  const tile = (label, value) => `
+    <div class="orders-map-kv" style="padding:7px;min-width:0">
+      <div class="orders-map-kv-label">${label}</div>
+      <div class="orders-map-kv-value">${value}</div>
+    </div>
+  `;
 
-        <div class="orders-map-grid">
-          <div class="orders-map-kv">
-            <div class="orders-map-kv-label">Selected Orders</div>
-            <div class="orders-map-kv-value">${formatNumber(selectedCount)}</div>
+  const vehicleField = `
+    <div style="display:grid;gap:5px">
+      <label class="orders-map-kv-label" for="mapVehicleSelect">
+        Vehicle
+      </label>
+      <select id="mapVehicleSelect" class="orders-map-select">
+        ${vehicleOptions}
+      </select>
+    </div>
+  `;
+
+  const actions = `
+    <div class="orders-map-row">
+      ${button(
+        "mapPreviewSelectionBtn",
+        preview ? "Refresh Preview" : "Preview Selection",
+        true
+      )}
+      ${button(
+        "mapApplySelectionBtn",
+        "Send to Planner",
+        false,
+        selectedCount === 0
+      )}
+    </div>
+  `;
+
+  const selectionManagement = `
+    <details style="
+      border:1px solid #e2e8f0;
+      border-radius:8px;
+      padding:8px;
+      background:#f8fafc;
+    ">
+      <summary style="
+        cursor:pointer;
+        font-size:11px;
+        font-weight:800;
+        color:#334155;
+      ">
+        Manage selection · ${fds.notAssignedCount} unassigned
+        · ${fds.alreadyFdsCount} FDS
+      </summary>
+
+      <div class="orders-map-fds-selection-summary"
+           style="margin-top:9px">
+        <div class="orders-map-fds-selection-row">
+          <div>
+            <strong>${fds.notAssignedCount} Not assigned</strong>
+            <span>Not yet assigned to FDS</span>
           </div>
-          <div class="orders-map-kv">
-            <div class="orders-map-kv-label">Mode</div>
-            <div class="orders-map-kv-value">${escapeHtml(selectionMode || "none")}</div>
+          ${button(
+            "mapSelectOnlyNotAssignedBtn",
+            "Select only these",
+            false,
+            !fds.notAssignedCount
+          )}
+        </div>
+
+        <div class="orders-map-fds-selection-row">
+          <div>
+            <strong>${fds.alreadyFdsCount} Already FDS</strong>
+            <span>Assigned to FDS / Carrier</span>
           </div>
+          ${button(
+            "mapDeselectFdsBtn",
+            "Deselect these",
+            false,
+            !fds.alreadyFdsCount
+          )}
         </div>
-
-        <select id="mapVehicleSelect" class="orders-map-select">${vehicleOptions}</select>
-
-        <div class="orders-map-row">
-          <button id="mapPreviewSelectionBtn" class="orders-map-btn primary" type="button">Preview Selection</button>
-          <button id="mapApplySelectionBtn" class="orders-map-btn" type="button">Send to Planner</button>
-        </div>
-      `;
-    }
-
-    const sel = preview.selection || {};
-    const suggested = preview.suggested_vehicle;
-    const selected = preview.selected_vehicle;
-
-    return `
-      <div class="orders-map-title-row">
-        <h4 class="orders-map-title">Manual Selection</h4>
-        <button id="mapTogglePanelBtn" class="orders-map-btn" type="button">Minimize</button>
       </div>
+    </details>
+  `;
 
-      <p class="orders-map-text">${escapeHtml(selectedCount)} selected order(s).</p>
+  if (!preview) {
+    return `
+      ${header}
 
-<div class="orders-map-fds-selection-summary">
-
-  <div class="orders-map-fds-selection-row">
-    <div>
-      <strong>${formatNumber(fdsSummary.notAssignedCount)} Not assigned</strong>
-      <span>Not yet assigned to FDS</span>
-    </div>
-
-    <button
-      id="mapSelectOnlyNotAssignedBtn"
-      class="orders-map-btn"
-      type="button"
-      ${fdsSummary.notAssignedCount ? "" : "disabled"}
-    >
-      Select only these
-    </button>
-  </div>
-
-  <div class="orders-map-fds-selection-row">
-    <div>
-      <strong>${formatNumber(fdsSummary.alreadyFdsCount)} Already FDS</strong>
-      <span>Already assigned to FDS / Carrier</span>
-    </div>
-
-    <button
-      id="mapDeselectFdsBtn"
-      class="orders-map-btn"
-      type="button"
-      ${fdsSummary.alreadyFdsCount ? "" : "disabled"}
-    >
-      Deselect these
-    </button>
-  </div>
-
-</div>
+      <p class="orders-map-text">
+        ${selectedCount} selected order(s).
+        Preview to calculate route distance, time and costs.
+      </p>
 
       <div class="orders-map-grid">
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Orders</div><div class="orders-map-kv-value">${formatNumber(sel.order_count || 0)}</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Colli</div><div class="orders-map-kv-value">${formatNumber(sel.total_colli || 0)}</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Volume</div><div class="orders-map-kv-value">${formatNumber(sel.total_volume_m3 || 0, 2)} m³</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Miles</div><div class="orders-map-kv-value">${formatNumber(sel.distance_miles || 0, 1)}</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Hours</div><div class="orders-map-kv-value">${formatNumber(sel.total_hours || 0, 2)} h</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Cost</div><div class="orders-map-kv-value">${formatMoney(sel.total_cost_gbp || 0)}</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Cost / Stop</div><div class="orders-map-kv-value">${formatMoney(sel.cost_per_stop_gbp || 0)}</div></div>
-        <div class="orders-map-kv"><div class="orders-map-kv-label">Stops</div><div class="orders-map-kv-value">${formatNumber(sel.stop_count || 0)}</div></div>
+        ${tile("Selected orders", formatNumber(selectedCount))}
+        ${tile("Selection mode", escapeHtml(selectionMode || "none"))}
       </div>
 
-      <select id="mapVehicleSelect" class="orders-map-select">${vehicleOptions}</select>
+      ${vehicleField}
+      ${selectionManagement}
+      ${actions}
+    `;
+  }
 
-      <div class="orders-map-kv">
-        <div class="orders-map-kv-label">Suggested Vehicle</div>
-        <div class="orders-map-kv-value">${suggested?.vehicle?.name ? escapeHtml(suggested.vehicle.name) : "No vehicle match"}</div>
-      </div>
+  const selection = preview.selection || {};
+  const suggested = preview.suggested_vehicle?.vehicle;
+  const selected = preview.selected_vehicle;
+  const emission = preview.emission_zones;
+  const warnings = Array.isArray(preview.warnings)
+    ? preview.warnings
+    : [];
 
-      ${
-        selected
-          ? `
-            <div class="orders-map-kv">
-              <div class="orders-map-kv-label">Selected Vehicle Estimate</div>
-              <div class="orders-map-kv-value">
-                ${escapeHtml(selected.vehicle?.name || "—")} · ${formatNumber((selected.fillRate || 0) * 100, 0)}% fill · ${formatMoney(selected.totalCost || 0)}
-              </div>
-            </div>
-          `
-          : ``
-      }
+  const hasCalculation =
+    preview.ok === true &&
+    preview.routing_source === "osrm";
 
-      <div class="orders-map-row">
-        <button id="mapPreviewSelectionBtn" class="orders-map-btn primary" type="button">Refresh Preview</button>
-        <button id="mapApplySelectionBtn" class="orders-map-btn" type="button">Send to Planner</button>
+  const metric = (value, digits = 1, suffix = "") =>
+    hasCalculation && Number.isFinite(Number(value))
+      ? `${formatNumber(value, digits)}${suffix}`
+      : "—";
+
+  const zoneRows = [
+    ...(emission?.delivery_zones || []),
+    ...(emission?.route_zones || [])
+  ];
+
+  const zoneNames = [
+    ...new Set(
+      zoneRows.map(zone =>
+        zone.zone_name || zone.zone_code
+      ).filter(Boolean)
+    )
+  ];
+
+  const affectedOrders = Number(
+    emission?.affected_orders || 0
+  );
+
+  const routeZones = emission?.route_zones || [];
+
+  let emissionHtml = "";
+
+  if (emission && emission.checked === false) {
+    emissionHtml = `
+      <div style="
+        padding:10px;
+        background:#fff7ed;
+        border:1px solid #fdba74;
+        border-radius:9px;
+        color:#9a3412;
+        font-size:11px;
+      ">
+        <strong>⚠ Emission zone check incomplete</strong>
+        <div style="margin-top:4px">
+          ${escapeHtml(
+            (emission.errors || []).join(" | ") ||
+            "Not all emission zone checks could be completed."
+          )}
+        </div>
       </div>
     `;
   }
+
+  if (zoneNames.length) {
+    emissionHtml += `
+      <div style="
+        padding:10px;
+        background:#fffbeb;
+        border:1px solid #fcd34d;
+        border-radius:9px;
+        display:grid;
+        gap:5px;
+        color:#92400e;
+        font-size:11px;
+      ">
+        <strong>⚠ Emission zone warning</strong>
+
+        <div>
+          ${affectedOrders} delivery order(s) inside a zone
+          · ${routeZones.length} route zone crossing(s)
+        </div>
+
+        <div style="font-weight:800">
+          ${zoneNames.map(escapeHtml).join(" · ")}
+        </div>
+
+        <small>
+          Check vehicle compliance and applicable charges.
+          Zone detection does not confirm vehicle eligibility.
+        </small>
+      </div>
+    `;
+  }
+
+  const calculationWarning = !hasCalculation
+    ? `
+      <div style="
+        padding:9px;
+        background:#fff7ed;
+        border:1px solid #fdba74;
+        border-radius:8px;
+        font-size:10px;
+        color:#9a3412;
+      ">
+        ⚠ Verified road calculation unavailable.
+        Route distance, hours and costs are not confirmed.
+      </div>
+    `
+    : "";
+
+  const otherWarnings = warnings.filter(message =>
+    !String(message).startsWith("Delivery ") &&
+    !String(message).startsWith("Route crosses ") &&
+    !String(message).startsWith("Emission zone check:")
+  );
+
+  return `
+    ${header}
+
+    <div class="orders-map-grid"
+         style="grid-template-columns:repeat(4,minmax(0,1fr));gap:5px">
+      ${tile("Orders", formatNumber(selection.order_count || 0))}
+      ${tile("Colli", formatNumber(selection.total_colli || 0))}
+      ${tile("Volume", `${formatNumber(selection.total_volume_m3 || 0, 2)} m³`)}
+      ${tile("Stops", formatNumber(selection.stop_count || 0))}
+    </div>
+
+    <div class="orders-map-grid"
+         style="grid-template-columns:repeat(3,minmax(0,1fr));gap:5px">
+      ${tile("Distance", metric(selection.distance_miles, 1, " mi"))}
+      ${tile("Duration", metric(selection.total_hours, 2, " h"))}
+      ${tile("Cost", hasCalculation
+        ? formatMoney(selection.total_cost_gbp)
+        : "—")}
+    </div>
+
+    ${calculationWarning}
+    ${emissionHtml}
+
+    ${vehicleField}
+
+    <div class="orders-map-kv" style="padding:8px">
+      <div class="orders-map-kv-label">Suggested Vehicle</div>
+      <div class="orders-map-kv-value">
+        ${escapeHtml(
+          suggested?.name ||
+          suggested?.vehicle_name ||
+          "No suitable vehicle found"
+        )}
+      </div>
+
+      ${selected ? `
+        <div style="font-size:10px;color:#64748b;margin-top:4px">
+          Selected: ${escapeHtml(
+            selected.vehicle?.name ||
+            selected.vehicle?.vehicle_name ||
+            "Vehicle"
+          )}
+          · ${formatNumber((selected.fillRate || 0) * 100, 0)}% fill
+          · ${hasCalculation ? formatMoney(selected.totalCost) : "Cost unverified"}
+        </div>
+      ` : ""}
+    </div>
+
+    ${otherWarnings.length ? `
+      <details style="font-size:10px;color:#92400e">
+        <summary>Other warnings (${otherWarnings.length})</summary>
+        <div style="margin-top:5px">
+          ${otherWarnings.map(escapeHtml).join(" | ")}
+        </div>
+      </details>
+    ` : ""}
+
+    ${selectionManagement}
+    ${actions}
+  `;
+}
 
   function installTopControl() {
     if (!map || topControl) return;
@@ -2936,92 +3357,173 @@ function bindSelectionPanelEvents() {
   }
 }
 
-  async function previewSelection() {
-    const selectedIds = [...selectedOrderIds];
 
-    if (!selectedIds.length) {
-      previewCache = null;
-      refreshSelectionPanel();
+async function previewSelection() {
+  const selectedIds = [...selectedOrderIds];
+
+  if (!selectedIds.length) {
+    previewCache = null;
+    refreshSelectionPanel();
+    return;
+  }
+
+  const selectedOrders = getVisibleOrders().filter(row =>
+    selectedOrderIds.has(String(row.id))
+  );
+
+  const vehicles = getActiveVehicles();
+
+  const totalVolume = selectedOrders.reduce(
+    (sum, row) => sum + getOrderVolume(row), 0
+  );
+
+  const totalColli = selectedOrders.reduce(
+    (sum, row) => sum + getOrderColli(row), 0
+  );
+
+  const selectedVehicle = vehicles.find(vehicle =>
+    String(vehicle.id) === String(selectedVehicleId)
+  ) || null;
+
+  const selectionBase = {
+    order_count: selectedOrders.length,
+    total_colli: totalColli,
+    total_volume_m3: totalVolume,
+    distance_miles: null,
+    total_hours: null,
+    total_cost_gbp: null,
+    cost_per_stop_gbp: null,
+    stop_count: null
+  };
+
+  // Show the user that the calculation has started.
+  previewCache = null;
+  refreshSelectionPanel();
+
+  try {
+    if (!window.PlanningEngine?.previewSelection) {
+      throw new Error(
+        "Planning Engine is not available."
+      );
+    }
+
+    const result = await window.PlanningEngine.previewSelection({
+      order_ids: selectedIds,
+      preferred_vehicle_id: selectedVehicleId || null,
+      vehicle_id: selectedVehicleId || null
+    });
+
+    if (!result?.ok || !result.summary) {
+      throw new Error(
+        result?.message || "Route preview unavailable."
+      );
+    }
+
+    const summary = result.summary;
+
+    // Ignore an outdated preview if the selection changed.
+    if (
+      selectedIds.length !== selectedOrderIds.size ||
+      selectedIds.some(id => !selectedOrderIds.has(id))
+    ) {
       return;
     }
 
-    const selectedOrders = getVisibleOrders().filter(row => selectedOrderIds.has(String(row.id)));
-    const vehicles = getActiveVehicles();
-
-    if (window.PlanningEngine?.previewSelection) {
-      try {
-        const result = await window.PlanningEngine.previewSelection({
-          order_ids: selectedIds,
-          preferred_vehicle_id: selectedVehicleId || null,
-          vehicle_id: selectedVehicleId || null
-        });
-
-        const summary = result?.summary || {};
-
-        previewCache = {
-          selection: {
-            order_count: result?.selected_orders || selectedOrders.length,
-            total_colli: selectedOrders.reduce((sum, row) => sum + getOrderColli(row), 0),
-            total_volume_m3: summary.totalVolume ?? selectedOrders.reduce((sum, row) => sum + getOrderVolume(row), 0),
-            distance_miles: summary.distanceMiles || 0,
-            total_hours: summary.totalHours || 0,
-            total_cost_gbp: summary.totalCost || 0,
-            cost_per_stop_gbp: summary.costPerStop || 0,
-            stop_count: summary.totalStops || selectedOrders.length
-          },
-          suggested_vehicle: result?.suggested_vehicle ? { vehicle: result.suggested_vehicle } : null,
-          selected_vehicle: selectedVehicleId
-            ? {
-                vehicle: vehicles.find(v => String(v.id) === String(selectedVehicleId)),
-                fillRate: summary.fillRate || 0,
-                totalCost: summary.totalCost || 0
-              }
-            : null
-        };
-
-        refreshSelectionPanel();
-        return;
-      } catch (error) {
-        console.warn("[orders-map.js] PlanningEngine preview failed, fallback used:", error.message);
-      }
-    }
-
-    const totalVolume = selectedOrders.reduce((sum, row) => sum + getOrderVolume(row), 0);
-    const totalColli = selectedOrders.reduce((sum, row) => sum + getOrderColli(row), 0);
-    const revenue = selectedOrders.reduce((sum, row) => sum + getOrderRevenue(row), 0);
-
-    const suggested = vehicles
-      .filter(vehicle => Number(vehicle.capacity_m3 || vehicle.max_volume_m3 || 0) >= totalVolume)
-      .sort((a, b) => Number(a.capacity_m3 || a.max_volume_m3 || 0) - Number(b.capacity_m3 || b.max_volume_m3 || 0))[0] || null;
-
-    const selectedVehicle = selectedVehicleId
-      ? vehicles.find(v => String(v.id) === String(selectedVehicleId))
-      : null;
-
     previewCache = {
+      ok: true,
+      routing_source: result.routing_source ||
+        summary.routingSource ||
+        "estimated",
+
       selection: {
-        order_count: selectedOrders.length,
-        total_colli: totalColli,
-        total_volume_m3: totalVolume,
-        distance_miles: 0,
-        total_hours: 0,
-        total_cost_gbp: 0,
-        cost_per_stop_gbp: 0,
-        stop_count: selectedOrders.length,
-        revenue_gbp: revenue
+        ...selectionBase,
+        order_count: result.selected_orders,
+        total_colli: summary.totalColli ?? totalColli,
+        total_volume_m3: summary.totalVolume ?? totalVolume,
+        distance_miles: summary.distanceMiles,
+        total_hours: summary.totalHours,
+        total_cost_gbp: summary.totalCost,
+        cost_per_stop_gbp: summary.costPerStop,
+        stop_count: summary.totalStops
       },
-      suggested_vehicle: suggested ? { vehicle: suggested } : null,
+
+      suggested_vehicle: result.suggested_vehicle
+        ? { vehicle: result.suggested_vehicle }
+        : null,
+
       selected_vehicle: selectedVehicle
         ? {
             vehicle: selectedVehicle,
-            fillRate: totalVolume / Math.max(1, Number(selectedVehicle.capacity_m3 || selectedVehicle.max_volume_m3 || 1)),
-            totalCost: 0
+            fillRate: summary.fillRate,
+            totalCost: summary.totalCost
           }
-        : null
+        : null,
+
+      emission_zones: result.emission_zones || null,
+      warnings: result.warnings || []
     };
 
-    refreshSelectionPanel();
+    console.info(
+      "[orders-map.js] Route preview completed:",
+      {
+        orders: result.selected_orders,
+        stops: summary.totalStops,
+        miles: summary.distanceMiles,
+        emission_zones:
+          result.emission_zones?.unique_zone_count ?? 0,
+        affected_orders:
+          result.emission_zones?.affected_orders ?? 0,
+        emission_checked:
+          result.emission_zones?.checked ?? false
+      }
+    );
+
+  } catch (error) {
+    console.error(
+      "[orders-map.js] Route preview failed:",
+      error
+    );
+
+    previewCache = {
+      ok: false,
+      routing_source: "unavailable",
+      selection: selectionBase,
+
+      suggested_vehicle: null,
+      selected_vehicle: selectedVehicle
+        ? {
+            vehicle: selectedVehicle,
+            fillRate: totalVolume /
+              Math.max(
+                1,
+                Number(
+                  selectedVehicle.capacity_m3 ||
+                  selectedVehicle.max_volume_m3 ||
+                  1
+                )
+              ),
+            totalCost: null
+          }
+        : null,
+
+      emission_zones: {
+        checked: false,
+        delivery_zones: [],
+        route_zones: [],
+        affected_orders: 0,
+        errors: [
+          "Emission assessment unavailable because the route preview failed."
+        ]
+      },
+
+      warnings: [
+        error.message || "Route calculation failed."
+      ]
+    };
   }
+
+  refreshSelectionPanel();
+}
 
   function drawVertex(point, isFirst = false, isClose = false) {
     if (!vertexLayer) return;
@@ -3291,6 +3793,17 @@ function bindSelectionPanelEvents() {
       attribution: "&copy; OpenStreetMap contributors"
     }).addTo(map);
 
+// Emission zones below orders and route lines
+map.createPane("emissionZonesPane");
+
+map.getPane("emissionZonesPane").style.zIndex = "350";
+map.getPane("emissionZonesPane").style.pointerEvents = "none";
+
+emissionZoneLayer = L.geoJSON(null, {
+  pane: "emissionZonesPane",
+  interactive: false
+}).addTo(map);
+
 depotLayer = L.layerGroup().addTo(map);
 orderLayer = L.layerGroup().addTo(map);
 routeLineLayer = L.layerGroup().addTo(map);
@@ -3305,12 +3818,32 @@ selectionLayer =
 vertexLayer =
   L.layerGroup().addTo(map);
 
-    installTopControl();
-    installPanelControl();
-    installLegendControl();
-    installMapHandlers();
+installTopControl();
+installPanelControl();
+installLegendControl();
+installMapHandlers();
 
-    fitUk();
+fitUk();
+
+// First read the tenant's visibility preference.
+// Only load and display boundaries when enabled.
+void loadEmissionMapSettings()
+  .then(() => {
+    if (emissionZonesVisible) {
+      return loadEmissionZones();
+    }
+  })
+  .catch(error => {
+    console.error(
+      "[orders-map.js] Emission map settings failed:",
+      error
+    );
+
+    // Fail closed: do not show zones when tenant
+    // visibility preferences cannot be verified.
+    emissionZonesVisible = false;
+    applyEmissionZoneVisibility();
+  });
 
     setTimeout(() => {
       reload();

@@ -463,9 +463,31 @@ history: `
     style.textContent = `
       .sidebar{position:sticky;top:0;height:100vh;overflow:visible!important;padding:18px 10px 16px;display:flex;flex-direction:column;gap:12px;}
       .veynor-brand{position:relative;padding:0 0 4px;display:grid;justify-items:center;}
-      .veynor-top-logo{width:112px;height:112px;border-radius:32px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.10);box-shadow:0 20px 44px rgba(0,0,0,.24);}
-      .veynor-icon-large{width:88px;height:88px;object-fit:contain;border-radius:23px;background:#fff;padding:8px;box-shadow:0 12px 26px rgba(0,0,0,.22);}
-      .sidebar-toggle{position:absolute!important;top:116px!important;right:-30px!important;width:44px!important;height:44px!important;border-radius:999px!important;border:1px solid rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf8)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:pointer!important;z-index:5000!important;box-shadow:0 18px 38px rgba(18,103,255,.35);}
+
+.veynor-top-logo {
+  width: 112px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.veynor-icon-large {
+  width: 108px;
+  height: 108px;
+  object-fit: contain;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+}
+rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf8)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:pointer!important;z-index:5000!important;box-shadow:0 18px 38px rgba(18,103,255,.35);}
       .sidebar-toggle-icon{font-size:28px;font-weight:950;line-height:1;transform:rotate(180deg);}
       body.sidebar-collapsed .sidebar-toggle-icon{transform:rotate(0deg);}
       .sidebar-system-status{margin:8px 8px 2px;padding:12px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));border:1px solid rgba(125,211,252,.16);}
@@ -486,16 +508,18 @@ history: `
   justify-content:center;
   align-items:center;
 }
-      .veynor-wordmark-bottom{
-  width:180px;
-  max-width:100%;
-  height:auto;
-  object-fit:contain;
-  background:transparent;
-  border-radius:0;
-  padding:0;
-  box-shadow:none;
-  filter:drop-shadow(0 8px 18px rgba(0,0,0,.28));
+
+.veynor-wordmark-bottom {
+  width: 180px;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  filter: none;
 }
       body.sidebar-collapsed .veynor-top-logo{width:54px;height:54px;border-radius:18px;}
       body.sidebar-collapsed .veynor-icon-large{width:44px;height:44px;border-radius:13px;padding:4px;}
@@ -793,8 +817,7 @@ async function updateMessageCenterNavBadge() {
     mount.innerHTML = `
       <div class="veynor-brand">
         <div class="veynor-top-logo">
-          <img src="./assets/veynor-icon2.png" alt="Veynor" class="veynor-icon-large">
-        </div>
+<img src="/assets/logos/veynor-symbol.png" alt="Veynor" class="veynor-icon-large">        </div>
 
         <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-label="Toggle sidebar">
           <span class="sidebar-toggle-icon">‹</span>
@@ -814,9 +837,14 @@ async function updateMessageCenterNavBadge() {
         </button>
       </div>
 
-      <div class="sidebar-wordmark">
-        <img src="./assets/veynor-wordmark.png" alt="veynor" class="veynor-wordmark-bottom">
-      </div>
+
+<div class="sidebar-wordmark">
+  <img
+    src="/assets/logos/veynor-wordmark-footer.png"
+    alt="Veynor"
+    class="veynor-wordmark-bottom"
+  >
+</div>
     `;
 
     document.getElementById("sidebarToggle")?.addEventListener("click", () => {

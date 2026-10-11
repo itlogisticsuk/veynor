@@ -1224,18 +1224,22 @@ inbound_expected_allocations (
 )
           )
         `)
-        .eq(
-          "company_id",
-          cid
-        )
-        .or(
-          "planning_release.is.null,planning_release.eq.false"
-        )
-        .not(
-          "status",
-          "in",
-          '("loaded","delivered","cancelled","export_for_charter")'
-        )
+
+.eq(
+  "company_id",
+  cid
+)
+.or(
+  "planning_release.is.null,planning_release.eq.false"
+)
+.or(
+  "manual_completion_override.is.null,manual_completion_override.eq.false"
+)
+.not(
+  "status",
+  "in",
+  '("loaded","delivered","cancelled","export_for_charter")'
+)
 .or(
   "transport_type.neq.charter,order_type.eq.service"
 )
@@ -3212,87 +3216,318 @@ ${renderExpectedAllocationHtml(
    * RUN MATCHING
    * ======================================================= */
 
-  async function runMatchModule() {
-    try {
-      if (
-        !window.AllocationEngine?.run
-      ) {
-        throw new Error(
-          "AllocationEngine is not loaded."
-        );
-      }
+  
 
-const sourceOrders =
-  selectedOrderIds.size
-    ? allOrders.filter(order =>
-        selectedOrderIds.has(
-          String(order.id)
+async function runMatchModule() {
+  const progress = window.VeynorProgress;
+  let progressOpened = false;
+
+  const button = byId("btnRunMatch");
+
+  try {
+    if (!window.AllocationEngine?.run) {
+      throw new Error(
+        "AllocationEngine is not loaded."
+      );
+    }
+
+    if (
+      !progress?.open ||
+      !progress?.update ||
+      !progress?.complete ||
+      !progress?.fail
+    ) {
+      throw new Error(
+        "VeynorProgress is not loaded."
+      );
+    }
+
+    const sourceOrders = selectedOrderIds.size
+      ? allOrders.filter(order =>
+          selectedOrderIds.has(String(order.id))
         )
-      )
-    : allOrders;
+      : allOrders;
 
-const orderIds =
-  sourceOrders
-    .filter(order =>
+    const eligibleOrders = sourceOrders.filter(order =>
       !isCollectionOrder(order) &&
       !order.planning_release &&
       !order.stats.isFullyMatched &&
       !order.stats.isExpectedComplete
-    )
-    .map(order =>
+    );
+
+    if (!eligibleOrders.length) {
+      showToast(
+        "No orders selected or available for matching.",
+        "err"
+      );
+      return;
+    }
+
+    const orderIds = eligibleOrders.map(order =>
       String(order.id)
     );
 
-      if (!orderIds.length) {
-        showToast(
-          "No orders selected or available for matching.",
-          "err"
-        );
+    const total = orderIds.length;
 
-        return;
-      }
+    if (button) {
+      button.disabled = true;
+    }
 
-      setProgress(
-        true,
-        10,
-        "Running allocation engine..."
-      );
+    progressOpened = progress.open({
+      type: "matching",
+      total
+    });
 
-      const result =
-        await window
-          .AllocationEngine
-          .run({
-            orderIds,
-            dryRun: false
-          });
-
-      setProgress(
-        true,
-        90,
-        "Reloading matching results..."
-      );
-
-      await loadOrders();
-
-      showToast(
-        `${formatNumber(
-          result
-            ?.allocations_created ||
-          0
-        )} stock item(s) matched and reserved.`,
-        "ok"
-      );
-    } catch (error) {
-      console.error(error);
-      setProgress(false);
-
-      showToast(
-        error.message ||
-        "Matching failed.",
-        "err"
+    if (!progressOpened) {
+      throw new Error(
+        "Another progress operation is already active."
       );
     }
+
+    // Start the matching process.
+    progress.update({
+      phase: 1,
+      completed: 0,
+      total
+    });
+
+    let lastCompleted = 0;
+
+    // Receive real progress from AllocationEngine.
+    function handleMatchingProgress(info = {}) {
+      const stage = String(info.stage || "");
+
+      const current = Math.max(
+        0,
+        Math.min(
+          total,
+          toNumber(info.completed, 0)
+        )
+      );
+
+      const stageTotal = Math.max(
+        1,
+        toNumber(info.total, total)
+      );
+
+      let phase = 2;
+      let completed = lastCompleted;
+
+      switch (stage) {
+        case "loading":
+          phase = 1;
+          break;
+
+        case "stock_loaded":
+          phase = 2;
+          break;
+
+        case "allocations_calculated":
+          phase = 3;
+          break;
+
+        case "orders":
+          phase = 3;
+
+          // First half of database order processing.
+          completed = Math.floor(
+            (current / stageTotal) *
+            total * 0.5
+          );
+          break;
+
+        case "lines":
+          phase = 3;
+
+          // Second half: save the order lines.
+          completed = Math.floor(
+            total * 0.5 +
+            (current / stageTotal) *
+            total * 0.5
+          );
+          break;
+
+        case "finished":
+          phase = 4;
+          completed = total;
+          break;
+
+        default:
+          return;
+      }
+
+      // Prevent the counter from moving backwards.
+      completed = Math.max(
+        lastCompleted,
+        Math.min(total, completed)
+      );
+
+      lastCompleted = completed;
+
+      progress.update({
+        phase,
+        completed,
+        total
+      });
+    }
+
+    // Preserve one global allocation run.
+    // Critical/Priority/Normal stock rules remain intact.
+    const result = await window.AllocationEngine.run({
+      orderIds,
+      dryRun: false,
+      onProgress: handleMatchingProgress
+    });
+
+    // The engine has completed successfully.
+    progress.update({
+      phase: 4,
+      completed: total,
+      total
+    });
+
+    // Refresh the displayed orders.
+    await loadOrders();
+
+    const summaries = Array.isArray(result?.summaries)
+      ? result.summaries
+      : [];
+
+    if (summaries.length !== total) {
+      throw new Error(
+        "Matching completed, but not all order summaries " +
+        "were returned. Review the results before retrying."
+      );
+    }
+
+    let matched = 0;
+    let partial = 0;
+    let unmatched = 0;
+
+    const details = [];
+
+    for (const summary of summaries) {
+      const required = toNumber(
+        summary.total_required,
+        0
+      );
+
+      const physical = toNumber(
+        summary.total_allocated,
+        0
+      );
+
+      const expected = toNumber(
+        summary.total_expected_allocated,
+        0
+      );
+
+      const combined = physical + expected;
+
+      const missingLines = (summary.lines || [])
+        .filter(line =>
+          toNumber(line.combined_missing, 0) > 0
+        );
+
+      const missingReasons = missingLines.map(line => {
+        const sku = line.sku_base || "Missing SKU";
+
+        const missing = toNumber(
+          line.combined_missing,
+          0
+        );
+
+        const reason = !line.product_id
+          ? "Product not linked"
+          : "Not allocated from physical or expected stock";
+
+        return `${sku}: ${missing} missing — ${reason}`;
+      });
+
+      if (required <= 0) {
+        unmatched++;
+
+        details.push({
+          orderNumber: summary.order_number,
+          status: "unmatched",
+          reason: "No matchable quantity found."
+        });
+
+      } else if (combined >= required) {
+        matched++;
+
+      } else if (combined > 0) {
+        partial++;
+
+        details.push({
+          orderNumber: summary.order_number,
+          status: "partial",
+          reason: missingReasons.join(" · ") ||
+            "Order partially matched."
+        });
+
+      } else {
+        unmatched++;
+
+        details.push({
+          orderNumber: summary.order_number,
+          status: "unmatched",
+          reason: missingReasons.join(" · ") ||
+            "No products allocated."
+        });
+      }
+    }
+
+    // Final matching results.
+    progress.update({
+      phase: 4,
+      completed: total,
+      total,
+      imported: matched,
+      skipped: partial,
+      failed: 0
+    });
+
+    progress.complete({
+      imported: matched,
+      skipped: partial,
+      failed: 0,
+      unmatched,
+      details
+    });
+
+    showToast(
+      `Matching complete: ${matched} matched, ` +
+      `${partial} partial, ${unmatched} unmatched.`,
+      unmatched || partial ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error(
+      "Run Match failed:",
+      error
+    );
+
+    if (progressOpened) {
+      progress.fail({
+        message: error?.message || String(error)
+      });
+    }
+
+    showToast(
+      error?.message || "Matching failed.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+
+    setProgress(false);
   }
+}
+
 
   /* =========================================================
    * GEOCODING
@@ -3443,101 +3678,120 @@ const orderIds =
     };
   }
 
-  async function geocodeOrders(
-    orderIds
-  ) {
-    let updated = 0;
-    let failed = 0;
-    let skipped = 0;
+  
+async function geocodeOrders(orderIds, onProgress = null) {
+  let updated = 0;
+  let failed = 0;
+  let skipped = 0;
 
-    for (
-      let index = 0;
-      index < orderIds.length;
-      index++
-    ) {
-      const order =
-        allOrders.find(
-          row =>
-            String(row.id) ===
-            String(
-              orderIds[index]
-            )
-        );
+  const details = [];
+  const total = orderIds.length;
 
-      if (!order) {
-        continue;
-      }
+  function report(index, order, status, reason = "") {
+    if (typeof onProgress !== "function") return;
 
+    try {
+      onProgress({
+        stage: "geocoding",
+        completed: index + 1,
+        total,
+        orderNumber: order?.order_number || "",
+        status,
+        reason
+      });
+    } catch (error) {
+      console.warn("Geocode progress callback failed:", error);
+    }
+  }
+
+  for (let index = 0; index < total; index++) {
+    const order = allOrders.find(
+      row => String(row.id) === String(orderIds[index])
+    );
+
+    if (!order) {
+      failed++;
+      details.push({
+        orderNumber: String(orderIds[index]),
+        status: "failed",
+        reason: "Order not found."
+      });
+      report(index, null, "failed", "Order not found.");
+      continue;
+    }
+
+    // Keep the old progress bar for standalone geocoding.
+    if (!onProgress) {
       setProgress(
         true,
-        Math.round(
-          (
-            (index + 1) /
-            orderIds.length
-          ) * 100
-        ),
-        `Geocoding ${
-          order.order_number
-        }...`
+        Math.round(((index + 1) / total) * 100),
+        `Geocoding ${order.order_number}...`
       );
+    }
 
-      const result =
-        await geocodeOne(order);
+    try {
+      const result = await geocodeOne(order);
 
       if (!result.ok) {
-        failed += 1;
+        failed++;
 
-        console.warn(
-          `No geocode for ${order.order_number}:`,
-          result.message
-        );
+        const reason = result.message || "No geocode match.";
 
+        details.push({
+          orderNumber: order.order_number,
+          status: "failed",
+          reason
+        });
+
+        report(index, order, "failed", reason);
         continue;
       }
 
       if (result.skipped) {
-        skipped += 1;
+        skipped++;
+        report(index, order, "skipped", "Coordinates already available.");
         continue;
       }
 
       const payload = {
-        delivery_lat:
-          result.lat,
-
-        delivery_lng:
-          result.lng
+        delivery_lat: result.lat,
+        delivery_lng: result.lng
       };
 
-      if (
-        "geocode_display_name"
-        in order
-      ) {
-        payload
-          .geocode_display_name =
-          result.display_name ||
-          null;
+      if ("geocode_display_name" in order) {
+        payload.geocode_display_name =
+          result.display_name || null;
       }
 
-      const { error } =
-        await client
-          .from("orders")
-          .update(payload)
-          .eq("id", order.id);
+      const { error } = await client
+        .from("orders")
+        .update(payload)
+        .eq("id", order.id);
 
-      if (error) {
-        failed += 1;
-        console.error(error);
-      } else {
-        updated += 1;
-      }
+      if (error) throw error;
+
+      updated++;
+      report(index, order, "updated");
+
+    } catch (error) {
+      failed++;
+
+      const reason = error?.message || "Geocoding failed.";
+
+      details.push({
+        orderNumber: order.order_number,
+        status: "failed",
+        reason
+      });
+
+      console.error("Geocode failed:", order.order_number, error);
+      report(index, order, "failed", reason);
     }
-
-    return {
-      updated,
-      failed,
-      skipped
-    };
   }
+
+  return { updated, failed, skipped, details };
+}
+
 
   async function geocodeSelected() {
     try {
@@ -3590,242 +3844,180 @@ const orderIds =
    * RELEASE TO PLANNING
    * ======================================================= */
 
-async function releaseOrders(
-  orderIds
-) {
-  const cid =
-    await getCompanyId();
 
-  const releasable = [];
-  const blocked = [];
+async function releaseOrders(orderIds, onProgress = null) {
+  const cid = await getCompanyId();
 
-  orderIds.forEach(id => {
-    const order =
-      allOrders.find(
-        row =>
-          String(row.id) ===
-          String(id)
-      );
+  const result = {
+    released: 0,
+    skipped: 0,
+    failed: 0,
+    details: []
+  };
 
-    if (!order) {
-      return;
+  const total = orderIds.length;
+
+  function report(index, order, status, reason = "") {
+    if (typeof onProgress !== "function") return;
+
+    try {
+      onProgress({
+        stage: "releasing",
+        completed: index + 1,
+        total,
+        orderNumber: order?.order_number || "",
+        status,
+        reason
+      });
+    } catch (error) {
+      console.warn("Release progress callback failed:", error);
     }
-
-const collection =
-  isCollectionOrder(order);
-
-const service =
-  isServiceOrder(order);
-
-const physicallyReady =
-  Boolean(
-    order.stats
-      ?.readyForPlanning
-  );
-
-const expectedReady =
-  Boolean(
-    order.stats
-      ?.isExpectedComplete &&
-    order.stats
-      ?.expectedCompleteDate
-  );
-
-const geoReady =
-  hasCoordinates(order);
-
-if (
-  collection &&
-  geoReady
-) {
-  releasable.push(order);
-  return;
-}
-
-if (
-  service &&
-  geoReady
-) {
-  releasable.push(order);
-  return;
-}
-
-if (
-  !collection &&
-  (
-    physicallyReady ||
-    expectedReady
-  ) &&
-  geoReady
-) {
-  releasable.push(order);
-  return;
-}
-
-const reasons = [];
-
-if (
-  !collection &&
-  !service &&
-  !physicallyReady &&
-  !expectedReady
-) {
-
-  reasons.push(
-    "order is not physically or expected complete"
-  );
-}
-
-if (!geoReady) {
-  reasons.push(
-    "geolocation is missing"
-  );
-}
-
-    blocked.push({
-      order,
-      reasons
-    });
-  });
-
-if (blocked.length) {
-  console.warn(
-    "ORDERS SKIPPED DURING RELEASE",
-    blocked.map(item => ({
-      order_number: item.order.order_number,
-      reasons: item.reasons
-    }))
-  );
-}
-
-if (!releasable.length) {
-  const example = blocked[0];
-
-  throw new Error(
-    blocked.length
-      ? `${blocked.length} order(s) blocked. Example ${example.order.order_number}: ${example.reasons.join(" · ")}`
-      : "No ready orders to release."
-  );
-}
-
-  if (!releasable.length) {
-    throw new Error(
-      "No ready orders to release."
-    );
   }
 
- for (
-  const order of releasable
-) {
-const collection =
-  isCollectionOrder(order);
+  for (let index = 0; index < total; index++) {
+    const id = String(orderIds[index]);
 
-const service =
-  isServiceOrder(order);
-
-  const physicallyReady =
-    Boolean(
-      order.stats
-        ?.readyForPlanning
+    const order = allOrders.find(
+      row => String(row.id) === id
     );
 
-const expectedOnly =
-  !collection &&
-  !service &&
-  !physicallyReady &&
-  Boolean(
-    order.stats
-      ?.isExpectedComplete
-  );
+    if (!order) {
+      result.failed++;
 
-    const expectedCompleteDate =
-      expectedOnly
+      result.details.push({
+        orderNumber: id,
+        status: "failed",
+        reason: "Order not found."
+      });
+
+      report(index, null, "failed", "Order not found.");
+      continue;
+    }
+
+    const orderNumber = order.order_number || id;
+
+    if (order.planning_release) {
+      result.skipped++;
+
+      result.details.push({
+        orderNumber,
+        status: "skipped",
+        reason: "Order already released to planning."
+      });
+
+      report(index, order, "skipped", "Already released.");
+      continue;
+    }
+
+    const collection = isCollectionOrder(order);
+    const service = isServiceOrder(order);
+
+    const physicallyReady = Boolean(
+      order.stats?.readyForPlanning
+    );
+
+    const expectedReady = Boolean(
+      order.stats?.isExpectedComplete &&
+      order.stats?.expectedCompleteDate
+    );
+
+    const geoReady = hasCoordinates(order);
+
+    const reasons = [];
+
+    if (
+      !collection &&
+      !service &&
+      !physicallyReady &&
+      !expectedReady
+    ) {
+      reasons.push(
+        "Order is not physically or expected complete."
+      );
+    }
+
+    if (!geoReady) {
+      reasons.push("Geolocation is missing.");
+    }
+
+    if (reasons.length) {
+      result.skipped++;
+
+      const reason = reasons.join(" ");
+
+      result.details.push({
+        orderNumber,
+        status: "skipped",
+        reason
+      });
+
+      report(index, order, "skipped", reason);
+      continue;
+    }
+
+    try {
+      const expectedOnly =
+        !collection &&
+        !service &&
+        !physicallyReady &&
+        expectedReady;
+
+      const expectedCompleteDate = expectedOnly
         ? (
-            order.stats
-              ?.expectedCompleteDate ||
+            order.stats?.expectedCompleteDate ||
             order.expected_complete_date ||
             null
           )
         : null;
 
-    const earliestPlanningDate =
-      expectedOnly
-        ? addDaysToDate(
-            expectedCompleteDate,
-            1
-          )
+      const earliestPlanningDate = expectedOnly
+        ? addDaysToDate(expectedCompleteDate, 1)
         : null;
 
-    if (
-      expectedOnly &&
-      !earliestPlanningDate
-    ) {
-      throw new Error(
-        `${order.order_number} has no valid expected completion date.`
-      );
-    }
+      if (expectedOnly && !earliestPlanningDate) {
+        throw new Error(
+          "No valid expected completion date."
+        );
+      }
 
-    const payload = {
-      status:
-        "ready_for_planning",
+      const payload = {
+        status: "ready_for_planning",
+        planning_release: true,
 
-      planning_release:
-        true,
+        planning_stock_basis:
+          collection || service
+            ? null
+            : expectedOnly
+              ? "expected"
+              : "physical",
 
-planning_stock_basis:
-  collection || service
-    ? null
-    : (
-        expectedOnly
-          ? "expected"
-          : "physical"
-      ),
+        earliest_planning_date: earliestPlanningDate,
 
-      earliest_planning_date:
-        earliestPlanningDate,
+        released_to_planning_at: nowIso(),
 
-      released_to_planning_at:
-        nowIso(),
+        released_to_planning_by:
+          collection
+            ? "collection_manual"
+            : expectedOnly
+              ? "expected_stock"
+              : "manual",
 
-released_to_planning_by:
-  collection
-    ? "collection_manual"
-    : (
-        expectedOnly
-          ? "expected_stock"
-          : "manual"
-      ),
+        planning_colli: getPlanningColli(order),
 
-      planning_colli:
-        getPlanningColli(
-          order
+        planning_volume_m3: round3(
+          getTotalVolume(order)
         ),
 
-      planning_volume_m3:
-        round3(
-          getTotalVolume(
-            order
-          )
-        ),
+        last_activity_at: nowIso()
+      };
 
-      last_activity_at:
-        nowIso()
-    };
-
-    const {
-      data,
-      error
-    } =
-      await client
+      const { data, error } = await client
         .from("orders")
         .update(payload)
-        .eq(
-          "company_id",
-          cid
-        )
-        .eq(
-          "id",
-          order.id
+        .eq("company_id", cid)
+        .eq("id", order.id)
+        .or(
+          "planning_release.is.null,planning_release.eq.false"
         )
         .select(`
           id,
@@ -3838,125 +4030,367 @@ released_to_planning_by:
         `)
         .maybeSingle();
 
-    if (error) {
-      throw error;
-    }
+      if (error) throw error;
 
+      if (!data) {
+        result.skipped++;
+
+        result.details.push({
+          orderNumber,
+          status: "skipped",
+          reason:
+            "Order was not updated. It may already be released."
+        });
+
+        report(index, order, "skipped", "Not updated.");
+        continue;
+      }
+
+      if (!data.planning_release) {
+        throw new Error(
+          "Database did not confirm planning release."
+        );
+      }
+
+      result.released++;
+
+      console.log(
+        "ORDER RELEASED TO PLANNING",
+        data
+      );
+
+      report(index, order, "released");
+
+    } catch (error) {
+      result.failed++;
+
+      const reason =
+        error?.message || "Planning release failed.";
+
+      result.details.push({
+        orderNumber,
+        status: "failed",
+        reason
+      });
+
+      console.error(
+        "Planning release failed:",
+        orderNumber,
+        error
+      );
+
+      report(index, order, "failed", reason);
+    }
+  }
+
+  return result;
+}
+
+
+async function geocodeAndReleaseSelected() {
+  const progress = window.VeynorProgress;
+  const button = byId("btnReleaseSelected");
+
+  let progressOpened = false;
+
+  try {
     if (
-      !data
-        ?.planning_release
+      !progress?.open ||
+      !progress?.update ||
+      !progress?.complete ||
+      !progress?.fail
     ) {
       throw new Error(
-        `Order ${order.order_number} was not released.`
+        "VeynorProgress is not loaded."
       );
     }
 
-    console.log(
-      "ORDER RELEASED TO PLANNING",
-      data
-    );
-  }
+    const orderIds = selectedOrderIds.size
+      ? [...selectedOrderIds]
+      : filteredOrders
+          .filter(order => {
+            const collection = isCollectionOrder(order);
+            const service = isServiceOrder(order);
 
-  return releasable.length;
-}
-
-async function geocodeAndReleaseSelected() {
-  try {
-const orderIds =
-  selectedOrderIds.size
-    ? [...selectedOrderIds]
-    : filteredOrders
-        .filter(order => {
-          const collection =
-            isCollectionOrder(order);
-const service =
-  isServiceOrder(order);
-
-          const physicallyReady =
-            Boolean(
-              order.stats
-                ?.isFullyMatched
+            const physicallyReady = Boolean(
+              order.stats?.readyForPlanning
             );
 
-          const expectedReady =
-            Boolean(
-              order.stats
-                ?.isExpectedComplete &&
-              order.stats
-                ?.expectedCompleteDate
+            const expectedReady = Boolean(
+              order.stats?.isExpectedComplete &&
+              order.stats?.expectedCompleteDate
             );
 
-          return (
-            !order.planning_release &&
-            (
-collection ||
-service ||
-physicallyReady ||
-expectedReady
-            )
-          );
-        })
-        .map(order =>
-          String(order.id)
-        );
+            return (
+              !order.planning_release &&
+              (
+                collection ||
+                service ||
+                physicallyReady ||
+                expectedReady
+              )
+            );
+          })
+          .map(order => String(order.id));
 
     if (!orderIds.length) {
       showToast(
-        "No selected, physically complete or expected complete orders to release.",
+        "No eligible orders available for planning release.",
         "err"
       );
-
       return;
     }
 
-    setProgress(
-      true,
-      5,
-      "Geocoding selected orders..."
-    );
+    const total = orderIds.length;
 
-    await geocodeOrders(
-      orderIds
-    );
+    if (button) {
+      button.disabled = true;
+    }
 
-    setProgress(
-      true,
-      65,
-      "Reloading orders..."
-    );
+    progressOpened = progress.open({
+      type: "geolocation",
+      total
+    });
 
-    await loadOrders();
-
-    setProgress(
-      true,
-      85,
-      "Releasing to planning..."
-    );
-
-    const count =
-      await releaseOrders(
-        orderIds
+    if (!progressOpened) {
+      throw new Error(
+        "Another progress operation is already active."
       );
+    }
+
+    setProgress(false);
+
+    progress.update({
+      phase: 1,
+      completed: 0,
+      total
+    });
+
+    const details = [];
+    let released = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    // Separate already released orders.
+    const pendingIds = [];
+
+    for (const id of orderIds) {
+      const order = allOrders.find(
+        row => String(row.id) === String(id)
+      );
+
+      if (order?.planning_release) {
+        skipped++;
+
+        details.push({
+          orderNumber: order.order_number || String(id),
+          status: "skipped",
+          reason: "Order already released to planning."
+        });
+      } else {
+        pendingIds.push(id);
+      }
+    }
+
+    const pendingTotal = pendingIds.length;
+
+    progress.update({
+      phase: 2,
+      completed: 0,
+      total
+    });
+
+    // First stage: geocode pending orders.
+    const geoResult = await geocodeOrders(
+      pendingIds,
+      info => {
+        const processed = Math.min(
+          pendingTotal,
+          Math.max(0, Number(info.completed) || 0)
+        );
+
+        const completed = Math.floor(
+          (processed / Math.max(1, pendingTotal)) *
+          total * 0.5
+        );
+
+        progress.update({
+          phase: 2,
+          completed,
+          total
+        });
+      }
+    );
+
+    // Store geocoding failures separately.
+    const geoFailedNumbers = new Set(
+      geoResult.details
+        .filter(item => item.status === "failed")
+        .map(item => String(item.orderNumber))
+    );
+
+
+failed += geoResult.failed;
+
+details.push(
+  ...geoResult.details.map(item => ({
+    ...item,
+    reason:
+      item.reason === "No geocode match" ||
+      item.reason === "Missing city/postcode"
+        ? `Address validation: ${item.reason}`
+        : item.reason
+  }))
+);
+
+
+    // Refresh coordinates and matching status.
+    await loadOrders();
+    setProgress(false);
+
+
+const releaseIds = pendingIds.filter(id => {
+  const order = allOrders.find(
+    row => String(row.id) === String(id)
+  );
+
+  const originalOrder = orderIds.includes(id)
+    ? id
+    : String(id);
+
+  // Already registered as failed during geocoding.
+  if (
+    geoFailedNumbers.has(String(id)) ||
+    (
+      order &&
+      geoFailedNumbers.has(String(order.order_number))
+    )
+  ) {
+    return false;
+  }
+
+  // Order disappeared after refreshing the list.
+  if (!order) {
+    failed++;
+
+    details.push({
+      orderNumber: String(originalOrder),
+      status: "failed",
+      reason:
+        "Order no longer available after refreshing. " +
+        "Check whether it was already released or changed."
+    });
+
+    return false;
+  }
+
+  return true;
+});
+
+    progress.update({
+      phase: 3,
+      completed: Math.floor(total * 0.5),
+      total
+    });
+
+    // Second stage: release eligible orders.
+    const releaseResult = await releaseOrders(
+      releaseIds,
+      info => {
+        const processed = Math.min(
+          releaseIds.length,
+          Math.max(0, Number(info.completed) || 0)
+        );
+
+        const completed = Math.floor(
+          total * 0.5 +
+          (processed / Math.max(1, releaseIds.length)) *
+          total * 0.5
+        );
+
+        progress.update({
+          phase: 3,
+          completed,
+          total
+        });
+      }
+    );
+
+    released += releaseResult.released;
+    skipped += releaseResult.skipped;
+    failed += releaseResult.failed;
+
+    details.push(...releaseResult.details);
+
+    // Reconcile any order not otherwise accounted for.
+    const accountedFor = released + skipped + failed;
+
+    if (accountedFor < total) {
+      const difference = total - accountedFor;
+
+      failed += difference;
+
+      details.push({
+        orderNumber: "Processing",
+        status: "failed",
+        reason:
+          `${difference} order(s) could not be accounted for. ` +
+          "Review the order status before retrying."
+      });
+    }
+
+    progress.update({
+      phase: 4,
+      completed: total,
+      total,
+      imported: released,
+      skipped,
+      failed
+    });
 
     selectedOrderIds.clear();
 
+    // Refresh the order matching table.
     await loadOrders();
-
-    showToast(
-      `${formatNumber(
-        count
-      )} order(s) released to planning.`,
-      "ok"
-    );
-  } catch (error) {
-    console.error(error);
     setProgress(false);
 
+    progress.complete({
+      imported: released,
+      skipped,
+      failed,
+      details
+    });
+
     showToast(
-      error.message ||
-      "Release failed.",
+      `Planning release complete: ${released} released, ` +
+      `${skipped} skipped, ${failed} failed.`,
+      skipped || failed ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error(
+      "Geolocation & planning release failed:",
+      error
+    );
+
+    if (progressOpened) {
+      progress.fail({
+        message: error?.message || String(error)
+      });
+    }
+
+    showToast(
+      error?.message ||
+        "Geolocation & planning release failed.",
       "err"
     );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+    }
+
+    setProgress(false);
   }
 }
 

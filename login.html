@@ -26,14 +26,15 @@
       min-height: 100vh;
       display: grid;
       grid-template-columns: minmax(0, 1.2fr) minmax(520px, .8fr);
-      background:
-        linear-gradient(
-          90deg,
-          rgba(4,12,28,.12) 0%,
-          rgba(4,12,28,.08) 38%,
-          rgba(243,246,251,.76) 100%
-        ),
-        url("/assets/veynor-login-bg.png") center center / cover no-repeat;
+
+background:
+  linear-gradient(
+    90deg,
+    rgba(4, 12, 28, 0.12) 0%,
+    rgba(4, 12, 28, 0.06) 50%,
+    rgba(4, 12, 28, 0.18) 100%
+  ),
+  url("/assets/veynor-login-bg.png") center center / cover no-repeat;
     }
 
     .login-left {
@@ -135,6 +136,13 @@
         inset 0 0 0 1px rgba(255,255,255,.22);
       overflow: hidden;
     }
+
+.login-card {
+  box-shadow:
+    0 28px 75px rgba(4, 15, 35, 0.30),
+    0 8px 25px rgba(4, 15, 35, 0.12);
+}
+
 
     .login-card:before {
       content: "";
@@ -457,6 +465,951 @@
         width: 100%;
       }
     }
+
+
+/* ==========================================================
+   VEYNOR LOGIN — CENTERED LAYOUT
+   ========================================================== */
+
+.login-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+}
+
+.login-left {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  padding: 42px;
+  pointer-events: none;
+}
+
+.hero-copy {
+  max-width: 460px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(30px, 3vw, 46px);
+  font-weight: 750;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.hero-copy p {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-top: 16px;
+}
+
+.trust-box {
+  margin-top: 20px;
+  padding: 14px 16px;
+  width: min(340px, 100%);
+}
+
+.login-right {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+  padding: 20px;
+  z-index: 5;
+}
+
+.login-card {
+  width: 100%;
+  padding: 38px;
+  border-radius: 26px;
+}
+
+.login-head h2 {
+  font-size: 34px;
+  font-weight: 750;
+}
+
+.login-btn {
+  font-weight: 650;
+}
+
+.login-card .field label,
+.remember,
+.forgot-link,
+.login-footer a {
+  font-weight: 600;
+}
+
+@media (max-width: 1180px) {
+  .login-shell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .login-right {
+    margin: 0;
+    padding: 20px;
+  }
+
+  .login-left {
+    min-height: 0;
+    padding: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .login-shell {
+    min-height: 100dvh;
+    padding: 20px 0;
+  }
+
+  .login-right {
+    max-width: 440px;
+    padding: 16px;
+  }
+
+  .login-card {
+    padding: 28px 24px;
+    border-radius: 22px;
+  }
+
+  .login-left {
+    position: relative;
+    padding: 24px;
+    order: 2;
+    width: 100%;
+  }
+
+  .hero-copy h1 {
+    font-size: 30px;
+  }
+
+  .hero-copy p {
+    font-size: 13px;
+  }
+
+  .trust-box {
+    display: none;
+  }
+}
+
+/* ==========================================================
+   VEYNOR LOGIN — BRAND & PLATFORM BENEFITS v2.0
+   ========================================================== */
+
+/* Main login layout */
+
+.login-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  isolation: isolate;
+}
+
+/* Official logo — top left */
+
+.login-brand {
+  position: absolute;
+  top: clamp(28px, 4vw, 64px);
+  left: clamp(28px, 4vw, 72px);
+  z-index: 10;
+  width: clamp(230px, 23vw, 420px);
+}
+
+.login-brand-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.login-brand-subtitle {
+  margin-top: 12px;
+  padding-left: 5px;
+  color: rgba(255,255,255,.82);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .22em;
+  white-space: nowrap;
+}
+
+.login-brand-subtitle span {
+  color: #38bdf8;
+  margin: 0 8px;
+}
+
+/* Benefits — top right */
+
+.login-benefits {
+  position: absolute;
+  top: clamp(28px, 4vw, 64px);
+  right: clamp(28px, 4vw, 72px);
+  z-index: 8;
+
+  width: clamp(300px, 27vw, 420px);
+  padding: 25px 27px;
+
+  color: #fff;
+  background: rgba(5, 19, 43, .76);
+  border: 1px solid rgba(148, 197, 255, .18);
+  border-radius: 22px;
+
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+
+  box-shadow:
+    0 22px 65px rgba(0,0,0,.22),
+    inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.login-benefits-eyebrow {
+  display: block;
+  margin-bottom: 9px;
+  color: #59c5ff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .17em;
+}
+
+.login-benefits-heading h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -.025em;
+}
+
+.login-benefits-heading p {
+  margin: 9px 0 0;
+  color: rgba(224,238,255,.70);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.login-benefits-list {
+  display: grid;
+  gap: 15px;
+  margin-top: 22px;
+}
+
+.login-benefit {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.login-benefit-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 25px;
+
+  width: 25px;
+  height: 25px;
+  border-radius: 9px;
+
+  color: #7dd3fc;
+  background: rgba(18,103,255,.18);
+  border: 1px solid rgba(56,189,248,.22);
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-benefit strong {
+  display: block;
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.login-benefit div > span {
+  display: block;
+  margin-top: 3px;
+  color: rgba(224,238,255,.65);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Login card — centered */
+
+.login-right {
+  position: relative;
+  z-index: 9;
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  padding: 36px;
+  border-radius: 26px;
+}
+
+.login-head h2 {
+  font-weight: 750;
+  font-size: 34px;
+}
+
+.login-btn {
+  font-weight: 650;
+}
+
+/* Slogan — bottom left */
+
+.login-left {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 40px;
+  pointer-events: none;
+}
+
+.hero-copy {
+  max-width: 430px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(30px, 3vw, 46px);
+  font-weight: 750;
+  line-height: 1.05;
+  letter-spacing: -.035em;
+}
+
+.hero-copy p {
+  margin-top: 15px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.trust-box {
+  margin-top: 18px;
+  padding: 13px 16px;
+  width: min(340px, 100%);
+}
+
+/* Medium desktop: compact benefits */
+
+@media (max-width: 1450px) {
+  .login-benefits {
+    width: 310px;
+    padding: 19px 20px;
+  }
+
+  .login-benefits-list {
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  .login-benefits-heading h2 {
+    font-size: 19px;
+  }
+
+  .login-right {
+    max-width: 470px;
+  }
+}
+
+/* Tablet: benefits below login */
+
+@media (max-width: 1100px) {
+  body {
+    overflow: auto;
+  }
+
+  .login-shell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 22px;
+    padding: 130px 20px 30px;
+  }
+
+  .login-brand {
+    top: 25px;
+    left: 25px;
+    width: 280px;
+  }
+
+  .login-right {
+    order: 1;
+    margin: 0;
+    padding: 0;
+  }
+
+  .login-benefits {
+    position: relative;
+    order: 2;
+    top: auto;
+    right: auto;
+    width: min(470px, 100%);
+  }
+
+  .login-left {
+    position: relative;
+    order: 3;
+    padding: 25px 0;
+    width: min(470px, 100%);
+  }
+}
+
+/* Mobile */
+
+@media (max-width: 600px) {
+  .login-shell {
+    padding: 115px 16px 25px;
+    gap: 18px;
+  }
+
+  .login-brand {
+    top: 22px;
+    left: 20px;
+    width: 220px;
+  }
+
+  .login-brand-subtitle {
+    font-size: 9px;
+    letter-spacing: .12em;
+  }
+
+  .login-right {
+    width: 100%;
+    padding: 0;
+  }
+
+  .login-card {
+    padding: 28px 22px;
+    border-radius: 22px;
+/* ==========================================================
+   VEYNOR LOGIN — BRAND & PLATFORM BENEFITS v2.0
+   ========================================================== */
+
+/* Main login layout */
+
+.login-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  isolation: isolate;
+}
+
+/* Official logo — top left */
+
+.login-brand {
+  position: absolute;
+  top: clamp(28px, 4vw, 64px);
+  left: clamp(28px, 4vw, 72px);
+  z-index: 10;
+  width: clamp(230px, 23vw, 420px);
+}
+
+.login-brand-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.login-brand-subtitle {
+  margin-top: 12px;
+  padding-left: 5px;
+  color: rgba(255,255,255,.82);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .22em;
+  white-space: nowrap;
+}
+
+.login-brand-subtitle span {
+  color: #38bdf8;
+  margin: 0 8px;
+}
+
+/* Benefits — top right */
+
+.login-benefits {
+  position: absolute;
+  top: clamp(28px, 4vw, 64px);
+  right: clamp(28px, 4vw, 72px);
+  z-index: 8;
+
+  width: clamp(300px, 27vw, 420px);
+  padding: 25px 27px;
+
+  color: #fff;
+  background: rgba(5, 19, 43, .76);
+  border: 1px solid rgba(148, 197, 255, .18);
+  border-radius: 22px;
+
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+
+  box-shadow:
+    0 22px 65px rgba(0,0,0,.22),
+    inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.login-benefits-eyebrow {
+  display: block;
+  margin-bottom: 9px;
+  color: #59c5ff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .17em;
+}
+
+.login-benefits-heading h2 {
+  margin: 0;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -.025em;
+}
+
+.login-benefits-heading p {
+  margin: 9px 0 0;
+  color: rgba(224,238,255,.70);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+.login-benefits-list {
+  display: grid;
+  gap: 15px;
+  margin-top: 22px;
+}
+
+.login-benefit {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.login-benefit-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 25px;
+
+  width: 25px;
+  height: 25px;
+  border-radius: 9px;
+
+  color: #7dd3fc;
+  background: rgba(18,103,255,.18);
+  border: 1px solid rgba(56,189,248,.22);
+
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-benefit strong {
+  display: block;
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.login-benefit div > span {
+  display: block;
+  margin-top: 3px;
+  color: rgba(224,238,255,.65);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Login card — centered */
+
+.login-right {
+  position: relative;
+  z-index: 9;
+  width: 100%;
+  max-width: 520px;
+  margin: 0;
+  padding: 20px;
+}
+
+.login-card {
+  width: 100%;
+  padding: 36px;
+  border-radius: 26px;
+}
+
+.login-head h2 {
+  font-weight: 750;
+  font-size: 34px;
+}
+
+.login-btn {
+  font-weight: 650;
+}
+
+/* Slogan — bottom left */
+
+.login-left {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  min-height: 0;
+  padding: 40px;
+  pointer-events: none;
+}
+
+.hero-copy {
+  max-width: 430px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(30px, 3vw, 46px);
+  font-weight: 750;
+  line-height: 1.05;
+  letter-spacing: -.035em;
+}
+
+.hero-copy p {
+  margin-top: 15px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.trust-box {
+  margin-top: 18px;
+  padding: 13px 16px;
+  width: min(340px, 100%);
+}
+
+/* Medium desktop: compact benefits */
+
+@media (max-width: 1450px) {
+  .login-benefits {
+    width: 310px;
+    padding: 19px 20px;
+  }
+
+  .login-benefits-list {
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  .login-benefits-heading h2 {
+    font-size: 19px;
+  }
+
+  .login-right {
+    max-width: 470px;
+  }
+}
+
+/* Tablet: benefits below login */
+
+@media (max-width: 1100px) {
+  body {
+    overflow: auto;
+  }
+
+  .login-shell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 22px;
+    padding: 130px 20px 30px;
+  }
+
+  .login-brand {
+    top: 25px;
+    left: 25px;
+    width: 280px;
+  }
+
+  .login-right {
+    order: 1;
+    margin: 0;
+    padding: 0;
+  }
+
+  .login-benefits {
+    position: relative;
+    order: 2;
+    top: auto;
+    right: auto;
+    width: min(470px, 100%);
+  }
+
+  .login-left {
+    position: relative;
+    order: 3;
+    padding: 25px 0;
+    width: min(470px, 100%);
+  }
+}
+
+/* Mobile */
+
+@media (max-width: 600px) {
+  .login-shell {
+    padding: 115px 16px 25px;
+    gap: 18px;
+  }
+
+  .login-brand {
+    top: 22px;
+    left: 20px;
+    width: 220px;
+  }
+
+  .login-brand-subtitle {
+    font-size: 9px;
+    letter-spacing: .12em;
+  }
+
+  .login-right {
+    width: 100%;
+    padding: 0;
+  }
+
+  .login-card {
+    padding: 28px 22px;
+    border-radius: 22px;
+  }
+
+  .login-benefits {
+    padding: 22px;
+    border-radius: 20px;
+  }
+
+  .login-left {
+    padding: 20px 5px;
+  }
+
+  .hero-copy h1 {
+    font-size: 30px;
+  }
+
+  .hero-copy p {
+    font-size: 12px;
+  }
+
+  .trust-box {
+    display: none;
+  }
+}
+
+/* ==========================================================
+   END VEYNOR LOGIN BENEFITS
+   ========================================================== */
+
+  }
+
+  .login-benefits {
+    padding: 22px;
+    border-radius: 20px;
+  }
+
+  .login-left {
+    padding: 20px 5px;
+  }
+
+  .hero-copy h1 {
+    font-size: 30px;
+  }
+
+  .hero-copy p {
+    font-size: 12px;
+  }
+
+  .trust-box {
+    display: none;
+  }
+}
+
+/* ==========================================================
+   END VEYNOR LOGIN BENEFITS
+   ========================================================== */
+
+/* VEYNOR — LOGIN SLOGAN REFINEMENT */
+
+@media (min-width: 1101px) {
+  .login-left {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    padding: 0 0 28px 38px;
+    width: 100%;
+    min-height: 0;
+    pointer-events: none;
+  }
+}
+
+.hero-copy {
+  max-width: 420px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(30px, 2.8vw, 44px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.hero-copy p {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255,255,255,.88);
+}
+
+/* VEYNOR — LARGER LOGIN LOGO */
+
+.login-brand {
+  width: clamp(280px, 30vw, 550px);
+}
+
+.login-brand-logo {
+  width: 100%;
+  max-width: 550px;
+  height: auto;
+}
+
+@media (max-width: 1100px) {
+  .login-brand {
+    width: min(340px, 75vw);
+  }
+}
+
+@media (max-width: 600px) {
+  .login-brand {
+    width: min(260px, 80vw);
+  }
+}
+
+
+/* VEYNOR — LOGIN SLOGAN PANEL */
+
+@media (min-width: 1101px) {
+  .login-left {
+    padding: 0 0 35px 35px;
+  }
+}
+
+.hero-copy {
+  max-width: 390px;
+  padding: 22px 26px;
+  background: rgba(5, 19, 43, 0.76);
+  border: 1px solid rgba(148, 197, 255, 0.20);
+  border-radius: 20px;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.20);
+}
+
+.hero-copy h1 {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+.hero-copy h1 span {
+  color: #38bdf8;
+}
+
+.hero-copy p {
+  margin-top: 13px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgba(224, 238, 255, 0.78);
+}
+
+@media (max-width: 600px) {
+  .hero-copy {
+    max-width: 100%;
+    padding: 20px;
+  }
+
+  .hero-copy h1 {
+    font-size: 25px;
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR — LARGER SLOGAN PANEL
+   ========================================================== */
+
+.hero-copy {
+  max-width: 440px;
+  padding: 26px 30px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(34px, 2.6vw, 42px);
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.035em;
+}
+
+.hero-copy h1 span {
+  color: #38bdf8;
+}
+
+.hero-copy p {
+  margin-top: 16px;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.65;
+  color: rgba(235, 244, 255, 0.90);
+}
+
+/* Mobile adjustments */
+
+@media (max-width: 600px) {
+  .hero-copy {
+    max-width: 100%;
+    padding: 22px 24px;
+  }
+
+  .hero-copy h1 {
+    font-size: 29px;
+  }
+
+  .hero-copy p {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+}
+
+
   </style>
 </head>
 
@@ -464,6 +1417,20 @@
   <main class="login-shell">
     <div class="floating-glow glow-1"></div>
     <div class="floating-glow glow-2"></div>
+
+
+<!-- VEYNOR OFFICIAL BRAND -->
+<div class="login-brand">
+  <img
+    src="/assets/logos/veynor-wordmark-footer.png"
+    alt="Veynor"
+    class="login-brand-logo"
+  >
+  <div class="login-brand-subtitle">
+    STORE <span>·</span> PLAN <span>·</span> DRIVE
+  </div>
+</div>
+
 
     <section class="login-left">
       <div class="hero-copy">
@@ -476,16 +1443,65 @@
           Veynor connects warehouse, planning, transport, POD and billing in one powerful operational platform.
         </p>
 
-        <div class="trust-box">
-          <div class="trust-icon">✓</div>
-
-          <div>
-            <strong>Store · Plan · Drive</strong>
-            <span>Secure access to your logistics control platform.</span>
-          </div>
-        </div>
       </div>
     </section>
+
+
+<!-- VEYNOR PLATFORM BENEFITS -->
+<aside class="login-benefits" aria-label="Veynor platform benefits">
+
+  <div class="login-benefits-heading">
+    <span class="login-benefits-eyebrow">THE VEYNOR ADVANTAGE</span>
+    <h2>One platform. Complete control.</h2>
+    <p>Everything you need to manage your logistics operations.</p>
+  </div>
+
+  <div class="login-benefits-list">
+
+    <div class="login-benefit">
+      <span class="login-benefit-icon">✓</span>
+      <div>
+        <strong>All-in-one Operations</strong>
+        <span>Orders, warehouse, transport and finance in one place.</span>
+      </div>
+    </div>
+
+    <div class="login-benefit">
+
+<span class="login-benefit-icon">✓</span>
+      <div>
+        <strong>Intelligent Route Planning</strong>
+        <span>Smarter delivery planning and route management.</span>
+      </div>
+    </div>
+
+    <div class="login-benefit">
+      <span class="login-benefit-icon">✓</span>
+      <div>
+        <strong>Real-time Delivery Visibility</strong>
+        <span>Follow delivery progress and proof of delivery.</span>
+      </div>
+    </div>
+
+    <div class="login-benefit">
+      <span class="login-benefit-icon">✓</span>
+      <div>
+        <strong>Automated Billing</strong>
+        <span>Customer-specific pricing and invoice generation.</span>
+      </div>
+    </div>
+
+    <div class="login-benefit">
+      <span class="login-benefit-icon">✓</span>
+      <div>
+        <strong>Warehouse Control</strong>
+        <span>Manage inventory, inbound goods and stock movements.</span>
+      </div>
+    </div>
+
+  </div>
+</aside>
+
 
     <section class="login-right">
       <form id="loginForm" class="login-card" autocomplete="on" novalidate>
@@ -551,21 +1567,7 @@
 
           <div id="loginMessage"></div>
 
-          <div class="divider">
-            or continue with
-          </div>
-
-          <div class="sso-grid">
-            <button class="sso-btn" type="button" disabled>
-              Google
-            </button>
-
-            <button class="sso-btn" type="button" disabled>
-              Microsoft
-            </button>
-          </div>
-
-          <div class="login-footer">
+           <div class="login-footer">
             By signing in, you agree to the
             <a href="#" onclick="return false;">Terms</a>
             and

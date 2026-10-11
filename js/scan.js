@@ -1,12 +1,18 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const OUTBOUND_STATUS = "manual_outbound";
   const OUTBOUND_STATUSES = ["manual_outbound", "picked", "loaded", "shipped", "closed", "cancelled", "damaged", "missing"];
 
-  let client = null;
-  let companyId = null;
+
+let client = null;
+let companyId = null;
+
+// Bulk Stock Import
+let bulkStockPreview = null;
+let bulkStockImportBusy = false;
+let bulkStockImportReference = null;
+
 
   let products = [];
   let productOwners = [];
@@ -143,21 +149,50 @@ function nextFrame() {
     return client;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
 
-    const { data, error } = await ensureClient()
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
+async function getCompanyId() {
+  if (companyId) return companyId;
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+  const db = ensureClient();
 
-    companyId = data.id;
-    return companyId;
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error("User is not authenticated.");
   }
+
+  const { data, error } = await db
+    .from("user_profiles")
+    .select("company_id, is_active")
+    .eq("auth_user_id", userId)
+    .eq("is_active", true);
+
+  if (error) throw error;
+
+  const companyIds = [
+    ...new Set(
+      (data || [])
+        .map(row => row.company_id)
+        .filter(Boolean)
+    )
+  ];
+
+  if (companyIds.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active tenant."
+    );
+  }
+
+  companyId = companyIds[0];
+
+  return companyId;
+}
+
 
   function parseScan(value) {
     const raw = String(value || "").trim();
@@ -819,25 +854,34 @@ const volumeM3 = activeRows.reduce(
 return true;
   }
 
-  function buildItemRow({
-    cid,
-    product,
-    physicalId,
-    packageInfo,
-    setIndex,
-    reference,
-    inboundDate
-  }) {
+
+function buildItemRow({
+  cid,
+  product,
+  physicalId,
+  packageInfo,
+  setIndex,
+  reference,
+  inboundDate,
+  warehouseId = activeWarehouse?.id,
+  locationId = activeLocation?.id,
+  uniqueSkuOverride = null
+}) {
+ 
     const packageTotal = packageInfo.package_total || 1;
     const packageNo = packageInfo.package_no || 1;
     const packageLabel = packageInfo.package_label || `${packageNo}/${packageTotal}`;
 
-    const uniqueSku = buildUniqueSku(
-      product,
-      setIndex,
-      packageNo,
-      packageTotal
-    );
+
+const uniqueSku =
+  uniqueSkuOverride ||
+  buildUniqueSku(
+    product,
+    setIndex,
+    packageNo,
+    packageTotal
+  );
+
 
     let volumePerPackage = 0;
 let weightPerPackage = 0;
@@ -886,8 +930,8 @@ switch (packageNo) {
     return {
       company_id: cid,
       product_id: product.id,
-      warehouse_id: activeWarehouse.id,
-      location_id: activeLocation.id,
+warehouse_id: warehouseId,
+location_id: locationId,
       storage_mutation_id: uniqueSku,
       sku_unique: uniqueSku,
       status: "in_stock",
@@ -1482,7 +1526,1038 @@ await bookInboundCompleteProducts(
     byId("mainScanInput")?.focus();
   }
 
+
+/* ==========================================================
+   VEYNOR — BULK STOCK IMPORT
+   PART 1: TEMPLATE, OPTIONS, VALIDATION & PREVIEW
+   ========================================================== */
+
+let bulkStockFile = null;
+let bulkStockPreviewContext = null;
+
+const BULK_STOCK_MAX_ROWS = 500;
+const BULK_STOCK_MAX_UNITS = 5000;
+
+function bulkStockInvalidatePreview() {
+  bulkStockPreview = null;
+  bulkStockPreviewContext = null;
+
+  const preview = byId("bulkStockPreview");
+  const summary = byId("bulkStockSummary");
+  const confirm = byId("btnConfirmBulkStock");
+  const progress = byId("bulkStockProgress");
+
+  if (preview) preview.style.display = "none";
+  if (summary) summary.style.display = "none";
+  if (progress && !bulkStockImportBusy) {
+    progress.style.display = "none";
+  }
+  if (confirm) confirm.disabled = true;
+}
+
+function bulkStockGetContext() {
+  const ownerId = byId("bulkStockOwner")?.value || "";
+  const warehouseId = byId("bulkStockWarehouse")?.value || "";
+  const locationId = byId("bulkStockLocation")?.value || "";
+  const reference = String(
+    byId("bulkStockReference")?.value || ""
+  ).trim();
+
+  const warehouse = warehouses.find(
+    row => String(row.id) === String(warehouseId)
+  );
+
+  const location = locations.find(
+    row => String(row.id) === String(locationId)
+  );
+
+  if (!ownerId) {
+    throw new Error("Select a Product Owner.");
+  }
+
+  if (!warehouse) {
+    throw new Error("Select a warehouse.");
+  }
+
+  if (!location) {
+    throw new Error("Select a warehouse location.");
+  }
+
+  if (String(location.warehouse_id) !== String(warehouse.id)) {
+    throw new Error(
+      "Selected location does not belong to the warehouse."
+    );
+  }
+
+  if (!reference) {
+    throw new Error("Enter a unique batch reference.");
+  }
+
+  return {
+    ownerId,
+    warehouseId,
+    locationId,
+    reference,
+    warehouse,
+    location
+  };
+}
+
+function renderBulkStockOptions() {
+  const ownerSelect = byId("bulkStockOwner");
+  const warehouseSelect = byId("bulkStockWarehouse");
+  const locationSelect = byId("bulkStockLocation");
+
+  if (ownerSelect) {
+    const previous = ownerSelect.value || "";
+
+    ownerSelect.innerHTML =
+      '<option value="">Select product owner</option>' +
+      productOwners.map(owner => `
+        <option value="${escapeHtml(owner.id)}">
+          ${escapeHtml(owner.name)}
+        </option>
+      `).join("");
+
+    if (productOwners.some(owner =>
+      String(owner.id) === String(previous)
+    )) {
+      ownerSelect.value = previous;
+    }
+  }
+
+  if (warehouseSelect) {
+    const previous = warehouseSelect.value || "";
+
+    warehouseSelect.innerHTML =
+      '<option value="">Select warehouse</option>' +
+      warehouses.map(warehouse => `
+        <option value="${escapeHtml(warehouse.id)}">
+          ${escapeHtml(warehouseLabel(warehouse))}
+        </option>
+      `).join("");
+
+    if (warehouses.some(warehouse =>
+      String(warehouse.id) === String(previous)
+    )) {
+      warehouseSelect.value = previous;
+    }
+  }
+
+  renderBulkStockLocations();
+}
+
+function renderBulkStockLocations() {
+  const select = byId("bulkStockLocation");
+  if (!select) return;
+
+  const previous = select.value || "";
+  const warehouseId =
+    byId("bulkStockWarehouse")?.value || "";
+
+  const available = locations.filter(location =>
+    String(location.warehouse_id) === String(warehouseId)
+  );
+
+  select.innerHTML =
+    '<option value="">Select location</option>' +
+    available.map(location => `
+      <option value="${escapeHtml(location.id)}">
+        ${escapeHtml(locationLabel(location))}
+      </option>
+    `).join("");
+
+  if (available.some(location =>
+    String(location.id) === String(previous)
+  )) {
+    select.value = previous;
+  }
+}
+
+function downloadBulkStockTemplate() {
+  if (typeof XLSX === "undefined") {
+    throw new Error("Excel library is not available.");
+  }
+
+  const rows = [
+    {
+      SKU: "VEYTEST-SOFA-001",
+      Quantity: 5
+    },
+    {
+      SKU: "VEYTEST-SOFA-002",
+      Quantity: 5
+    }
+  ];
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+
+  worksheet["!cols"] = [
+    { wch: 28 },
+    { wch: 15 }
+  ];
+
+  const workbook = XLSX.utils.book_new();
+
+  XLSX.utils.book_append_sheet(
+    workbook,
+    worksheet,
+    "Stock Import"
+  );
+
+  XLSX.writeFile(
+    workbook,
+    "veynor-bulk-stock-import-template.xlsx"
+  );
+}
+
+async function readBulkStockExcel(file) {
+  if (!file) {
+    throw new Error("Select an Excel or CSV file.");
+  }
+
+  if (typeof XLSX === "undefined") {
+    throw new Error("Excel library is not available.");
+  }
+
+  const extension = String(file.name || "")
+    .split(".")
+    .pop()
+    .toLowerCase();
+
+  if (!["xlsx", "xls", "csv"].includes(extension)) {
+    throw new Error("Only XLSX, XLS and CSV files are supported.");
+  }
+
+  const buffer = await file.arrayBuffer();
+
+  const workbook = XLSX.read(buffer, {
+    type: "array"
+  });
+
+  const worksheet =
+    workbook.Sheets[workbook.SheetNames[0]];
+
+  if (!worksheet) {
+    throw new Error("Excel file contains no worksheet.");
+  }
+
+  const rows = XLSX.utils.sheet_to_json(
+    worksheet,
+    {
+      header: 1,
+      defval: "",
+      blankrows: false
+    }
+  );
+
+  if (!rows.length) {
+    throw new Error("Excel file is empty.");
+  }
+
+  const headers = rows[0].map(value =>
+    String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")
+  );
+
+  const skuIndex = headers.findIndex(value =>
+    ["sku", "skubase", "productcode"].includes(value)
+  );
+
+  const qtyIndex = headers.findIndex(value =>
+    ["quantity", "qty", "units"].includes(value)
+  );
+
+  if (skuIndex < 0 || qtyIndex < 0) {
+    throw new Error(
+      "Excel must contain SKU and Quantity columns."
+    );
+  }
+
+  const result = [];
+
+  for (let index = 1; index < rows.length; index++) {
+    const row = rows[index];
+
+    const sku = String(
+      row[skuIndex] ?? ""
+    ).trim();
+
+    const quantityRaw = row[qtyIndex];
+
+    if (
+      !sku &&
+      String(quantityRaw ?? "").trim() === ""
+    ) {
+      continue;
+    }
+
+    result.push({
+      row_number: index + 1,
+      sku,
+      quantity_raw: quantityRaw
+    });
+  }
+
+  if (result.length > BULK_STOCK_MAX_ROWS) {
+    throw new Error(
+      `Maximum ${BULK_STOCK_MAX_ROWS} stock rows per import.`
+    );
+  }
+
+  if (!result.length) {
+    throw new Error("No stock rows found.");
+  }
+
+  return result;
+}
+
+function validateBulkStockRows(rows, context) {
+  const ownerProducts = products.filter(product =>
+    String(product.customer_id) === String(context.ownerId)
+  );
+
+  const productMap = new Map();
+
+  for (const product of ownerProducts) {
+    const key = cleanCode(product.sku_base);
+
+    if (!key) continue;
+
+    if (!productMap.has(key)) {
+      productMap.set(key, []);
+    }
+
+    productMap.get(key).push(product);
+  }
+
+  let totalUnits = 0;
+
+  const validated = rows.map(row => {
+    const errors = [];
+
+    const key = cleanCode(row.sku);
+    const matches = productMap.get(key) || [];
+
+    const quantity = Number(row.quantity_raw);
+
+    if (!row.sku) {
+      errors.push("Missing SKU");
+    }
+
+    if (!matches.length) {
+      errors.push("Product not found for selected owner");
+    }
+
+    if (matches.length > 1) {
+      errors.push("Duplicate product SKU in product master");
+    }
+
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity <= 0
+    ) {
+      errors.push("Quantity must be a positive whole number");
+    }
+
+    const product =
+      matches.length === 1 ? matches[0] : null;
+
+    const packages = product
+      ? packageProfile(product).length
+      : 0;
+
+    const volume = product &&
+      Number.isSafeInteger(quantity) &&
+      quantity > 0
+        ? toNumber(product.volume_m3, 0) * quantity
+        : 0;
+
+    if (!errors.length) {
+      totalUnits += quantity;
+    }
+
+    return {
+      ...row,
+      quantity,
+      product,
+      packages,
+      volume,
+      errors,
+      valid: errors.length === 0
+    };
+  });
+
+  if (totalUnits > BULK_STOCK_MAX_UNITS) {
+    throw new Error(
+      `Maximum ${BULK_STOCK_MAX_UNITS} units per import.`
+    );
+  }
+
+  return validated;
+}
+
+function renderBulkStockPreview() {
+  const rows = bulkStockPreview || [];
+  const context = bulkStockPreviewContext;
+
+  const totalRows = rows.length;
+  const validRows = rows.filter(row => row.valid);
+  const errorRows = rows.filter(row => !row.valid);
+
+  const totalUnits = validRows.reduce(
+    (sum, row) => sum + row.quantity,
+    0
+  );
+
+  setText("bulkStockTotalRows", totalRows);
+  setText("bulkStockValidRows", validRows.length);
+  setText("bulkStockErrorRows", errorRows.length);
+  setText("bulkStockTotalUnits", totalUnits);
+
+  const summary = byId("bulkStockSummary");
+  const preview = byId("bulkStockPreview");
+  const tbody = byId("bulkStockPreviewBody");
+  const confirm = byId("btnConfirmBulkStock");
+
+  if (summary) summary.style.display = "grid";
+  if (preview) preview.style.display = "grid";
+
+  if (tbody) {
+    tbody.innerHTML = rows.map(row => {
+      const product = row.product;
+
+      const status = row.valid
+        ? '<span class="soft-pill green">Valid</span>'
+        : `<span class="soft-pill orange">${
+            escapeHtml(row.errors.join(" | "))
+          }</span>`;
+
+      return `
+        <tr>
+          <td>${row.row_number}</td>
+          <td><strong>${escapeHtml(row.sku)}</strong></td>
+          <td>${escapeHtml(product?.name || "—")}</td>
+          <td>${escapeHtml(ownerName(product))}</td>
+          <td>${escapeHtml(row.quantity_raw)}</td>
+          <td>${row.packages}</td>
+          <td>${formatNumber(row.volume, 3)}</td>
+          <td>${escapeHtml(
+            warehouseLabel(context?.warehouse)
+          )}</td>
+          <td>${escapeHtml(
+            locationLabel(context?.location)
+          )}</td>
+          <td>${status}</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  if (confirm) {
+    confirm.disabled =
+      bulkStockImportBusy ||
+      !validRows.length ||
+      errorRows.length > 0;
+  }
+}
+
+async function previewBulkStock() {
+  if (bulkStockImportBusy) {
+    throw new Error("An import is already running.");
+  }
+
+  bulkStockInvalidatePreview();
+
+  const context = bulkStockGetContext();
+
+  const file =
+    byId("bulkStockFile")?.files?.[0] ||
+    bulkStockFile;
+
+  const rows = await readBulkStockExcel(file);
+
+  bulkStockPreview =
+    validateBulkStockRows(rows, context);
+
+  bulkStockPreviewContext = {
+    ...context,
+    fileName: file.name,
+    previewedAt: Date.now()
+  };
+
+  renderBulkStockPreview();
+
+  const errors = bulkStockPreview.filter(
+    row => !row.valid
+  ).length;
+
+  showToast(
+    errors
+      ? `${errors} invalid row(s). Correct the Excel file before importing.`
+      : `${bulkStockPreview.length} stock row(s) validated. Ready for confirmation.`,
+    errors ? "err" : "ok"
+  );
+}
+
+/* END BULK STOCK IMPORT — PART 1 */
+
+
+/* ==========================================================
+   VEYNOR — BULK STOCK IMPORT
+   PART 2: STOCK BOOKING, PROGRESS & EVENTS
+   ========================================================== */
+
+function bulkStockSetProgress(current, total, message) {
+  const box = byId("bulkStockProgress");
+  const title = byId("bulkStockProgressTitle");
+  const percent = byId("bulkStockProgressPercent");
+  const bar = byId("bulkStockProgressBar");
+  const text = byId("bulkStockProgressText");
+
+  const safeTotal = Math.max(1, Number(total || 1));
+  const safeCurrent = Math.max(
+    0,
+    Math.min(Number(current || 0), safeTotal)
+  );
+
+  const pct = Math.round(
+    (safeCurrent / safeTotal) * 100
+  );
+
+  if (box) box.style.display = "block";
+  if (title) title.textContent = "Importing stock...";
+  if (percent) percent.textContent = `${pct}%`;
+  if (bar) bar.style.width = `${pct}%`;
+  if (text) text.textContent = message || "";
+}
+
+function bulkStockMakeUniqueSku(
+  batchKey,
+  product,
+  unitIndex,
+  packageInfo
+) {
+  const clean = value =>
+    String(value || "")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 45);
+
+  return [
+    "BULK",
+    clean(batchKey),
+    clean(product.sku_base),
+    String(unitIndex).padStart(5, "0"),
+    `PKG${packageInfo.package_no}OF${packageInfo.package_total}`
+  ].join("-");
+}
+
+function bulkStockHash(text) {
+  let hash = 2166136261;
+
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function bulkStockPhysicalId(batchKey, productId, unitIndex) {
+  const source = [
+    batchKey,
+    productId,
+    unitIndex
+  ].join("|");
+
+  const a = bulkStockHash(source + "|a");
+  const b = bulkStockHash(source + "|b");
+  const c = bulkStockHash(source + "|c");
+  const d = bulkStockHash(source + "|d");
+
+  const hex = (a + b + c + d).slice(0, 32);
+
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    "4" + hex.slice(13, 16),
+    "8" + hex.slice(17, 20),
+    hex.slice(20, 32)
+  ].join("-");
+}
+
+function bulkStockGetBatchKey(context) {
+  const company = String(companyId || "");
+  const owner = String(context.ownerId || "");
+  const reference = normalize(context.reference);
+
+  return bulkStockHash(
+    `${company}|${owner}|${reference}`
+  );
+}
+
+async function bulkStockCheckExistingBatch(context) {
+  const cid = await getCompanyId();
+
+  const { count, error } = await ensureClient()
+    .from("items")
+    .select("id", {
+      count: "exact",
+      head: true
+    })
+    .eq("company_id", cid)
+    .eq("inbound_reference", context.reference);
+
+  if (error) throw error;
+
+  if (Number(count || 0) > 0) {
+    throw new Error(
+      `Batch reference "${context.reference}" already exists. ` +
+      "Use a new reference or investigate the previous import."
+    );
+  }
+}
+
+async function bulkStockInsertRows(rows) {
+  const db = ensureClient();
+
+  const { data, error } = await db
+    .from("items")
+    .insert(rows)
+    .select(`
+      id,
+      product_id,
+      sku_unique,
+      physical_product_id,
+      package_no,
+      package_total,
+      stock_set_status
+    `);
+
+  if (error) throw error;
+
+  return data || [];
+}
+
+
+/* ==========================================================
+   VEYNOR — TRANSACTIONAL BULK STOCK IMPORT
+   Uses Supabase RPC: import_bulk_stock
+   ========================================================== */
+
+async function bulkStockBookRows(previewRows, context) {
+  if (!Array.isArray(previewRows) || !previewRows.length) {
+    throw new Error("No validated stock rows available.");
+  }
+
+  if (previewRows.some(row => !row.valid || !row.product)) {
+    throw new Error("Import contains invalid product rows.");
+  }
+
+  const cid = await getCompanyId();
+
+  const importRows = previewRows.map(row => ({
+    sku: String(row.product.sku_base).trim(),
+    quantity: Number(row.quantity)
+  }));
+
+  const totalUnits = importRows.reduce(
+    (sum, row) => sum + row.quantity,
+    0
+  );
+
+  const expectedPackages = previewRows.reduce(
+    (sum, row) =>
+      sum + row.quantity * packageProfile(row.product).length,
+    0
+  );
+
+  bulkStockSetProgress(
+    0,
+    100,
+    `Submitting ${totalUnits} products / ${expectedPackages} packages to Supabase...`
+  );
+
+  await nextFrame();
+
+  /* ========================================================
+     ATOMIC DATABASE TRANSACTION
+     ======================================================== */
+
+  const { data, error } = await ensureClient().rpc(
+    "import_bulk_stock",
+    {
+      p_company_id: cid,
+      p_product_owner_id: context.ownerId,
+      p_warehouse_id: context.warehouseId,
+      p_location_id: context.locationId,
+      p_batch_reference: context.reference,
+      p_file_name:
+        bulkStockPreviewContext?.fileName || null,
+      p_rows: importRows
+    }
+  );
+
+  if (error) {
+    console.error(
+      "[scan.js] Transactional stock import failed:",
+      error
+    );
+
+    throw new Error(
+      error.message || "Database stock import failed."
+    );
+  }
+
+  if (!data?.ok || data.status !== "completed") {
+    throw new Error(
+      "Database did not confirm a completed stock import."
+    );
+  }
+
+  const importedUnits = Number(data.total_units || 0);
+  const importedPackages = Number(data.total_packages || 0);
+
+  if (
+    importedUnits !== totalUnits ||
+    importedPackages !== expectedPackages
+  ) {
+    console.warn(
+      "[scan.js] Import count mismatch:",
+      {
+        expectedUnits: totalUnits,
+        importedUnits,
+        expectedPackages,
+        importedPackages
+      }
+    );
+  }
+
+  bulkStockSetProgress(
+    80,
+    100,
+    `${importedPackages} packages saved. Checking automatic allocation...`
+  );
+
+  /* ========================================================
+     AUTOMATIC ALLOCATION AFTER COMMIT
+     ======================================================== */
+
+  const uniqueProducts = new Map();
+
+  for (const row of previewRows) {
+    uniqueProducts.set(
+      String(row.product.id),
+      row.product
+    );
+  }
+
+  let allocationsCreated = 0;
+  const allocationErrors = [];
+
+  for (const product of uniqueProducts.values()) {
+    try {
+      const allocation = await autoAllocateInboundProduct(product);
+
+      allocationsCreated += Number(
+        allocation?.allocations_created || 0
+      );
+
+      if (allocation?.error || allocation?.skipped) {
+        allocationErrors.push(
+          `${product.sku_base}: ${
+            allocation.error || "Allocation skipped"
+          }`
+        );
+      }
+    } catch (allocationError) {
+      allocationErrors.push(
+        `${product.sku_base}: ${allocationError.message}`
+      );
+    }
+  }
+
+  /* ========================================================
+     UPDATE SESSION HISTORY AND KPIS
+     ======================================================== */
+
+  for (const row of previewRows) {
+    inboundHistory.unshift({
+      time: nowTime(),
+      warehouse: warehouseLabel(context.warehouse),
+      location: locationLabel(context.location),
+      sku: row.product.sku_base,
+      product: row.product.name,
+      owner: ownerName(row.product),
+      mutation: `${row.quantity} complete product(s)`,
+      reference: context.reference,
+      status: "complete"
+    });
+  }
+
+  inboundHistory = inboundHistory.slice(0, 100);
+
+  linesToday += previewRows.length;
+  unitsIn += importedPackages;
+
+  renderInboundHistory();
+
+  updateKpis(
+    "Scan In",
+    `${importedUnits} products / ${importedPackages} packages imported`
+  );
+
+  bulkStockSetProgress(
+    100,
+    100,
+    `Stock import completed. ${allocationsCreated} allocations created.`
+  );
+
+  console.info(
+    "[scan.js] Transactional bulk stock import completed:",
+    {
+      batch_id: data.batch_id,
+      batch_reference: data.batch_reference,
+      total_rows: data.total_rows,
+      total_units: importedUnits,
+      total_packages: importedPackages,
+      stock_sets_created: data.stock_sets_created,
+      allocations_created: allocationsCreated,
+      allocation_errors: allocationErrors
+    }
+  );
+
+  return {
+    ok: true,
+    batch_id: data.batch_id,
+    batch_reference: data.batch_reference,
+    total_rows: Number(data.total_rows || 0),
+    total_units: importedUnits,
+    total_packages: importedPackages,
+    stock_sets: Number(data.stock_sets_created || 0),
+    allocations_created: allocationsCreated,
+    allocation_errors: allocationErrors
+  };
+}
+
+/* END TRANSACTIONAL BULK STOCK IMPORT */
+
+
+/* ==========================================================
+   VEYNOR — CONFIRM BULK STOCK IMPORT
+   ========================================================== */
+
+async function confirmBulkStock() {
+  if (bulkStockImportBusy) {
+    throw new Error("A stock import is already running.");
+  }
+
+  if (
+    !Array.isArray(bulkStockPreview) ||
+    !bulkStockPreview.length ||
+    !bulkStockPreviewContext
+  ) {
+    throw new Error("Preview the Excel file before importing.");
+  }
+
+  if (bulkStockPreview.some(row => !row.valid)) {
+    throw new Error(
+      "Import contains invalid rows. Correct the Excel file first."
+    );
+  }
+
+  const context = bulkStockGetContext();
+  const original = bulkStockPreviewContext;
+
+  if (
+    context.ownerId !== original.ownerId ||
+    context.warehouseId !== original.warehouseId ||
+    context.locationId !== original.locationId ||
+    context.reference !== original.reference
+  ) {
+    bulkStockInvalidatePreview();
+
+    throw new Error(
+      "Import settings have changed. Preview the Excel file again."
+    );
+  }
+
+  bulkStockImportBusy = true;
+
+  const confirmButton = byId("btnConfirmBulkStock");
+  const previewButton = byId("btnPreviewBulkStock");
+  const clearButton = byId("btnClearBulkStock");
+
+  if (confirmButton) confirmButton.disabled = true;
+  if (previewButton) previewButton.disabled = true;
+  if (clearButton) clearButton.disabled = true;
+
+  try {
+    bulkStockSetProgress(
+      0,
+      100,
+      "Validating and submitting stock import..."
+    );
+
+    const result = await bulkStockBookRows(
+      bulkStockPreview,
+      context
+    );
+
+    bulkStockImportReference = context.reference;
+
+    const allocationIssues =
+      result.allocation_errors || [];
+
+    // Clear preview after successful database import.
+    bulkStockInvalidatePreview();
+
+    // Keep completion progress visible.
+    bulkStockSetProgress(
+      100,
+      100,
+      allocationIssues.length
+        ? "Stock imported. Automatic allocation requires attention."
+        : "Stock import completed successfully."
+    );
+
+    showToast(
+      allocationIssues.length
+        ? `${result.total_units} products imported successfully, but ${allocationIssues.length} allocation check(s) need attention.`
+        : `${result.total_units} products / ${result.total_packages} packages imported successfully.`,
+      allocationIssues.length ? "err" : "ok"
+    );
+
+    console.info(
+      "[scan.js] Bulk import result:",
+      result
+    );
+
+  } catch (error) {
+    console.error(
+      "[scan.js] Bulk stock import error:",
+      error
+    );
+
+    bulkStockSetProgress(
+      0,
+      100,
+      `Import failed: ${error.message}`
+    );
+
+    const title = byId("bulkStockProgressTitle");
+    if (title) title.textContent = "Import failed";
+
+    throw error;
+
+  } finally {
+    bulkStockImportBusy = false;
+
+    if (previewButton) previewButton.disabled = false;
+    if (clearButton) clearButton.disabled = false;
+
+    // A failed request must be investigated before retrying.
+    // Require a new preview before another confirmation.
+    if (confirmButton) confirmButton.disabled = true;
+  }
+}
+
+/* END CONFIRM BULK STOCK IMPORT */
+
+function clearBulkStock() {
+  if (bulkStockImportBusy) return;
+
+  bulkStockInvalidatePreview();
+  bulkStockFile = null;
+
+  [
+    "bulkStockOwner",
+    "bulkStockWarehouse",
+    "bulkStockLocation",
+    "bulkStockReference",
+    "bulkStockFile"
+  ].forEach(id => {
+    const element = byId(id);
+    if (element) element.value = "";
+  });
+
+  renderBulkStockLocations();
+}
+
+function bindBulkStockEvents() {
+  byId("btnDownloadBulkStockTemplate")
+    ?.addEventListener("click", () => {
+      try {
+        downloadBulkStockTemplate();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message, "err");
+      }
+    });
+
+  byId("bulkStockFile")
+    ?.addEventListener("change", event => {
+      bulkStockFile = event.target.files?.[0] || null;
+      bulkStockInvalidatePreview();
+    });
+
+  [
+    "bulkStockOwner",
+    "bulkStockLocation",
+    "bulkStockReference"
+  ].forEach(id => {
+    byId(id)?.addEventListener(
+      "change",
+      bulkStockInvalidatePreview
+    );
+  });
+
+  byId("bulkStockWarehouse")
+    ?.addEventListener("change", () => {
+      renderBulkStockLocations();
+      bulkStockInvalidatePreview();
+    });
+
+  byId("btnPreviewBulkStock")
+    ?.addEventListener("click", async () => {
+      try {
+        await previewBulkStock();
+      } catch (error) {
+        console.error(error);
+        showToast(error.message, "err");
+      }
+    });
+
+  byId("btnConfirmBulkStock")
+    ?.addEventListener("click", async () => {
+      try {
+        await confirmBulkStock();
+      } catch (error) {
+        console.error(error);
+        showToast(
+          `Stock import failed: ${error.message}`,
+          "err"
+        );
+      }
+    });
+
+  byId("btnCancelBulkStock")
+    ?.addEventListener("click", () => {
+      if (!bulkStockImportBusy) {
+        bulkStockInvalidatePreview();
+      }
+    });
+
+  byId("btnClearBulkStock")
+    ?.addEventListener("click", clearBulkStock);
+}
+
+/* END BULK STOCK IMPORT — PART 2 */
+
   function bindEvents() {
+bindBulkStockEvents();
     document.querySelectorAll("[data-scan-tab]").forEach(btn => {
       btn.addEventListener("click", () => switchTab(btn.dataset.scanTab));
     });
@@ -1591,8 +2666,9 @@ await bookInboundCompleteProducts(
       loadProducts()
     ]);
 
-    updateActiveState();
-    renderPicklistsPlaceholder();
+updateActiveState();
+renderPicklistsPlaceholder();
+renderBulkStockOptions();
   }
 
   async function init() {

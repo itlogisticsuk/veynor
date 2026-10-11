@@ -27,6 +27,365 @@ const signedNoticeOrderIds = new Set();
 
   let draggedStopId = null;
 
+
+/* =========================================================
+   VEYNOR — SAVED ROUTE EMISSION ZONE WARNINGS
+   ========================================================= */
+
+const emissionAssessments = new Map();
+let emissionAssessmentGeneration = 0;
+
+function emissionForRoute(routeId) {
+  return emissionAssessments.get(String(routeId)) || null;
+}
+
+function emissionZoneNames(result) {
+  return [...new Set([
+    ...(result?.delivery_zones || []),
+    ...(result?.route_zones || [])
+  ]
+    .map(zone => zone.zone_name || zone.zone_code)
+    .filter(Boolean)
+  )];
+}
+
+function emissionIcon(result) {
+  if (!result || !emissionZoneNames(result).length) {
+    return "";
+  }
+
+  return `
+    <span
+      class="av-emission-icon"
+      title="Emission zone warning — check vehicle compliance"
+      aria-label="Emission zone warning"
+    >
+      🌿<b>!</b>
+    </span>
+  `;
+}
+
+
+/* =========================================================
+   VEYNOR — EMISSION ZONES PER DELIVERY ORDER
+   ========================================================= */
+
+function emissionLocationKey(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+
+function emissionDeliveryMatches(routeId) {
+  const assessment = emissionForRoute(routeId);
+  const zones = assessment?.delivery_zones || [];
+  const matches = new Map();
+
+  if (!Array.isArray(zones) || !zones.length) {
+    return matches;
+  }
+
+  const stops = getStopsForRoute(routeId);
+
+  // Normalize UK postcodes, including spaces and case.
+  const normalizePostcode = value =>
+    String(value || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+
+  // Extract postcode from Planning Engine location key.
+  const postcodeFromLocationKey = key => {
+    const parts = String(key || "").split("|");
+
+    if (
+      parts.length < 3 ||
+      !parts[0].toUpperCase().startsWith("ADDRESS:")
+    ) {
+      return "";
+    }
+
+    return normalizePostcode(parts[1]);
+  };
+
+  for (const zone of zones) {
+    const zoneName = String(
+      zone.zone_name ||
+      zone.zone_code ||
+      "Emission zone"
+    );
+
+    const zonePostcode =
+      normalizePostcode(
+        zone.postcode ||
+        zone.delivery_postcode
+      ) ||
+      postcodeFromLocationKey(zone.location_key);
+
+    const zoneOrderIds = [
+      ...(Array.isArray(zone.order_ids) ? zone.order_ids : []),
+      ...(zone.order_id ? [zone.order_id] : [])
+    ].map(String);
+
+    for (const stop of stops) {
+      const order = getOrderById(stop.order_id);
+      if (!order) continue;
+
+      const orderId = String(order.id);
+
+      const orderPostcode = normalizePostcode(
+        order.delivery_postcode ||
+        stop.postcode
+      );
+
+      const directMatch =
+        zoneOrderIds.includes(orderId);
+
+      const postcodeMatch =
+        Boolean(zonePostcode && orderPostcode) &&
+        zonePostcode === orderPostcode;
+
+      if (!directMatch && !postcodeMatch) {
+        continue;
+      }
+
+      if (!matches.has(orderId)) {
+        matches.set(orderId, new Set());
+      }
+
+      matches.get(orderId).add(zoneName);
+    }
+  }
+
+  return matches;
+}
+
+function emissionForOrder(routeId, orderId) {
+  const matches = emissionDeliveryMatches(routeId);
+
+  return [...(matches.get(String(orderId)) || [])];
+}
+
+function emissionAffectedOrderCount(routeId) {
+  return emissionDeliveryMatches(routeId).size;
+}
+
+function emissionOrderIndicator(routeId, orderId) {
+  const names = emissionForOrder(routeId, orderId);
+
+  if (!names.length) {
+    return "";
+  }
+
+  return `
+    <span
+      class="av-emission-icon"
+      title="${escapeHtml(names.join(" · "))}"
+      aria-label="Delivery inside emission zone"
+    >
+      🌿<b>!</b>
+    </span>
+  `;
+}
+
+/* END EMISSION ZONES PER DELIVERY ORDER */
+
+
+
+function emissionNotice(routeId) {
+  const result = emissionForRoute(routeId);
+
+  if (!result) return "";
+
+  const deliveryZones = result.delivery_zones || [];
+  const routeZones = result.route_zones || [];
+
+  const names = emissionZoneNames(result);
+  const incomplete = result.checked !== true;
+
+  if (!names.length && !incomplete) {
+    return "";
+  }
+
+  const affectedOrders = emissionAffectedOrderCount(routeId);
+
+  const deliveryStatus =
+    affectedOrders > 0
+      ? `${affectedOrders} delivery order(s) identified inside an emission zone`
+      : deliveryZones.length > 0
+        ? "Delivery zones detected — order matching not confirmed"
+        : "Delivery address checks: No confirmed matches";
+
+  return `
+    <div class="av-emission-notice">
+
+      <strong>
+        🌿 ${
+          incomplete
+            ? "Emission Zone Check Incomplete"
+            : "Emission Zone Warning"
+        } ⚠️
+      </strong>
+
+      ${
+        names.length
+          ? `
+            <div>
+              <strong>
+                ${names.length} emission zone(s) detected along this route
+              </strong>
+            </div>
+
+            <div class="av-emission-names">
+              ${names.map(escapeHtml).join(" · ")}
+            </div>
+
+            <div>
+              ${escapeHtml(deliveryStatus)}
+            </div>
+          `
+          : ""
+      }
+
+      ${
+        incomplete
+          ? `
+            <div>
+              ${escapeHtml(
+                (result.errors || []).join(" | ") ||
+                "The emission assessment could not be completed."
+              )}
+            </div>
+          `
+          : ""
+      }
+
+      <small>
+        Check vehicle eligibility, applicable charges and
+        restrictions before departure.
+        Zone detection does not confirm vehicle compliance.
+      </small>
+
+    </div>
+  `;
+}
+
+
+async function assessSavedRoutes() {
+  const generation = ++emissionAssessmentGeneration;
+
+  if (
+    typeof window.PlanningEngine?.previewRouteChanges !== "function"
+  ) {
+    console.warn(
+      "[AvailableVehicles] Route emission assessment unavailable."
+    );
+    return;
+  }
+
+  const routes = allRoutes.filter(route =>
+    !selectedPlanningDate ||
+    !getRouteDate(route) ||
+    getRouteDate(route) === selectedPlanningDate
+  );
+
+  const activeIds = new Set(routes.map(route => String(route.id)));
+
+  for (const id of emissionAssessments.keys()) {
+    if (!activeIds.has(id)) {
+      emissionAssessments.delete(id);
+    }
+  }
+
+  for (const route of routes) {
+    if (generation !== emissionAssessmentGeneration) {
+      return;
+    }
+
+    const routeId = String(route.id);
+
+    const stops = getStopsForRoute(route.id);
+
+    if (!stops.length) {
+      emissionAssessments.delete(routeId);
+      continue;
+    }
+
+    try {
+      const result =
+        await window.PlanningEngine.previewRouteChanges({
+          route_id: route.id
+        });
+
+      if (generation !== emissionAssessmentGeneration) {
+        return;
+      }
+
+      if (!result?.ok) {
+        throw new Error(
+          result?.message ||
+          "Saved route assessment failed."
+        );
+      }
+
+      const assessment = result.emission_zones;
+
+      if (!assessment) {
+        throw new Error(
+          "Planning Engine returned no emission assessment."
+        );
+      }
+
+      emissionAssessments.set(routeId, {
+        ...assessment,
+        checked: assessment.checked === true,
+        delivery_zones: assessment.delivery_zones || [],
+        route_zones: assessment.route_zones || [],
+        errors: assessment.errors || []
+      });
+
+      console.info(
+        "[AvailableVehicles] Saved route emission check:",
+        {
+          route: route.route_code || routeId,
+          checked: assessment.checked,
+          delivery_zones:
+            (assessment.delivery_zones || []).length,
+          route_zones:
+            (assessment.route_zones || []).length
+        }
+      );
+
+    } catch (error) {
+      if (generation !== emissionAssessmentGeneration) {
+        return;
+      }
+
+      console.warn(
+        "[AvailableVehicles] Saved route emission check failed:",
+        route.route_code || routeId,
+        error
+      );
+
+      emissionAssessments.set(routeId, {
+        checked: false,
+        delivery_zones: [],
+        route_zones: [],
+        errors: [
+          error?.message ||
+          "Saved route emission assessment unavailable."
+        ]
+      });
+    }
+
+    render();
+  }
+}
+
+/* END SAVED ROUTE EMISSION ZONES */
+
+
   function log(...args) {
     if (DEBUG) console.log("[available-vehicles.js]", ...args);
   }
@@ -680,6 +1039,79 @@ function getRouteWarehouseCost(route) {
     const style = document.createElement("style");
     style.id = "availableVehiclesStyles";
     style.textContent = `
+
+
+/* VEYNOR — EMISSION ZONE INDICATORS */
+
+.av-emission-icon {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  font-size: 16px;
+  line-height: 1;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.av-emission-icon b {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  background: #f59e0b;
+  color: #fff;
+  border: 1px solid white;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+}
+
+.av-emission-notice {
+  display: grid;
+  gap: 5px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 9px;
+  padding: 11px;
+  color: #166534;
+  font-size: 11px;
+}
+
+.av-emission-notice strong {
+  font-size: 12px;
+}
+
+.av-emission-names {
+  font-weight: 800;
+}
+
+.av-emission-notice small {
+  line-height: 1.45;
+}
+
+
+.av-own-stop-emission {
+  margin-top: 3px;
+  color: #15803d;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.av-own-stop-title .av-emission-icon {
+  margin-left: 5px;
+  font-size: 13px;
+}
+
+.av-own-stop-title .av-emission-icon b {
+  width: 11px;
+  height: 11px;
+  font-size: 8px;
+}
+
+
       .av-stack{display:grid;gap:10px;}
 .av-owner-badge{
   width:28px;
@@ -2431,6 +2863,10 @@ function renderVehicle(vehicle) {
   const dotClass =
     routeDotClass(vehicle);
 
+const vehicleEmission = routes
+  .map(route => emissionForRoute(route.id))
+  .find(result => emissionZoneNames(result).length);
+
   const driverName =
     primaryRoute
       ? getRouteDriverName(primaryRoute)
@@ -2507,6 +2943,7 @@ function renderVehicle(vehicle) {
                   getVehicleName(vehicle)
                 )}
               </span>
+${emissionIcon(vehicleEmission)}
 
               ${
                 hasRoute && resourceBadge
@@ -2614,6 +3051,7 @@ function renderVehicle(vehicle) {
   const summary = getRouteSummary(route);
   const routeId = String(route.id);
   const open = expandedRouteIds.has(routeId);
+const routeEmission = emissionForRoute(routeId);
   const routeStatus = getRouteCompletionStatus(route);
   const statusClass = statusClassFromValue(routeStatus);
 
@@ -2635,6 +3073,7 @@ function renderVehicle(vehicle) {
             <span class="av-own-route-title">
               ${escapeHtml(getRouteLabel(route))}
             </span>
+${emissionIcon(routeEmission)}
 
             <span class="av-status ${escapeHtml(statusClass)}">
               ${escapeHtml(titleCase(routeStatus))}
@@ -2655,6 +3094,13 @@ function renderVehicle(vehicle) {
 
         <div class="av-own-route-actions">
           <button
+            class="av-own-action-btn"
+            type="button"
+            data-open-route-workspace="${escapeHtml(routeId)}"
+          >
+            Workspace
+          </button>          
+<button
             class="av-own-action-btn"
             type="button"
             data-toggle-route="${escapeHtml(routeId)}"
@@ -2796,6 +3242,7 @@ function renderVehicle(vehicle) {
       </div>
 
 <div class="av-own-route-extra">
+${emissionNotice(routeId)}
 
   ${renderOwnRouteDocuments(route)}
 
@@ -3095,6 +3542,12 @@ function renderStop(stop) {
   const order =
     getOrderById(stop.order_id);
 
+const routeId = String(stop.route_id || "");
+
+const orderEmissionZones = order
+  ? emissionForOrder(routeId, order.id)
+  : [];
+
   const statusValue =
     getStatusValueFromStop(
       stop,
@@ -3166,6 +3619,8 @@ function renderStop(stop) {
           ·
           ${escapeHtml(retailer)}
 
+${order ? emissionOrderIndicator(routeId, order.id) : ""}
+
           ${
             collection
               ? `
@@ -3186,6 +3641,16 @@ function renderStop(stop) {
             `
             : ""
         }
+
+${
+  orderEmissionZones.length
+    ? `
+      <div class="av-own-stop-emission">
+        ${escapeHtml(orderEmissionZones.join(" · "))}
+      </div>
+    `
+    : ""
+}
 
         <div class="av-own-stop-detail">
           <span>
@@ -3246,6 +3711,52 @@ function renderStop(stop) {
 }
 
 function bindEvents(mount) {
+
+  mount
+    .querySelectorAll("[data-open-route-workspace]")
+    .forEach(button => {
+      button.addEventListener("click", async event => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const routeId = String(
+          button.dataset.openRouteWorkspace || ""
+        ).trim();
+
+        if (!routeId || button.disabled) {
+          return;
+        }
+
+        const workspace = window.VeynorRouteWorkspace;
+
+        if (typeof workspace?.open !== "function") {
+          showToast(
+            "Route workspace is not loaded. Check the planner scripts.",
+            "error"
+          );
+          return;
+        }
+
+        button.disabled = true;
+
+        try {
+          await workspace.open(routeId);
+        } catch (error) {
+          console.error(
+            "[AvailableVehicles] Unable to open route workspace:",
+            error
+          );
+
+          showToast(
+            error?.message ||
+              "Unable to open route workspace.",
+            "error"
+          );
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
 
   mount.querySelectorAll("[data-select-vehicle]").forEach(button => {
     button.addEventListener("click", () => {
@@ -3409,7 +3920,52 @@ mount.querySelectorAll("[data-fds-upload-input]").forEach(input => {
 
 mount.querySelectorAll("[data-fds-labels]").forEach(button => {
   button.addEventListener("click", async () => {
-    await generateFdsDeliveryLabels(button.dataset.fdsLabels);
+    const vehicleId = button.dataset.fdsLabels;
+
+    const vehicle = activeVehicles.find(
+      v => String(v.id) === String(vehicleId)
+    );
+
+    if (!vehicle) {
+      showToast("Carrier not found.", "err");
+      return;
+    }
+
+    const orders = getCarrierOrders(vehicle);
+
+    if (!orders.length) {
+      showToast("No carrier orders found.", "err");
+      return;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const carrierName = safeDocumentFileName(
+      getVehicleName(vehicle),
+      "Carrier"
+    );
+
+    const fileName =
+      `${carrierName} Delivery Labels ${today}.pdf`;
+
+    try {
+      const result = await generateLabelsWithProgress(
+        orders,
+        fileName
+      );
+
+      showToast(
+        `${result.generated} label PDF(s) prepared.`,
+        result.failed > 0 ? "err" : "ok"
+      );
+    } catch (error) {
+      console.error("Carrier labels failed:", error);
+
+      showToast(
+        error.message || "Could not generate labels.",
+        "err"
+      );
+    }
   });
 });
 
@@ -5150,289 +5706,23 @@ async function generateRouteSheetPdf(routeId) {
   }
 }
 
+
 async function generateRouteDeliveryNotes(routeId) {
-  const button =
-    document.querySelector(
-      `[data-route-delivery-notes="${CSS.escape(
-        String(routeId)
-      )}"]`
-    );
-
-  const oldText =
-    button?.textContent?.trim() ||
-    "Generate Route Notes";
-
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent =
-        "Generating... ⏳";
-    }
-
-    const db =
-      ensureClient();
-
-    const cid =
-      getCompanyId();
-
-    if (!cid) {
-      throw new Error(
-        "Company id missing."
-      );
-    }
-
-    const route =
-      allRoutes.find(
-        row =>
-          String(row.id) ===
-          String(routeId)
-      );
-
-    if (!route) {
-      throw new Error(
-        "Route not found."
-      );
-    }
-
-    const orders =
-      getOrdersForRoute(
-        routeId
-      );
-
-    if (!orders.length) {
-      throw new Error(
-        "No orders found for this route."
-      );
-    }
-
-    if (
-      !window
-        .DeliveryNoteGenerator
-        ?.generate
-    ) {
-      throw new Error(
-        "Delivery Note Generator is not loaded."
-      );
-    }
-
-    if (
-      !window.PDFLib
-        ?.PDFDocument
-    ) {
-      throw new Error(
-        "pdf-lib is not loaded."
-      );
-    }
-
-    showToast(
-      `Generating route notes for ${getRouteLabel(route)}...`,
-      "ok"
-    );
-
-    const pdfUrls = [];
-
-    for (
-      const order of orders
-    ) {
-      try {
-        const uploaded =
-          await window
-            .DeliveryNoteGenerator
-            .generate(
-              order,
-              db,
-              cid
-            );
-
-        if (
-          uploaded?.fileUrl
-        ) {
-          pdfUrls.push(
-            uploaded.fileUrl
-          );
-        }
-      } catch (error) {
-        console.warn(
-          `Route note skipped for ${order.order_number}:`,
-          error.message
-        );
-      }
-    }
-
-    if (!pdfUrls.length) {
-      throw new Error(
-        "No route note PDFs were generated."
-      );
-    }
-
-    const mergedPdf =
-      await window
-        .PDFLib
-        .PDFDocument
-        .create();
-
-    for (
-      const url of pdfUrls
-    ) {
-      try {
-        const response =
-          await fetch(
-            url,
-            {
-              cache:
-                "no-store"
-            }
-          );
-
-        if (
-          !response.ok
-        ) {
-          continue;
-        }
-
-        const bytes =
-          await response
-            .arrayBuffer();
-
-        const pdf =
-          await window
-            .PDFLib
-            .PDFDocument
-            .load(
-              bytes
-            );
-
-        const pages =
-          await mergedPdf
-            .copyPages(
-              pdf,
-              pdf.getPageIndices()
-            );
-
-        pages.forEach(
-          page =>
-            mergedPdf
-              .addPage(
-                page
-              )
-        );
-      } catch (error) {
-        console.warn(
-          "Route note could not be merged:",
-          error
-        );
-      }
-    }
-
-    if (
-      !mergedPdf
-        .getPageCount()
-    ) {
-      throw new Error(
-        "No valid route note pages could be combined."
-      );
-    }
-
-    const mergedBytes =
-      await mergedPdf
-        .save();
-
-    const blob =
-      new Blob(
-        [mergedBytes],
-        {
-          type:
-            "application/pdf"
-        }
-      );
-
-    const blobUrl =
-      URL.createObjectURL(
-        blob
-      );
-
-    const routeLabel =
-      safeDocumentFileName(
-        getRouteLabel(
-          route
-        ),
-        "Route"
-      );
-
-    const link =
-      document.createElement(
-        "a"
-      );
-
-    link.href =
-      blobUrl;
-
-    link.download =
-      `${routeLabel} Route Notes.pdf`;
-
-    document.body
-      .appendChild(
-        link
-      );
-
-    link.click();
-    link.remove();
-
-    setTimeout(
-      () =>
-        URL
-          .revokeObjectURL(
-            blobUrl
-          ),
-      30000
-    );
-
-    showToast(
-      `${orders.length} route note(s) downloaded for ${getRouteLabel(route)}.`,
-      "ok"
-    );
-  } catch (error) {
-    console.error(
-      "Route notes failed:",
-      error
-    );
-
-    showToast(
-      error.message ||
-        "Could not generate route notes.",
-      "err"
-    );
-  } finally {
-    if (button) {
-      button.disabled =
-        false;
-
-      button.textContent =
-        oldText;
-    }
-  }
-}
-
-async function generateRouteDeliveryLabels(routeId) {
   const button = document.querySelector(
-    `[data-route-labels="${CSS.escape(
-      String(routeId)
-    )}"]`
+    `[data-route-delivery-notes="${CSS.escape(String(routeId))}"]`
   );
 
   const oldText =
-    button?.textContent?.trim() ||
-    "Generate Labels";
+    button?.textContent?.trim() || "Generate Route Notes";
 
   try {
     if (button) {
       button.disabled = true;
-      button.textContent = "Generating... ⏳";
+      button.textContent = "Generating...";
     }
 
     const route = allRoutes.find(
-      row =>
-        String(row.id) === String(routeId)
+      row => String(row.id) === String(routeId)
     );
 
     if (!route) {
@@ -5442,834 +5732,689 @@ async function generateRouteDeliveryLabels(routeId) {
     const orders = getOrdersForRoute(routeId);
 
     if (!orders.length) {
-      throw new Error(
-        "No orders found for this route."
-      );
+      throw new Error("No orders found for this route.");
     }
 
-    if (
-      !window.DeliveryLabelGenerator?.generate
-    ) {
-      throw new Error(
-        "Delivery Label Generator is not loaded."
-      );
-    }
-
-    if (!window.PDFLib?.PDFDocument) {
-      throw new Error(
-        "pdf-lib is not loaded."
-      );
-    }
-
-    showToast(
-      `Generating labels for ${getRouteLabel(route)}...`,
-      "ok"
+    const routeLabel = safeDocumentFileName(
+      getRouteLabel(route),
+      "Route"
     );
 
-    const pdfUrls = [];
+    const fileName = `${routeLabel} Route Notes.pdf`;
+
+    const result = await generateDeliveryNotesWithProgress(
+      orders,
+      fileName
+    );
+
+    showToast(
+      `${result.generated} route delivery note(s) prepared for ${getRouteLabel(route)}.`,
+      result.failed > 0 ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error("Route notes failed:", error);
+
+    showToast(
+      error.message || "Could not generate route notes.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+
+async function generateRouteDeliveryLabels(routeId) {
+  const button = document.querySelector(
+    `[data-route-labels="${CSS.escape(String(routeId))}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() || "Generate Labels";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating...";
+    }
+
+    const route = allRoutes.find(
+      row => String(row.id) === String(routeId)
+    );
+
+    if (!route) {
+      throw new Error("Route not found.");
+    }
+
+    const orders = getOrdersForRoute(routeId);
+
+    if (!orders.length) {
+      throw new Error("No orders found for this route.");
+    }
+
+    const routeLabel = safeDocumentFileName(
+      getRouteLabel(route),
+      "Route"
+    );
+
+    const fileName =
+      `${routeLabel} Delivery Labels.pdf`;
+
+    const result = await generateLabelsWithProgress(
+      orders,
+      fileName
+    );
+
+    showToast(
+      `${result.generated} order label PDF(s) prepared for ${getRouteLabel(route)}.`,
+      result.failed > 0 ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error("Route labels failed:", error);
+
+    showToast(
+      error.message || "Could not generate route labels.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+
+async function generateFdsDeliveryNotes(vehicleId) {
+  const button = document.querySelector(
+    `[data-fds-delivery-notes="${CSS.escape(String(vehicleId))}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() || "Generate Delivery Notes";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating...";
+    }
+
+    const vehicle = activeVehicles.find(
+      row => String(row.id) === String(vehicleId)
+    );
+
+    if (!vehicle) {
+      throw new Error("Carrier not found.");
+    }
+
+    const orders = getCarrierOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error("No carrier orders found.");
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const carrierName = safeDocumentFileName(
+      getVehicleName(vehicle),
+      "Carrier"
+    );
+
+    const fileName =
+      `${carrierName} Delivery Notes ${today}.pdf`;
+
+    const result = await generateDeliveryNotesWithProgress(
+      orders,
+      fileName
+    );
+
+    showToast(
+      `${result.generated} carrier delivery note(s) prepared.`,
+      result.failed > 0 ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error("Carrier delivery notes failed:", error);
+
+    showToast(
+      error.message || "Could not generate delivery notes.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+async function generatePickupDeliveryNotes(vehicleId) {
+  const button = document.querySelector(
+    `[data-pickup-delivery-notes="${CSS.escape(String(vehicleId))}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() || "Generate Delivery Notes";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating...";
+    }
+
+    const vehicle = activeVehicles.find(
+      row => String(row.id) === String(vehicleId)
+    );
+
+    if (!vehicle) {
+      throw new Error("Warehouse pickup resource not found.");
+    }
+
+    const orders = getWarehousePickupOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error("No warehouse pickup orders found.");
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const fileName =
+      `Warehouse Pickup Delivery Notes ${today}.pdf`;
+
+    const result = await generateDeliveryNotesWithProgress(
+      orders,
+      fileName
+    );
+
+    showToast(
+      `${result.generated} warehouse pickup delivery note(s) prepared.`,
+      result.failed > 0 ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error("Warehouse pickup delivery notes failed:", error);
+
+    showToast(
+      error.message ||
+        "Could not generate warehouse pickup delivery notes.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+
+async function generatePickupDeliveryLabels(vehicleId) {
+  const button = document.querySelector(
+    `[data-pickup-labels="${CSS.escape(String(vehicleId))}"]`
+  );
+
+  const oldText =
+    button?.textContent?.trim() || "Generate Labels";
+
+  try {
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Generating...";
+    }
+
+    const vehicle = activeVehicles.find(
+      row => String(row.id) === String(vehicleId)
+    );
+
+    if (!vehicle) {
+      throw new Error("Warehouse pickup resource not found.");
+    }
+
+    const orders = getWarehousePickupOrders(vehicle);
+
+    if (!orders.length) {
+      throw new Error("No warehouse pickup orders found.");
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    const fileName =
+      `Warehouse Pickup Delivery Labels ${today}.pdf`;
+
+    const result = await generateLabelsWithProgress(
+      orders,
+      fileName
+    );
+
+    showToast(
+      `${result.generated} warehouse pickup order label PDF(s) prepared.`,
+      result.failed > 0 ? "err" : "ok"
+    );
+
+  } catch (error) {
+    console.error("Warehouse pickup labels failed:", error);
+
+    showToast(
+      error.message ||
+        "Could not generate warehouse pickup labels.",
+      "err"
+    );
+
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+}
+
+
+/* ============================================================
+   VEYNOR — DELIVERY LABEL PROGRESS
+   ============================================================ */
+
+async function generateLabelsWithProgress(orders, fileName) {
+  const progress = window.VeynorProgress;
+
+  if (!progress) {
+    throw new Error("Veynor Progress module is not loaded.");
+  }
+
+  if (!window.DeliveryLabelGenerator?.generate) {
+    throw new Error("Delivery Label Generator is not loaded.");
+  }
+
+  if (!window.PDFLib?.PDFDocument) {
+    throw new Error("pdf-lib is not loaded.");
+  }
+
+  if (!orders.length) {
+    throw new Error("No orders available for label generation.");
+  }
+
+  if (!progress.open({
+    type: "labels",
+    total: orders.length
+  })) {
+    throw new Error("Another progress operation is already active.");
+  }
+
+  let completed = 0;
+  let generated = 0;
+  let failed = 0;
+
+  const details = [];
+  const pdfFiles = [];
+
+  try {
+    progress.update({
+      phase: 2,
+      completed: 0,
+      total: orders.length
+    });
 
     for (const order of orders) {
       try {
-        const uploaded =
-          await window
-            .DeliveryLabelGenerator
-            .generate(order.id);
+        const result =
+          await window.DeliveryLabelGenerator.generate(order.id);
 
-        if (uploaded?.fileUrl) {
-          pdfUrls.push(
-            uploaded.fileUrl
+        if (!result?.fileUrl) {
+          throw new Error("No PDF URL returned by label generator.");
+        }
+
+        pdfFiles.push({
+          orderNumber: order.order_number,
+          url: result.fileUrl
+        });
+
+        generated++;
+      } catch (error) {
+        failed++;
+
+        details.push({
+          orderNumber: order.order_number || "Unknown order",
+          status: "failed",
+          reason: error.message || String(error)
+        });
+      }
+
+      completed++;
+
+      progress.update({
+        phase: 2,
+        completed,
+        total: orders.length,
+        imported: generated,
+        failed,
+        reference: order.order_number || ""
+      });
+    }
+
+    if (!pdfFiles.length) {
+      throw new Error("No label PDFs were generated.");
+    }
+
+    progress.update({
+      phase: 3,
+      completed,
+      imported: generated,
+      failed
+    });
+
+    const mergedPdf =
+      await window.PDFLib.PDFDocument.create();
+
+    let mergedCount = 0;
+
+    for (const file of pdfFiles) {
+      try {
+        const response = await fetch(file.url, {
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Could not retrieve PDF (HTTP ${response.status}).`
           );
         }
-      } catch (error) {
-        console.warn(
-          `Labels skipped for ${order.order_number}:`,
-          error.message
+
+        const bytes = await response.arrayBuffer();
+
+        const sourcePdf =
+          await window.PDFLib.PDFDocument.load(bytes);
+
+        const pages = await mergedPdf.copyPages(
+          sourcePdf,
+          sourcePdf.getPageIndices()
         );
+
+        if (!pages.length) {
+          throw new Error("PDF contains no pages.");
+        }
+
+        pages.forEach(page => mergedPdf.addPage(page));
+        mergedCount++;
+      } catch (error) {
+        failed++;
+        generated--;
+
+        details.push({
+          orderNumber: file.orderNumber || "Unknown order",
+          status: "failed",
+          reason: "PDF combining failed: " +
+            (error.message || String(error))
+        });
       }
     }
 
-    if (!pdfUrls.length) {
-      throw new Error(
-        "No label PDFs were generated."
-      );
+    if (!mergedPdf.getPageCount()) {
+      throw new Error("No valid label pages could be combined.");
     }
 
-    const mergedPdf =
-      await window.PDFLib
-        .PDFDocument
-        .create();
+    progress.update({
+      phase: 4,
+      imported: generated,
+      failed
+    });
 
-    for (const url of pdfUrls) {
+    const bytes = await mergedPdf.save();
+
+    const blob = new Blob([bytes], {
+      type: "application/pdf"
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    progress.complete({
+      imported: generated,
+      skipped: 0,
+      failed,
+      details
+    });
+
+    return { generated, failed };
+
+  } catch (error) {
+    progress.fail({
+      message: error.message || String(error)
+    });
+
+    throw error;
+  }
+}
+
+
+/* ============================================================
+   VEYNOR — DELIVERY NOTES PROGRESS
+   ============================================================ */
+
+async function generateDeliveryNotesWithProgress(orders, fileName) {
+  const progress = window.VeynorProgress;
+
+  if (!progress?.open || !progress?.update ||
+      !progress?.complete || !progress?.fail) {
+    throw new Error("Veynor Progress module is not loaded.");
+  }
+
+  if (!window.DeliveryNoteGenerator?.generate) {
+    throw new Error("Delivery Note Generator is not loaded.");
+  }
+
+  if (!window.PDFLib?.PDFDocument) {
+    throw new Error("pdf-lib is not loaded.");
+  }
+
+  if (!Array.isArray(orders) || !orders.length) {
+    throw new Error("No orders available for delivery notes.");
+  }
+
+  const db = ensureClient();
+  const cid = getCompanyId();
+
+  if (!cid) {
+    throw new Error("Company id missing.");
+  }
+
+  const opened = progress.open({
+    type: "deliveryNotes",
+    total: orders.length
+  });
+
+  if (!opened) {
+    throw new Error("Another progress operation is already active.");
+  }
+
+  let completed = 0;
+  let generated = 0;
+  let failed = 0;
+
+  const details = [];
+  const pdfFiles = [];
+
+  try {
+    progress.update({
+      phase: 2,
+      completed: 0,
+      total: orders.length
+    });
+
+    for (const order of orders) {
       try {
-        const response = await fetch(
-          url,
-          {
-            cache: "no-store"
-          }
+        const result = await window.DeliveryNoteGenerator.generate(
+          order,
+          db,
+          cid
         );
 
-        if (!response.ok) {
-          console.warn(
-            `Could not load labels: ${url}`
-          );
-          continue;
+        if (!result?.fileUrl) {
+          throw new Error("No PDF URL returned by delivery note generator.");
         }
 
-        const bytes =
-          await response.arrayBuffer();
+        pdfFiles.push({
+          orderNumber: order.order_number || "Unknown order",
+          url: result.fileUrl
+        });
 
-        const pdf =
-          await window.PDFLib
-            .PDFDocument
-            .load(bytes);
+        generated++;
 
-        const pages =
-          await mergedPdf.copyPages(
-            pdf,
-            pdf.getPageIndices()
-          );
-
-        pages.forEach(page =>
-          mergedPdf.addPage(page)
-        );
       } catch (error) {
+        failed++;
+
+        details.push({
+          orderNumber: order.order_number || "Unknown order",
+          status: "failed",
+          reason: error?.message || String(error)
+        });
+
         console.warn(
-          "Labels could not be merged:",
+          "Delivery note generation failed:",
+          order.order_number,
+          error
+        );
+      }
+
+      completed++;
+
+      progress.update({
+        phase: 2,
+        completed,
+        total: orders.length,
+        imported: generated,
+        skipped: 0,
+        failed,
+        reference: order.order_number || ""
+      });
+    }
+
+    if (!pdfFiles.length) {
+      throw new Error("No delivery note PDFs were generated.");
+    }
+
+    progress.update({
+      phase: 3,
+      completed,
+      imported: generated,
+      failed
+    });
+
+    const mergedPdf = await window.PDFLib.PDFDocument.create();
+
+    for (const file of pdfFiles) {
+      try {
+        const response = await fetch(file.url, {
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          throw new Error(
+            `Could not retrieve PDF (HTTP ${response.status}).`
+          );
+        }
+
+        const bytes = await response.arrayBuffer();
+
+        const sourcePdf =
+          await window.PDFLib.PDFDocument.load(bytes);
+
+        const pages = await mergedPdf.copyPages(
+          sourcePdf,
+          sourcePdf.getPageIndices()
+        );
+
+        if (!pages.length) {
+          throw new Error("PDF contains no pages.");
+        }
+
+        pages.forEach(page => mergedPdf.addPage(page));
+
+      } catch (error) {
+        failed++;
+        generated--;
+
+        details.push({
+          orderNumber: file.orderNumber,
+          status: "failed",
+          reason: "PDF combining failed: " +
+            (error?.message || String(error))
+        });
+
+        console.warn(
+          "Delivery note combining failed:",
+          file.orderNumber,
           error
         );
       }
     }
 
     if (!mergedPdf.getPageCount()) {
-      throw new Error(
-        "No valid label pages could be combined."
-      );
+      throw new Error("No valid delivery note pages could be combined.");
     }
 
-    const mergedBytes =
-      await mergedPdf.save();
-
-    const blob = new Blob(
-      [mergedBytes],
-      {
-        type: "application/pdf"
-      }
-    );
-
-    const blobUrl =
-      URL.createObjectURL(blob);
-
-    const routeLabel =
-      safeDocumentFileName(
-        getRouteLabel(route),
-        "Route"
-      );
-
-    const link =
-      document.createElement("a");
-
-    link.href = blobUrl;
-
-    link.download =
-      `${routeLabel} Delivery Labels.pdf`;
-
-    document.body.appendChild(link);
-
-    link.click();
-    link.remove();
-
-    setTimeout(
-      () =>
-        URL.revokeObjectURL(blobUrl),
-      30000
-    );
-
-    showToast(
-      `${orders.length} order label file(s) downloaded for ${getRouteLabel(route)}.`,
-      "ok"
-    );
-  } catch (error) {
-    console.error(
-      "Route labels failed:",
-      error
-    );
-
-    showToast(
-      error.message ||
-        "Could not generate route labels.",
-      "err"
-    );
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
-    }
-  }
-}
-
-async function generateFdsDeliveryNotes(vehicleId) {
-  const button = document.querySelector(
-    `[data-fds-delivery-notes="${CSS.escape(String(vehicleId))}"]`
-  );
-  const oldText = button?.textContent || "Generate Delivery Notes";
-
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent = "Generating... ⏳";
-    }
-
-    const db = ensureClient();
-    const cid = getCompanyId();
-
-    const vehicle = activeVehicles.find(v => String(v.id) === String(vehicleId));
-    if (!vehicle) throw new Error("Carrier not found.");
-
-    const orders = getCarrierOrders(vehicle);
-    if (!orders.length) throw new Error("No FDS orders found.");
-
-    if (!window.DeliveryNoteGenerator?.generate) {
-      throw new Error("Delivery Note Generator is not loaded.");
-    }
-
-    if (!window.PDFLib?.PDFDocument) {
-      throw new Error("pdf-lib is not loaded.");
-    }
-
-    showToast("Generating and combining delivery notes...", "ok");
-
-    const pdfUrls = [];
-
-    for (const order of orders) {
-      try {
-        const uploaded = await window.DeliveryNoteGenerator.generate(order, db, cid);
-        if (uploaded?.fileUrl) pdfUrls.push(uploaded.fileUrl);
-      } catch (error) {
-        console.warn(`Delivery note skipped for ${order.order_number}:`, error.message);
-      }
-    }
-
-    if (!pdfUrls.length) throw new Error("No delivery note PDFs were generated.");
-
-    const mergedPdf = await window.PDFLib.PDFDocument.create();
-
-    for (const url of pdfUrls) {
-      const response = await fetch(url);
-      if (!response.ok) continue;
-
-      const bytes = await response.arrayBuffer();
-      const pdf = await window.PDFLib.PDFDocument.load(bytes);
-      const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-      pages.forEach(page => mergedPdf.addPage(page));
-    }
+    progress.update({
+      phase: 4,
+      completed,
+      imported: generated,
+      failed
+    });
 
     const mergedBytes = await mergedPdf.save();
-    const blob = new Blob([mergedBytes], { type: "application/pdf" });
+
+    const blob = new Blob([mergedBytes], {
+      type: "application/pdf"
+    });
+
     const blobUrl = URL.createObjectURL(blob);
-    const today = new Date().toISOString().slice(0, 10);
 
     const link = document.createElement("a");
     link.href = blobUrl;
-    link.download = `FDS Delivery Notes ${today}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-    showToast("FDS delivery notes downloaded.", "ok");
-  } catch (error) {
-    console.error(error);
-    showToast(error.message || "Could not generate delivery notes.", "err");
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
-    }
-  }
-}
-
-async function generatePickupDeliveryNotes(
-  vehicleId
-) {
-  const button = document.querySelector(
-    `[data-pickup-delivery-notes="${CSS.escape(
-      String(vehicleId)
-    )}"]`
-  );
-
-  const oldText =
-    button?.textContent ||
-    "Generate Delivery Notes";
-
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent =
-        "Generating... ⏳";
-    }
-
-    const db = ensureClient();
-    const cid = getCompanyId();
-
-    const vehicle =
-      activeVehicles.find(
-        row =>
-          String(row.id) ===
-          String(vehicleId)
-      );
-
-    if (!vehicle) {
-      throw new Error(
-        "Warehouse pickup resource not found."
-      );
-    }
-
-    const orders =
-      getWarehousePickupOrders(vehicle);
-
-    if (!orders.length) {
-      throw new Error(
-        "No warehouse pickup orders found."
-      );
-    }
-
-    if (
-      !window.DeliveryNoteGenerator
-        ?.generate
-    ) {
-      throw new Error(
-        "Delivery Note Generator is not loaded."
-      );
-    }
-
-    if (!window.PDFLib?.PDFDocument) {
-      throw new Error(
-        "pdf-lib is not loaded."
-      );
-    }
-
-    showToast(
-      "Generating warehouse pickup delivery notes...",
-      "ok"
-    );
-
-    const pdfUrls = [];
-
-    for (const order of orders) {
-      try {
-        const uploaded =
-          await window
-            .DeliveryNoteGenerator
-            .generate(
-              order,
-              db,
-              cid
-            );
-
-        if (uploaded?.fileUrl) {
-          pdfUrls.push(
-            uploaded.fileUrl
-          );
-        }
-      } catch (error) {
-        console.warn(
-          `Delivery note skipped for ${order.order_number}:`,
-          error.message
-        );
-      }
-    }
-
-    if (!pdfUrls.length) {
-      throw new Error(
-        "No delivery note PDFs were generated."
-      );
-    }
-
-    const mergedPdf =
-      await window.PDFLib
-        .PDFDocument
-        .create();
-
-    for (const url of pdfUrls) {
-      const response =
-        await fetch(url);
-
-      if (!response.ok) continue;
-
-      const bytes =
-        await response.arrayBuffer();
-
-      const pdf =
-        await window.PDFLib
-          .PDFDocument
-          .load(bytes);
-
-      const pages =
-        await mergedPdf.copyPages(
-          pdf,
-          pdf.getPageIndices()
-        );
-
-      pages.forEach(page =>
-        mergedPdf.addPage(page)
-      );
-    }
-
-    const mergedBytes =
-      await mergedPdf.save();
-
-    const blob = new Blob(
-      [mergedBytes],
-      {
-        type: "application/pdf"
-      }
-    );
-
-    const blobUrl =
-      URL.createObjectURL(blob);
-
-    const today =
-      new Date()
-        .toISOString()
-        .slice(0, 10);
-
-    const link =
-      document.createElement("a");
-
-    link.href = blobUrl;
-
-    link.download =
-      `Warehouse Pickup Delivery Notes ${today}.pdf`;
+    link.download = fileName;
 
     document.body.appendChild(link);
     link.click();
     link.remove();
 
-    setTimeout(
-      () =>
-        URL.revokeObjectURL(
-          blobUrl
-        ),
-      30000
-    );
+    setTimeout(() => {
+      URL.revokeObjectURL(blobUrl);
+    }, 30000);
 
-    showToast(
-      "Warehouse pickup delivery notes downloaded.",
-      "ok"
-    );
-  } catch (error) {
-    console.error(error);
+    progress.complete({
+      imported: generated,
+      skipped: 0,
+      failed,
+      details
+    });
 
-    showToast(
-      error.message ||
-      "Could not generate warehouse pickup delivery notes.",
-      "err"
-    );
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
-    }
-  }
-}
-
-async function generateFdsDeliveryLabels(vehicleId) {
-  const button = document.querySelector(
-    `[data-fds-labels="${CSS.escape(String(vehicleId))}"]`
-  );
-
-  const oldText =
-    button?.textContent ||
-    "Generate Labels";
-
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent =
-        "Generating... ⏳";
-    }
-
-    const vehicle =
-      activeVehicles.find(
-        row =>
-          String(row.id) ===
-          String(vehicleId)
-      );
-
-    if (!vehicle) {
-      throw new Error(
-        "Carrier not found."
-      );
-    }
-
-    /*
-     * Haal alle FDS-orders op.
-     */
-    const allFdsOrders =
-      getCarrierOrders(vehicle);
-
-    /*
-     * Collection-orders hebben GEEN
-     * delivery label nodig.
-     */
-    const orders =
-      allFdsOrders.filter(order =>
-        !isCollectionOrder(order)
-      );
-
-    if (!orders.length) {
-      throw new Error(
-        "No delivery labels required. Only collection orders found."
-      );
-    }
-
-    if (
-      !window
-        .DeliveryLabelGenerator
-        ?.generate
-    ) {
-      throw new Error(
-        "Delivery Label Generator is not loaded."
-      );
-    }
-
-    if (
-      !window.PDFLib
-        ?.PDFDocument
-    ) {
-      throw new Error(
-        "pdf-lib is not loaded."
-      );
-    }
-
-    const skippedCollections =
-      allFdsOrders.length -
-      orders.length;
-
-    showToast(
-      skippedCollections > 0
-        ? `Generating labels for ${orders.length} order(s). ${skippedCollections} collection order(s) skipped.`
-        : `Generating labels for ${orders.length} order(s)...`,
-      "ok"
-    );
-
-    const pdfUrls = [];
-
-    for (const order of orders) {
-      try {
-        const uploaded =
-          await window
-            .DeliveryLabelGenerator
-            .generate(
-              order.id
-            );
-
-        if (
-          uploaded?.fileUrl
-        ) {
-          pdfUrls.push(
-            uploaded.fileUrl
-          );
-        }
-      } catch (error) {
-        console.warn(
-          `Labels skipped for ${order.order_number}:`,
-          error.message
-        );
-      }
-    }
-
-    if (!pdfUrls.length) {
-      throw new Error(
-        "No label PDFs were generated."
-      );
-    }
-
-    showToast(
-      "Combining labels...",
-      "ok"
-    );
-
-    const mergedPdf =
-      await window.PDFLib
-        .PDFDocument
-        .create();
-
-    for (const url of pdfUrls) {
-      const response =
-        await fetch(url);
-
-      if (!response.ok) {
-        continue;
-      }
-
-      const bytes =
-        await response
-          .arrayBuffer();
-
-      const pdf =
-        await window.PDFLib
-          .PDFDocument
-          .load(bytes);
-
-      const pages =
-        await mergedPdf
-          .copyPages(
-            pdf,
-            pdf.getPageIndices()
-          );
-
-      pages.forEach(page =>
-        mergedPdf.addPage(page)
-      );
-    }
-
-    const mergedBytes =
-      await mergedPdf.save();
-
-    const blob =
-      new Blob(
-        [mergedBytes],
-        {
-          type:
-            "application/pdf"
-        }
-      );
-
-    const blobUrl =
-      URL.createObjectURL(
-        blob
-      );
-
-    const today =
-      new Date()
-        .toISOString()
-        .slice(0, 10);
-
-    const link =
-      document.createElement(
-        "a"
-      );
-
-    link.href = blobUrl;
-
-    link.download =
-      `FDS Delivery Labels ${today}.pdf`;
-
-    document.body
-      .appendChild(link);
-
-    link.click();
-    link.remove();
-
-    setTimeout(
-      () =>
-        URL.revokeObjectURL(
-          blobUrl
-        ),
-      30000
-    );
-
-    showToast(
-      skippedCollections > 0
-        ? `FDS labels downloaded. ${skippedCollections} collection order(s) skipped.`
-        : "FDS labels downloaded.",
-      "ok"
-    );
+    return {
+      generated,
+      failed,
+      total: orders.length
+    };
 
   } catch (error) {
-    console.error(error);
+    progress.fail({
+      message: error?.message || String(error)
+    });
 
-    showToast(
-      error.message ||
-      "Could not generate labels.",
-      "err"
-    );
-
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent =
-        oldText;
-    }
-  }
-}
-
-async function generatePickupDeliveryLabels(
-  vehicleId
-) {
-  const button = document.querySelector(
-    `[data-pickup-labels="${CSS.escape(
-      String(vehicleId)
-    )}"]`
-  );
-
-  const oldText =
-    button?.textContent ||
-    "Generate Labels";
-
-  try {
-    if (button) {
-      button.disabled = true;
-      button.textContent =
-        "Generating... ⏳";
-    }
-
-    const vehicle =
-      activeVehicles.find(
-        row =>
-          String(row.id) ===
-          String(vehicleId)
-      );
-
-    if (!vehicle) {
-      throw new Error(
-        "Warehouse pickup resource not found."
-      );
-    }
-
-    const orders =
-      getWarehousePickupOrders(vehicle);
-
-    if (!orders.length) {
-      throw new Error(
-        "No warehouse pickup orders found."
-      );
-    }
-
-    if (
-      !window.DeliveryLabelGenerator
-        ?.generate
-    ) {
-      throw new Error(
-        "Delivery Label Generator is not loaded."
-      );
-    }
-
-    if (!window.PDFLib?.PDFDocument) {
-      throw new Error(
-        "pdf-lib is not loaded."
-      );
-    }
-
-    showToast(
-      "Generating warehouse pickup labels...",
-      "ok"
-    );
-
-    const pdfUrls = [];
-
-    for (const order of orders) {
-      try {
-        const uploaded =
-          await window
-            .DeliveryLabelGenerator
-            .generate(order.id);
-
-        if (uploaded?.fileUrl) {
-          pdfUrls.push(
-            uploaded.fileUrl
-          );
-        }
-      } catch (error) {
-        console.warn(
-          `Labels skipped for ${order.order_number}:`,
-          error.message
-        );
-      }
-    }
-
-    if (!pdfUrls.length) {
-      throw new Error(
-        "No label PDFs were generated."
-      );
-    }
-
-    const mergedPdf =
-      await window.PDFLib
-        .PDFDocument
-        .create();
-
-    for (const url of pdfUrls) {
-      const response =
-        await fetch(url);
-
-      if (!response.ok) continue;
-
-      const bytes =
-        await response.arrayBuffer();
-
-      const pdf =
-        await window.PDFLib
-          .PDFDocument
-          .load(bytes);
-
-      const pages =
-        await mergedPdf.copyPages(
-          pdf,
-          pdf.getPageIndices()
-        );
-
-      pages.forEach(page =>
-        mergedPdf.addPage(page)
-      );
-    }
-
-    const mergedBytes =
-      await mergedPdf.save();
-
-    const blob = new Blob(
-      [mergedBytes],
-      {
-        type: "application/pdf"
-      }
-    );
-
-    const blobUrl =
-      URL.createObjectURL(blob);
-
-    const today =
-      new Date()
-        .toISOString()
-        .slice(0, 10);
-
-    const link =
-      document.createElement("a");
-
-    link.href = blobUrl;
-
-    link.download =
-      `Warehouse Pickup Delivery Labels ${today}.pdf`;
-
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    setTimeout(
-      () =>
-        URL.revokeObjectURL(
-          blobUrl
-        ),
-      30000
-    );
-
-    showToast(
-      "Warehouse pickup labels downloaded.",
-      "ok"
-    );
-  } catch (error) {
-    console.error(error);
-
-    showToast(
-      error.message ||
-      "Could not generate warehouse pickup labels.",
-      "err"
-    );
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
-    }
+    throw error;
   }
 }
 
@@ -6278,9 +6423,10 @@ async function generatePickupDeliveryLabels(
     window.dispatchEvent(new CustomEvent("veynor:routes-changed"));
   }
 
-  function refresh() {
-    render();
-  }
+function refresh() {
+  render();
+  void assessSavedRoutes();
+}
 
 async function init() {
   try {
@@ -6288,27 +6434,47 @@ ensureClient();
 injectStyles();
 syncFromPlannerData();
 
+
 await loadSignedFdsNoticeStatus();
 
 render();
 
+// Check emission zones when the page first loads.
+void assessSavedRoutes();
+
+// Check again after planner data has loaded.
 setTimeout(async () => {
   syncFromPlannerData();
+
   await loadSignedFdsNoticeStatus();
+
   render();
+
+  void assessSavedRoutes();
 }, 800);
+;
     byId("btnVehicleModuleRefresh")?.addEventListener("click", () => {
       notifyRoutesChanged();
     });
 
+
 window.addEventListener(
   "veynor:planner-data-changed",
   async event => {
+    // Update planner data.
     syncFromPlannerData(event.detail);
+
+    // Update signed document status.
     await loadSignedFdsNoticeStatus();
+
+    // Refresh available vehicles and routes.
     render();
+
+    // Recheck emission zones for saved routes.
+    void assessSavedRoutes();
   }
 );
+
     window.addEventListener("veynor:planner-selection-changed", event => {
       const detail = event.detail || {};
 

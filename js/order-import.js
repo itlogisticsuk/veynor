@@ -16,6 +16,7 @@ let productList = [];
   let selectedPdfFiles = [];
   let rawRows = [];
   let groupedOrders = [];
+let orderImportRunning = false;
   let selectedOrderNo = null;
   let currentSourceKind = "";
   let lastPdfText = "";
@@ -418,7 +419,11 @@ function getStockPriorityClass(value) {
       ].map(normalize).includes(normalize(defaultOwner));
     });
 
-    select.value = match?.key || ownerProfiles[0]?.key || "";
+select.value = "";
+select.insertAdjacentHTML(
+  "afterbegin",
+  '<option value="">-- Select Product Owner --</option>'
+);
   }
 
 function isZoyOwner() {
@@ -434,23 +439,44 @@ function isZoyOwner() {
   return text.includes("zoy");
 }
 
-  function getSelectedProductOwner() {
-    const selected = getFieldValue("productOwnerName", "");
 
-    if (!ownerProfiles.length) return null;
+function isAutoAckEnabledForSelectedOwner() {
+  const owner = getSelectedProductOwner();
 
-    const match = ownerProfiles.find(profile => {
-      return [
-        profile.key,
-        profile.name,
-        profile.trading_name,
-        profile.default_source_name,
-        profile.customer_code
-      ].map(normalize).includes(normalize(selected));
-    });
-
-    return match || ownerProfiles[0] || null;
+  if (!owner) {
+    return false;
   }
+
+  const value = owner.auto_ack;
+
+  return (
+    value === true ||
+    value === 1 ||
+    String(value).trim().toLowerCase() === "true" ||
+    String(value).trim() === "1"
+  );
+}
+
+
+function getSelectedProductOwner() {
+  const selected = getFieldValue("productOwnerName", "");
+
+  if (!selected || !ownerProfiles.length) {
+    return null;
+  }
+
+  return ownerProfiles.find(profile =>
+    [
+      profile.key,
+      profile.name,
+      profile.trading_name,
+      profile.default_source_name,
+      profile.customer_code
+    ]
+      .filter(Boolean)
+      .some(value => normalize(value) === normalize(selected))
+  ) || null;
+}
 
   function buildEmptyAddress() {
   return {
@@ -760,6 +786,7 @@ if (
 
     rawRows = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false });
     groupedOrders = groupExcelRows(rawRows);
+await enrichPreviewOrdersWithProductData();
     selectedOrderNo = groupedOrders[0]?.orderNumber || null;
 
     setProgress(true, 55, "Checking existing orders...");
@@ -2264,61 +2291,74 @@ async function reserveSalesOrderNumber() {
   });
 }
 
-  async function markMissingProducts() {
-    if (!groupedOrders.length) return;
 
-    const cid = await getCompanyId();
-    const owner = getSelectedProductOwner();
+async function markMissingProducts() {
+  if (!groupedOrders.length) return;
 
-    const skus = [...new Set(
-      groupedOrders
-        .flatMap(order => order.lines || [])
-        .map(line => String(line.itemCode || "").trim())
-        .filter(Boolean)
-    )];
+  const cid = await getCompanyId();
+  const owner = getSelectedProductOwner();
 
-    if (!skus.length) return;
-
-    let query = client
-      .from("products")
-      .select("id, sku_base, customer_id")
-      .eq("company_id", cid)
-      .in("sku_base", skus);
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    const foundSkus = new Set((data || []).map(row => normalize(row.sku_base)));
-
-groupedOrders = groupedOrders.map(order => {
-
-  if (
-    normalize(order.movementType) ===
-    "collection"
-  ) {
-    return {
-      ...order,
-      missingProductSkus: [],
-      warnings: []
-    };
+  if (!owner) {
+    throw new Error("Select a Product Owner first.");
   }
 
-  const missing = [...new Set(
-        (order.lines || [])
-          .map(line => String(line.itemCode || "").trim())
-          .filter(sku => sku && !foundSkus.has(normalize(sku)))
-      )];
+  const ownerId = await getOrCreateProductOwnerCustomer(
+    owner,
+    cid
+  );
 
+  const skus = [...new Set(
+    groupedOrders
+      .flatMap(order => order.lines || [])
+      .map(line => String(line.itemCode || "").trim())
+      .filter(Boolean)
+  )];
+
+  if (!skus.length) return;
+
+  const { data, error } = await client
+    .from("products")
+    .select("id, sku_base, customer_id")
+    .eq("company_id", cid)
+    .eq("customer_id", ownerId)
+    .in("sku_base", skus);
+
+  if (error) throw error;
+
+  const foundSkus = new Set(
+    (data || []).map(product =>
+      normalize(product.sku_base)
+    )
+  );
+
+  groupedOrders = groupedOrders.map(order => {
+    if (normalize(order.movementType) === "collection") {
       return {
         ...order,
-        missingProductSkus: missing,
-        warnings: missing.length
-          ? [`Product(s) not found in master data for selected product owner: ${missing.join(", ")}`]
-          : []
+        missingProductSkus: [],
+        warnings: []
       };
-    });
-  }
+    }
+
+    const missing = [...new Set(
+      (order.lines || [])
+        .map(line => String(line.itemCode || "").trim())
+        .filter(sku =>
+          sku && !foundSkus.has(normalize(sku))
+        )
+    )];
+
+    return {
+      ...order,
+      missingProductSkus: missing,
+      warnings: missing.length
+        ? [
+            `Product(s) not found for selected Product Owner: ${missing.join(", ")}`
+          ]
+        : []
+    };
+  });
+}
 
   function getAllMissingProductSkus() {
     return [...new Set(
@@ -2894,53 +2934,69 @@ async function getOrCreateProductOwnerCustomer(owner, cid) {
     return data?.id || null;
   }
 
-  async function loadProductCostMap(cid, lines) {
-    const skus = [...new Set(
-      (lines || [])
-        .map(line => String(line.itemCode || "").trim())
-        .filter(Boolean)
-    )];
 
-    if (!skus.length) return new Map();
+async function loadProductCostMap(cid, lines) {
+  const owner = getSelectedProductOwner();
 
-    const { data, error } = await client
-      .from("products")
-.select(`
-  id,
-  sku_base,
-  volume_m3,
-  weight_kg,
-  net_weight_kg,
-  package_count,
-  packages_per_unit,
-  storage_tariff,
-  admin_tariff,
-  handling_tariff,
-  transport_tariff,
-  total_s2u_fees,
-  total_customer_charge
-`)
-      .eq("company_id", cid)
-      .in("sku_base", skus);
-
-    if (error) {
-      console.warn("Product tariff lookup skipped:", error.message);
-      return new Map();
-    }
-
-    const productMap = new Map();
-
-(data || []).forEach(row => {
-  const rawSku = String(row.sku_base || "").trim();
-
-  if (!rawSku) return;
-
-  productMap.set(rawSku, row);
-  productMap.set(normalize(rawSku), row);
-});
-
-return productMap;
+  if (!owner) {
+    throw new Error("Select a Product Owner first.");
   }
+
+  const ownerId = await getOrCreateProductOwnerCustomer(
+    owner,
+    cid
+  );
+
+  if (!ownerId) {
+    throw new Error(
+      "Could not resolve selected Product Owner."
+    );
+  }
+
+  const skus = [...new Set(
+    (lines || [])
+      .map(line => String(line.itemCode || "").trim())
+      .filter(Boolean)
+  )];
+
+  if (!skus.length) return new Map();
+
+  const { data, error } = await client
+    .from("products")
+    .select(`
+      id,
+      sku_base,
+      volume_m3,
+      weight_kg,
+      net_weight_kg,
+      package_count,
+      packages_per_unit,
+      storage_tariff,
+      admin_tariff,
+      handling_tariff,
+      transport_tariff,
+      total_s2u_fees,
+      total_customer_charge
+    `)
+    .eq("company_id", cid)
+    .eq("customer_id", ownerId)
+    .in("sku_base", skus);
+
+  if (error) throw error;
+
+  const productMap = new Map();
+
+  (data || []).forEach(product => {
+    const sku = String(product.sku_base || "").trim();
+
+    if (!sku) return;
+
+    productMap.set(sku, product);
+    productMap.set(normalize(sku), product);
+  });
+
+  return productMap;
+}
 
  function enrichLineWithProductData(
   line,
@@ -3246,7 +3302,13 @@ async function insertOrder(order, cid) {
     const productOwnerName = dedupeRepeatedWords(owner.name || owner.trading_name || order.productOwnerName || "");
     const retailerName = dedupeRepeatedWords(order.retailName || order.customerName);
 
-    const productOwnerId = await getOrCreateProductOwnerCustomer(owner, cid);
+const productOwnerId = await getSelectedProductOwnerCustomerId(cid);
+
+if (!productOwnerId) {
+  throw new Error(
+    "Selected Product Owner could not be resolved in Supabase."
+  );
+}
     const billingAddressId = await getOrCreateOwnerBillingAddress(owner, productOwnerId);
 
 const productMap =
@@ -3648,222 +3710,554 @@ async function createOrderImportedNotification(order, result, companyId) {
   }
 }
 
- async function importOrders() {
+
+async function checkOrderExistsBeforeImport(order, cid) {
+  const reference = String(
+    order.externalReference || order.orderNumber || ""
+  ).trim();
+
+  if (!reference) {
+    throw new Error(
+      "Cannot verify existing order: reference is missing."
+    );
+  }
+
+  const { data, error } = await client
+    .from("orders")
+    .select("id, order_number")
+    .eq("company_id", cid)
+    .eq("external_reference", reference)
+    .limit(1);
+
+  if (error) {
+    throw new Error(
+      "Could not verify existing order: " + error.message
+    );
+  }
+
+  return {
+    exists: (data || []).length > 0,
+    existingOrderId: data?.[0]?.id || null
+  };
+}
+
+
+async function generateAutoAckAfterImport(result, owner, cid) {
+  const enabled =
+    owner?.auto_ack === true ||
+    String(owner?.auto_ack).trim().toLowerCase() === "true";
+
+  if (!enabled) {
+    return { status: "disabled" };
+  }
+
+  if (!result?.orderId) {
+    return {
+      status: "failed",
+      message: "Imported order ID is missing."
+    };
+  }
+
+  try {
+    const { data: existingDocs, error: checkError } =
+      await client
+        .from("order_documents")
+        .select("id")
+        .eq("company_id", cid)
+        .eq("order_id", result.orderId)
+        .eq("document_type", "acknowledgement")
+        .limit(1);
+
+    if (checkError) throw checkError;
+
+    if (existingDocs?.length) {
+      return { status: "already_exists" };
+    }
+
+    const generator = window.AcknowledgementGenerator;
+
+    if (typeof generator?.generate !== "function") {
+      throw new Error(
+        "Acknowledgement Generator is not available."
+      );
+    }
+
+    const uploaded = await generator.generate(
+      { id: result.orderId },
+      client,
+      cid
+    );
+
+    if (!uploaded?.storagePath || !uploaded?.fileUrl) {
+      throw new Error(
+        "ACK generation did not return a valid document."
+      );
+    }
+
+    return {
+      status: "generated",
+      fileUrl: uploaded.fileUrl
+    };
+
+  } catch (error) {
+    console.error(
+      "Automatic ACK failed for order:",
+      result.orderId,
+      error
+    );
+
+    return {
+      status: "failed",
+      message: error.message || String(error)
+    };
+  }
+}
+
+
+async function importOrders() {
+  if (orderImportRunning) return;
+
   if (!groupedOrders.length) {
+    showToast("Read a file first.", "err");
+    return;
+  }
+
+  const owner = getSelectedProductOwner();
+
+  if (!owner) {
+    showToast("Select a product owner first.", "err");
+    return;
+  }
+
+ const progress = window.VeynorProgress;
+
+  if (!progress) {
     showToast(
-      "Read a file first.",
+      "Import progress module is not loaded.",
       "err"
     );
     return;
   }
 
-  if (!getSelectedProductOwner()) {
+  const cid = await getCompanyId();
+
+  const ownerId =
+    await getSelectedProductOwnerCustomerId(cid);
+
+  if (!ownerId) {
     showToast(
-      "Select a product owner first.",
+      "Selected Product Owner could not be resolved.",
       "err"
     );
     return;
   }
 
-  const cid =
-    await getCompanyId();
+  const total = groupedOrders.length;
 
+  let processed = 0;
   let imported = 0;
   let skipped = 0;
   let failed = 0;
   let linesWritten = 0;
   let supplierPackingSlipsLinked = 0;
 
-  const missingProductsAfterImport =
-    new Set();
+  // Individual results for the Import Details popup.
+  const importDetails = [];
 
-  setProgress(
-    true,
-    0,
-    "Starting import..."
-  );
+  const missingProductsAfterImport = new Set();
 
-  for (
-    let i = 0;
-    i < groupedOrders.length;
-    i++
-  ) {
-    const order =
-      groupedOrders[i];
+  const importButton = byId("btnImportOrders");
+  const clearButton = byId("btnClearPreview");
+  const ownerSelect = byId("productOwnerName");
 
-    const pct =
-      Math.round(
-        ((i + 1) / groupedOrders.length) *
-        100
+  const previousDisabled = {
+    import: importButton?.disabled,
+    clear: clearButton?.disabled,
+    owner: ownerSelect?.disabled
+  };
+
+  orderImportRunning = true;
+
+  if (importButton) importButton.disabled = true;
+  if (clearButton) clearButton.disabled = true;
+  if (ownerSelect) ownerSelect.disabled = true;
+
+  try {
+    const opened = progress.open({
+      title: "Importing Orders",
+      description:
+        "Please keep this window open while Veynor " +
+        "processes your orders. You can follow " +
+        "the progress below.",
+      total,
+      type: "orders"
+    });
+
+    if (!opened) {
+      throw new Error(
+        "Could not open the import progress window."
       );
-
-    setProgress(
-      true,
-      pct,
-      `Importing ${order.orderNumber} (${i + 1}/${groupedOrders.length})...`
-    );
-
-    if (order.notes.length) {
-      order.importMessage =
-        order.notes.join(" · ");
-
-      skipped++;
-
-      renderAll();
-      continue;
     }
 
-    if (
-      order.existing &&
-      getCheckbox(
-        "optSkipExisting",
-        true
-      ) &&
-      !order.importAnyway
-    ) {
-      order.importMessage =
-        "Skipped: order number already exists.";
+    // Hide the old inline progress bar.
+    setProgress(false);
 
-      skipped++;
+    for (let i = 0; i < total; i++) {
+      const order = groupedOrders[i];
 
-      renderAll();
-      continue;
-    }
+      const reference =
+        order.orderNumber ||
+        order.externalReference ||
+        `Order ${i + 1}`;
 
-    try {
-      const result =
-        await insertOrder(
+      try {
+// Do not import orders already processed successfully.
+if (order.imported) {
+  order.importMessage = "Already imported in this session.";
+
+  importDetails.push({
+    orderNumber: reference,
+    status: "skipped",
+    reason: order.importMessage
+  });
+
+  skipped++;
+  continue;
+}
+
+// Validation errors: do not import.
+if (order.notes?.length) {
+  order.importMessage =
+    order.notes.join(" · ");
+
+  importDetails.push({
+    orderNumber: reference,
+    status: "skipped",
+    reason: order.importMessage
+  });
+
+  skipped++;
+  continue;
+}
+
+        // Existing order: skip unless explicitly approved.
+        if (
+          order.existing &&
+          getCheckbox("optSkipExisting", true) &&
+          !order.importAnyway
+        ) {
+order.importMessage =
+  "Skipped: order number already exists.";
+
+importDetails.push({
+  orderNumber: reference,
+  status: "skipped",
+  reason: order.importMessage
+});
+
+skipped++;
+continue;
+        }
+
+
+        // ==================================================
+        // VERIFY ORDER EXISTENCE IMMEDIATELY BEFORE IMPORT
+        // ==================================================
+
+        const existenceCheck =
+          await checkOrderExistsBeforeImport(order, cid);
+
+        const wasExistingBeforeImport =
+          existenceCheck.exists || order.existing === true;
+
+        // Respect the existing Import Anyway behaviour.
+        // However, never generate an automatic ACK
+        // for an order reference that already existed.
+        if (
+          existenceCheck.exists &&
+          getCheckbox("optSkipExisting", true) &&
+          !order.importAnyway
+        ) {
+          order.existing = true;
+          order.existingOrderId =
+            existenceCheck.existingOrderId;
+
+          order.importMessage =
+            "Skipped: order already exists in Supabase.";
+
+          importDetails.push({
+            orderNumber: reference,
+            status: "skipped",
+            reason: order.importMessage
+          });
+
+          skipped++;
+          continue;
+        }
+
+        const result = await insertOrder(order, cid);
+
+        // Remember whether this reference was genuinely new
+        // before inserting the order.
+        result.wasExistingBeforeImport =
+          wasExistingBeforeImport;
+
+
+        // Notification is best-effort, as before.
+        await createOrderImportedNotification(
           order,
+          result,
           cid
         );
 
-      await createOrderImportedNotification(
-        order,
-        result,
-        cid
-      );
+        let packingSlipLinked = false;
 
-      let packingSlipLinked =
-        false;
+        if (
+          order.sourceKind === "pdf" &&
+          order.sourcePdfFile
+        ) {
+          try {
+            await uploadSupplierPackingSlip(
+              result.orderId,
+              order.orderNumber,
+              result.customerId || null,
+              order.sourcePdfFile
+            );
 
-      if (
-        order.sourceKind === "pdf" &&
-        order.sourcePdfFile
-      ) {
-        try {
-          await uploadSupplierPackingSlip(
-            result.orderId,
-            order.orderNumber,
-            result.customerId || null,
-            order.sourcePdfFile
-          );
+            supplierPackingSlipsLinked++;
+            packingSlipLinked = true;
 
-          supplierPackingSlipsLinked++;
-          packingSlipLinked = true;
+          } catch (pdfError) {
+            console.error(
+              `Supplier packing slip upload failed for ${reference}`,
+              pdfError
+            );
+          }
+        }
 
-        } catch (pdfError) {
-          console.error(
-            `Supplier packing slip upload failed for ${order.orderNumber}`,
-            pdfError
+        order.imported = true;
+        order.failed = false;
+
+
+        // ==================================================
+        // AUTOMATIC ACKNOWLEDGEMENT
+        // ==================================================
+
+
+        // ==================================================
+        // AUTOMATIC ACK — NEW ORDERS ONLY
+        // ==================================================
+
+        let autoAckResult = {
+          status: "skipped"
+        };
+
+        // Only generate an ACK for genuinely new orders.
+        // Existing orders and "Import anyway" are excluded.
+
+const isGenuinelyNewOrder =
+  result.wasExistingBeforeImport === false &&
+  order.importAnyway !== true &&
+  !!result.orderId;
+
+
+        if (isGenuinelyNewOrder) {
+          autoAckResult =
+            await generateAutoAckAfterImport(
+              result,
+              owner,
+              cid
+            );
+        }
+
+        order.autoAckStatus = autoAckResult.status;
+        order.autoAckMessage =
+          autoAckResult.message || "";
+
+        if (autoAckResult.status === "failed") {
+          console.warn(
+            `Order ${reference} imported successfully, ` +
+            `but Auto ACK failed: ${autoAckResult.message}`
           );
         }
-      }
 
-      order.imported = true;
-      order.failed = false;
 
-      if (
-        result.missingSkus?.length
-      ) {
-        result.missingSkus.forEach(
-          sku =>
-            missingProductsAfterImport.add(
-              sku
-            )
-        );
+        if (result.missingSkus?.length) {
+          result.missingSkus.forEach(sku => {
+            missingProductsAfterImport.add(sku);
+          });
 
-        order.importMessage =
-          `${result.lineCount} order line(s) written. ` +
-          `Missing product(s): ${result.missingSkus.join(", ")}.`;
+          order.importMessage =
+            `${result.lineCount} order line(s) written. ` +
+            `Missing product(s): ${result.missingSkus.join(", ")}.`;
 
-      } else {
-        order.importMessage =
-          `${result.lineCount} order line(s) written.`;
-      }
+        } else {
+          order.importMessage =
+            `${result.lineCount} order line(s) written.`;
+        }
 
-      if (
-        result.priorityCount > 0
-      ) {
-        order.importMessage +=
-          ` Stock priority set on ${result.priorityCount} ` +
-          `product line${result.priorityCount === 1 ? "" : "s"}.`;
-      }
+        if (result.priorityCount > 0) {
+          order.importMessage +=
+            ` Stock priority set on ${result.priorityCount} ` +
+            `product line${result.priorityCount === 1 ? "" : "s"}.`;
+        }
 
-      if (
-        order.sourceKind === "pdf"
-      ) {
-        order.importMessage +=
-          packingSlipLinked
+        if (order.sourceKind === "pdf") {
+          order.importMessage += packingSlipLinked
             ? " Supplier packing slip linked."
             : " Supplier packing slip upload checked.";
+        }
+
+
+        if (autoAckResult.status === "generated") {
+          order.importMessage +=
+            " Automatic ACK generated successfully.";
+        }
+
+        if (autoAckResult.status === "already_exists") {
+          order.importMessage +=
+            " Existing ACK preserved.";
+        }
+
+        if (autoAckResult.status === "failed") {
+          order.importMessage +=
+            ` WARNING: Auto ACK failed: ` +
+            autoAckResult.message;
+        }
+
+
+        imported++;
+        linesWritten += result.lineCount;
+
+      } catch (error) {
+        console.error(
+          `Import failed for ${reference}:`,
+          error
+        );
+
+order.failed = true;
+order.imported = false;
+order.importMessage =
+  error.message || String(error);
+
+importDetails.push({
+  orderNumber: reference,
+  status: "failed",
+  reason: order.importMessage
+});
+
+failed++;
+
+      } finally {
+        // Only advance after this order has been handled.
+        processed++;
+
+        progress.update({
+          completed: processed,
+          total,
+          reference,
+          imported,
+          skipped,
+          failed
+        });
+
+        renderAll();
+
+        // Allow the browser to paint the latest progress.
+        await new Promise(resolve =>
+          requestAnimationFrame(resolve)
+        );
       }
-
-      imported++;
-      linesWritten +=
-        result.lineCount;
-
-    } catch (error) {
-      console.error(
-        "FULL IMPORT ERROR",
-        error
-      );
-
-      order.failed = true;
-      order.imported = false;
-
-      order.importMessage =
-        error.message ||
-        JSON.stringify(error);
-
-      failed++;
     }
 
-    renderAll();
-  }
+    // Refresh database-based preview information.
+    // A refresh error should not change completed imports
+    // into failed orders.
+    let refreshError = null;
 
-  setProgress(
-    false
-  );
+    try {
+      await markExistingOrders();
+      await markMissingProducts();
+      renderAll();
+    } catch (error) {
+      refreshError = error;
+      console.error(
+        "Post-import preview refresh failed:",
+        error
+      );
+    }
 
-  const missingList =
-    [
+    const missingList = [
       ...missingProductsAfterImport
-    ].sort(
-      (a, b) =>
-        a.localeCompare(b)
-    );
+    ].sort((a, b) => a.localeCompare(b));
 
-  const missingText =
-    missingList.length
+    const missingText = missingList.length
       ? ` Missing products: ${missingList.join(", ")}.`
       : "";
 
-  const pdfText =
-    supplierPackingSlipsLinked
+    const pdfText = supplierPackingSlipsLinked
       ? ` Supplier packing slips linked: ${supplierPackingSlipsLinked}.`
       : "";
 
-  showToast(
-    `Import complete. Imported: ${imported}, lines written: ${linesWritten}, skipped: ${skipped}, failed: ${failed}.${pdfText}${missingText}`,
-    failed || missingList.length
-      ? "err"
-      : "ok"
-  );
+    const refreshText = refreshError
+      ? " Preview refresh failed; reload to verify results."
+      : "";
 
-  await markExistingOrders();
-  await markMissingProducts();
+progress.complete({
+  imported,
+  skipped,
+  failed,
+  details: importDetails
+});
 
-  renderAll();
+    showToast(
+      `Import complete. Imported: ${imported}, ` +
+      `lines written: ${linesWritten}, ` +
+      `skipped: ${skipped}, failed: ${failed}.` +
+      pdfText +
+      missingText +
+      refreshText,
+      failed || missingList.length || refreshError
+        ? "err"
+        : "ok"
+    );
+
+  } catch (error) {
+    console.error("Order import interrupted:", error);
+
+    if (progress.getStatus()?.active) {
+      progress.fail({
+        message:
+          error.message ||
+          "The import was interrupted."
+      });
+    }
+
+    showToast(
+      error.message || "Import failed.",
+      "err"
+    );
+
+  } finally {
+    orderImportRunning = false;
+
+    if (importButton) {
+      importButton.disabled =
+        previousDisabled.import ?? false;
+    }
+
+    if (clearButton) {
+      clearButton.disabled =
+        previousDisabled.clear ?? false;
+    }
+
+    if (ownerSelect) {
+      ownerSelect.disabled =
+        previousDisabled.owner ?? false;
+    }
+
+    setProgress(false);
+  }
 }
 
 function clearPreview() {
@@ -4154,19 +4548,13 @@ function bindPdfDropZone() {
     }
   }
 
+
 async function getSelectedProductOwnerCustomerId(cid) {
   const owner = getSelectedProductOwner();
-  if (!owner) return null;
 
-  if (owner.customer_id) return owner.customer_id;
-
-  const ownerText = [
-    owner.name,
-    owner.trading_name,
-    owner.customer_code,
-    owner.key,
-    owner.default_source_name
-  ].filter(Boolean).join(" ").toLowerCase();
+  if (!owner) {
+    return null;
+  }
 
   const { data, error } = await client
     .from("customers")
@@ -4174,15 +4562,44 @@ async function getSelectedProductOwnerCustomerId(cid) {
     .eq("company_id", cid)
     .limit(1000);
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
-  const match = (data || []).find(row => {
-    const rowText = `${row.name || ""} ${row.customer_code || ""}`.toLowerCase();
+  const ownerValues = [
+    owner.customer_code,
+    owner.key,
+    owner.name,
+    owner.trading_name,
+    owner.default_source_name
+  ]
+    .filter(Boolean)
+    .map(normalize);
 
-    if (ownerText.includes("zoy") && rowText.includes("zoy")) return true;
-    if (ownerText.includes("bellstone") && rowText.includes("bellstone")) return true;
+  // Prefer the customer ID stored in Settings,
+  // but only if it belongs to the active tenant.
+  if (owner.customer_id) {
+    const matchById = (data || []).find(
+      customer => customer.id === owner.customer_id
+    );
 
-    return false;
+    if (matchById) {
+      return matchById.id;
+    }
+  }
+
+  // Match exact customer code or name.
+  const match = (data || []).find(customer => {
+    const customerValues = [
+      customer.customer_code,
+      customer.name
+    ]
+      .filter(Boolean)
+      .map(normalize);
+
+    return ownerValues.some(value =>
+      customerValues.includes(value)
+    );
   });
 
   return match?.id || null;
@@ -4246,15 +4663,27 @@ function fillManualOwnerFields() {
   }
 }
 
+
 async function loadManualProducts() {
-  const cid = await getCompanyId();
-  const ownerId = await getSelectedProductOwnerCustomerId(cid);
+  const owner = getSelectedProductOwner();
 
   manualProducts = [];
 
+  // No owner selected yet: normal initial state.
+  if (!owner) {
+    renderManualProductOptions();
+    return;
+  }
+
+  const cid = await getCompanyId();
+  const ownerId = await getSelectedProductOwnerCustomerId(cid);
+
   if (!ownerId) {
     renderManualProductOptions();
-    showToast("No product owner customer found for selected owner.", "err");
+    showToast(
+      "The selected Product Owner could not be found in Supabase.",
+      "err"
+    );
     return;
   }
 
@@ -4266,8 +4695,12 @@ async function loadManualProducts() {
     .order("sku_base", { ascending: true });
 
   if (error) {
-    console.warn("Manual products skipped:", error.message);
+    console.error("Could not load products:", error);
     renderManualProductOptions();
+    showToast(
+      "Could not load products for the selected Product Owner.",
+      "err"
+    );
     return;
   }
 

@@ -492,158 +492,231 @@ function getCreditTotal(orders) {
  * - VAT;
  * - invoice total.
  */
+
+
+/* ==========================================================
+   VEYNOR — CENTRAL INVOICE PRICING CONTEXT
+   Read-only calculation.
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — CENTRAL INVOICE PRICING CONTEXT
+   Same regional settings approach as ACK Generator.
+   ========================================================== */
+
+async function prepareCentralInvoicePricing(
+  orders,
+  client,
+  companyId,
+  ctx
+) {
+  const engine = window.VeynorPricing;
+
+  if (
+    !engine ||
+    typeof engine.calculateInvoicePricing !== "function" ||
+    typeof engine.calculateOrderPricing !== "function"
+  ) {
+    throw new Error(
+      "Veynor Pricing Engine v2.0 is not loaded."
+    );
+  }
+
+  if (!(ctx?.pricingSettings instanceof Map)) {
+    throw new Error(
+      "Tenant pricing settings are not available."
+    );
+  }
+
+  if (!ctx?.productOwner?.id) {
+    throw new Error(
+      "Product Owner information is missing."
+    );
+  }
+
+  // Load current Product Owner billing configuration.
+  const ownerSettings =
+    await loadProductOwnerBillingSettings(
+      client,
+      companyId,
+      ctx.productOwner
+    );
+
+  // Preserve Tenant Settings, with the same regional
+  // overrides used by the ACK Generator.
+  const settings = new Map(ctx.pricingSettings);
+
+  const overrideKeys = [
+    "regional_surcharge_enabled",
+    "surcharge_edinburgh_glasgow_percent",
+    "surcharge_highlands_islands_percent",
+    "pricing_ireland_mode",
+    "fuel_surcharge_percent"
+  ];
+
+  for (const key of overrideKeys) {
+    const value = ownerSettings[key];
+
+    if (
+      value !== null &&
+      value !== undefined &&
+      value !== ""
+    ) {
+      settings.set(key, value);
+    }
+  }
+
+  // Regional zone definitions remain centrally
+  // configured in Tenant Settings.
+  const zones = settings.get("regional_pricing_zones");
+
+  if (!zones) {
+    throw new Error(
+      "Regional Pricing Zones are missing."
+    );
+  }
+
+  // Load approved Minimum Delivery Charges.
+  const surcharges =
+    ctx.invoiceMode === "zoy"
+      ? []
+      : await loadApprovedDeliverySurcharges(
+          client,
+          companyId,
+          orders
+        );
+
+  // One shared calculation for all selected orders.
+  const totals = engine.calculateInvoicePricing(
+    orders,
+    settings,
+    ownerSettings,
+    surcharges
+  );
+
+  // Keep the individual order calculations available
+  // for the PDF specification.
+  const orderPricings = totals.orderPricings;
+
+  if (
+    !Array.isArray(orderPricings) ||
+    orderPricings.length !== orders.length
+  ) {
+    throw new Error(
+      "Central pricing returned invalid order results."
+    );
+  }
+
+  return {
+    ownerSettings,
+    settings,
+    surcharges,
+    orderPricings,
+    totals,
+    pricingVersion: totals.pricingVersion
+  };
+}
+
+
+/* ==========================================================
+   VEYNOR — SHARED INVOICE TOTALS
+
+   Test invoices: Central Pricing Engine v2.0
+   Final invoices: Existing calculation until migration
+   ========================================================== */
+
 function getTotals(
   orders,
   vatRate,
-  fuelSurchargePercent =
-    DEFAULT_FUEL_SURCHARGE_PERCENT,
+  fuelSurchargePercent = DEFAULT_FUEL_SURCHARGE_PERCENT,
   ctx = {}
 ) {
-  const selectedOrders =
-    Array.isArray(orders)
-      ? orders
-      : [];
+  // Central calculation is prepared only for test
+  // invoices at this stage.
+  if (ctx.centralPricing?.totals) {
+    const central = ctx.centralPricing.totals;
 
-  const normalOrders =
-    selectedOrders.filter(order =>
-      !isCreditOrder(order)
-    );
+    if (
+      !Array.isArray(central.orderPricings) ||
+      central.orderPricings.length !== orders.length
+    ) {
+      throw new Error(
+        "Central invoice pricing is incomplete."
+      );
+    }
 
-  const creditOrders =
-    selectedOrders.filter(order =>
-      isCreditOrder(order)
-    );
+    return central;
+  }
 
-  /*
-   * Deze functies controleren ieder afzonderlijk
-   * of een order chargeable is.
-   */
+  // Legacy calculation for definitive invoices.
+  const normalOrders = orders.filter(
+    order => !isCreditOrder(order)
+  );
+
+  const creditOrders = orders.filter(
+    order => isCreditOrder(order)
+  );
+
   const warehouse = round2(
     normalOrders.reduce(
-      (sum, order) => {
-        return (
-          sum +
-          getOrderWarehouseTotal(order)
-        );
-      },
+      (sum, order) =>
+        sum + getOrderWarehouseTotal(order),
       0
     )
   );
 
   const transport = round2(
     normalOrders.reduce(
-      (sum, order) => {
-        return (
-          sum +
-          getOrderTransportTotal(order)
-        );
-      },
+      (sum, order) =>
+        sum + getOrderTransportTotal(order),
       0
     )
   );
 
   const credits = round2(
     creditOrders.reduce(
-      (sum, order) => {
-        return (
-          sum +
-          getOrderTotal(order)
-        );
-      },
+      (sum, order) =>
+        sum + getOrderTotal(order),
       0
     )
   );
 
-  /*
-   * Minimum Delivery Charges worden alleen
-   * gerekend voor chargeable orders.
-   */
   const minimumDeliverySurcharge =
-    getDeliverySurchargeTotal(
-      ctx,
-      selectedOrders
-    );
+    getDeliverySurchargeTotal(ctx, orders);
 
-  /*
-   * Basisbedrag vóór fuel surcharge.
-   */
   const serviceSubtotal = round2(
-    warehouse +
-    transport +
-    credits
+    warehouse + transport + credits
   );
 
-  /*
-   * De fuel surcharge wordt alleen berekend
-   * over transport.
-   *
-   * Wanneer alle orders gratis zijn, is transport
-   * automatisch £0.00 en dus ook fuel £0.00.
-   */
-const fuelSurchargeBase =
-  round2(
-    normalOrders.reduce(
-      (sum, order) => {
+  const fuelBase = round2(
+    normalOrders.reduce((sum, order) => {
+      if (
+        normalize(order.order_type) === "manual_charge" ||
+        normalize(order.source_type) === "manual_charge"
+      ) {
+        return sum;
+      }
 
-        /*
-         * Manual charge orders zijn uitgesloten
-         * van de fuel surcharge.
-         */
-        if (
-          normalize(order.order_type) === "manual_charge" ||
-          normalize(order.source_type) === "manual_charge"
-        ) {
-          return sum;
-        }
-
-        return (
-          sum +
-          getOrderTransportTotal(order)
-        );
-      },
-      0
-    )
+      return sum + getOrderTransportTotal(order);
+    }, 0)
   );
 
   const usedFuelPercent =
-    toNumber(
-      fuelSurchargePercent,
-      0
-    );
+    toNumber(fuelSurchargePercent, 0);
 
   const fuelSurcharge = round2(
-    fuelSurchargeBase *
-    (
-      usedFuelPercent /
-      100
-    )
+    fuelBase * usedFuelPercent / 100
   );
 
-  /*
-   * Minimum Delivery Charge wordt na het
-   * serviceSubtotal toegevoegd.
-   */
   const subtotal = round2(
     serviceSubtotal +
     fuelSurcharge +
     minimumDeliverySurcharge
   );
 
-  /*
-   * VAT wordt uitsluitend berekend over het
-   * daadwerkelijke factuurbedrag.
-   */
   const vat = round2(
-    subtotal *
-    toNumber(
-      vatRate,
-      0
-    )
-  );
-
-  const total = round2(
-    subtotal +
-    vat
+    subtotal * toNumber(vatRate, 0)
   );
 
   return {
@@ -652,16 +725,12 @@ const fuelSurchargeBase =
     credits,
     minimumDeliverySurcharge,
     serviceSubtotal,
-
-    fuelSurchargePercent:
-      usedFuelPercent,
-
+    fuelSurchargePercent: usedFuelPercent,
     fuelSurcharge,
     subtotal,
-    vatBase:
-      subtotal,
+    vatBase: subtotal,
     vat,
-    total
+    total: round2(subtotal + vat)
   };
 }
 
@@ -712,54 +781,128 @@ async function reserveNextInvoiceNumber(
     return `${prefix}-${y}${m}${d}-${hh}${mm}${ss}`;
   }
 
-  async function loadCompanySettings(client, companyId) {
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
 
-    if (error) {
-      console.warn("Invoice company settings skipped:", error.message);
-      return {
-  company: { ...FALLBACK_COMPANY },
-  vatRate: DEFAULT_VAT_RATE,
-  paymentTermDays: DEFAULT_PAYMENT_TERM_DAYS,
-  invoicePrefix: "INV",
-  fuelSurchargePercent: DEFAULT_FUEL_SURCHARGE_PERCENT
-};
-    }
+async function loadCompanySettings(client, companyId) {
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
 
-    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
-
-    const company = {
-      name: map.get("main_company_name") || FALLBACK_COMPANY.name,
-      displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
-      registration: map.get("main_company_registration") || "",
-      address: map.get("main_address") || FALLBACK_COMPANY.address,
-      phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
-      email: map.get("main_email") || FALLBACK_COMPANY.email,
-      vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
-      logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
-
-      bankCompanyName: map.get("bank_company_name") || map.get("main_company_name") || FALLBACK_COMPANY.name,
-      bankName: map.get("bank_name") || FALLBACK_COMPANY.bankName,
-      sortCode: map.get("bank_sort_code") || FALLBACK_COMPANY.sortCode,
-      accountNo: map.get("bank_account_no") || FALLBACK_COMPANY.accountNo,
-      iban: map.get("bank_iban") || "",
-      bic: map.get("bank_bic") || "",
-
-      paymentNote: map.get("invoice_payment_note") || FALLBACK_COMPANY.paymentNote,
-      footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
-    };
-
-    return {
-  company,
-  vatRate: toNumber(map.get("tax_default_vat_rate") || map.get("doc_vat_rate"), DEFAULT_VAT_RATE),
-  paymentTermDays: Math.round(toNumber(map.get("default_payment_terms_days") || map.get("doc_default_payment_terms"), DEFAULT_PAYMENT_TERM_DAYS)),
-  invoicePrefix: map.get("invoice_prefix") || "INV",
-  fuelSurchargePercent: toNumber(map.get("fuel_surcharge_percent"), DEFAULT_FUEL_SURCHARGE_PERCENT)
-};
+  if (error) {
+    throw new Error(
+      "Cannot load invoice settings: " + error.message
+    );
   }
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  const setting = (key, fallback = "") => {
+    const value = map.get(key);
+    return value === null ||
+      value === undefined ||
+      value === ""
+      ? fallback
+      : value;
+  };
+
+  const company = {
+    name: setting(
+      "main_company_name",
+      FALLBACK_COMPANY.name
+    ),
+    displayName: setting(
+      "main_display_name",
+      FALLBACK_COMPANY.displayName
+    ),
+    registration: setting(
+      "main_company_registration"
+    ),
+    address: setting(
+      "main_address",
+      FALLBACK_COMPANY.address
+    ),
+    phone: setting(
+      "main_phone",
+      FALLBACK_COMPANY.phone
+    ),
+    email: setting(
+      "main_email",
+      FALLBACK_COMPANY.email
+    ),
+    vat: setting(
+      "main_vat",
+      FALLBACK_COMPANY.vat
+    ),
+    logoUrl: setting(
+      "main_logo_url",
+      FALLBACK_COMPANY.logoUrl
+    ),
+    bankCompanyName: setting(
+      "bank_company_name",
+      setting("main_company_name", FALLBACK_COMPANY.name)
+    ),
+    bankName: setting(
+      "bank_name",
+      FALLBACK_COMPANY.bankName
+    ),
+    sortCode: setting(
+      "bank_sort_code",
+      FALLBACK_COMPANY.sortCode
+    ),
+    accountNo: setting(
+      "bank_account_no",
+      FALLBACK_COMPANY.accountNo
+    ),
+    iban: setting("bank_iban"),
+    bic: setting("bank_bic"),
+    paymentNote: setting(
+      "invoice_payment_note",
+      FALLBACK_COMPANY.paymentNote
+    ),
+    footerText: setting("document_footer_text")
+  };
+
+  const vatRate = toNumber(
+    setting(
+      "tax_default_vat_rate",
+      setting("doc_vat_rate", DEFAULT_VAT_RATE)
+    ),
+    DEFAULT_VAT_RATE
+  );
+
+  const paymentTermDays = Math.round(
+    toNumber(
+      setting(
+        "default_payment_terms_days",
+        setting(
+          "doc_default_payment_terms",
+          DEFAULT_PAYMENT_TERM_DAYS
+        )
+      ),
+      DEFAULT_PAYMENT_TERM_DAYS
+    )
+  );
+
+  return {
+    company,
+    vatRate,
+    paymentTermDays,
+    invoicePrefix: setting("invoice_prefix", "INV"),
+    fuelSurchargePercent: toNumber(
+      setting(
+        "fuel_surcharge_percent",
+        DEFAULT_FUEL_SURCHARGE_PERCENT
+      ),
+      DEFAULT_FUEL_SURCHARGE_PERCENT
+    ),
+    pricingSettings: map
+  };
+}
 
   async function loadProductOwnerProfile(client, customerId) {
     if (!customerId) {
@@ -802,6 +945,89 @@ async function reserveNextInvoiceNumber(
       country: address?.country || customer.country || "United Kingdom"
     };
   }
+
+
+/* ==========================================================
+   VEYNOR — LOAD PRODUCT OWNER BILLING SETTINGS
+   ========================================================== */
+
+async function loadProductOwnerBillingSettings(
+  client,
+  companyId,
+  productOwner
+) {
+  if (!productOwner?.id) {
+    throw new Error("Product Owner is missing.");
+  }
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_value")
+    .eq("company_id", companyId)
+    .eq("setting_key", "product_owner_profiles")
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      "Cannot load Product Owner billing settings: " +
+      error.message
+    );
+  }
+
+  if (!data?.setting_value) {
+    throw new Error(
+      "Product Owner profiles are not configured."
+    );
+  }
+
+  let profiles;
+
+  try {
+    profiles =
+      typeof data.setting_value === "string"
+        ? JSON.parse(data.setting_value)
+        : data.setting_value;
+  } catch {
+    throw new Error(
+      "Invalid Product Owner profiles configuration."
+    );
+  }
+
+  if (!Array.isArray(profiles)) {
+    throw new Error(
+      "Product Owner profiles must be an array."
+    );
+  }
+
+  const customerCode = String(
+    productOwner.customerCode || ""
+  ).trim().toLowerCase();
+
+  if (!customerCode) {
+    throw new Error(
+      "Product Owner has no customer code."
+    );
+  }
+
+  const matches = profiles.filter(profile =>
+    String(profile.key || "")
+      .trim()
+      .toLowerCase() === customerCode
+  );
+
+  if (matches.length !== 1) {
+    throw new Error(
+      "Cannot uniquely match Product Owner settings for " +
+      customerCode +
+      ". Check Settings > Product Owners."
+    );
+  }
+
+  return {
+    ...matches[0]
+  };
+}
+
 
 function getInvoiceMode(productOwner) {
   const customerCode = normalize(
@@ -1003,7 +1229,13 @@ function getInvoiceMode(productOwner) {
     });
   }
 
-  function drawCostSummaryBox(
+
+/* ==========================================================
+   VEYNOR — INVOICE COST SUMMARY
+   Central totals with regional surcharge breakdown.
+   ========================================================== */
+
+function drawCostSummaryBox(
   doc,
   x,
   y,
@@ -1013,121 +1245,131 @@ function getInvoiceMode(productOwner) {
   totals,
   ctx
 ) {
+  const central = !!ctx.centralPricing;
+  const isZoy = ctx.invoiceMode === "zoy";
+
+  const regionalAmount = central
+    ? round2(totals.regionalSurcharge || 0)
+    : 0;
+
+  const rows = [];
+
+  rows.push([
+    "Delivered orders",
+    String(orders.length),
+    false
+  ]);
+
+  if (isZoy) {
+    rows.push([
+      "Logistics Services",
+      formatMoney(
+        totals.warehouse +
+        totals.transport +
+        totals.credits
+      ),
+      false
+    ]);
+  } else {
+    rows.push([
+      "Warehouse costs",
+      formatMoney(totals.warehouse),
+      false
+    ]);
+
+    rows.push([
+      "Transport costs",
+      formatMoney(totals.transport),
+      false
+    ]);
+
+    if (regionalAmount !== 0) {
+      rows.push([
+        "Incl. regional surcharge",
+        formatMoney(regionalAmount),
+        false
+      ]);
+    }
+
+    if (totals.credits !== 0) {
+      rows.push([
+        "Credit notes",
+        formatMoney(totals.credits),
+        false
+      ]);
+    }
+
+    if (totals.minimumDeliverySurcharge !== 0) {
+      rows.push([
+        "Minimum Delivery Charge",
+        formatMoney(
+          totals.minimumDeliverySurcharge
+        ),
+        false
+      ]);
+    }
+  }
+
+  const subtotalBeforeFuel = round2(
+    totals.serviceSubtotal +
+    totals.minimumDeliverySurcharge
+  );
+
+
+rows.push([
+  isZoy
+    ? "Subtotal excl. VAT"
+    : "Subtotal before fuel surcharge",
+  formatMoney(
+    isZoy
+      ? totals.subtotal
+      : subtotalBeforeFuel
+  ),
+  false
+]);
+
+  if (!isZoy) {
+    rows.push([
+      `Fuel surcharge ${formatNumber(
+        totals.fuelSurchargePercent || 0,
+        1
+      )}%`,
+      formatMoney(totals.fuelSurcharge),
+      false
+    ]);
+  }
+
+  rows.push([
+    `VAT ${Math.round(ctx.vatRate * 100)}%`,
+    formatMoney(totals.vat),
+    false
+  ]);
+
+  rows.push([
+    "Invoice total",
+    formatMoney(totals.total),
+    true
+  ]);
+
+  // Expand vertically for the additional regional row.
+  const requiredHeight = 22 + rows.length * 6.5;
+  const boxHeight = Math.max(h, requiredHeight);
+
   doc.setFillColor(248, 249, 251);
-  doc.roundedRect(x, y, w, h, 2, 2, "F");
+  doc.roundedRect(x, y, w, boxHeight, 2, 2, "F");
 
   doc.setDrawColor(220, 224, 231);
-  doc.roundedRect(x, y, w, h, 2, 2);
+  doc.roundedRect(x, y, w, boxHeight, 2, 2);
 
   setDark(doc);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text("Invoice Overview", x + 5, y + 9);
 
-  const isZoy = ctx.invoiceMode === "zoy";
-
-  let rows;
-
-  if (isZoy) {
-    const logisticsServices = round2(
-      totals.warehouse +
-      totals.transport +
-      totals.credits
-    );
-
-    rows = [
-      [
-        "Delivered orders",
-        String(orders.length),
-        false
-      ],
-      [
-        "Logistics Services",
-        formatMoney(logisticsServices),
-        false
-      ],
-      [
-        "Subtotal excl. VAT",
-        formatMoney(totals.subtotal),
-        false
-      ],
-      [
-        `VAT ${Math.round(ctx.vatRate * 100)}%`,
-        formatMoney(totals.vat),
-        false
-      ],
-      [
-        "Invoice total",
-        formatMoney(totals.total),
-        true
-      ]
-    ];
-  } else {
-    const subtotalBeforeFuel = round2(
-      totals.serviceSubtotal +
-      totals.minimumDeliverySurcharge
-    );
-
-    const fuelLabel =
-      `Fuel surcharge ${formatNumber(
-        totals.fuelSurchargePercent,
-        1
-      )}%`;
-
-    rows = [
-      [
-        "Delivered orders",
-        String(orders.length),
-        false
-      ],
-      [
-        "Warehouse costs",
-        formatMoney(totals.warehouse),
-        false
-      ],
-      [
-        "Transport costs",
-        formatMoney(totals.transport),
-        false
-      ],
-      ...(totals.credits !== 0
-        ? [[
-            "Credit notes",
-            formatMoney(totals.credits),
-            false
-          ]]
-        : []),
-      ...(totals.minimumDeliverySurcharge > 0
-        ? [[
-            "Minimum Delivery Charge",
-            formatMoney(
-              totals.minimumDeliverySurcharge
-            ),
-            false
-          ]]
-        : []),
-      [
-        "Subtotal excl. VAT",
-        formatMoney(subtotalBeforeFuel),
-        false
-      ],
-      [
-        fuelLabel,
-        formatMoney(totals.fuelSurcharge),
-        false
-      ],
-      [
-        `VAT ${Math.round(ctx.vatRate * 100)}%`,
-        formatMoney(totals.vat),
-        false
-      ],
-      [
-        "Invoice total",
-        formatMoney(totals.total),
-        true
-      ]
-    ];
-  }
+  doc.text(
+    "Invoice Overview",
+    x + 5,
+    y + 9
+  );
 
   let rowY = y + 19;
 
@@ -1137,9 +1379,7 @@ function getInvoiceMode(productOwner) {
       bold ? "bold" : "normal"
     );
 
-    doc.setFontSize(
-      bold ? 9.4 : 8.3
-    );
+    doc.setFontSize(bold ? 9.2 : 8);
 
     doc.text(
       label,
@@ -1154,10 +1394,9 @@ function getInvoiceMode(productOwner) {
       { align: "right" }
     );
 
-    rowY += bold ? 7 : 6.5;
+    rowY += 6.5;
   });
 }
-
 
   function drawPaymentDetails(doc, y, company) {
     doc.setFillColor(248, 249, 251);
@@ -1596,142 +1835,87 @@ function getInvoiceMode(productOwner) {
   return y + 10;
 }
 
+
+/* ==========================================================
+   VEYNOR — MINIMUM DELIVERY SPECIFICATION
+   Show only surcharges included in central totals.
+   ========================================================== */
+
 function drawMinimumDeliverySurchargeRows(
   doc,
   y,
   ctx,
   orders = []
 ) {
-  /*
-   * Alleen chargeable orders mogen een
-   * Minimum Delivery Charge op de
-   * specificatie tonen.
-   */
-  const chargeableOrders =
-    (orders || []).filter(order =>
-      isChargeableOrder(order)
-    );
+  const central = ctx.centralPricing || null;
 
-  /*
-   * Bestaat de factuur alleen uit gratis
-   * orders, dan tonen we helemaal geen
-   * Minimum Delivery Charge-regels.
-   */
-  if (!chargeableOrders.length) {
-    return y;
-  }
-
-  const chargeableOrderNumbers =
-    getChargeableOrderNumbers(
-      chargeableOrders
-    );
-
-  /*
-   * Filter dezelfde surcharges als bij de
-   * berekening van de factuurtotalen.
-   */
-  const surcharges =
-    (
-      ctx.deliverySurcharges ||
-      []
-    ).filter(group => {
-      const linkedOrderNumber =
-        normalize(
-          group.order_number ||
-          ""
+  const surcharges = central
+    ? (
+        central.totals
+          ?.appliedDeliverySurcharges || []
+      )
+    : (
+        ctx.deliverySurcharges || []
+      ).filter(group => {
+        const chargeable = getChargeableOrderNumbers(
+          orders.filter(isChargeableOrder)
         );
 
-      /*
-       * Zonder ordernummer mag de surcharge
-       * blijven staan wanneer minimaal één
-       * chargeable order aanwezig is.
-       */
-      if (!linkedOrderNumber) {
-        return true;
-      }
+        const linked = normalize(
+          group.order_number || ""
+        );
 
-      return chargeableOrderNumbers.has(
-        linkedOrderNumber
+        return !linked || chargeable.has(linked);
+      });
+
+  if (!surcharges.length) return y;
+
+  for (const group of surcharges) {
+    if (y > 247) {
+      doc.addPage();
+
+      y = drawSpecificationHeader(
+        doc,
+        88,
+        ctx
       );
-    });
+    }
 
-  if (!surcharges.length) {
-    return y;
-  }
-
-  surcharges.forEach(group => {
-if (y > 258) {
-  doc.addPage();
-
-  y =
-    drawSpecificationHeader(
-      doc,
-      88,
-      ctx
+    const amount = round2(
+      toNumber(group.applied_surcharge, 0)
     );
 
-  doc.setFont(
-    "helvetica",
-    "normal"
-  );
+    if (amount === 0) continue;
 
-  doc.setFontSize(6.5);
-}
+    const readyVolume = toNumber(
+      group.ready_volume_m3,
+      0
+    );
 
-    const postcode =
-      cleanText(
-        group.delivery_postcode ||
-        ""
-      );
+    const minimumVolume = toNumber(
+      group.minimum_volume_m3,
+      1.25
+    );
 
-    const readyVolume =
-      toNumber(
-        group.ready_volume_m3,
-        0
-      );
-
-    const minimumVolume =
-      toNumber(
-        group.minimum_volume_m3,
-        1.25
-      );
-
-    const shortfall =
-      toNumber(
-        group.shortfall_m3,
-        Math.max(
-          0,
-          minimumVolume -
-          readyVolume
-        )
-      );
-
-const surcharge =
-  toNumber(
-    group.applied_surcharge,
-    0
-  );
+    const shortfall = toNumber(
+      group.shortfall_m3,
+      Math.max(
+        0,
+        minimumVolume - readyVolume
+      )
+    );
 
     setDark(doc);
-
-    doc.setFont(
-      "helvetica",
-      "bold"
-    );
-
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(6.5);
 
     doc.text(
-      group.order_number ||
-      "Minimum",
+      cleanText(group.order_number || "Minimum"),
       COL.order,
       y
     );
 
-    doc.setFont(
-      "helvetica",
-      "normal"
-    );
+    doc.setFont("helvetica", "normal");
 
     doc.text(
       "Min. Delivery",
@@ -1739,38 +1923,20 @@ const surcharge =
       y
     );
 
+    const description =
+      `Planned: ${formatNumber(readyVolume, 2)} / ` +
+      `${formatNumber(minimumVolume, 2)} m³\n` +
+      `Shortfall: ${formatNumber(shortfall, 2)} m³\n` +
+      cleanText(group.delivery_postcode || "");
+
     doc.text(
-      splitText(
-        doc,
-        `Planned: ${formatNumber(
-          readyVolume,
-          2
-        )} / ${formatNumber(
-          minimumVolume,
-          2
-        )} m³
-Shortfall: ${formatNumber(
-          shortfall,
-          2
-        )} m³
-${postcode}`,
-        54
-      ),
+      splitText(doc, description, 54),
       COL.address,
       y
     );
 
-    doc.text(
-      "—",
-      COL.date,
-      y
-    );
-
-    doc.text(
-      "—",
-      COL.amount,
-      y
-    );
+    doc.text("—", COL.date, y);
+    doc.text("—", COL.amount, y);
 
     doc.text(
       formatMoney(0),
@@ -1779,24 +1945,24 @@ ${postcode}`,
     );
 
     doc.text(
-      formatMoney(surcharge),
+      formatMoney(amount),
       COL.transport,
       y
     );
 
     doc.text(
-      formatMoney(surcharge),
+      formatMoney(amount),
       COL.total,
       y
     );
 
     y += 15;
-  });
+  }
 
   return y;
 }
 
-  function drawSpecificationPage(
+function drawSpecificationPage(
   doc,
   orders,
   invoiceNumber,
@@ -1805,202 +1971,122 @@ ${postcode}`,
   ctx,
   logoDataUrl
 ) {
-
-  doc.addPage();
-
-
-  drawHeader(
-    doc,
-    "Specification",
-    invoiceNumber,
-    invoiceDate,
-    dueDate,
-    ctx,
-    logoDataUrl
-  );
-
-
-  let y = 88;
-
-
-  y = drawSpecificationHeader(
-    doc,
-    y,
+  const central = ctx.centralPricing || null;
+  const totals = getTotals(
+    orders,
+    ctx.vatRate,
+    ctx.fuelSurchargePercent,
     ctx
   );
 
+  const startPage = () => {
+    doc.addPage();
 
-  doc.setFont(
-    "helvetica",
-    "normal"
-  );
+    drawHeader(
+      doc,
+      "Specification",
+      invoiceNumber,
+      invoiceDate,
+      dueDate,
+      ctx,
+      logoDataUrl
+    );
 
-  doc.setFontSize(6.5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(6.5);
 
+    return drawSpecificationHeader(doc, 88, ctx);
+  };
 
-  orders.forEach(order => {
+  let y = startPage();
 
-    if (y > 258) {
+  orders.forEach((order, index) => {
+    const pricing = central
+      ? central.orderPricings[index]
+      : null;
 
-      doc.addPage();
-
-      drawHeader(
-        doc,
-        "Specification",
-        invoiceNumber,
-        invoiceDate,
-        dueDate,
-        ctx,
-        logoDataUrl
+    if (central && !pricing) {
+      throw new Error(
+        "Missing central pricing for " +
+        getOrderNumber(order)
       );
-
-      y = drawSpecificationHeader(
-        doc,
-        88,
-        ctx
-      );
-
-      doc.setFont(
-        "helvetica",
-        "normal"
-      );
-
-      doc.setFontSize(6.5);
     }
 
+    const credit = isCreditOrder(order);
 
-    const orderNo =
-      getOrderNumber(order);
+    const warehouse = pricing
+      ? round2(pricing.warehouse)
+      : getOrderWarehouseTotal(order);
 
-    const supplierRef =
-      getSupplierReference(order);
+    const transport = pricing
+      ? round2(pricing.transport)
+      : getOrderTransportTotal(order);
 
-    const orderRefLines =
-      supplierRef
-        ? [
-            orderNo,
-            supplierRef
-          ]
-        : [
-            orderNo
-          ];
+    const total = pricing
+      ? round2(warehouse + transport)
+      : getOrderTotal(order);
 
+    const regionalAmount = pricing
+      ? round2(pricing.regionalSurcharge)
+      : 0;
 
-    const retailer =
-      getRetailerName(order);
+    const regional = pricing?.regional || {};
 
-    const address =
-      getDeliveryAddress(order);
+    const orderNo = getOrderNumber(order);
+    const supplierRef = getSupplierReference(order);
 
-    const deliveryDate =
-      formatDate(
-        getDeliveryDate(order)
-      );
+    const retailerLines = splitText(
+      doc,
+      getRetailerName(order),
+      23
+    );
 
-    const amount =
-      getDeliveredColli(order);
-
-    const warehouse =
-      getOrderWarehouseTotal(order);
-
-    const transport =
-      getOrderTransportTotal(order);
-
-    const total =
-      getOrderTotal(order);
-
+    const addressLines = splitText(
+      doc,
+      getDeliveryAddress(order),
+      54
+    );
 
     const warehouseOnlyFds =
       isWarehouseOnlyFdsOrder(order);
 
+    const showRegional =
+      !!pricing &&
+      !credit &&
+      regionalAmount !== 0;
 
-    const retailerLines =
-      splitText(
-        doc,
-        retailer,
-        23
-      );
+    const rowHeight = Math.max(
+      9,
+      retailerLines.length * 3.8,
+      addressLines.length * 3.8,
+      warehouseOnlyFds ? 8 : 0,
+      supplierRef ? 9 : 0
+    );
 
-    const addressLines =
-      splitText(
-        doc,
-        address,
-        54
-      );
+    const extraHeight = showRegional ? 11 : 0;
 
-
-    /*
-     * Warehouse-only FDS orders gebruiken twee regels
-     * in de transportkolom:
-     *
-     * FDS
-     * Separate
-     */
-    const transportLineCount =
-      warehouseOnlyFds
-        ? 2
-        : 1;
-
-
-    const rowHeight =
-      Math.max(
-        8,
-        retailerLines.length * 3.8,
-        addressLines.length * 3.8,
-        transportLineCount * 3.8
-      );
-
-
-    // ========================================================
-    // ORDER / REFERENCE
-    // ========================================================
+    if (y + rowHeight + extraHeight > 258) {
+      y = startPage();
+    }
 
     setDark(doc);
-
-    doc.setFont(
-      "helvetica",
-      "bold"
-    );
-
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(6.5);
 
-    doc.text(
-      orderRefLines[0],
-      COL.order,
-      y
-    );
+    doc.text(orderNo, COL.order, y);
 
-
-    if (orderRefLines[1]) {
-
-      doc.setFont(
-        "helvetica",
-        "normal"
-      );
-
+    if (supplierRef) {
+      doc.setFont("helvetica", "normal");
       doc.setFontSize(5.8);
-
       doc.text(
-        orderRefLines[1],
+        supplierRef,
         COL.order,
         y + 4
       );
-
-      doc.setFontSize(6.5);
     }
 
-
-    // ========================================================
-    // ORDER INFORMATION
-    // ========================================================
-
-    doc.setFont(
-      "helvetica",
-      "normal"
-    );
-
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(6.5);
-
 
     doc.text(
       retailerLines,
@@ -2015,36 +2101,20 @@ ${postcode}`,
     );
 
     doc.text(
-      deliveryDate,
+      formatDate(getDeliveryDate(order)),
       COL.date,
       y
     );
 
     doc.text(
-      String(amount),
+      String(getDeliveredColli(order)),
       COL.amount,
       y
     );
 
-
-    // ========================================================
-    // ZOY
-    // ========================================================
-
-    if (
-      ctx.invoiceMode === "zoy"
-    ) {
-
-      const logisticsServices =
-        round2(
-          warehouse +
-          transport
-        );
-
+    if (ctx.invoiceMode === "zoy") {
       doc.text(
-        formatMoney(
-          logisticsServices
-        ),
+        formatMoney(total),
         COL.transport - 8,
         y
       );
@@ -2054,40 +2124,15 @@ ${postcode}`,
         COL.total,
         y
       );
-
-    }
-
-
-    // ========================================================
-    // STANDARD / BELLSTONE
-    // ========================================================
-
-    else {
-
-      // Warehouse
+    } else {
       doc.text(
         formatMoney(warehouse),
         COL.warehouse,
         y
       );
 
-
-      /*
-       * Wanneer deze order expliciet als
-       * warehouse-only / FDS is gemarkeerd,
-       * tonen we geen £0.00.
-       *
-       * Daarmee is voor Bellstone duidelijk dat
-       * transport niet gratis is, maar afzonderlijk
-       * door FDS wordt gefactureerd.
-       */
       if (warehouseOnlyFds) {
-
-        doc.setFont(
-          "helvetica",
-          "bold"
-        );
-
+        doc.setFont("helvetica", "bold");
         doc.setFontSize(6.2);
 
         doc.text(
@@ -2096,12 +2141,7 @@ ${postcode}`,
           y
         );
 
-
-        doc.setFont(
-          "helvetica",
-          "normal"
-        );
-
+        doc.setFont("helvetica", "normal");
         doc.setFontSize(5.4);
 
         doc.text(
@@ -2109,19 +2149,7 @@ ${postcode}`,
           COL.transport,
           y + 3.6
         );
-
-
-        doc.setFontSize(6.5);
-
       } else {
-
-        doc.setFont(
-          "helvetica",
-          "normal"
-        );
-
-        doc.setFontSize(6.5);
-
         doc.text(
           formatMoney(transport),
           COL.transport,
@@ -2129,13 +2157,7 @@ ${postcode}`,
         );
       }
 
-
-      // Total
-      doc.setFont(
-        "helvetica",
-        "normal"
-      );
-
+      doc.setFont("helvetica", "normal");
       doc.setFontSize(6.5);
 
       doc.text(
@@ -2145,15 +2167,48 @@ ${postcode}`,
       );
     }
 
-
     y += rowHeight;
+
+    // Informational breakdown only.
+    // Regional surcharge is already included
+    // in the transport amount above.
+    if (showRegional) {
+      setMuted(doc);
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(6);
+
+      const label =
+        `${regional.label || "Regional"} ` +
+        `surcharge (${formatNumber(
+          regional.percent || 0,
+          1
+        )}%): ${formatMoney(regionalAmount)} ` +
+        "included in transport";
+
+      const noteLines = splitText(
+        doc,
+        label,
+        165
+      );
+
+      doc.text(
+        noteLines.slice(0, 2),
+        COL.retailer,
+        y + 2
+      );
+
+      y += Math.max(
+        7,
+        Math.min(noteLines.length, 2) * 3.2 + 2
+      );
+
+      setDark(doc);
+      doc.setFont("helvetica", "normal");
+    }
   });
 
-
-  // ==========================================================
-  // MINIMUM DELIVERY SURCHARGES
-  // ==========================================================
-
+  // Minimum Delivery Charges must come from
+  // the same pricing result as the totals.
   y = drawMinimumDeliverySurchargeRows(
     doc,
     y,
@@ -2161,40 +2216,11 @@ ${postcode}`,
     orders
   );
 
-
   y += 7;
 
-
-  // ==========================================================
-  // TOTALS
-  // ==========================================================
-
-  const totals =
-    getTotals(
-      orders,
-      ctx.vatRate,
-      ctx.fuelSurchargePercent,
-      ctx
-    );
-
-
   if (y > 230) {
-
-    doc.addPage();
-
-    drawHeader(
-      doc,
-      "Specification",
-      invoiceNumber,
-      invoiceDate,
-      dueDate,
-      ctx,
-      logoDataUrl
-    );
-
-    y = 82;
+    y = startPage();
   }
-
 
   drawSpecificationTotalsBlock(
     doc,
@@ -2217,7 +2243,7 @@ ${postcode}`,
       format: "a4"
     });
 
-    const invoiceDate = new Date();
+	const invoiceDate = ctx.invoiceDate || new Date();
     const dueDate = addDays(invoiceDate, ctx.paymentTermDays);
     const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
 
@@ -2279,6 +2305,446 @@ ${postcode}`,
       data?.publicUrl || ""
   };
 }
+
+
+/* ==========================================================
+   VEYNOR — ATOMIC INVOICE DATABASE REGISTRATION
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — BUILD FINANCIAL INVOICE SNAPSHOTS
+   Pricing Engine v2.0
+   ========================================================== */
+
+function buildInvoiceOrderSnapshots(orders, ctx) {
+  const central = ctx?.centralPricing;
+  const totals = central?.totals;
+  const pricings = central?.orderPricings;
+
+  if (
+    !Array.isArray(orders) ||
+    !orders.length ||
+    !totals ||
+    !Array.isArray(pricings) ||
+    pricings.length !== orders.length
+  ) {
+    throw new Error(
+      "Cannot build invoice snapshots: central pricing is incomplete."
+    );
+  }
+
+  const money = value => {
+    const number = Number(value ?? 0);
+
+    if (!Number.isFinite(number)) {
+      throw new Error("Invalid financial snapshot amount.");
+    }
+
+    return Math.round((number + Number.EPSILON) * 100);
+  };
+
+  const percent = value => {
+    const number = Number(value ?? 0);
+
+    if (!Number.isFinite(number)) {
+      throw new Error("Invalid financial snapshot percentage.");
+    }
+
+    return number;
+  };
+
+  const isCredit = order =>
+    normalize(order?.order_type) === "credit" ||
+    order?.is_credit === true;
+
+  const isManualCharge = order =>
+    normalize(order?.order_type) === "manual_charge" ||
+    normalize(order?.source_type) === "manual_charge";
+
+  const rows = orders.map((order, index) => {
+    const pricing = pricings[index];
+
+    if (!order?.id || !pricing) {
+      throw new Error(
+        "Invoice snapshot has a missing order or pricing result."
+      );
+    }
+
+    const credit = isCredit(order);
+
+    const warehouse = money(pricing.warehouse);
+    const baseTransport = money(pricing.baseTransport);
+    const regional = money(pricing.regionalSurcharge);
+
+    const transport = baseTransport + regional;
+
+    const fuelEligible =
+      !credit &&
+      !isManualCharge(order) &&
+      pricing.billing?.fuelEnabled !== false;
+
+    return {
+      order_id: order.id,
+      warehouse,
+      baseTransport,
+      regional,
+      transport,
+      fuelEligible,
+      fuel: 0,
+      minimum: 0,
+      vat: 0,
+      credit,
+      regionalPct: percent(pricing.regional?.percent),
+      fuelPct: fuelEligible
+        ? percent(totals.fuelSurchargePercent)
+        : 0,
+      pricingVersion:
+        pricing.pricingVersion ||
+        central.pricingVersion ||
+        "2.0"
+    };
+  });
+
+  /*
+   * Allocate an invoice-level amount over eligible
+   * orders while preserving the exact total in pence.
+   */
+  function allocatePence(totalPence, eligibleRows, weightFn, field) {
+    if (!totalPence) return;
+
+    if (!eligibleRows.length) {
+      throw new Error(
+        `Cannot allocate invoice ${field}: no eligible orders.`
+      );
+    }
+
+    const sign = Math.sign(totalPence);
+    const absoluteTotal = Math.abs(totalPence);
+
+    const weights = eligibleRows.map(row =>
+      Math.max(0, Math.abs(weightFn(row)))
+    );
+
+    const weightTotal = weights.reduce(
+      (sum, weight) => sum + weight,
+      0
+    );
+
+    const effectiveWeights = weightTotal > 0
+      ? weights
+      : weights.map(() => 1);
+
+    const effectiveTotal = effectiveWeights.reduce(
+      (sum, weight) => sum + weight,
+      0
+    );
+
+    const allocations = effectiveWeights.map((weight, index) => {
+      const exact = absoluteTotal * weight / effectiveTotal;
+      const whole = Math.floor(exact);
+
+      return {
+        index,
+        whole,
+        fraction: exact - whole
+      };
+    });
+
+    let remaining = absoluteTotal -
+      allocations.reduce((sum, item) => sum + item.whole, 0);
+
+    allocations.sort((a, b) =>
+      b.fraction - a.fraction || a.index - b.index
+    );
+
+    for (let i = 0; i < remaining; i++) {
+      allocations[i].whole += 1;
+    }
+
+    allocations.forEach(item => {
+      eligibleRows[item.index][field] +=
+        sign * item.whole;
+    });
+  }
+
+  // Fuel surcharge: same eligible transport base as
+  // the central Pricing Engine.
+  const fuelRows = rows.filter(row => row.fuelEligible);
+
+  allocatePence(
+    money(totals.fuelSurcharge),
+    fuelRows,
+    row => row.transport,
+    "fuel"
+  );
+
+  /*
+   * Minimum Delivery Charges are allocated to
+   * eligible orders linked to each delivery group.
+   */
+  const appliedGroups =
+    totals.appliedDeliverySurcharges || [];
+
+  const assignedGroupIds = new Set();
+
+  for (const group of appliedGroups) {
+    if (!group?.id) {
+      throw new Error(
+        "Minimum Delivery Charge has no group ID."
+      );
+    }
+
+    const groupId = String(group.id);
+
+    if (assignedGroupIds.has(groupId)) {
+      continue;
+    }
+
+    assignedGroupIds.add(groupId);
+
+    const groupAmount = money(group.applied_surcharge);
+
+    if (!groupAmount) continue;
+
+    const linkedIds = new Set(
+      Array.isArray(group.order_ids)
+        ? group.order_ids.map(String)
+        : group.order_id
+          ? [String(group.order_id)]
+          : []
+    );
+
+
+const eligibleRows = rows.filter((row, index) =>
+  linkedIds.has(String(row.order_id)) &&
+  !row.credit &&
+  orders[index]?.is_chargeable !== false &&
+  pricings[index]?.billing?.transportEnabled === true
+);
+
+    if (!eligibleRows.length) {
+      throw new Error(
+        `No eligible snapshot orders for delivery group ${groupId}.`
+      );
+    }
+
+    allocatePence(
+      groupAmount,
+      eligibleRows,
+      row => row.transport,
+      "minimum"
+    );
+  }
+
+  /*
+   * Check that the order components reconcile
+   * with the central invoice subtotal.
+   */
+  const sum = field =>
+    rows.reduce((total, row) => total + row[field], 0);
+
+  const calculatedSubtotal =
+    sum("warehouse") +
+    sum("transport") +
+    sum("fuel") +
+    sum("minimum");
+
+  if (calculatedSubtotal !== money(totals.subtotal)) {
+    throw new Error(
+      "Invoice snapshot subtotal does not match central pricing. " +
+      `Expected ${money(totals.subtotal)} pence, ` +
+      `calculated ${calculatedSubtotal} pence.`
+    );
+  }
+
+  /*
+   * Allocate VAT based on each order's net value.
+   * Any rounding pennies are distributed so that
+   * the snapshots match the final invoice exactly.
+   */
+  allocatePence(
+    money(totals.vat),
+    rows,
+    row =>
+      row.warehouse +
+      row.transport +
+      row.fuel +
+      row.minimum,
+    "vat"
+  );
+
+  const snapshots = rows.map(row => {
+    const subtotal =
+      row.warehouse +
+      row.transport +
+      row.fuel +
+      row.minimum;
+
+    const total = subtotal + row.vat;
+
+    const pounds = pence =>
+      Number((pence / 100).toFixed(2));
+
+    return {
+      order_id: row.order_id,
+
+      warehouse_amount:
+        pounds(row.warehouse),
+
+      transport_base_amount:
+        pounds(row.baseTransport),
+
+      regional_surcharge_amount:
+        pounds(row.regional),
+
+      fuel_surcharge_amount:
+        pounds(row.fuel),
+
+      minimum_delivery_charge_amount:
+        pounds(row.minimum),
+
+      subtotal_ex_vat:
+        pounds(subtotal),
+
+      vat_amount:
+        pounds(row.vat),
+
+      total_inc_vat:
+        pounds(total),
+
+      regional_surcharge_pct:
+        row.regionalPct,
+
+      fuel_surcharge_pct:
+        row.fuelPct,
+
+      pricing_version:
+        row.pricingVersion
+    };
+  });
+
+  const sumSnapshots = field =>
+    money(
+      snapshots.reduce(
+        (sum, row) => sum + row[field],
+        0
+      )
+    );
+
+  if (
+    sumSnapshots("subtotal_ex_vat") !== money(totals.subtotal) ||
+    sumSnapshots("vat_amount") !== money(totals.vat) ||
+    sumSnapshots("total_inc_vat") !== money(totals.total)
+  ) {
+    throw new Error(
+      "Financial snapshots do not reconcile with invoice totals."
+    );
+  }
+
+  return snapshots;
+}
+
+
+
+/* ==========================================================
+   VEYNOR — ATOMIC INVOICE REGISTRATION WITH SNAPSHOTS
+   Pricing Engine v2.0
+   ========================================================== */
+
+async function createInvoiceAtomic(
+  client,
+  companyId,
+  orders,
+  invoiceNumber,
+  uploaded,
+  ctx,
+  invoiceDate
+) {
+  if (!client || !companyId) {
+    throw new Error(
+      "Supabase client or company ID is missing."
+    );
+  }
+
+  if (!Array.isArray(orders) || !orders.length) {
+    throw new Error(
+      "No orders supplied for invoice registration."
+    );
+  }
+
+  if (!ctx?.centralPricing?.totals) {
+    throw new Error(
+      "Central Pricing Engine totals are missing."
+    );
+  }
+
+  const totals = getTotals(
+    orders,
+    ctx.vatRate,
+    ctx.fuelSurchargePercent,
+    ctx
+  );
+
+  // Build the exact financial breakdown per order.
+  const snapshots = buildInvoiceOrderSnapshots(
+    orders,
+    ctx
+  );
+
+  if (snapshots.length !== orders.length) {
+    throw new Error(
+      "Invoice snapshot count does not match order count."
+    );
+  }
+
+  const dueDate = addDays(
+    invoiceDate,
+    ctx.paymentTermDays
+  );
+
+  const dateOnly = date => [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+
+  // Register invoice, order links, snapshots and
+  // financial statuses in one database transaction.
+  const { data, error } = await client.rpc(
+    "create_order_invoice_with_snapshots",
+    {
+      p_company_id: companyId,
+      p_customer_id: ctx.productOwner.id,
+      p_invoice_number: invoiceNumber,
+      p_invoice_date: dateOnly(invoiceDate),
+      p_due_date: dateOnly(dueDate),
+      p_subtotal: totals.subtotal,
+      p_vat_amount: totals.vat,
+      p_total_amount: totals.total,
+      p_storage_path: uploaded.storagePath,
+      p_file_url: uploaded.fileUrl,
+      p_order_ids: orders.map(order => order.id),
+      p_snapshots: snapshots
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      "Atomic invoice registration with snapshots failed: " +
+      error.message
+    );
+  }
+
+  if (!data) {
+    throw new Error(
+      "Atomic invoice registration returned no invoice ID."
+    );
+  }
+
+  return data;
+}
+
 
   async function createInvoiceRecord(client, companyId, orders, invoiceNumber, uploaded, ctx) {
     const totals = getTotals(orders, ctx.vatRate, ctx.fuelSurchargePercent, ctx);
@@ -2475,41 +2941,69 @@ async function createInvoiceGeneratedNotification(
   }
 }
 
-async function loadApprovedDeliverySurcharges(client, companyId, orders) {
-  const orderIds = orders.map(order => String(order.id)).filter(Boolean);
+
+async function loadApprovedDeliverySurcharges(
+  client,
+  companyId,
+  orders
+) {
+  const orderIds = [
+    ...new Set(
+      (orders || [])
+        .map(order => String(order.id || ""))
+        .filter(Boolean)
+    )
+  ];
+
   if (!orderIds.length) return [];
 
-  const { data: groupOrders, error: groupOrdersError } = await client
-    .from("delivery_group_orders")
-    .select("delivery_group_id, order_id, order_number, group_role")
-    .in("order_id", orderIds)
-    .eq("group_role", "ready");
+  const { data: groupOrders, error: linkError } =
+    await client
+      .from("delivery_group_orders")
+      .select(
+        "delivery_group_id, order_id, order_number, group_role"
+      )
+      .in("order_id", orderIds)
+      .eq("group_role", "ready");
 
-  if (groupOrdersError) throw groupOrdersError;
+  if (linkError) throw linkError;
 
-  const groupIds = [...new Set((groupOrders || []).map(row => row.delivery_group_id).filter(Boolean))];
+  const groupIds = [
+    ...new Set(
+      (groupOrders || [])
+        .map(row => row.delivery_group_id)
+        .filter(Boolean)
+    )
+  ];
+
   if (!groupIds.length) return [];
 
-  const { data: groups, error: groupsError } = await client
-    .from("delivery_groups")
-    .select("*")
-    .eq("company_id", companyId)
-    .eq("status", "approved")
-    .neq("invoice_status", "invoiced")
-    .in("id", groupIds);
+  const { data: groups, error: groupError } =
+    await client
+      .from("delivery_groups")
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("status", "approved")
+      .neq("invoice_status", "invoiced")
+      .in("id", groupIds);
 
-  if (groupsError) throw groupsError;
+  if (groupError) throw groupError;
 
   return (groups || []).map(group => {
-  const relatedOrder = (groupOrders || []).find(row =>
-    String(row.delivery_group_id) === String(group.id)
-  );
+    const links = (groupOrders || []).filter(row =>
+      String(row.delivery_group_id) === String(group.id)
+    );
 
-  return {
-    ...group,
-    order_number: relatedOrder?.order_number || ""
-  };
-});
+    return {
+      ...group,
+      order_ids: [
+        ...new Set(
+          links.map(row => String(row.order_id))
+        )
+      ],
+      order_number: links[0]?.order_number || ""
+    };
+  });
 }
 
 async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
@@ -2528,55 +3022,45 @@ async function markDeliverySurchargesInvoiced(client, invoiceId, surcharges) {
   if (error) throw error;
 }
 
+
+/* ==========================================================
+   VEYNOR — TEST INVOICE
+   Central Pricing Engine validation.
+   No database writes or invoice number reservation.
+   ========================================================== */
+
 async function generateTestInvoice(
   orders,
   client,
   companyId
 ) {
-  if (
-    !Array.isArray(orders) ||
-    !orders.length
-  ) {
+  if (!Array.isArray(orders) || !orders.length) {
     throw new Error(
       "No orders selected for test invoice."
     );
   }
 
-
-  if (!client) {
+  if (!client || !companyId) {
     throw new Error(
-      "Supabase client is missing."
+      "Supabase client or company ID is missing."
     );
   }
 
-
-  if (!companyId) {
-    throw new Error(
-      "Company ID is missing."
-    );
-  }
-
-
-  /*
-   * Controleer dat alle geselecteerde orders
-   * van dezelfde product owner zijn.
-   */
   const productOwnerId =
-    validateSingleProductOwner(
-      orders
-    );
+    validateSingleProductOwner(orders);
 
+  // Do not recalculate already invoiced orders.
+  // Historical invoices must retain their saved values.
+  await validateOrdersNotInvoiced(
+    orders,
+    client,
+    companyId
+  );
 
-  /*
-   * Alleen instellingen ophalen.
-   * Er wordt niets opgeslagen.
-   */
-  const ctx =
-    await loadCompanySettings(
-      client,
-      companyId
-    );
-
+  const ctx = await loadCompanySettings(
+    client,
+    companyId
+  );
 
   ctx.productOwner =
     await loadProductOwnerProfile(
@@ -2584,226 +3068,476 @@ async function generateTestInvoice(
       productOwnerId
     );
 
+  ctx.invoiceMode = getInvoiceMode(
+    ctx.productOwner
+  );
 
-  ctx.invoiceMode =
-    getInvoiceMode(
-      ctx.productOwner
-    );
+  // Calculate everything using Pricing Engine v2.0.
+  const central = await prepareCentralInvoicePricing(
+    orders,
+    client,
+    companyId,
+    ctx
+  );
 
+  ctx.centralPricing = central;
+  ctx.centralTotals = central.totals;
+  ctx.deliverySurcharges =
+    central.totals.appliedDeliverySurcharges;
 
-  /*
-   * Zelfde surcharge-logica als echte factuur,
-   * zodat de test-PDF financieel exact dezelfde
-   * berekening gebruikt.
-   */
-  if (
-    ctx.invoiceMode === "zoy"
-  ) {
+  ctx.vatRate = central.totals.vatRate;
+  ctx.fuelSurchargePercent =
+    central.totals.fuelSurchargePercent;
 
-    ctx.fuelSurchargePercent = 0;
-    ctx.deliverySurcharges = [];
+  // Diagnostic output for comparison with the
+  // existing invoice PDF calculation.
+  console.table(
+    orders.map((order, index) => {
+      const pricing = central.orderPricings[index];
 
-  } else {
+      return {
+        order: order.order_number,
+        postcode: order.delivery_postcode,
+        warehouse: pricing.warehouse,
+        baseTransport: pricing.baseTransport,
+        regionalPercent:
+          pricing.regional?.percent || 0,
+        regionalSurcharge:
+          pricing.regionalSurcharge,
+        transport: pricing.transport,
+        regionalZone:
+          pricing.regional?.label || "Standard"
+      };
+    })
+  );
 
-    ctx.deliverySurcharges =
-      await loadApprovedDeliverySurcharges(
-        client,
-        companyId,
-        orders
-      );
-  }
+  console.log(
+    "Veynor Central Invoice Pricing:",
+    central.totals
+  );
 
-
-  /*
-   * GEEN reserveNextInvoiceNumber().
-   *
-   * Daardoor wordt het echte factuurnummer
-   * niet opgehoogd.
-   */
-  const now =
-    new Date();
-
+  // Existing PDF rendering is deliberately retained
+  // until the specification and totals are connected.
+  // This prevents showing a partially converted invoice.
+  const now = new Date();
 
   const testInvoiceNumber =
     "TEST-" +
-    now
-      .toISOString()
-      .replace(
-        /[-:TZ.]/g,
-        ""
-      )
-      .slice(
-        0,
-        14
-      );
+    now.toISOString()
+      .replace(/[-:TZ.]/g, "")
+      .slice(0, 14);
 
+  const blob = await createPdfBlob(
+    orders,
+    testInvoiceNumber,
+    ctx
+  );
 
-  /*
-   * Maak exact dezelfde PDF als bij
-   * een echte factuur.
-   */
-  const blob =
-    await createPdfBlob(
-      orders,
-      testInvoiceNumber,
-      ctx
-    );
-
-
-  /*
-   * Alleen lokaal downloaden.
-   *
-   * Geen Storage upload.
-   * Geen invoices record.
-   * Geen invoice_orders.
-   * Geen order update.
-   * Geen notification.
-   */
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-
-  const link =
-    document.createElement(
-      "a"
-    );
-
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
 
   link.href = url;
+  link.download = `${testInvoiceNumber}.pdf`;
 
-  link.download =
-    `${testInvoiceNumber}.pdf`;
-
-
-  document.body.appendChild(
-    link
-  );
-
-
+  document.body.appendChild(link);
   link.click();
-
-
   link.remove();
 
-
-  setTimeout(
-    () => {
-      URL.revokeObjectURL(
-        url
-      );
-    },
-    1000
-  );
-
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
 
   return {
     test: true,
-    invoiceNumber:
-      testInvoiceNumber
+    invoiceNumber: testInvoiceNumber,
+    centralTotals: central.totals,
+    pricingVersion: central.pricingVersion,
+    pdfPricingMode: "central_v2"
   };
 }
 
-  async function generate(orders, client, companyId) {
-    if (!Array.isArray(orders) || !orders.length) {
-      throw new Error("No orders selected for invoice.");
-    }
+/* ==========================================================
+   VEYNOR — INVOICE PROTECTION
+   Check whether selected orders are already invoiced.
+   ========================================================== */
 
-    if (!client) {
-      throw new Error("Supabase client is missing.");
-    }
-
-    if (!companyId) {
-      throw new Error("Company ID is missing.");
-    }
-
-    const productOwnerId = validateSingleProductOwner(orders);
-    const ctx = await loadCompanySettings(client, companyId);
-
-ctx.productOwner = await loadProductOwnerProfile(
+async function validateOrdersNotInvoiced(
+  orders,
   client,
-  productOwnerId
-);
+  companyId
+) {
+  if (!Array.isArray(orders) || !orders.length) {
+    throw new Error("No orders selected for invoicing.");
+  }
 
-ctx.invoiceMode = getInvoiceMode(
-  ctx.productOwner
-);
+  const orderIds = orders.map(order => order.id);
 
-if (ctx.invoiceMode === "zoy") {
-  ctx.fuelSurchargePercent = 0;
-  ctx.deliverySurcharges = [];
-} else {
-  ctx.deliverySurcharges =
-    await loadApprovedDeliverySurcharges(
-      client,
-      companyId,
-      orders
+  if (orderIds.some(id => !id)) {
+    throw new Error(
+      "Cannot invoice: one or more orders have no valid ID."
     );
+  }
+
+  if (new Set(orderIds.map(String)).size !== orderIds.length) {
+    throw new Error(
+      "Cannot invoice: duplicate orders in selection."
+    );
+  }
+
+  // Check current order status directly in Supabase.
+  const { data: currentOrders, error: orderError } =
+    await client
+      .from("orders")
+      .select("id, order_number, finance_status, overall_status")
+      .eq("company_id", companyId)
+      .in("id", orderIds);
+
+  if (orderError) {
+    throw new Error(
+      "Cannot verify invoice status: " + orderError.message
+    );
+  }
+
+  if ((currentOrders || []).length !== orderIds.length) {
+    throw new Error(
+      "One or more selected orders could not be verified."
+    );
+  }
+
+  const invoicedStatuses = new Set([
+    "invoice_generated",
+    "invoiced",
+    "paid",
+    "partially_paid"
+  ]);
+
+  const blockedOrders = (currentOrders || []).filter(order => {
+    const financeStatus = normalize(order.finance_status);
+    const overallStatus = normalize(order.overall_status);
+
+    return (
+      invoicedStatuses.has(financeStatus) ||
+      invoicedStatuses.has(overallStatus)
+    );
+  });
+
+  if (blockedOrders.length) {
+    const numbers = blockedOrders.map(
+      order => order.order_number || order.id
+    );
+
+    throw new Error(
+      "Invoice blocked. These orders are already invoiced: " +
+      numbers.join(", ")
+    );
+  }
+
+  // Check existing invoice-to-order relationships.
+  const { data: invoiceLinks, error: linkError } =
+    await client
+      .from("invoice_orders")
+      .select("order_id, invoice_id")
+      .in("order_id", orderIds);
+
+  if (linkError) {
+    throw new Error(
+      "Cannot verify existing invoices: " + linkError.message
+    );
+  }
+
+  if (invoiceLinks?.length) {
+    const linkedIds = new Set(
+      invoiceLinks.map(link => String(link.order_id))
+    );
+
+    const numbers = orders
+      .filter(order => linkedIds.has(String(order.id)))
+      .map(order => order.order_number || order.id);
+
+    throw new Error(
+      "Invoice blocked. Existing invoice records found for: " +
+      numbers.join(", ")
+    );
+  }
+
+  // Check registered invoice documents as an extra safeguard.
+  const { data: invoiceDocuments, error: documentError } =
+    await client
+      .from("order_documents")
+      .select("order_id, document_number")
+      .eq("company_id", companyId)
+      .eq("document_type", "invoice")
+      .in("order_id", orderIds);
+
+  if (documentError) {
+    throw new Error(
+      "Cannot verify invoice documents: " +
+      documentError.message
+    );
+  }
+
+  if (invoiceDocuments?.length) {
+    const numbers = [
+      ...new Set(
+        invoiceDocuments.map(
+          doc => doc.document_number || doc.order_id
+        )
+      )
+    ];
+
+    throw new Error(
+      "Invoice blocked. Invoice documents already exist: " +
+      numbers.join(", ")
+    );
+  }
+
+  return true;
 }
 
-const invoiceNumber = await reserveNextInvoiceNumber(
-  client,
-  companyId,
-  ctx.invoicePrefix
-);
 
-    const blob = await createPdfBlob(orders, invoiceNumber, ctx);
-    const uploaded = await uploadPdf(client, companyId, invoiceNumber, blob);
 
-    if (!uploaded.fileUrl || !uploaded.storagePath) {
-      throw new Error("Invoice PDF was uploaded, but no file URL/storage path was returned.");
+/* ==========================================================
+   VEYNOR — GENERATE FINAL INVOICE
+   Protected against already invoiced orders.
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — GENERATE FINAL INVOICE
+   Central Pricing Engine v2.0
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR — GENERATE FINAL INVOICE
+   Central Pricing Engine v2.0
+   Atomic Supabase registration
+   ========================================================== */
+
+async function generate(orders, client, companyId) {
+  if (!Array.isArray(orders) || !orders.length) {
+    throw new Error("No orders selected for invoice.");
+  }
+
+  if (!client || !companyId) {
+    throw new Error("Supabase client or Company ID missing.");
+  }
+
+  const productOwnerId = validateSingleProductOwner(orders);
+
+  // 1. Initial protection
+  await validateOrdersNotInvoiced(
+    orders,
+    client,
+    companyId
+  );
+
+  // 2. Load company and Product Owner
+  const ctx = await loadCompanySettings(
+    client,
+    companyId
+  );
+
+  ctx.productOwner = await loadProductOwnerProfile(
+    client,
+    productOwnerId
+  );
+
+  ctx.invoiceMode = getInvoiceMode(ctx.productOwner);
+
+  // 3. Central pricing
+  const central = await prepareCentralInvoicePricing(
+    orders,
+    client,
+    companyId,
+    ctx
+  );
+
+  ctx.centralPricing = central;
+  ctx.centralTotals = central.totals;
+  ctx.deliverySurcharges =
+    central.totals.appliedDeliverySurcharges || [];
+
+  ctx.vatRate = central.totals.vatRate;
+  ctx.fuelSurchargePercent =
+    central.totals.fuelSurchargePercent;
+
+  const totals = getTotals(
+    orders,
+    ctx.vatRate,
+    ctx.fuelSurchargePercent,
+    ctx
+  );
+
+  for (const field of ["subtotal", "vat", "total"]) {
+    if (!Number.isFinite(totals[field])) {
+      throw new Error(
+        `Invalid central invoice amount: ${field}`
+      );
+    }
+  }
+
+  if (
+    round2(totals.subtotal + totals.vat) !==
+    round2(totals.total)
+  ) {
+    throw new Error(
+      "Invoice totals do not reconcile."
+    );
+  }
+
+  // 4. Revalidate before invoice number reservation
+  await validateOrdersNotInvoiced(
+    orders,
+    client,
+    companyId
+  );
+
+  const invoiceNumber = await reserveNextInvoiceNumber(
+    client,
+    companyId,
+    ctx.invoicePrefix
+  );
+
+  // 5. Use the same date for PDF and database
+  const invoiceDate = new Date();
+  ctx.invoiceDate = invoiceDate;
+
+  // 6. Generate PDF
+  const blob = await createPdfBlob(
+    orders,
+    invoiceNumber,
+    ctx
+  );
+
+  // 7. Upload PDF
+  const uploaded = await uploadPdf(
+    client,
+    companyId,
+    invoiceNumber,
+    blob
+  );
+
+  if (!uploaded.fileUrl || !uploaded.storagePath) {
+    throw new Error(
+      "Invoice PDF upload returned incomplete information."
+    );
+  }
+
+  // 8. Atomic database registration
+  let invoiceId;
+
+  try {
+    invoiceId = await createInvoiceAtomic(
+      client,
+      companyId,
+      orders,
+      invoiceNumber,
+      uploaded,
+      ctx,
+      invoiceDate
+    );
+  } catch (error) {
+    // The database transaction has not committed.
+    // Remove only the PDF uploaded by this attempt.
+    const { error: cleanupError } = await client.storage
+      .from(DOCUMENT_BUCKET)
+      .remove([uploaded.storagePath]);
+
+    if (cleanupError) {
+      console.error(
+        "Invoice PDF cleanup failed:",
+        cleanupError.message
+      );
     }
 
-    const invoiceId = await createInvoiceRecord(client, companyId, orders, invoiceNumber, uploaded, ctx);
-
-await createInvoiceOrderLinks(
-  client,
-  invoiceId,
-  orders
-);
-
-await upsertInvoiceDocumentPerOrder(
-  client,
-  companyId,
-  invoiceNumber,
-  uploaded,
-  orders
-);
-
-await updateOrdersAsInvoiced(
-  client,
-  orders
-);
-
-await createActivityRows(
-  client,
-  companyId,
-  orders,
-  invoiceNumber
-);
-
-await markDeliverySurchargesInvoiced(
-  client,
-  invoiceId,
-  ctx.deliverySurcharges
-);
-
-await createInvoiceGeneratedNotification(
-  client,
-  companyId,
-  orders,
-  invoiceId,
-  invoiceNumber,
-  uploaded
-);
-
-return {
-  invoiceId,
-  invoiceNumber,
-  ...uploaded
-};
+    throw error;
   }
+
+  // 9. The invoice is now registered in Supabase.
+  // Follow-up operations must not create another invoice.
+  const warnings = [];
+
+  const runFollowUp = async (label, callback) => {
+    try {
+      await callback();
+    } catch (error) {
+      const message =
+        `${label}: ${error?.message || String(error)}`;
+
+      warnings.push(message);
+      console.error(
+        "Invoice post-registration warning:",
+        message
+      );
+    }
+  };
+
+  // 10. Register PDF documents
+  await runFollowUp(
+    "Invoice documents",
+    () => upsertInvoiceDocumentPerOrder(
+      client,
+      companyId,
+      invoiceNumber,
+      uploaded,
+      orders
+    )
+  );
+
+  // 11. Mark applied Minimum Delivery Charges
+  await runFollowUp(
+    "Minimum Delivery Charges",
+    () => markDeliverySurchargesInvoiced(
+      client,
+      invoiceId,
+      ctx.deliverySurcharges
+    )
+  );
+
+  // 12. Activity history
+  await runFollowUp(
+    "Activity history",
+    () => createActivityRows(
+      client,
+      companyId,
+      orders,
+      invoiceNumber
+    )
+  );
+
+  // 13. Customer notification
+  await runFollowUp(
+    "Invoice notification",
+    () => createInvoiceGeneratedNotification(
+      client,
+      companyId,
+      orders,
+      invoiceId,
+      invoiceNumber,
+      uploaded
+    )
+  );
+
+  if (warnings.length) {
+    console.warn(
+      "Invoice registered, but follow-up actions need review:",
+      warnings
+    );
+  }
+
+  return {
+    invoiceId,
+    invoiceNumber,
+    subtotal: totals.subtotal,
+    vat: totals.vat,
+    total: totals.total,
+    pricingVersion: central.pricingVersion,
+    registered: true,
+    warnings,
+    ...uploaded
+  };
+}
 
 async function createClaimPdfBlob(claim, invoiceNumber, ctx) {
   if (!window.jspdf?.jsPDF) {
@@ -2818,7 +3552,7 @@ async function createClaimPdfBlob(claim, invoiceNumber, ctx) {
     format: "a4"
   });
 
-  const invoiceDate = new Date();
+const invoiceDate = ctx.invoiceDate || new Date();
   const dueDate = addDays(invoiceDate, ctx.paymentTermDays);
   const logoDataUrl = await urlToDataUrl(ctx.company.logoUrl);
 

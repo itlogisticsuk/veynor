@@ -1,0 +1,2339 @@
+/*
+ * VEYNOR ROUTE WORKSPACE
+ * File: /js/planning-engine/route-workspace.css
+ *
+ * Alle regels zijn beperkt tot de Workspace-popup.
+ */
+
+/* ==========================================================
+   1. POPUP EN BASIS
+   ========================================================== */
+
+.rw-dialog {
+  --rw-blue: #0866ff;
+  --rw-blue-dark: #004fd4;
+  --rw-navy: #123052;
+
+  --rw-text: #172b4d;
+  --rw-muted: #64748b;
+
+  --rw-border: #dce5ef;
+  --rw-background: #f4f7fb;
+  --rw-surface: #ffffff;
+
+  --rw-green: #15803d;
+  --rw-green-light: #ecfdf3;
+
+  --rw-orange: #a85d00;
+  --rw-orange-light: #fff8e8;
+
+  --rw-red: #b42318;
+  --rw-red-light: #fff1f0;
+
+  box-sizing: border-box;
+  margin: auto;
+
+  color: var(--rw-text);
+  background: var(--rw-background);
+
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+
+  font-size: 14px;
+  line-height: 1.5;
+
+  box-shadow:
+    0 24px 80px rgb(15 23 42 / 28%),
+    0 4px 16px rgb(15 23 42 / 12%);
+
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.rw-dialog[open] {
+  display: block;
+}
+
+.rw-dialog:not([open]) {
+  display: none;
+}
+
+.rw-dialog::backdrop {
+  background: rgb(9 24 45 / 62%);
+  backdrop-filter: blur(3px);
+}
+
+.rw-dialog *,
+.rw-dialog *::before,
+.rw-dialog *::after {
+  box-sizing: border-box;
+}
+
+.rw-dialog [hidden] {
+  display: none !important;
+}
+
+.rw-dialog h2,
+.rw-dialog h3,
+.rw-dialog h4,
+.rw-dialog p {
+  margin: 0;
+}
+
+.rw-dialog h2 {
+  color: var(--rw-navy);
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 750;
+}
+
+.rw-dialog h3 {
+  color: var(--rw-navy);
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.rw-dialog h4 {
+  color: var(--rw-navy);
+  font-size: 14px;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.rw-dialog button,
+.rw-dialog input,
+.rw-dialog select {
+  font: inherit;
+}
+
+.rw-dialog button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rw-dialog button:focus-visible,
+.rw-dialog input:focus-visible,
+.rw-dialog select:focus-visible,
+.rw-dialog summary:focus-visible {
+  outline: 3px solid rgb(8 102 255 / 35%);
+  outline-offset: 3px;
+}
+
+.rw-dialog :where(p, td, th, li, strong, span) {
+  overflow-wrap: anywhere;
+}
+
+.rw-dialog .rw-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* ==========================================================
+   2. KOP EN STATUS
+   ========================================================== */
+
+.rw-dialog .rw-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+
+  padding: 20px 24px 16px;
+
+  border-bottom: 1px solid var(--rw-border);
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-header-copy {
+  min-width: 0;
+}
+
+.rw-dialog .rw-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.rw-dialog .rw-route-label {
+  margin-top: 6px;
+  color: var(--rw-text);
+  font-weight: 600;
+}
+
+.rw-dialog .rw-description {
+  margin-top: 4px;
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  padding: 4px 9px;
+
+  border: 1px solid #d4e5ff;
+  border-radius: 999px;
+
+  color: #0752c7;
+  background: #edf5ff;
+
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.rw-dialog .rw-badge[data-status="stale"] {
+  color: var(--rw-orange);
+  border-color: #f3dfb4;
+  background: var(--rw-orange-light);
+}
+
+.rw-dialog .rw-badge[data-status="error"] {
+  color: var(--rw-red);
+  border-color: #f4c8c3;
+  background: var(--rw-red-light);
+}
+
+.rw-dialog .rw-badge[data-status="calculating"]::before,
+.rw-dialog .rw-badge[data-status="loading"]::before {
+  content: "";
+
+  width: 10px;
+  height: 10px;
+
+  border: 2px solid rgb(8 102 255 / 25%);
+  border-top-color: var(--rw-blue);
+  border-radius: 50%;
+
+  animation: veynor-rw-spin 0.8s linear infinite;
+}
+
+@keyframes veynor-rw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================
+   3. KNOPPEN
+   ========================================================== */
+
+.rw-dialog .rw-button,
+.rw-dialog .rw-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+
+  min-height: 36px;
+  padding: 8px 12px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 8px;
+
+  color: var(--rw-navy);
+  background: var(--rw-surface);
+
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 650;
+  text-align: center;
+
+  cursor: pointer;
+
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.rw-dialog .rw-button:not(:disabled):hover,
+.rw-dialog .rw-icon-button:not(:disabled):hover {
+  border-color: #a9c8f7;
+  background: #f0f6ff;
+}
+
+.rw-dialog .rw-button-primary {
+  color: #ffffff;
+  border-color: var(--rw-blue);
+  background: var(--rw-blue);
+}
+
+.rw-dialog .rw-button-primary:not(:disabled):hover {
+  color: #ffffff;
+  border-color: var(--rw-blue-dark);
+  background: var(--rw-blue-dark);
+}
+
+.rw-dialog .rw-button:disabled,
+.rw-dialog .rw-icon-button:disabled {
+  color: #7a889d;
+  border-color: #e0e6ed;
+  background: #eef2f6;
+
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.rw-dialog .rw-icon-button {
+  flex: 0 0 auto;
+
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+
+  font-size: 24px;
+  font-weight: 400;
+}
+
+
+/* ==========================================================
+   VEYNOR ROUTE WORKSPACE — SETTINGS TAB STYLE
+   ========================================================== */
+
+.rw-dialog .rw-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+
+  gap: 7px;
+  padding: 8px 14px;
+
+  background: #f3f6fc;
+  border-bottom: 1px solid #dce5ef;
+}
+
+/* Standaard tabblad */
+
+.rw-dialog .rw-tab {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 38px;
+
+  padding: 0 14px;
+
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+
+  background: #ffffff;
+  color: #071b3b;
+
+  font-size: 12.5px;
+  font-weight: 800;
+  white-space: nowrap;
+
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+
+  cursor: pointer;
+
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+/* Hover */
+
+.rw-dialog .rw-tab:hover:not(.is-active) {
+  background: #eef5ff;
+  border-color: #b7d2ff;
+}
+
+/* Actieve tab — donkerblauw naar helderblauw */
+
+.rw-dialog .rw-tab.is-active,
+.rw-dialog .rw-tab[aria-selected="true"] {
+  color: #ffffff;
+
+  background: linear-gradient(
+    180deg,
+    #123052 0%,
+    #1267ff 68%,
+    #39a2ff 100%
+  );
+
+  border-color: #1267ff;
+
+  box-shadow:
+    0 3px 9px rgba(18, 103, 255, 0.25),
+    0 7px 17px rgba(18, 103, 255, 0.18);
+}
+
+/* Toetsenbordfocus */
+
+.rw-dialog .rw-tab:focus-visible {
+  outline: 2px solid #1267ff;
+  outline-offset: 3px;
+}
+
+/* ==========================================================
+   5. MELDINGEN
+   ========================================================== */
+
+.rw-dialog .rw-notices {
+  display: grid;
+  gap: 8px;
+
+  padding: 12px 24px 0;
+}
+
+.rw-dialog .rw-calculation-status {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-error,
+.rw-dialog .rw-action-error {
+  padding: 10px 12px;
+
+  border: 1px solid #f0c7c2;
+  border-radius: 8px;
+
+  color: var(--rw-red);
+  background: var(--rw-red-light);
+
+  font-size: 12px;
+  white-space: pre-line;
+}
+
+.rw-dialog .rw-unsaved {
+  padding: 9px 12px;
+
+  border: 1px solid #d4e5ff;
+  border-radius: 8px;
+
+  color: #0752c7;
+  background: #edf5ff;
+
+  font-size: 12px;
+}
+
+.rw-dialog .rw-message {
+  padding: 10px 12px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 8px;
+
+  color: var(--rw-muted);
+  background: #f8fafc;
+
+  font-size: 12px;
+}
+
+.rw-dialog .rw-message-success {
+  color: var(--rw-green);
+  border-color: #c9ead4;
+  background: var(--rw-green-light);
+}
+
+.rw-dialog .rw-message-warning {
+  color: var(--rw-orange);
+  border-color: #f3dfb4;
+  background: var(--rw-orange-light);
+}
+
+.rw-dialog .rw-message-error {
+  color: var(--rw-red);
+  border-color: #f0c7c2;
+  background: var(--rw-red-light);
+}
+
+.rw-dialog .rw-message-info {
+  color: #0752c7;
+  border-color: #d4e5ff;
+  background: #edf5ff;
+}
+
+.rw-dialog .rw-warning-list {
+  margin: 0;
+  padding: 10px 12px 10px 30px;
+
+  border: 1px solid #f3dfb4;
+  border-radius: 8px;
+
+  color: var(--rw-orange);
+  background: var(--rw-orange-light);
+
+  font-size: 12px;
+}
+
+.rw-dialog .rw-warning-item + .rw-warning-item {
+  margin-top: 6px;
+}
+
+/* ==========================================================
+   6. HOOFDINDELING
+   ========================================================== */
+
+.rw-dialog .rw-main {
+  flex: 1 0 auto;
+
+  min-width: 0;
+  padding: 20px 24px 24px;
+}
+
+.rw-dialog .rw-panel {
+  min-width: 0;
+  margin-bottom: 20px;
+}
+
+.rw-dialog .rw-section-heading {
+  margin-bottom: 14px;
+}
+
+.rw-dialog .rw-section-heading p {
+  margin-top: 4px;
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-card {
+  min-width: 0;
+  padding: 16px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 12px;
+
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-stops-layout {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(280px, 340px);
+
+  align-items: start;
+  gap: 16px;
+}
+
+.rw-dialog .rw-bottom-grid {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 2fr)
+    minmax(280px, 1fr);
+
+  align-items: start;
+  gap: 16px;
+}
+
+.rw-dialog .rw-module-placeholder {
+  padding: 14px;
+
+  border: 1px dashed #cbd7e6;
+  border-radius: 8px;
+
+  color: var(--rw-muted);
+  background: #f8fafc;
+
+  font-size: 12px;
+}
+
+/* ==========================================================
+   7. FORMULIERVELDEN
+   ========================================================== */
+
+.rw-dialog .rw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  min-width: 0;
+}
+
+.rw-dialog .rw-field-label {
+  color: var(--rw-text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rw-dialog .rw-input {
+  display: block;
+
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+
+  border: 1px solid #cbd7e6;
+  border-radius: 7px;
+
+  color: var(--rw-text);
+  background: var(--rw-surface);
+
+  font-size: 13px;
+}
+
+.rw-dialog .rw-input:hover:not(:disabled) {
+  border-color: #a9c8f7;
+}
+
+.rw-dialog .rw-input:focus {
+  border-color: var(--rw-blue);
+}
+
+.rw-dialog .rw-input:disabled {
+  color: #7a889d;
+  border-color: #e0e6ed;
+  background: #f1f4f8;
+
+  cursor: not-allowed;
+}
+
+.rw-dialog .rw-field-help {
+  color: var(--rw-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rw-dialog input[type="checkbox"] {
+  flex: 0 0 auto;
+
+  width: 16px;
+  height: 16px;
+  margin: 0;
+
+  accent-color: var(--rw-blue);
+}
+
+.rw-dialog [data-rw="route-fields"] {
+  display: grid;
+
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.rw-dialog [data-rw="route-fields"] > .rw-field-help {
+  grid-column: 1 / -1;
+}
+
+.rw-dialog [data-rw="vehicle-content"] {
+  display: grid;
+  gap: 12px;
+
+  max-width: 650px;
+}
+
+.rw-dialog .rw-driver-info {
+  display: grid;
+  gap: 6px;
+
+  margin-top: 6px;
+  padding: 14px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 9px;
+
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-driver-name {
+  color: var(--rw-text);
+  font-weight: 600;
+}
+
+/* ==========================================================
+   8. STOPLIJST EN LOCATIEKAARTEN
+   ========================================================== */
+
+.rw-dialog .rw-stops-module {
+  display: grid;
+  gap: 12px;
+}
+
+.rw-dialog .rw-stops-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rw-dialog .rw-stops-status {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-stops-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rw-dialog .rw-stop-card {
+  min-width: 0;
+  padding: 14px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 10px;
+
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-stop-header {
+  display: grid;
+
+  grid-template-columns:
+    32px
+    minmax(0, 1fr)
+    auto;
+
+  align-items: start;
+  gap: 10px;
+}
+
+.rw-dialog .rw-stop-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 32px;
+  height: 32px;
+
+  border-radius: 50%;
+
+  color: #ffffff;
+  background: var(--rw-blue);
+
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.rw-dialog .rw-stop-heading {
+  min-width: 0;
+}
+
+.rw-dialog .rw-stop-title {
+  margin-top: 2px;
+}
+
+.rw-dialog .rw-stop-address {
+  margin-top: 4px;
+
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-stop-move-buttons {
+  display: flex;
+  gap: 5px;
+}
+
+.rw-dialog .rw-stop-move-buttons .rw-button {
+  width: 32px;
+  min-height: 32px;
+  padding: 5px;
+
+  font-size: 16px;
+}
+
+.rw-dialog .rw-stop-totals {
+  margin-top: 10px;
+
+  color: var(--rw-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rw-dialog .rw-stop-timing {
+  margin-top: 5px;
+
+  color: #0752c7;
+  font-size: 12px;
+}
+
+.rw-dialog .rw-stop-unloading {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(0, 1fr)
+    auto;
+
+  align-items: end;
+  gap: 10px;
+
+  margin-top: 14px;
+  padding-top: 12px;
+
+  border-top: 1px solid #e9eef5;
+}
+
+.rw-dialog .rw-stop-unloading > .rw-field-help {
+  grid-column: 1 / -1;
+}
+
+.rw-dialog .rw-stop-orders {
+  margin-top: 12px;
+
+  border-top: 1px solid #e9eef5;
+}
+
+.rw-dialog .rw-stop-orders-summary {
+  padding: 10px 0 0;
+
+  color: var(--rw-navy);
+  font-size: 12px;
+  font-weight: 650;
+
+  cursor: pointer;
+}
+
+.rw-dialog .rw-stop-orders-summary::marker {
+  color: var(--rw-blue);
+}
+
+.rw-dialog .rw-stop-orders-content {
+  margin-top: 10px;
+
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* ==========================================================
+   9. TABELLEN
+   ========================================================== */
+
+.rw-dialog .rw-stop-orders-table,
+.rw-dialog .rw-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+
+  font-size: 12px;
+  text-align: left;
+}
+
+.rw-dialog .rw-stop-orders-table {
+  min-width: 460px;
+}
+
+.rw-dialog .rw-comparison-table {
+  min-width: 540px;
+
+  border: 1px solid var(--rw-border);
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-stop-orders-table caption,
+.rw-dialog .rw-comparison-table caption {
+  padding: 0 0 10px;
+
+  color: var(--rw-muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.rw-dialog .rw-stop-orders-table th,
+.rw-dialog .rw-stop-orders-table td,
+.rw-dialog .rw-comparison-table th,
+.rw-dialog .rw-comparison-table td {
+  padding: 10px;
+
+  border-bottom: 1px solid #e8eef5;
+  vertical-align: top;
+}
+
+.rw-dialog .rw-stop-orders-table thead th,
+.rw-dialog .rw-comparison-table thead th {
+  color: var(--rw-navy);
+  background: #f3f7fc;
+
+  font-weight: 700;
+}
+
+.rw-dialog .rw-stop-orders-table tbody th,
+.rw-dialog .rw-comparison-table tbody th {
+  color: var(--rw-text);
+  font-weight: 600;
+}
+
+.rw-dialog .rw-stop-orders-table tbody tr:last-child > *,
+.rw-dialog .rw-comparison-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.rw-dialog [data-rw="comparison"] {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+
+/* ==========================================================
+   10. INSTELLINGEN
+   ========================================================== */
+
+.rw-dialog .rw-settings-module {
+  display: grid;
+  gap: 14px;
+}
+
+.rw-dialog .rw-settings-status {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-settings-section {
+  display: grid;
+  gap: 10px;
+}
+
+.rw-dialog .rw-settings-section + .rw-settings-section {
+  padding-top: 14px;
+  border-top: 1px solid #e8eef5;
+}
+
+.rw-dialog .rw-setting-feature {
+  display: grid;
+
+  grid-template-columns:
+    minmax(0, 1fr)
+    auto;
+
+  align-items: start;
+  gap: 4px 8px;
+
+  padding: 10px 0;
+}
+
+.rw-dialog .rw-setting-feature + .rw-setting-feature {
+  border-top: 1px solid #eef2f7;
+}
+
+.rw-dialog .rw-setting-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+
+  min-width: 0;
+}
+
+.rw-dialog .rw-setting-toggle input {
+  margin-top: 2px;
+}
+
+.rw-dialog .rw-setting-toggle-label {
+  color: var(--rw-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rw-dialog .rw-setting-lock {
+  padding: 2px 6px;
+
+  border: 1px solid #e0e6ed;
+  border-radius: 5px;
+
+  color: var(--rw-muted);
+  background: #f3f6fa;
+
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.rw-dialog .rw-setting-feature > .rw-field-help {
+  grid-column: 1 / -1;
+  padding-left: 24px;
+}
+
+.rw-dialog .rw-settings-note {
+  padding: 10px 12px;
+
+  border-radius: 8px;
+
+  color: var(--rw-muted);
+  background: #f3f6fa;
+
+  font-size: 12px;
+}
+
+.rw-dialog [data-rw-slot="settings"] .rw-settings-module {
+  max-width: 800px;
+  padding: 16px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 12px;
+
+  background: var(--rw-surface);
+}
+
+/* ==========================================================
+   11. SAMENVATTING EN WAARSCHUWINGEN
+   ========================================================== */
+
+.rw-dialog .rw-summary-source {
+  margin-top: 5px;
+
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-metrics {
+  display: grid;
+
+  grid-template-columns:
+    repeat(5, minmax(0, 1fr));
+
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.rw-dialog .rw-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  min-width: 0;
+  padding: 10px;
+
+  border: 1px solid #e0e8f2;
+  border-radius: 8px;
+
+  background: #f8fbff;
+}
+
+.rw-dialog .rw-metric-label {
+  color: var(--rw-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.rw-dialog .rw-metric-value {
+  color: var(--rw-navy);
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 750;
+
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-dialog [data-rw="routing-source"] {
+  margin-top: 12px;
+
+  color: var(--rw-muted);
+  font-size: 11px;
+}
+
+.rw-dialog [data-rw="warnings"] {
+  display: grid;
+  gap: 10px;
+
+  margin-top: 12px;
+}
+
+/* ==========================================================
+   12. KAART
+   ========================================================== */
+
+.rw-dialog .rw-map-slot {
+  min-width: 0;
+}
+
+.rw-dialog .rw-map-module {
+  display: grid;
+  gap: 10px;
+}
+
+.rw-dialog .rw-map-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+
+  padding: 10px 12px;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 9px;
+
+  background: var(--rw-surface);
+}
+
+.rw-dialog .rw-map-toolbar > .rw-button {
+  margin-left: auto;
+}
+
+.rw-dialog .rw-map-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+
+  color: var(--rw-text);
+  font-size: 12px;
+  font-weight: 600;
+
+  cursor: pointer;
+}
+
+.rw-dialog .rw-map-status {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-map-canvas {
+  position: relative;
+  z-index: 0;
+
+  min-width: 0;
+
+  border: 1px solid var(--rw-border);
+  border-radius: 12px;
+
+  background: #e8eff6;
+
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.rw-dialog .rw-map-marker-icon {
+  border: 0;
+  background: transparent;
+}
+
+.rw-dialog .rw-map-marker {
+  box-shadow: 0 2px 6px rgb(15 23 42 / 24%);
+}
+
+.rw-dialog .rw-map-popup {
+  display: grid;
+  gap: 6px;
+
+  min-width: 160px;
+  max-width: 260px;
+
+  color: var(--rw-text);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.rw-dialog .rw-map-popup-title {
+  color: var(--rw-navy);
+  font-size: 13px;
+}
+
+.rw-dialog .rw-map-canvas .leaflet-popup-content {
+  margin: 12px 14px;
+}
+
+.rw-dialog .rw-map-canvas .leaflet-popup-content p {
+  margin: 0;
+}
+
+.rw-dialog .rw-map-canvas .leaflet-control-attribution {
+  font-size: 10px;
+}
+
+/* ==========================================================
+   13. SUGGESTIES
+   ========================================================== */
+
+.rw-dialog .rw-suggestions-module {
+  display: grid;
+  gap: 16px;
+}
+
+.rw-dialog .rw-suggestions-status {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-suggestions-metrics {
+  display: grid;
+
+  grid-template-columns:
+    repeat(5, minmax(0, 1fr));
+
+  gap: 10px;
+  margin: 14px 0 10px;
+}
+
+.rw-dialog .rw-suggestions-metric {
+  min-width: 0;
+  padding: 12px;
+
+  border: 1px solid #e0e8f2;
+  border-radius: 8px;
+
+  background: #f8fbff;
+}
+
+.rw-dialog .rw-suggestions-metric-label {
+  color: var(--rw-muted);
+  font-size: 11px;
+}
+
+.rw-dialog .rw-suggestions-metric-value {
+  margin: 6px 0 0;
+
+  color: var(--rw-navy);
+  font-size: 16px;
+  font-weight: 750;
+
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-dialog .rw-suggestions-assessment > .rw-field-help,
+.rw-dialog .rw-suggestions-optimisation > .rw-field-help {
+  margin-top: 6px;
+}
+
+.rw-dialog .rw-suggestions-messages {
+  display: grid;
+  gap: 10px;
+
+  margin-top: 14px;
+}
+
+.rw-dialog .rw-suggestions-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  margin-top: 14px;
+}
+
+.rw-dialog .rw-suggestions-optimisation > .rw-button,
+.rw-dialog .rw-suggestions-alternatives > .rw-button {
+  margin-top: 14px;
+}
+
+.rw-dialog .rw-suggestions-alternatives-content {
+  margin-top: 12px;
+}
+
+.rw-dialog .rw-suggestions-note {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+/* ==========================================================
+   14. ONDERSTE ACTIEBALK
+   ========================================================== */
+
+.rw-dialog .rw-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 100;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+
+  padding: 14px 24px;
+
+  border-top: 1px solid var(--rw-border);
+  background: var(--rw-surface);
+
+  box-shadow: 0 -4px 16px rgb(15 23 42 / 4%);
+}
+
+.rw-dialog [data-rw="footer-status"] {
+  color: var(--rw-muted);
+  font-size: 12px;
+}
+
+.rw-dialog .rw-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ==========================================================
+   15. SMALLERE DESKTOP EN TABLET
+   ========================================================== */
+
+@media (max-width: 1150px) {
+  .rw-dialog .rw-metrics {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+
+  .rw-dialog .rw-suggestions-metrics {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+
+  .rw-dialog .rw-stop-unloading {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .rw-dialog .rw-stop-unloading > .rw-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 900px) {
+  .rw-dialog .rw-stops-layout,
+  .rw-dialog .rw-bottom-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rw-dialog .rw-header {
+    padding: 18px 18px 14px;
+  }
+
+  .rw-dialog .rw-tabs {
+    padding: 10px 18px;
+  }
+
+  .rw-dialog .rw-notices {
+    padding: 12px 18px 0;
+  }
+
+  .rw-dialog .rw-main {
+    padding: 18px;
+  }
+
+  .rw-dialog .rw-footer {
+    align-items: flex-start;
+    flex-direction: column;
+
+    padding: 12px 18px;
+  }
+
+  .rw-dialog .rw-footer-actions {
+    width: 100%;
+  }
+}
+
+/* ==========================================================
+   16. MOBIEL
+   ========================================================== */
+
+@media (max-width: 600px) {
+  .rw-dialog {
+    width: 100vw !important;
+    max-width: 100vw !important;
+
+    height: 100vh !important;
+    max-height: 100vh !important;
+
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+
+    margin: 0;
+    border-radius: 0 !important;
+
+    font-size: 13px;
+  }
+
+  .rw-dialog h2 {
+    font-size: 20px;
+  }
+
+  .rw-dialog .rw-header {
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .rw-dialog .rw-description {
+    font-size: 11px;
+  }
+
+  .rw-dialog .rw-tabs {
+    gap: 4px;
+    padding: 9px 14px;
+  }
+
+  .rw-dialog .rw-tab {
+    flex: 0 0 auto;
+
+    min-height: 36px;
+    padding: 8px 11px;
+  }
+
+  .rw-dialog .rw-notices {
+    padding: 10px 14px 0;
+  }
+
+  .rw-dialog .rw-main {
+    padding: 14px;
+  }
+
+  .rw-dialog .rw-card {
+    padding: 12px;
+  }
+
+  .rw-dialog .rw-metrics,
+  .rw-dialog .rw-suggestions-metrics {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .rw-dialog [data-rw="route-fields"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rw-dialog .rw-stop-card {
+    padding: 12px;
+  }
+
+  .rw-dialog .rw-stop-header {
+    grid-template-columns:
+      28px
+      minmax(0, 1fr)
+      auto;
+
+    gap: 8px;
+  }
+
+  .rw-dialog .rw-stop-number {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .rw-dialog .rw-stop-move-buttons {
+    flex-direction: column;
+  }
+
+  .rw-dialog .rw-stop-move-buttons .rw-button {
+    width: 28px;
+    min-height: 28px;
+  }
+
+  .rw-dialog .rw-stop-unloading {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rw-dialog .rw-setting-feature {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rw-dialog .rw-setting-lock {
+    justify-self: start;
+    margin-left: 24px;
+  }
+
+  .rw-dialog .rw-map-toolbar {
+    gap: 10px;
+  }
+
+  .rw-dialog .rw-map-toolbar > .rw-button {
+    margin-left: 0;
+  }
+
+  .rw-dialog .rw-map-canvas {
+    min-height: 300px !important;
+  }
+
+  .rw-dialog .rw-footer {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .rw-dialog .rw-footer-actions {
+    display: grid;
+
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+
+    gap: 8px;
+  }
+
+  .rw-dialog .rw-footer-actions .rw-button {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+/* ==========================================================
+   17. VERMINDERDE BEWEGING
+   ========================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .rw-dialog *,
+  .rw-dialog *::before,
+  .rw-dialog *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR ROUTE WORKSPACE — BRANDED HEADER
+   ========================================================== */
+
+
+/* ==========================================================
+   VEYNOR ROUTE WORKSPACE — COMPACT BRANDED HEADER
+   Original WebP background retained
+   ========================================================== */
+
+.rw-dialog .rw-header.rw-header-compact {
+  position: relative;
+  top: auto;
+  z-index: 20;
+
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+
+
+width: 100%;
+height: 155px;
+min-height: 155px;
+flex-shrink: 0;
+padding: 16px 58px 16px 32%;
+
+
+  border: 0;
+  border-bottom: 2px solid #0866ff;
+  border-radius: 0;
+
+  background-color: #061a3b;
+  background-image:
+    url('/assets/images/route-workspace-header.webp');
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-position: center;
+
+  color: #ffffff;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Logo is already part of the background image. */
+
+
+/* ==========================================================
+   VEYNOR HEADER — TRANSPARENT LOGO
+   ========================================================== */
+
+.rw-dialog .rw-header-compact > .rw-header-brand {
+  position: absolute;
+  top: 50%;
+  left: 2.5%;
+  transform: translateY(-50%);
+
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+
+  width: 27%;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+
+  background: transparent;
+  border: 0;
+  z-index: 3;
+}
+
+.rw-dialog .rw-header-compact .rw-header-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: left center;
+}
+
+
+/* Main dynamic content */
+
+.rw-dialog .rw-header-compact .rw-header-content {
+  position: relative;
+  z-index: 2;
+
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+
+  width: 100%;
+  min-width: 0;
+  max-width: 760px;
+
+  padding: 0;
+  margin: 0;
+  gap: 12px;
+
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Title and status */
+
+.rw-dialog .rw-header-compact .rw-header-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.rw-dialog .rw-header-compact h2 {
+  margin: 0;
+  color: #ffffff;
+  font-size: clamp(19px, 1.65vw, 26px);
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.4px;
+}
+
+.rw-dialog .rw-header-compact .rw-badge {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 4px 10px;
+  border: 1px solid rgba(147,197,253,.4);
+  border-radius: 999px;
+
+  background: #0866ff;
+  color: #ffffff;
+
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.rw-dialog .rw-header-compact
+.rw-badge[data-status="stale"] {
+  background: #a85d00;
+}
+
+.rw-dialog .rw-header-compact.rw-header-invalid
+.rw-badge {
+  box-shadow: 0 0 0 2px rgba(239,68,68,.6);
+}
+
+/* Route number and details on one line */
+
+.rw-dialog .rw-header-compact
+.rw-header-details-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 0;
+
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.rw-dialog .rw-header-compact .rw-route-label {
+  display: inline-block;
+  margin: 0;
+  padding: 0 14px 0 0;
+
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.rw-dialog .rw-header-compact .rw-header-detail {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+
+  min-width: 0;
+  padding: 0 12px;
+  margin: 0;
+
+  border-left: 1px solid rgba(255,255,255,.35);
+}
+
+.rw-dialog .rw-header-compact
+.rw-header-detail + .rw-header-detail {
+  border-left: 1px solid rgba(255,255,255,.35);
+}
+
+.rw-dialog .rw-header-compact .rw-header-detail span {
+  color: #b8c9e4;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.rw-dialog .rw-header-compact
+.rw-header-detail span::after {
+  content: ":";
+}
+
+.rw-dialog .rw-header-compact .rw-header-detail strong {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: normal;
+}
+
+/* Hide descriptive sentence to save height */
+
+.rw-dialog .rw-header-compact .rw-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Close button */
+
+.rw-dialog .rw-header-compact .rw-header-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 5;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 50%;
+
+  background: rgba(4,18,43,.65);
+  color: #ffffff;
+
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.rw-dialog .rw-header-compact
+.rw-header-close:hover {
+  background: #0866ff;
+  border-color: #ffffff;
+}
+
+/* ==========================================================
+   RESPONSIVE HEADER
+   ========================================================== */
+
+@media (max-width: 1200px) {
+  .rw-dialog .rw-header.rw-header-compact {
+    padding-left: 35%;
+    min-height: 125px;
+  }
+
+  .rw-dialog .rw-header-compact .rw-header-detail {
+    padding: 0 8px;
+  }
+}
+
+
+@media (max-width: 900px) {
+  .rw-dialog .rw-header.rw-header-compact {
+    height: 155px;
+    min-height: 155px;
+    padding-left: 35%;
+  }
+}
+
+/* ==========================================================
+   VEYNOR ROUTE WORKSPACE
+   HEADER ZONDER WITTE RANDEN OF AFGERONDE HOEKEN
+   ========================================================== */
+
+.rw-dialog {
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+
+.rw-dialog .rw-shell {
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.rw-dialog .rw-header.rw-header-compact {
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-top: 0 !important;
+  border-left: 0 !important;
+  border-right: 0 !important;
+}
+
+
+/* ==========================================================
+   18. VEYNOR ROUTE WORKSPACE — PREMIUM KPI CARDS
+   ========================================================== */
+
+.rw-dialog .rw-route-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 14px;
+}
+
+.rw-dialog .rw-route-kpis .rw-route-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+
+  min-width: 0;
+  min-height: 150px;
+  padding: 16px 18px;
+
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+  background: #ffffff;
+
+  box-shadow: 0 3px 12px rgba(15, 35, 65, 0.045);
+
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.rw-dialog .rw-route-kpis .rw-route-kpi:hover {
+  transform: translateY(-2px);
+  border-color: #b9d2f5;
+  box-shadow: 0 8px 22px rgba(15, 35, 65, 0.09);
+}
+
+/* Top row: icon and status */
+
+.rw-dialog .rw-route-kpi .rw-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 39px;
+  margin-bottom: 2px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+
+  border: 1px solid #dfebff;
+  border-radius: 11px;
+
+  background: linear-gradient(
+    145deg,
+    #f2f7ff,
+    #e8f1ff
+  );
+
+  color: #1267ff;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-icon svg {
+  display: block;
+  width: 23px;
+  height: 23px;
+}
+
+/* Status label */
+
+.rw-dialog .rw-route-kpi .rw-kpi-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+
+  max-width: 65%;
+  padding: 4px 8px;
+
+  border-radius: 6px;
+  background: #f1f5fa;
+  color: #58708d;
+
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: right;
+}
+
+/* Labels and figures */
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-label {
+  display: block;
+  margin-top: 3px;
+
+  color: #60718c;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.45px;
+  text-transform: uppercase;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-value {
+  display: block;
+
+  color: #0a2349;
+  font-size: clamp(22px, 2vw, 30px);
+  font-weight: 850;
+  line-height: 1.12;
+  letter-spacing: -0.6px;
+
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-detail {
+  display: block;
+  margin-top: auto;
+
+  color: #63748f;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* Vehicle fill bar */
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-fill-track {
+  position: relative;
+  width: 100%;
+  height: 10px;
+  min-height: 10px;
+
+  margin-top: 4px;
+  overflow: hidden;
+
+  border-radius: 999px;
+  background: #e7edf6;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-fill-bar {
+  height: 100%;
+  width: 0%;
+
+  border-radius: 999px;
+  background: #1267ff;
+
+  transition: width 0.3s ease;
+}
+
+.rw-dialog .rw-route-kpi .rw-kpi-fill-target {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #10233f;
+  z-index: 2;
+}
+
+/* Dynamic fill statuses */
+
+.rw-dialog .rw-route-kpi[data-fill-state="danger"] {
+  border-color: #f3c0bc;
+}
+
+.rw-dialog
+.rw-route-kpi[data-fill-state="danger"]
+.rw-kpi-status {
+  background: #fff0ef;
+  color: #b42318;
+}
+
+.rw-dialog
+.rw-route-kpi[data-fill-state="success"]
+.rw-kpi-status {
+  background: #e9fbf0;
+  color: #15803d;
+}
+
+.rw-dialog
+.rw-route-kpi[data-fill-state="normal"]
+.rw-kpi-status {
+  background: #eef5ff;
+  color: #0752c7;
+}
+
+/* Previous calculation */
+
+.rw-dialog .rw-route-kpis .rw-route-kpi-stale {
+  border-style: dashed;
+  border-color: #e6bc72;
+}
+
+/* Responsive */
+
+@media (max-width: 1050px) {
+  .rw-dialog .rw-route-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .rw-dialog .rw-route-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rw-dialog .rw-route-kpi,
+  .rw-dialog .rw-route-kpi-fill-bar {
+    transition: none;
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR — COMPACT KPI REFINEMENT
+   ========================================================== */
+
+.rw-dialog .rw-route-kpis {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rw-dialog .rw-route-kpis .rw-route-kpi {
+  min-height: 112px;
+  padding: 11px 14px;
+  gap: 4px;
+  border-radius: 10px;
+}
+
+.rw-dialog .rw-route-kpi .rw-kpi-top {
+  min-height: 30px;
+  margin-bottom: 0;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-icon {
+  flex-basis: 31px;
+  width: 31px;
+  height: 31px;
+  border-radius: 8px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-label {
+  margin-top: 1px;
+  font-size: 10px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-value {
+  font-size: 25px;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-detail {
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.rw-dialog .rw-route-kpi .rw-kpi-status {
+  font-size: 9px;
+  padding: 3px 6px;
+}
+
+.rw-dialog .rw-route-kpi .rw-route-kpi-fill-track {
+  height: 7px;
+  min-height: 7px;
+  margin-top: 2px;
+}
+
+/* Subtle interaction without excessive animation */
+
+.rw-dialog .rw-route-kpis .rw-route-kpi:hover {
+  transform: translateY(-1px);
+  border-color: #a9c8f7;
+  box-shadow: 0 5px 15px rgba(15, 35, 65, 0.08);
+}
+
+
+
+/* ==========================================================
+   19. VEYNOR — INTERACTIVE MAP TOOLBAR
+   ========================================================== */
+
+.rw-dialog .rw-map-module .rw-map-toolbar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 9px;
+
+  width: 100%;
+  padding: 10px 12px;
+
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  background: #f7f9fd;
+}
+
+/* Map display controls */
+
+.rw-dialog .rw-map-toolbar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  min-width: 0;
+}
+
+/* Map layer dropdown */
+
+.rw-dialog .rw-map-toolbar .rw-map-layer-select {
+  display: block;
+  flex: none;
+  width: 160px;
+  height: 35px;
+  min-height: 35px;
+  max-height: 35px;
+  padding: 6px 28px 6px 11px;
+  align-self: flex-start;
+}
+
+.rw-dialog .rw-map-toolbar .rw-map-layer-select:hover {
+  border-color: #9bbff5;
+}
+
+/* Checkbox controls as compact selectable chips */
+
+.rw-dialog .rw-map-toolbar .rw-map-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  min-height: 35px;
+  padding: 6px 11px;
+
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+
+  background: #ffffff;
+  color: #173453;
+
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.rw-dialog .rw-map-toolbar .rw-map-toggle:hover {
+  background: #eef5ff;
+  border-color: #aacbff;
+}
+
+.rw-dialog .rw-map-toolbar .rw-map-toggle:has(input:checked) {
+  background: #edf5ff;
+  border-color: #b8d3ff;
+  color: #0752c7;
+}
+
+.rw-dialog .rw-map-toolbar .rw-map-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #1267ff;
+  cursor: pointer;
+}
+
+.rw-dialog .rw-map-toolbar .rw-map-toggle:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Separate route actions */
+
+.rw-dialog .rw-map-toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+
+  width: 100%;
+  padding-top: 9px;
+
+  border-top: 1px solid #e3eaf4;
+}
+
+/* Action buttons */
+
+.rw-dialog .rw-map-toolbar-actions .rw-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 11px;
+
+  border: 1px solid #d7e3f2;
+  border-radius: 8px;
+
+  background: #ffffff;
+  color: #123052;
+
+  font-size: 11.5px;
+  font-weight: 750;
+  white-space: nowrap;
+
+  box-shadow: 0 1px 2px rgba(15,35,65,0.03);
+}
+
+.rw-dialog .rw-map-toolbar-actions
+.rw-button:not(:disabled):hover {
+  background: #edf5ff;
+  border-color: #9ec4ff;
+  color: #0752c7;
+}
+
+/* Primary route optimisation action */
+
+.rw-dialog .rw-map-toolbar-actions
+.rw-button-primary:not(:disabled) {
+  color: #ffffff;
+  border-color: #1267ff;
+  background: linear-gradient(
+    180deg,
+    #176eff,
+    #0756df
+  );
+}
+
+.rw-dialog .rw-map-toolbar-actions
+.rw-button-primary:not(:disabled):hover {
+  color: #ffffff;
+  background: #004fd4;
+}
+
+/* Disabled controls */
+
+.rw-dialog .rw-map-toolbar-actions .rw-button:disabled {
+  color: #8b99ac;
+  background: #eef2f7;
+  border-color: #e1e7ef;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+/* Routing status below toolbar */
+
+.rw-dialog .rw-map-module .rw-map-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  margin: 0;
+  padding: 3px 2px;
+
+  color: #63748f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* Responsive toolbar */
+
+@media (max-width: 700px) {
+  .rw-dialog .rw-map-toolbar-controls,
+  .rw-dialog .rw-map-toolbar-actions {
+    gap: 6px;
+  }
+
+  .rw-dialog .rw-map-toolbar .rw-map-layer-select {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .rw-dialog .rw-map-toolbar .rw-map-toggle {
+    flex: 1 1 auto;
+  }
+}
+
+
+/* VEYNOR MAP — GROUPED CONTROLS */
+
+.rw-dialog .rw-map-control-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.rw-dialog .rw-map-control-label {
+  color: #60718c;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.rw-dialog .rw-map-toggle-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.rw-dialog .rw-map-toolbar-controls {
+  align-items: flex-end;
+  gap: 16px;
+}
+
+.rw-dialog .rw-map-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.rw-dialog .rw-map-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rw-dialog .rw-map-button-icon svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+

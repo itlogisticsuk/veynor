@@ -1,3 +1,4 @@
+
 :root {
   --bg: #f3f6fb;
   --surface: #ffffff;
@@ -101,9 +102,22 @@ body.sidebar-collapsed .app-shell {
   gap: 14px;
   color: #fff;
   background:
-    radial-gradient(circle at 38% 0%, rgba(56, 189, 248, 0.22), transparent 32%),
-    radial-gradient(circle at 0% 48%, rgba(18, 103, 255, 0.16), transparent 34%),
-    linear-gradient(180deg, var(--sidebar) 0%, var(--sidebar-2) 48%, var(--sidebar-3) 100%);
+    radial-gradient(
+      circle at 38% 0%,
+      rgba(56, 189, 248, 0.22),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 0% 48%,
+      rgba(18, 103, 255, 0.16),
+      transparent 34%
+    ),
+    linear-gradient(
+      180deg,
+      var(--sidebar) 0%,
+      var(--sidebar-2) 48%,
+      var(--sidebar-3) 100%
+    );
   border-right: 1px solid rgba(148, 163, 184, 0.22);
   z-index: 20;
 }
@@ -149,7 +163,7 @@ body.sidebar-collapsed .app-shell {
     inset 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
-/* SIDEBAR TOGGLE - OP DE VERTICALE LIJN */
+/* SIDEBAR TOGGLE */
 
 .sidebar-toggle {
   position: fixed;
@@ -161,7 +175,11 @@ body.sidebar-collapsed .app-shell {
   border-radius: 999px;
   border: 1px solid rgba(125, 211, 252, 0.35);
   background:
-    radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.28), transparent 32%),
+    radial-gradient(
+      circle at 35% 25%,
+      rgba(255, 255, 255, 0.28),
+      transparent 32%
+    ),
     linear-gradient(135deg, #1267ff, #38bdf8);
   color: #fff;
   display: flex;
@@ -215,7 +233,11 @@ body.sidebar-collapsed .sidebar-toggle-icon {
 .sidebar-secure-card {
   border: 1px solid rgba(125, 211, 252, 0.16);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.035));
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.075),
+      rgba(255, 255, 255, 0.035)
+    );
   border-radius: 18px;
   padding: 14px;
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.20);
@@ -275,7 +297,12 @@ body.sidebar-collapsed .sidebar-toggle-icon {
 
 .nav a.active {
   color: #fff;
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.34), rgba(59, 130, 246, 0.18));
+  background:
+    linear-gradient(
+      135deg,
+      rgba(37, 99, 235, 0.34),
+      rgba(59, 130, 246, 0.18)
+    );
   border-color: rgba(96, 165, 250, 0.24);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
@@ -321,7 +348,12 @@ body.sidebar-collapsed .sidebar-toggle-icon {
 .veynor-wordmark-bottom {
   width: 122px;
   border-radius: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .03));
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, .07),
+      rgba(255, 255, 255, .03)
+    );
   padding: 12px 18px;
   backdrop-filter: blur(14px);
   box-shadow:
@@ -445,7 +477,7 @@ body.sidebar-collapsed .nav a:hover {
   line-height: 1.5;
 }
 
-/* GENERIEKE TABS - ZELFDE LOOK ALS SETTINGS */
+/* GENERIC TABS */
 
 .page-tabs,
 .settings-tabs,
@@ -507,8 +539,17 @@ body.sidebar-collapsed .nav a:hover {
 .billing-tab.active,
 .billing-tab.is-active {
   background:
-    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, .38), transparent 28%),
-    linear-gradient(135deg, #07162d 0%, #1267ff 54%, #38bdf8 100%) !important;
+    radial-gradient(
+      circle at 18% 20%,
+      rgba(255, 255, 255, .38),
+      transparent 28%
+    ),
+    linear-gradient(
+      135deg,
+      #07162d 0%,
+      #1267ff 54%,
+      #38bdf8 100%
+    ) !important;
   color: #ffffff !important;
   border-color: rgba(56, 189, 248, 0.55) !important;
   box-shadow:
@@ -535,6 +576,7 @@ body.sidebar-collapsed .nav a:hover {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.78);
 }
+
 
 /* BUTTONS */
 
@@ -767,7 +809,11 @@ body.sidebar-collapsed .nav a:hover {
 
 .billing-row-paid,
 tr.billing-row-paid {
-  background: linear-gradient(90deg, rgba(236, 253, 245, 0.72), #fff 34%);
+  background: linear-gradient(
+    90deg,
+    rgba(236, 253, 245, 0.72),
+    #fff 34%
+  );
 }
 
 .billing-payment-note {
@@ -926,3 +972,143 @@ tr.billing-row-paid {
     font-size: 12px;
   }
 }
+
+/* ==========================================================
+   VEYNOR — REFINED TYPOGRAPHY v1.0
+   Lighter and more consistent application typography
+   ========================================================== */
+
+/* GLOBAL */
+
+html,
+body {
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* NAVIGATION */
+
+.nav a {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.nav a.active {
+  font-weight: 650;
+}
+
+.nav-group-label {
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  color: rgba(219, 234, 254, 0.55);
+}
+
+/* PAGE TITLES */
+
+.page-title h1 {
+  font-weight: 750;
+  letter-spacing: -0.025em;
+}
+
+/* SECTION HEADINGS */
+
+.table-head h2,
+.card-head h2,
+.card-head h3,
+.detail-head h3,
+.section-title {
+  font-weight: 700;
+}
+
+/* TABS */
+
+.page-tab,
+.settings-tab,
+.tab-btn,
+.tab-button,
+.billing-tab {
+  font-weight: 600;
+}
+
+/* BUTTONS */
+
+.btn,
+.mini-btn,
+.planner-btn {
+  font-weight: 600;
+}
+
+/* FORMS */
+
+.field label {
+  font-weight: 600;
+}
+
+/* TABLE HEADERS */
+
+.table th,
+.data-table th,
+.occ-table th,
+.matching-table th,
+.orders-table th {
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+/* KPI LABELS */
+
+.kpi-label,
+.dashboard-kpi-label,
+.matching-kpi-label,
+.occ-kpi-label {
+  font-weight: 650;
+}
+
+/* KPI VALUES */
+
+.kpi-value,
+.dashboard-kpi-value,
+.matching-kpi-value,
+.occ-kpi-value {
+  font-weight: 750;
+}
+
+/* STATUS INDICATORS */
+
+.status-pill,
+.pill,
+.soft-badge,
+.soft-pill {
+  font-weight: 600;
+}
+
+/* NOTIFICATIONS */
+
+.notice,
+.billing-payment-note {
+  font-weight: 600;
+}
+
+/* SHARED LAYOUT ELEMENTS */
+
+.system-status-top,
+.system-status-grid strong,
+.sidebar-logout-btn {
+  font-weight: 600;
+}
+
+.global-account-text strong {
+  font-weight: 650;
+}
+
+.global-account-text small {
+  font-weight: 500;
+}
+
+/* ==========================================================
+   END VEYNOR THEME
+   ========================================================== */
+

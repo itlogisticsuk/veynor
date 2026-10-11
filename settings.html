@@ -103,6 +103,1099 @@
     @media(max-width:760px){
       .summary-grid,.field-grid,.field-grid.two,.field-grid.three,.vehicle-grid,.vehicle-head,.tenant-flow{grid-template-columns:1fr}
     }
+
+
+/* Pricing zones layout */
+.pricing-zone-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.pricing-zone-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: zoom-in;
+  transition: box-shadow .2s, transform .2s;
+}
+
+.pricing-zone-image:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .12);
+  transform: translateY(-2px);
+}
+
+.pricing-zone-settings {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+/* Image popup */
+.pricing-image-dialog {
+  border: none;
+  padding: 14px;
+  border-radius: 14px;
+  background: white;
+  width: min(95vw, 1150px);
+  max-height: 94vh;
+  overflow: auto;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, .25);
+}
+
+.pricing-image-dialog::backdrop {
+  background: rgba(5, 15, 35, .78);
+}
+
+.pricing-image-dialog img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(94vh - 70px);
+  width: auto;
+  height: auto;
+  margin: auto;
+  object-fit: contain;
+}
+
+.pricing-dialog-close {
+  display: block;
+  margin: 0 0 10px auto;
+  padding: 6px 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 18px;
+}
+
+@media (max-width: 950px) {
+  .pricing-zone-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR TRANSPORT — SUBTABS
+   ========================================================== */
+
+.transport-subtabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+
+  background: #f1f5fb;
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+}
+
+.transport-subtab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+
+  min-height: 37px;
+  padding: 8px 14px;
+
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+
+  background: #ffffff;
+  color: #123052;
+
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.transport-subtab:hover:not(.active) {
+  background: #edf5ff;
+  border-color: #a9c8f7;
+}
+
+.transport-subtab.active {
+  color: #ffffff;
+  border-color: #1267ff;
+
+  background: linear-gradient(
+    180deg,
+    #123052 0%,
+    #1267ff 70%,
+    #39a2ff 100%
+  );
+
+  box-shadow:
+    0 3px 9px rgba(18,103,255,0.22),
+    0 7px 16px rgba(18,103,255,0.12);
+}
+
+.transport-subtab:focus-visible {
+  outline: 2px solid #1267ff;
+  outline-offset: 2px;
+}
+
+/* Only show the selected Transport section */
+
+#tab-transport .transport-subpanel {
+  display: none;
+}
+
+#tab-transport .transport-subpanel.active {
+  display: grid;
+}
+
+/* Keep existing card styling */
+
+#tab-transport .transport-subpanel.settings-card {
+  gap: 14px;
+  align-content: start;
+}
+
+/* Emission zone preparation */
+
+.transport-zone-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.transport-zone-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  padding: 12px 14px;
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.transport-zone-name {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #123052;
+}
+
+.transport-zone-description {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+@media (max-width: 760px) {
+  .transport-subtabs {
+    gap: 6px;
+  }
+
+  .transport-subtab {
+    flex: 1 1 auto;
+  }
+
+  .transport-zone-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* VEYNOR EMISSION ZONE ACCORDIONS */
+
+
+/* ==========================================================
+   VEYNOR — EMISSION ZONES INTERACTIVE ACCORDIONS
+   ========================================================== */
+
+.emission-accordion-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+
+/* Main accordion card */
+
+.emission-zone-accordion {
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+
+.emission-zone-accordion:hover {
+  border-color: #a9c8f7;
+  box-shadow: 0 3px 12px rgba(18, 48, 82, .06);
+}
+
+.emission-zone-accordion[open] {
+  border-color: #a9c8f7;
+  box-shadow: 0 5px 18px rgba(18, 103, 255, .07);
+}
+
+/* Accordion header */
+
+.emission-zone-accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  cursor: pointer;
+  list-style: none;
+  color: #123052;
+  min-height: 62px;
+  transition: background .2s ease;
+}
+
+.emission-zone-accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.emission-zone-accordion summary::after {
+  display: none;
+}
+
+.emission-zone-accordion summary:hover {
+  background: #f5f9ff;
+}
+
+.emission-zone-accordion[open] summary {
+  background: #f1f6ff;
+  border-bottom: 1px solid #dce5ef;
+}
+
+/* Left header content */
+
+.emission-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.emission-header-icon {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: #eaf2ff;
+  color: #1267ff;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.emission-header-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.emission-header-text strong {
+  font-size: 13px;
+  font-weight: 900;
+  color: #123052;
+}
+
+.emission-header-text small {
+  font-size: 10.5px;
+  color: #64748b;
+}
+
+/* Right header content */
+
+.emission-header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.emission-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.emission-status-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #16a34a;
+  margin-right: 7px;
+}
+
+.emission-alert-count {
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.emission-chevron {
+  font-size: 22px;
+  line-height: 1;
+  color: #64748b;
+  transition: transform .2s ease;
+}
+
+.emission-zone-accordion[open] .emission-chevron {
+  transform: rotate(180deg);
+}
+
+/* Expanded content */
+
+.emission-zone-content {
+  padding: 16px;
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr)
+    minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+/* Map panel */
+
+.emission-map-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+}
+
+.emission-zone-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
+  object-fit: contain;
+  background: #f5f8fc;
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  cursor: zoom-in;
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+
+.emission-zone-image:hover {
+  box-shadow: 0 8px 22px rgba(18, 48, 82, .12);
+  transform: translateY(-2px);
+}
+
+.emission-zone-image:focus-visible {
+  outline: 2px solid #1267ff;
+  outline-offset: 3px;
+}
+
+.emission-enlarge-button {
+  justify-self: end;
+  padding: 8px 12px;
+  border-color: #cbdcf4;
+  color: #1267ff;
+  background: #f8fbff;
+}
+
+.emission-enlarge-button:hover {
+  background: #eaf2ff;
+}
+
+/* Settings panel */
+
+.emission-settings-panel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-width: 0;
+}
+
+.emission-settings-heading {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.emission-settings-heading strong {
+  font-size: 13px;
+  color: #123052;
+}
+
+.emission-zone-options {
+  display: grid;
+  gap: 9px;
+}
+
+.emission-zone-option {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color .2s ease, background .2s ease;
+}
+
+.emission-zone-option:hover {
+  border-color: #a9c8f7;
+  background: #f8fbff;
+}
+
+.emission-zone-option strong {
+  font-size: 12px;
+  color: #123052;
+}
+
+.emission-zone-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #1267ff;
+  cursor: pointer;
+}
+
+/* Route detection information */
+
+.emission-info-panel {
+  padding: 13px 14px;
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  background: #f5f8fc;
+}
+
+.emission-info-panel strong {
+  font-size: 12px;
+  color: #123052;
+}
+
+.emission-info-panel p {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #64748b;
+}
+
+
+/* ==========================================================
+   VEYNOR — COMPACT UK EMISSION ZONES OVERVIEW
+   ========================================================== */
+
+.emission-overview {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+  padding-top: 18px;
+  border-top: 1px solid #dce5ef;
+}
+
+/* Compact overview card */
+
+.emission-overview-card {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 14px;
+  background: #ffffff;
+  border: 1px solid #dce5ef;
+  border-radius: 13px;
+  transition:
+    border-color .2s ease,
+    box-shadow .2s ease;
+}
+
+.emission-overview-card:hover {
+  border-color: #a9c8f7;
+  box-shadow: 0 5px 18px rgba(18, 103, 255, .07);
+}
+
+/* Map thumbnail */
+
+.emission-overview-thumbnail {
+  display: block;
+  width: 100%;
+  height: 155px;
+  object-fit: cover;
+  object-position: center;
+  border: 1px solid #dce5ef;
+  border-radius: 10px;
+  background: #f5f8fc;
+  cursor: zoom-in;
+  transition:
+    transform .2s ease,
+    box-shadow .2s ease;
+}
+
+.emission-overview-thumbnail:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(18, 48, 82, .12);
+}
+
+.emission-overview-thumbnail:focus-visible {
+  outline: 2px solid #1267ff;
+  outline-offset: 3px;
+}
+
+/* Right-hand content */
+
+.emission-overview-details {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.emission-overview-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.emission-overview-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  background: #eaf2ff;
+  color: #1267ff;
+  border-radius: 11px;
+  font-size: 23px;
+  font-weight: 900;
+}
+
+.emission-overview-heading h3 {
+  margin: 0;
+  color: #123052;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.emission-overview-heading p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+/* Description */
+
+.emission-overview-description {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Bottom row */
+
+.emission-overview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.emission-overview-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  font-size: 10.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.emission-overview-footer .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* ==========================================================
+   RESPONSIVE — TABLET
+   ========================================================== */
+
+@media (max-width: 900px) {
+
+  .emission-zone-content {
+    grid-template-columns: 1fr;
+  }
+
+  .emission-header-meta {
+    gap: 8px;
+  }
+
+  .emission-overview-card {
+    grid-template-columns: 200px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .emission-overview-thumbnail {
+    height: 145px;
+  }
+}
+
+/* ==========================================================
+   RESPONSIVE — MOBILE
+   ========================================================== */
+
+@media (max-width: 600px) {
+
+  .emission-zone-accordion summary {
+    padding: 12px;
+  }
+
+  .emission-header-text strong {
+    font-size: 12px;
+  }
+
+  .emission-header-text small {
+    font-size: 10px;
+  }
+
+  .emission-status-pill {
+    padding: 4px 7px;
+  }
+
+  .emission-alert-count {
+    display: none;
+  }
+
+  .emission-zone-content {
+    padding: 12px;
+  }
+
+  .emission-overview-card {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 12px;
+  }
+
+  .emission-overview-thumbnail {
+    height: 180px;
+    object-fit: contain;
+  }
+
+  .emission-overview-heading h3 {
+    font-size: 14px;
+  }
+
+  .emission-overview-footer {
+    align-items: stretch;
+  }
+
+  .emission-overview-footer .btn {
+    width: 100%;
+  }
+}
+
+
+/* ==========================================================
+   VEYNOR — PRODUCT OWNERS SETTINGS V2
+   ========================================================== */
+
+#tab-customers {
+  gap: 0;
+}
+
+#tab-customers .settings-card {
+  min-width: 0;
+}
+
+#tab-customers .product-owner-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+#tab-customers .owner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #e0e8f3;
+  border-radius: 12px;
+  background: #fbfcff;
+  min-height: 560px;
+}
+
+#tab-customers .owner-list::before {
+  content: "Product Owners";
+  display: block;
+  padding: 4px 2px 9px;
+  color: #071b3b;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+#tab-customers .owner-btn {
+  padding: 11px 12px;
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+  background: #fff;
+  transition: border-color .15s, background .15s;
+}
+
+#tab-customers .owner-btn:hover {
+  border-color: #94bfff;
+  background: #f7faff;
+}
+
+#tab-customers .owner-btn.active {
+  border-color: #1267ff;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px rgba(18,103,255,.08);
+}
+
+#tab-customers .owner-btn strong {
+  color: #071b3b;
+  font-size: 12px;
+}
+
+#tab-customers .owner-btn span {
+  margin-top: 3px;
+  font-size: 10.5px;
+}
+
+#tab-customers .owner-editor {
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+#tab-customers .owner-profile-header {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 17px 18px;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(110deg,#fff,#f8fbff);
+}
+
+#tab-customers .owner-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg,#39a2ff,#1267ff);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+#tab-customers .owner-profile-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+#tab-customers .owner-profile-heading h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 900;
+  color: #071b3b;
+}
+
+#tab-customers .owner-profile-heading p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+#tab-customers .owner-profile-badge {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1267ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+#tab-customers .owner-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0 12px;
+}
+
+#tab-customers .owner-subtab {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid #dce5ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #123052;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+#tab-customers .owner-subtab:hover {
+  background: #f1f6ff;
+}
+
+#tab-customers .owner-subtab.active {
+  background: #1267ff;
+  border-color: #1267ff;
+  color: #fff;
+  box-shadow: 0 3px 10px rgba(18,103,255,.18);
+}
+
+#tab-customers .owner-subpanel {
+  display: none;
+  gap: 14px;
+}
+
+#tab-customers .owner-subpanel.active {
+  display: grid;
+}
+
+#tab-customers .owner-section {
+  display: grid;
+  gap: 13px;
+  padding: 16px;
+  border: 1px solid #e0e8f3;
+  border-radius: 12px;
+  background: #fff;
+}
+
+#tab-customers .owner-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid #e8eef5;
+}
+
+#tab-customers .owner-section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 35px;
+  height: 35px;
+  border-radius: 10px;
+  background: #eaf2ff;
+  color: #1267ff;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+#tab-customers .owner-section-heading h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 900;
+  color: #071b3b;
+}
+
+#tab-customers .owner-section-heading p {
+  margin: 3px 0 0;
+  font-size: 10.5px;
+  color: #64748b;
+}
+
+#tab-customers .owner-fields {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 12px;
+}
+
+#tab-customers .owner-fields.two {
+  grid-template-columns: repeat(2,minmax(0,1fr));
+}
+
+#tab-customers .owner-fields.three {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+}
+
+#tab-customers .owner-fields .field {
+  min-width: 0;
+}
+
+#tab-customers .owner-fields .field label {
+  font-size: 11px;
+}
+
+#tab-customers .owner-fields .input,
+#tab-customers .owner-fields .select {
+  min-height: 37px;
+  padding: 8px 10px;
+}
+
+#tab-customers .owner-fields .textarea {
+  min-height: 100px;
+}
+
+#tab-customers .owner-wide {
+  grid-column: 1 / -1;
+}
+
+#tab-customers .owner-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+#tab-customers .owner-switch-row strong {
+  display: block;
+  font-size: 12px;
+  color: #071b3b;
+}
+
+#tab-customers .owner-switch-row small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+#tab-customers .owner-switch {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: #b9c5d3;
+  cursor: pointer;
+  transition: background .2s;
+}
+
+#tab-customers .owner-switch:checked {
+  background: #1267ff;
+}
+
+#tab-customers .owner-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.15);
+  transition: transform .2s;
+}
+
+#tab-customers .owner-switch:checked::after {
+  transform: translateX(18px);
+}
+
+#tab-customers .owner-switch:focus-visible {
+  outline: 2px solid #1267ff;
+  outline-offset: 3px;
+}
+
+#tab-customers .owner-dependent-disabled {
+  opacity: .5;
+}
+
+#tab-customers .owner-dependent-disabled input,
+#tab-customers .owner-dependent-disabled select {
+  pointer-events: none;
+}
+
+#tab-customers .owner-billing-warning {
+  padding: 11px 13px;
+  border: 1px solid #fed7aa;
+  border-radius: 9px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+#tab-customers .owner-editor-content {
+  display: grid;
+  gap: 0;
+  padding: 0 16px 16px;
+}
+
+#tab-customers .owner-tools .input {
+  width: 210px;
+}
+
+@media(max-width:1200px) {
+  #tab-customers .product-owner-layout {
+    grid-template-columns: 210px minmax(0,1fr);
+  }
+
+  #tab-customers .owner-fields {
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+}
+
+@media(max-width:850px) {
+  #tab-customers .product-owner-layout {
+    grid-template-columns: 1fr;
+  }
+
+  #tab-customers .owner-list {
+    min-height: 0;
+  }
+
+  #tab-customers .owner-fields,
+  #tab-customers .owner-fields.two,
+  #tab-customers .owner-fields.three {
+    grid-template-columns: 1fr;
+  }
+
+  #tab-customers .owner-profile-header {
+    flex-wrap: wrap;
+  }
+
+  #tab-customers .owner-tools .input {
+    width: 100%;
+  }
+}
+
   </style>
 </head>
 
@@ -110,38 +1203,57 @@
 <div class="app-shell">
   <aside id="sidebarMount" class="sidebar"></aside>
 
-  <main class="page settings-page">
-    <section class="page-topbar">
-      <div class="page-title">
-        <h1>Veynor Tenant Settings</h1>
-        <p>Configure Sofa2U, vehicles, drivers, product owners, documents and automation.</p>
-      </div>
-    </section>
+<main class="page settings-page">
+<section class="page-topbar">
 
-    <div id="toast" class="notice"></div>
+  <div class="page-title">
+    <h1>Veynor Tenant Settings</h1>
+    <p>
+      Configure your company, vehicles, drivers, product owners,
+      documents and automation.
+    </p>
+  </div>
+</section>
 
-    <section class="tenant-flow">
-      <div class="tenant-flow-card">
-        <div class="tenant-flow-kicker">Platform</div>
-        <div class="tenant-flow-title">Veynor</div>
-        <div class="tenant-flow-sub">The software platform and future admin layer.</div>
-      </div>
-      <div class="tenant-flow-card">
-        <div class="tenant-flow-kicker">Tenant</div>
-        <div class="tenant-flow-title">Sofa2U</div>
-        <div class="tenant-flow-sub">The operating logistics account.</div>
-      </div>
-      <div class="tenant-flow-card">
-        <div class="tenant-flow-kicker">Product Owners</div>
-        <div class="tenant-flow-title">Bellstone / Zoy</div>
-        <div class="tenant-flow-sub">Contract customers whose stock and orders are handled.</div>
-      </div>
-      <div class="tenant-flow-card">
-        <div class="tenant-flow-kicker">Drivers</div>
-        <div class="tenant-flow-title">Personnel / Chauffeurs</div>
-        <div class="tenant-flow-sub">Driver accounts used for vehicles, planning and POD.</div>
-      </div>
-    </section>
+<div id="toast" class="notice"></div>
+
+<section class="tenant-flow">
+  <div class="tenant-flow-card">
+    <div class="tenant-flow-kicker">Platform</div>
+    <div class="tenant-flow-title">Veynor</div>
+    <div class="tenant-flow-sub">
+      The software platform.
+    </div>
+  </div>
+
+  <div class="tenant-flow-card">
+    <div class="tenant-flow-kicker">Tenant</div>
+    <div id="tenantFlowName" class="tenant-flow-title">
+      Loading…
+    </div>
+    <div class="tenant-flow-sub">
+      The operating logistics account.
+    </div>
+  </div>
+
+  <div class="tenant-flow-card">
+    <div class="tenant-flow-kicker">Product Owners</div>
+    <div id="tenantFlowOwners" class="tenant-flow-title">
+      Loading…
+    </div>
+    <div class="tenant-flow-sub">
+      Contract customers whose stock and orders are handled.
+    </div>
+  </div>
+
+  <div class="tenant-flow-card">
+    <div class="tenant-flow-kicker">Drivers</div>
+    <div class="tenant-flow-title">Personnel / Chauffeurs</div>
+    <div class="tenant-flow-sub">
+      Driver accounts used for vehicles, planning and POD.
+    </div>
+  </div>
+</section>
 
     <nav class="settings-tabs">
 <button class="settings-tab active" data-tab="main" type="button">Tenant Account</button>
@@ -226,19 +1338,66 @@
           </div>
         </div>
 
-        <div class="field-grid">
-          <div class="field"><label for="contact_finance_name">Finance Contact Name</label><input id="contact_finance_name" class="input"/></div>
-          <div class="field"><label for="contact_finance_email">Finance Email</label><input id="contact_finance_email" class="input"/></div>
-          <div class="field"><label for="contact_finance_phone">Finance Phone</label><input id="contact_finance_phone" class="input"/></div>
-          <div class="field"><label for="contact_invoice_email">Invoice Email</label><input id="contact_invoice_email" class="input"/></div>
-          <div class="field"><label for="contact_ops_name">Operations Contact Name</label><input id="contact_ops_name" class="input"/></div>
-          <div class="field"><label for="contact_ops_email">Operations Email</label><input id="contact_ops_email" class="input"/></div>
-          <div class="field"><label for="contact_ops_phone">Operations Phone</label><input id="contact_ops_phone" class="input"/></div>
-          <div class="field"><label for="contact_orders_email">Orders Email</label><input id="contact_orders_email" class="input"/></div>
-          <div class="field"><label for="contact_pod_email">POD Email</label><input id="contact_pod_email" class="input"/></div>
-          <div class="field"><label for="contact_claims_email">Claims / Damage Email</label><input id="contact_claims_email" class="input"/></div>
-          <div class="field"><label for="contact_customer_service_email">Customer Service Email</label><input id="contact_customer_service_email" class="input"/></div>
-          <div class="field"><label for="contact_default_cc">Default CC</label><input id="contact_default_cc" class="input"/></div>
+<div class="field-grid">
+  <div class="field">
+    <label for="finance_contact_name">Finance Contact Name</label>
+    <input id="finance_contact_name" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="finance_email">Finance Email</label>
+    <input id="finance_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="finance_phone">Finance Phone</label>
+    <input id="finance_phone" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="invoice_email">Invoice Email</label>
+    <input id="invoice_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="operations_contact_name">Operations Contact Name</label>
+    <input id="operations_contact_name" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="operations_email">Operations Email</label>
+    <input id="operations_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="operations_phone">Operations Phone</label>
+    <input id="operations_phone" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="contact_orders_email">Orders Email</label>
+    <input id="contact_orders_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="pod_email">POD Email</label>
+    <input id="pod_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="claims_email">Claims / Damage Email</label>
+    <input id="claims_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="contact_customer_service_email">Customer Service Email</label>
+    <input id="contact_customer_service_email" class="input"/>
+  </div>
+
+  <div class="field">
+    <label for="contact_default_cc">Default CC</label>
+    <input id="contact_default_cc" class="input"/>
+</div>
         </div>
       </section>
 
@@ -395,53 +1554,438 @@ Quality inspection charge per colli.
         <div class="summary-box"><div class="summary-label">Active Vehicles</div><div id="summaryActiveVehicles" class="summary-value">0</div><div class="summary-sub">Visible in planner</div></div>
       </section>
 
-      <section class="card settings-card">
-        <div class="section-head">
-          <div>
-            <h2 class="section-title">Transport Settings</h2>
-            <p class="section-sub">Depot, route rules, route cost settings and planner limits.</p>
-          </div>
-          <div class="actions-row">
-            <button id="btnResetDefaults" class="btn" type="button">Load Defaults</button>
-            <button id="btnSaveTransport" class="btn btn-primary" type="button">Save Transport</button>
-          </div>
+<!-- TRANSPORT SETTINGS HEADER -->
+<section class="card settings-card">
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">Transport Settings</h2>
+      <p class="section-sub">
+        Configure depot, unloading rules, planning limits
+        and transport costs.
+      </p>
+    </div>
+
+    <div class="actions-row">
+      <button id="btnResetDefaults" class="btn" type="button">
+        Load Defaults
+      </button>
+
+      <button id="btnSaveTransport" class="btn btn-primary" type="button">
+        Save Transport
+      </button>
+    </div>
+  </div>
+
+</section>
+
+
+<!-- ========================================================
+     TRANSPORT SUBTAB NAVIGATION
+     ======================================================== -->
+
+<nav
+  class="transport-subtabs"
+  id="transportSubtabs"
+  aria-label="Transport settings sections"
+>
+  <button
+    type="button"
+    class="transport-subtab active"
+    data-transport-tab="depot"
+    aria-selected="true"
+  >
+    Depot & Routing
+  </button>
+
+  <button
+    type="button"
+    class="transport-subtab"
+    data-transport-tab="unloading"
+    aria-selected="false"
+  >
+    Unloading
+  </button>
+
+  <button
+    type="button"
+    class="transport-subtab"
+    data-transport-tab="limits"
+    aria-selected="false"
+  >
+    Planning Limits
+  </button>
+
+  <button
+    type="button"
+    class="transport-subtab"
+    data-transport-tab="costs"
+    aria-selected="false"
+  >
+    Transport Costs
+  </button>
+
+  <button
+    type="button"
+    class="transport-subtab"
+    data-transport-tab="fleet"
+    aria-selected="false"
+  >
+    Fleet & Carriers
+  </button>
+
+  <button
+    type="button"
+    class="transport-subtab"
+    data-transport-tab="zones"
+    aria-selected="false"
+  >
+    Emission Zones
+  </button>
+</nav>
+
+
+<!-- 1. DEPOT & ROUTE DEFAULTS -->
+<section
+  class="card settings-card transport-subpanel active"
+  data-transport-panel="depot"
+>
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">1. Depot & Route Defaults</h2>
+      <p class="section-sub">
+        Default departure location and routing assumptions.
+      </p>
+    </div>
+  </div>
+
+  <div class="field-grid">
+
+    <div class="field">
+      <label for="home_depot_name">Depot Name</label>
+      <input id="home_depot_name" class="input"/>
+    </div>
+
+    <div class="field">
+      <label for="home_depot_postcode">Depot Postcode</label>
+      <input id="home_depot_postcode" class="input"/>
+    </div>
+
+    <div class="field">
+      <label for="home_depot_city">Depot City</label>
+      <input id="home_depot_city" class="input"/>
+    </div>
+
+    <div class="field">
+      <label for="home_depot_country">Depot Country</label>
+      <input id="home_depot_country" class="input"/>
+    </div>
+
+    <div class="field">
+      <label for="home_depot_lat">Depot Latitude</label>
+      <input id="home_depot_lat" class="input"
+             type="number" step="any"/>
+    </div>
+
+    <div class="field">
+      <label for="home_depot_lng">Depot Longitude</label>
+      <input id="home_depot_lng" class="input"
+             type="number" step="any"/>
+    </div>
+
+    <div class="field">
+      <label for="average_speed_kmh">
+        Average Speed (km/h)
+      </label>
+      <input id="average_speed_kmh" class="input"
+             type="number" step="0.1"/>
+    </div>
+
+    <div class="field">
+      <label for="distance_factor">Distance Factor</label>
+      <input id="distance_factor" class="input"
+             type="number" step="0.01"/>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- 2. DELIVERY & UNLOADING TIME -->
+<section
+  class="card settings-card transport-subpanel"
+  data-transport-panel="unloading"
+>
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">
+        2. Delivery & Unloading Time
+      </h2>
+      <p class="section-sub">
+        Calculate unloading time per delivery location.
+        Multiple orders at one location are combined.
+      </p>
+    </div>
+  </div>
+
+  <div class="field-grid">
+
+    <div class="field">
+      <label for="unloading_time_mode">
+        Default Unloading Calculation
+      </label>
+
+      <select id="unloading_time_mode" class="select">
+        <option value="fixed">
+          Fixed time per delivery location
+        </option>
+        <option value="orders">
+          Base time + additional orders
+        </option>
+        <option value="volume">
+          Base time + additional volume
+        </option>
+        <option value="combined">
+          Combined - orders and volume
+        </option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="stop_time_minutes">
+        Base Unloading Time (minutes)
+      </label>
+      <input id="stop_time_minutes" class="input"
+             type="number" min="0" step="1"/>
+    </div>
+
+    <div class="field">
+      <label for="unloading_extra_minutes_per_order">
+        Additional Minutes per Extra Order
+      </label>
+      <input id="unloading_extra_minutes_per_order"
+             class="input" type="number"
+             min="0" step="0.5"/>
+    </div>
+
+    <div class="field">
+      <label for="unloading_volume_threshold_m3">
+        Included Volume per Stop (m³)
+      </label>
+      <input id="unloading_volume_threshold_m3"
+             class="input" type="number"
+             min="0" step="0.1"/>
+    </div>
+
+    <div class="field">
+      <label for="unloading_extra_minutes_per_m3">
+        Additional Minutes per m³
+      </label>
+      <input id="unloading_extra_minutes_per_m3"
+             class="input" type="number"
+             min="0" step="0.1"/>
+    </div>
+
+    <div class="field">
+      <label for="unloading_volume_rounding">
+        Additional Volume Calculation
+      </label>
+      <select id="unloading_volume_rounding" class="select">
+        <option value="proportional">
+          Proportional volume
+        </option>
+        <option value="round_up">
+          Round up to whole m³
+        </option>
+      </select>
+    </div>
+
+  </div>
+
+  <!-- LIVE CALCULATION PREVIEW -->
+  <div class="note-box" style="display:grid;gap:12px;">
+
+    <strong>Unloading Time Calculator</strong>
+
+    <div class="field-grid two">
+
+      <div class="field">
+        <label for="unloadingPreviewOrders">
+          Example Orders at Location
+        </label>
+        <input id="unloadingPreviewOrders"
+               class="input" type="number"
+               value="6" min="1" step="1"/>
+      </div>
+
+      <div class="field">
+        <label for="unloadingPreviewVolume">
+          Example Total Volume (m³)
+        </label>
+        <input id="unloadingPreviewVolume"
+               class="input" type="number"
+               value="8" min="0" step="0.1"/>
+      </div>
+
+    </div>
+
+    <div style="
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:12px;
+      background:white;
+      border:1px solid var(--border);
+      border-radius:10px;
+      padding:14px;
+    ">
+
+      <div>
+        <div style="font-size:11px;color:#64748b;">
+          Estimated Unloading Time
         </div>
 
-        <div class="field-grid">
-          <div class="field"><label for="home_depot_name">Depot Name</label><input id="home_depot_name" class="input"/></div>
-          <div class="field"><label for="home_depot_postcode">Depot Postcode</label><input id="home_depot_postcode" class="input"/></div>
-          <div class="field"><label for="home_depot_city">Depot City</label><input id="home_depot_city" class="input"/></div>
-          <div class="field"><label for="home_depot_country">Depot Country</label><input id="home_depot_country" class="input"/></div>
-          <div class="field"><label for="home_depot_lat">Depot Latitude</label><input id="home_depot_lat" class="input" type="number" step="any"/></div>
-          <div class="field"><label for="home_depot_lng">Depot Longitude</label><input id="home_depot_lng" class="input" type="number" step="any"/></div>
-          <div class="field"><label for="average_speed_kmh">Average Speed (km/h)</label><input id="average_speed_kmh" class="input" type="number" step="0.1"/></div>
-          <div class="field"><label for="stop_time_minutes">Stop Time (minutes)</label><input id="stop_time_minutes" class="input" type="number" step="1"/></div>
-          <div class="field"><label for="distance_factor">Distance Factor</label><input id="distance_factor" class="input" type="number" step="0.01"/></div>
-          <div class="field"><label for="max_route_volume_m3">Max Route Volume (m³)</label><input id="max_route_volume_m3" class="input" type="number" step="0.1"/></div>
-          <div class="field"><label for="max_route_stops">Max Route Stops</label><input id="max_route_stops" class="input" type="number" step="1"/></div>
-          <div class="field"><label for="max_route_duration_hours">Max Route Duration (hours)</label><input id="max_route_duration_hours" class="input" type="number" step="0.1"/></div>
-          <div class="field"><label for="max_orders_per_route">Max Orders Per Route</label><input id="max_orders_per_route" class="input" type="number" step="1"/></div>
-          <div class="field"><label for="labour_cost_per_hour_gbp">Labour Cost / Hour (£)</label><input id="labour_cost_per_hour_gbp" class="input" type="number" step="0.01"/></div>
-<div class="field">
-  <label for="vehicle_cost_per_hour_gbp">Vehicle Cost / Hour (£)</label>
-  <input id="vehicle_cost_per_hour_gbp" class="input" type="number" step="0.01"/>
-</div>
-<div class="field">
-  <label for="diesel_price_per_litre_gbp_inc_vat">
-    Diesel Price / Litre incl. VAT (£)
-  </label>
-  <input
-    id="diesel_price_per_litre_gbp_inc_vat"
-    class="input"
-    type="number"
-    step="0.001"
-  />
-</div>
-          <div class="field"><label for="default_transport_type">Default Transport Type</label><select id="default_transport_type" class="select"><option value="own_transport">own_transport</option><option value="charter">charter</option><option value="unassigned">unassigned</option></select></div>
+        <div id="unloadingPreviewResult"
+             style="font-size:24px;font-weight:900;color:#071b3b;">
+          -- minutes
         </div>
-      </section>
+      </div>
 
-      <section class="card settings-card">
+      <div id="unloadingPreviewBreakdown"
+           style="font-size:11px;color:#64748b;text-align:right;">
+        Calculation preview
+      </div>
+
+    </div>
+
+    <span class="subline">
+      Preview only. The actual route calculation
+      is performed by the Planning Engine.
+    </span>
+
+  </div>
+
+</section>
+
+
+<!-- 3. PLANNING LIMITS -->
+<section
+  class="card settings-card transport-subpanel"
+  data-transport-panel="limits"
+>
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">3. Planning Limits</h2>
+      <p class="section-sub">
+        Maximum route capacity, delivery stops,
+        orders and working hours.
+      </p>
+    </div>
+  </div>
+
+  <div class="field-grid">
+
+    <div class="field">
+      <label for="max_route_volume_m3">
+        Max Route Volume (m³)
+      </label>
+      <input id="max_route_volume_m3" class="input"
+             type="number" step="0.1"/>
+    </div>
+
+    <div class="field">
+      <label for="max_route_stops">
+        Max Route Stops
+      </label>
+      <input id="max_route_stops" class="input"
+             type="number" step="1"/>
+    </div>
+
+    <div class="field">
+      <label for="max_orders_per_route">
+        Max Orders Per Route
+      </label>
+      <input id="max_orders_per_route" class="input"
+             type="number" step="1"/>
+    </div>
+
+    <div class="field">
+      <label for="max_route_duration_hours">
+        Max Route Duration (hours)
+      </label>
+      <input id="max_route_duration_hours"
+             class="input" type="number"
+             step="0.1"/>
+    </div>
+
+  </div>
+</section>
+
+
+<!-- 4. TRANSPORT COSTS -->
+<section
+  class="card settings-card transport-subpanel"
+  data-transport-panel="costs"
+>
+
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">4. Transport Costs</h2>
+      <p class="section-sub">
+        Default cost assumptions used for route profitability.
+      </p>
+    </div>
+  </div>
+
+  <div class="field-grid">
+
+    <div class="field">
+      <label for="labour_cost_per_hour_gbp">
+        Labour Cost / Hour (£)
+      </label>
+      <input id="labour_cost_per_hour_gbp"
+             class="input" type="number" step="0.01"/>
+    </div>
+
+    <div class="field">
+      <label for="vehicle_cost_per_hour_gbp">
+        Vehicle Cost / Hour (£)
+      </label>
+      <input id="vehicle_cost_per_hour_gbp"
+             class="input" type="number" step="0.01"/>
+    </div>
+
+    <div class="field">
+      <label for="diesel_price_per_litre_gbp_inc_vat">
+        Diesel Price / Litre incl. VAT (£)
+      </label>
+      <input id="diesel_price_per_litre_gbp_inc_vat"
+             class="input" type="number" step="0.001"/>
+    </div>
+
+    <div class="field">
+      <label for="default_transport_type">
+        Default Transport Type
+      </label>
+
+      <select id="default_transport_type" class="select">
+        <option value="own_transport">Own Transport</option>
+        <option value="charter">Charter</option>
+        <option value="unassigned">Unassigned</option>
+      </select>
+    </div>
+
+  </div>
+</section>
+
+
+<section
+  class="card settings-card transport-subpanel"
+  data-transport-panel="fleet"
+>
         <div class="section-head">
           <div>
 <h2 class="section-title">Fleet & Carriers</h2>
@@ -502,11 +2046,180 @@ Quality inspection charge per colli.
           <button id="btnResetNewVehicle" class="btn" type="button">Clear</button>
         </div>
 
-        <div id="vehicleStack" style="display:grid;gap:12px;"></div>
-      </section>
-    </section>
 
-    <section id="tab-personnel" class="settings-panel">
+<div id="vehicleStack" style="display:grid;gap:12px;"></div>
+
+</section>
+
+<!-- ========================================================
+     6. EMISSION ZONES & ROAD RESTRICTIONS
+     ======================================================== -->
+ 
+<section
+  class="card settings-card transport-subpanel"
+  data-transport-panel="zones"
+>
+  <div class="section-head">
+    <div>
+      <h2 class="section-title">
+        Emission Zones & Road Restrictions
+      </h2>
+      <p class="section-sub">
+        Configure UK emission zone visibility,
+        vehicle compliance checks and route planning alerts.
+      </p>
+    </div>
+  </div>
+
+  <div class="note-box">
+    Central emission zone boundaries are shared across
+    Veynor. Your settings only apply to your company.
+    Planner warnings and vehicle charges are not yet connected.
+  </div>
+
+  <div class="field-grid three">
+    <div class="field">
+      <label for="emission_alert_delivery">
+        Delivery Location Alerts
+      </label>
+      <select id="emission_alert_delivery" class="select">
+        <option value="true">Enabled</option>
+        <option value="false">Disabled</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="emission_alert_route">
+        Route Crossing Alerts
+      </label>
+      <select id="emission_alert_route" class="select">
+        <option value="true">Enabled</option>
+        <option value="false">Disabled</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="emission_display_map">
+        Show Zone Boundaries on Map
+      </label>
+      <select id="emission_display_map" class="select">
+        <option value="true">Enabled</option>
+        <option value="false">Disabled</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <div>
+      <h3 class="section-title">UK Emission Zones</h3>
+      <p class="section-sub">
+        Enable or disable individual zone alerts.
+        The central geographic boundaries remain unchanged.
+      </p>
+    </div>
+    <button
+      type="button"
+      id="btnRefreshEmissionZones"
+      class="btn"
+    >
+      Refresh Zones
+    </button>
+  </div>
+
+  <div
+    id="emissionZoneStatus"
+    class="subline"
+    role="status"
+  >
+    Loading zones...
+  </div>
+
+<div
+  id="emissionZoneList"
+  class="emission-accordion-list"
+></div>
+
+  <div class="actions-row">
+    <button
+      type="button"
+      id="btnSaveEmissionZones"
+      class="btn btn-primary"
+    >
+      Save Emission Zones
+    </button>
+  </div>
+
+  <div class="note-box">
+    Vehicle eligibility and official charges depend on
+    vehicle details, zone rules and time.
+    Customer surcharges remain under Pricing.
+  </div>
+
+<!-- UK EMISSION ZONES OVERVIEW -->
+
+<!-- UK EMISSION ZONES OVERVIEW -->
+<div class="emission-overview">
+
+  <div class="emission-overview-card">
+
+    <img
+      src="/assets/emission-zones/england-emission-zones-overview.png"
+      alt="Veynor UK Emission Zones Overview"
+      class="emission-overview-thumbnail"
+      loading="lazy"
+      role="button"
+      tabindex="0"
+      aria-label="Enlarge UK emission zones overview"
+      onclick="openPricingImage(this.src, this.alt)"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPricingImage(this.src,this.alt);}"
+    >
+
+    <div class="emission-overview-details">
+
+      <div class="emission-overview-heading">
+        <span class="emission-overview-icon">⌖</span>
+
+        <div>
+          <h3>UK Emission Zones Overview</h3>
+          <p>Nationwide emission zone reference map</p>
+        </div>
+      </div>
+
+      <p class="emission-overview-description">
+        View the illustrative overview of emission zones
+        across England. Exact geographical boundaries
+        are managed centrally in Veynor.
+      </p>
+
+      <div class="emission-overview-footer">
+        <span class="emission-overview-badge">
+          Illustrative map
+        </span>
+
+        <button
+          type="button"
+          class="btn btn-primary"
+          onclick="openPricingImage(
+            '/assets/emission-zones/england-emission-zones-overview.png',
+            'Veynor UK Emission Zones Overview'
+          )"
+        >
+          ⛶ View Overview Map
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+</section>
+
+<!-- END TRANSPORT SETTINGS -->
+</section>
+
+<section id="tab-personnel" class="settings-panel">
+
       <section class="card settings-card">
         <div class="section-head">
           <div>
@@ -630,264 +2343,1291 @@ Quality inspection charge per colli.
   </section>
 </section>
 
-    <section id="tab-customers" class="settings-panel">
-      <section class="card settings-card">
-        <div class="section-head">
-          <div>
-            <h2 class="section-title">Product Owners / Contract Customers</h2>
-            <p class="section-sub">Product owners such as Bellstone and Zoy. Products, invoices and operational flows are linked to these companies.</p>
+
+<!-- ==========================================================
+     VEYNOR — PRODUCT OWNERS / CONTRACT CUSTOMERS
+     ========================================================== -->
+
+<section id="tab-customers" class="settings-panel">
+
+  <section class="card settings-card">
+
+    <!-- ======================================================
+         PAGE HEADER
+         ====================================================== -->
+
+    <div class="section-head">
+
+      <div>
+        <h2 class="section-title">
+          Product Owners / Contract Customers
+        </h2>
+
+        <p class="section-sub">
+          Manage product owners linked to your company.
+          Products, invoices and operational flows are
+          connected to these accounts.
+        </p>
+      </div>
+
+      <div class="owner-tools">
+
+        <input
+          id="newOwnerName"
+          class="input"
+          placeholder="New product owner name"
+        />
+
+        <button
+          id="btnAddOwnerProfile"
+          class="btn"
+          type="button"
+        >
+          + Add Product Owner
+        </button>
+
+        <button
+          id="btnSaveOwnerProfile"
+          class="btn btn-primary"
+          type="button"
+        >
+          Save Changes
+        </button>
+
+      </div>
+
+    </div>
+
+
+    <!-- ======================================================
+         PRODUCT OWNER WORKSPACE
+         ====================================================== -->
+
+    <div class="product-owner-layout">
+
+      <!-- LEFT: PRODUCT OWNER LIST -->
+
+      <div
+        class="owner-list"
+        id="ownerList"
+      ></div>
+
+
+      <!-- RIGHT: PRODUCT OWNER EDITOR -->
+
+      <div class="card settings-card owner-editor">
+
+        <!-- ==================================================
+             SELECTED PRODUCT OWNER HEADER
+             ================================================== -->
+
+        <div class="owner-profile-header">
+
+          <div
+            class="owner-avatar"
+            id="ownerProfileAvatar"
+          >
+            PO
           </div>
-          <div class="owner-tools">
-            <input id="newOwnerName" class="input" style="width:220px;" placeholder="New product owner name"/>
-            <button id="btnAddOwnerProfile" class="btn" type="button">Add Product Owner</button>
-            <button id="btnSaveOwnerProfile" class="btn btn-primary" type="button">Save Product Owner</button>
+
+          <div class="owner-profile-heading">
+
+            <h2 id="ownerEditorTitle">
+              Select product owner
+            </h2>
+
+            <p>
+              Billing, documents and operational settings
+              for the selected product owner.
+            </p>
+
           </div>
+
+          <span class="owner-profile-badge">
+            Contract Customer
+          </span>
+
         </div>
 
-        <div class="product-owner-layout">
-          <div class="owner-list" id="ownerList"></div>
 
-          <div class="card settings-card">
-            <div class="section-head">
-              <div>
-                <h2 class="section-title" id="ownerEditorTitle">Select product owner</h2>
-                <p class="section-sub">Billing, document and operational master data for the selected product owner.</p>
-              </div>
-            </div>
+        <div class="owner-editor-content">
 
-            <div class="field-grid">
-<div class="field">
-  <label for="owner_name">Product Owner Name</label>
-  <input id="owner_name" class="input"/>
-</div>
+          <!-- ================================================
+               PRODUCT OWNER SUBTAB NAVIGATION
+               ================================================ -->
 
-<div class="field">
-  <label for="owner_trading_name">Trading Name</label>
-  <input id="owner_trading_name" class="input"/>
-</div>
+          <nav
+            class="owner-subtabs"
+            id="ownerSubtabs"
+            aria-label="Product owner settings"
+          >
 
-<div class="field">
-  <label for="owner_customer_code">Product Owner Code</label>
-  <input
-    id="owner_customer_code"
-    class="input"
-    placeholder="BELLSTONE"
-  />
-</div>
+            <button
+              type="button"
+              class="owner-subtab active"
+              data-owner-tab="general"
+              aria-selected="true"
+            >
+              General
+            </button>
 
-<div class="field">
-  <label for="owner_display_code">Display Code</label>
-  <input
-    id="owner_display_code"
-    class="input"
-    maxlength="3"
-    placeholder="BS"
-  />
-</div>
+            <button
+              type="button"
+              class="owner-subtab"
+              data-owner-tab="billing"
+              aria-selected="false"
+            >
+              Billing Configuration
+            </button>
 
-<div class="field">
-  <label for="owner_vat">VAT Number</label>
-  <input id="owner_vat" class="input"/>
-</div>
-              <div class="field"><label for="owner_address1">Address 1</label><input id="owner_address1" class="input"/></div>
-              <div class="field"><label for="owner_address2">Address 2</label><input id="owner_address2" class="input"/></div>
-              <div class="field"><label for="owner_city">City</label><input id="owner_city" class="input"/></div>
-              <div class="field"><label for="owner_postcode">Postcode</label><input id="owner_postcode" class="input"/></div>
-              <div class="field"><label for="owner_country">Country</label><input id="owner_country" class="input"/></div>
-              <div class="field"><label for="owner_logo_file">Product Owner Logo Upload</label><input id="owner_logo_file" class="input" type="file" accept="image/png,image/jpeg,image/webp"/></div>
-              <div class="field"><label for="owner_logo_url">Product Owner Logo URL</label><input id="owner_logo_url" class="input"/></div>
-              <div class="field"><label for="owner_logo_storage_path">Logo Storage Path</label><input id="owner_logo_storage_path" class="input"/></div>
-              <div class="field">
-                <label>Product Owner Logo Preview</label>
-                <div class="logo-preview-box" id="owner_logo_preview_box">
-                  <img id="owner_logo_preview" alt="Product owner logo preview"/>
-                  <span id="owner_logo_preview_empty">No logo uploaded yet.</span>
+            <button
+              type="button"
+              class="owner-subtab"
+              data-owner-tab="pricing"
+              aria-selected="false"
+            >
+              Pricing &amp; Surcharges
+            </button>
+
+            <button
+              type="button"
+              class="owner-subtab"
+              data-owner-tab="operations"
+              aria-selected="false"
+            >
+              Operational Settings
+            </button>
+
+            <button
+              type="button"
+              class="owner-subtab"
+              data-owner-tab="contacts"
+              aria-selected="false"
+            >
+              Contact &amp; Communication
+            </button>
+
+            <button
+              type="button"
+              class="owner-subtab"
+              data-owner-tab="notes"
+              aria-selected="false"
+            >
+              Notes
+            </button>
+
+          </nav>
+
+
+          <!-- ================================================
+               TAB 1 — GENERAL
+               ================================================ -->
+
+          <div
+            class="owner-subpanel active"
+            data-owner-panel="general"
+          >
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">▣</span>
+
+                <div>
+                  <h3>Basic Information</h3>
+                  <p>
+                    Core details and identification
+                    for this product owner.
+                  </p>
                 </div>
+
               </div>
-              <div class="field">
-  <label for="owner_invoice_email">Invoice Email</label>
-  <input id="owner_invoice_email" class="input"/>
-</div>
-
-<div class="field">
-  <label for="owner_ack_email">ACK Email</label>
-  <input id="owner_ack_email" class="input"/>
-</div>
-
-<div class="field">
-  <label for="owner_pod_email">POD Email</label>
-  <input id="owner_pod_email" class="input"/>
-</div>
-
-<div class="field">
-  <label for="owner_ops_email">Operations Email</label>
-  <input id="owner_ops_email" class="input"/>
-</div>
-
-<div class="field">
-  <label for="owner_payment_terms_days">Payment Terms Days</label>
-  <input id="owner_payment_terms_days" class="input" type="number" min="0"/>
-</div>
-
-<div class="field">
-  <label for="owner_invoice_frequency">Invoice Frequency</label>
-  <select id="owner_invoice_frequency" class="select">
-    <option value="batch">Batch</option>
-    <option value="per_order">Per Order</option>
-    <option value="weekly">Weekly</option>
-    <option value="monthly">Monthly</option>
-  </select>
-</div>
-
-<div class="field">
-  <label for="owner_default_source_name">Default Import Name</label>
-  <input id="owner_default_source_name" class="input"/>
-</div>
-
-<div class="field">
-  <label for="owner_auto_ack">Auto ACK</label>
-  <select id="owner_auto_ack" class="select">
-    <option value="false">false</option>
-    <option value="true">true</option>
-  </select>
-</div>
-
-<div class="field">
-  <label for="owner_auto_invoice">Auto Invoice</label>
-  <select id="owner_auto_invoice" class="select">
-    <option value="false">false</option>
-    <option value="true">true</option>
-  </select>
-</div>
-
-<div class="field" style="grid-column:1 / -1;">
-  <div class="note-box">
-    <strong>Transport Volume Restrictions</strong><br>
-    Configure minimum delivery volume and transport surcharge rules for this product owner.
-  </div>
 
 
-</div>
+              <div class="owner-fields">
+
+                <div class="field">
+                  <label for="owner_name">
+                    Product Owner Name
+                  </label>
+                  <input
+                    id="owner_name"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_trading_name">
+                    Trading Name
+                  </label>
+                  <input
+                    id="owner_trading_name"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_customer_code">
+                    Product Owner Code
+                  </label>
+                  <input
+                    id="owner_customer_code"
+                    class="input"
+                    placeholder="OWNER_CODE"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_display_code">
+                    Display Code
+                  </label>
+                  <input
+                    id="owner_display_code"
+                    class="input"
+                    maxlength="3"
+                    placeholder="BEL"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_vat">
+                    VAT Number
+                  </label>
+                  <input
+                    id="owner_vat"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_country">
+                    Country
+                  </label>
+                  <input
+                    id="owner_country"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_address1">
+                    Address 1
+                  </label>
+                  <input
+                    id="owner_address1"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_address2">
+                    Address 2
+                  </label>
+                  <input
+                    id="owner_address2"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_postcode">
+                    Postcode
+                  </label>
+                  <input
+                    id="owner_postcode"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_city">
+                    City
+                  </label>
+                  <input
+                    id="owner_city"
+                    class="input"
+                  />
+                </div>
+
+                <div class="field">
+                  <label for="owner_default_source_name">
+                    Default Import Name
+                  </label>
+                  <input
+                    id="owner_default_source_name"
+                    class="input"
+                  />
+                </div>
+
+              </div>
+
+            </section>
 
 
-<div class="field">
-  <label for="owner_minimum_delivery_enabled">Enable Minimum Delivery Rule</label>
-  <select id="owner_minimum_delivery_enabled" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+            <!-- ==============================================
+                 PRODUCT OWNER LOGO
+                 ============================================== -->
 
-<div class="field">
-  <label for="owner_minimum_delivery_volume_m3">Minimum Delivery Volume (m³)</label>
-  <input id="owner_minimum_delivery_volume_m3" class="input" type="number" step="0.01" value="1.25"/>
-</div>
+            <section class="owner-section">
 
-<div class="field">
-  <label for="owner_minimum_delivery_transport_tariff_per_m3">Transport Tariff / m³ (£)</label>
-  <input id="owner_minimum_delivery_transport_tariff_per_m3" class="input" type="number" step="0.01" value="55.20"/>
-</div>
+              <div class="owner-section-heading">
 
-<div class="field">
-  <label for="owner_minimum_delivery_requires_approval">Require Approval Below Minimum</label>
-  <select id="owner_minimum_delivery_requires_approval" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+                <span class="owner-section-icon">▧</span>
 
-<div class="field">
-  <label for="owner_minimum_delivery_owner_can_approve">Product Owner Can Approve</label>
-  <select id="owner_minimum_delivery_owner_can_approve" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+                <div>
+                  <h3>Product Owner Branding</h3>
+                  <p>
+                    Logo used on customer-facing documents.
+                  </p>
+                </div>
 
-<div class="field">
-  <label for="owner_minimum_delivery_manual_override">Allow Manual Surcharge Override</label>
-  <select id="owner_minimum_delivery_manual_override" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+              </div>
 
-<div class="field" style="grid-column:1 / -1;">
-  <label for="owner_minimum_delivery_invoice_label">Invoice Line Label</label>
-  <input
-    id="owner_minimum_delivery_invoice_label"
-    class="input"
-    value="Minimum delivery surcharge"
-  />
-</div>
 
-<div class="field" style="grid-column:1 / -1;">
-  <div class="note-box">
-    <strong>Product Owner Pricing</strong><br>
-    Configure postcode based regional surcharge, Ireland pricing and fuel surcharge for this product owner.
-  </div>
-</div>
+              <div class="owner-fields">
 
-<div class="field">
-  <label for="owner_regional_surcharge_enabled">Enable Regional Surcharge</label>
-  <select id="owner_regional_surcharge_enabled" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+                <div class="field">
+                  <label for="owner_logo_file">
+                    Product Owner Logo Upload
+                  </label>
+                  <input
+                    id="owner_logo_file"
+                    class="input"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                  />
+                </div>
 
-<div class="field">
-  <label for="owner_surcharge_edinburgh_glasgow_percent">Edinburgh / Glasgow %</label>
-  <input id="owner_surcharge_edinburgh_glasgow_percent" class="input" type="number" step="0.01"/>
-</div>
+                <div class="field">
+                  <label for="owner_logo_url">
+                    Product Owner Logo URL
+                  </label>
+                  <input
+                    id="owner_logo_url"
+                    class="input"
+                  />
+                </div>
 
-<div class="field">
-  <label for="owner_surcharge_highlands_islands_percent">Highlands & Islands %</label>
-  <input id="owner_surcharge_highlands_islands_percent" class="input" type="number" step="0.01"/>
-</div>
+                <div class="field">
+                  <label for="owner_logo_storage_path">
+                    Logo Storage Path
+                  </label>
+                  <input
+                    id="owner_logo_storage_path"
+                    class="input"
+                  />
+                </div>
 
-<div class="field">
-  <label for="owner_pricing_ireland_mode">Ireland Pricing</label>
-  <select id="owner_pricing_ireland_mode" class="select">
-    <option value="price_on_request">Price on request</option>
-    <option value="allow_manual_price">Allow manual quotation</option>
-    <option value="normal">Normal pricing</option>
-  </select>
-</div>
+                <div class="field">
 
-<div class="field">
-  <label for="owner_fuel_surcharge_enabled">Enable Fuel Surcharge</label>
-  <select id="owner_fuel_surcharge_enabled" class="select">
-    <option value="true">true</option>
-    <option value="false">false</option>
-  </select>
-</div>
+                  <label>
+                    Product Owner Logo Preview
+                  </label>
 
-<div class="field">
-  <label for="owner_fuel_surcharge_percent">Fuel Surcharge %</label>
-  <input id="owner_fuel_surcharge_percent" class="input" type="number" step="0.01"/>
-</div>
+                  <div
+                    class="logo-preview-box"
+                    id="owner_logo_preview_box"
+                  >
 
-<div class="field" style="grid-column:1 / -1;">
-  <label for="owner_pricing_ack_note">ACK Pricing Note</label>
-  <textarea id="owner_pricing_ack_note" class="textarea"></textarea>
-</div>
+                    <img
+                      id="owner_logo_preview"
+                      alt="Product owner logo preview"
+                    />
 
-<div class="field" style="grid-column:1 / -1;">
-  <label for="owner_pricing_invoice_note">Invoice Pricing Note</label>
-  <textarea id="owner_pricing_invoice_note" class="textarea"></textarea>
-</div>
+                    <span id="owner_logo_preview_empty">
+                      No logo uploaded yet.
+                    </span>
 
-<div class="field" style="grid-column:1 / -1;">
-  <label for="owner_notes">Document / Product Owner Notes</label>
-  <textarea id="owner_notes" class="textarea"></textarea>
-</div>
+                  </div>
 
-</div>
-</div>
-</div>
+                </div>
+
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ================================================
+               TAB 2 — BILLING CONFIGURATION
+               ================================================ -->
+
+          <div
+            class="owner-subpanel"
+            data-owner-panel="billing"
+          >
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">£</span>
+
+                <div>
+                  <h3>Billing Configuration</h3>
+                  <p>
+                    Select which services are invoiced
+                    for this product owner.
+                  </p>
+                </div>
+
+              </div>
+
+
+              <div class="note-box">
+                These settings determine which services
+                are chargeable to this product owner.
+                Warehouse and transport can be configured
+                independently.
+              </div>
+
+
+              <!-- WAREHOUSE BILLING -->
+
+              <label class="owner-switch-row">
+
+                <span>
+                  <strong>
+                    Invoice warehouse services
+                  </strong>
+
+                  <small>
+                    Include handling, storage, administration
+                    and related warehouse charges.
+                  </small>
+                </span>
+
+                <input
+                  id="owner_invoice_warehouse_enabled"
+                  class="owner-switch"
+                  type="checkbox"
+                />
+
+              </label>
+
+
+              <!-- TRANSPORT BILLING -->
+
+              <label class="owner-switch-row">
+
+                <span>
+                  <strong>
+                    Invoice transport services
+                  </strong>
+
+                  <small>
+                    Include chargeable transport services
+                    and delivery-related transport costs.
+                  </small>
+                </span>
+
+                <input
+                  id="owner_invoice_transport_enabled"
+                  class="owner-switch"
+                  type="checkbox"
+                />
+
+              </label>
+
+
+              <div class="owner-billing-warning">
+                When transport invoicing is disabled,
+                regional and fuel surcharges will not
+                be applied to transport invoices.
+                Existing surcharge settings are preserved.
+              </div>
+
+            </section>
+
+
+            <!-- ==============================================
+                 PAYMENT & INVOICE SETTINGS
+                 ============================================== -->
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">▤</span>
+
+                <div>
+                  <h3>Payment &amp; Invoice Settings</h3>
+                  <p>
+                    Payment terms and invoice generation.
+                  </p>
+                </div>
+
+              </div>
+
+
+              <div class="owner-fields two">
+
+                <div class="field">
+
+                  <label for="owner_payment_terms_days">
+                    Payment Terms (Days)
+                  </label>
+
+                  <input
+                    id="owner_payment_terms_days"
+                    class="input"
+                    type="number"
+                    min="0"
+                  />
+
+                </div>
+
+                <div class="field">
+
+                  <label for="owner_invoice_frequency">
+                    Invoice Frequency
+                  </label>
+
+                  <select
+                    id="owner_invoice_frequency"
+                    class="select"
+                  >
+                    <option value="batch">Batch</option>
+                    <option value="per_order">Per Order</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+
+                </div>
+
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ================================================
+               TAB 3 — PRICING & SURCHARGES
+               ================================================ -->
+
+          <div
+            class="owner-subpanel"
+            data-owner-panel="pricing"
+          >
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">£</span>
+
+                <div>
+                  <h3>Pricing &amp; Surcharges</h3>
+                  <p>
+                    Product owner-specific transport pricing
+                    and additional surcharges.
+                  </p>
+                </div>
+
+              </div>
+
+
+              <!-- REGIONAL SURCHARGES -->
+
+              <div
+                class="owner-switch-row"
+                data-owner-transport-dependent
+              >
+
+                <span>
+                  <strong>
+                    Enable Regional Surcharge
+                  </strong>
+
+                  <small>
+                    Apply postcode-based regional
+                    transport surcharges.
+                  </small>
+                </span>
+
+                <select
+                  id="owner_regional_surcharge_enabled"
+                  class="select"
+                  style="width:115px"
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+
+              </div>
+
+
+              <div
+                class="owner-fields three"
+                data-owner-transport-dependent
+              >
+
+                <div class="field">
+
+                  <label for="owner_surcharge_edinburgh_glasgow_percent">
+                    Edinburgh / Glasgow %
+                  </label>
+
+                  <input
+                    id="owner_surcharge_edinburgh_glasgow_percent"
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+
+                </div>
+
+                <div class="field">
+
+                  <label for="owner_surcharge_highlands_islands_percent">
+                    Highlands &amp; Islands %
+                  </label>
+
+                  <input
+                    id="owner_surcharge_highlands_islands_percent"
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+
+                </div>
+
+                <div class="field">
+
+                  <label for="owner_pricing_ireland_mode">
+                    Ireland Pricing
+                  </label>
+
+                  <select
+                    id="owner_pricing_ireland_mode"
+                    class="select"
+                  >
+                    <option value="price_on_request">
+                      Price on request
+                    </option>
+
+                    <option value="allow_manual_price">
+                      Allow manual quotation
+                    </option>
+
+                    <option value="normal">
+                      Normal pricing
+                    </option>
+                  </select>
+
+                </div>
+
+              </div>
+
+
+              <!-- FUEL SURCHARGE -->
+
+              <div
+                class="owner-switch-row"
+                data-owner-transport-dependent
+              >
+
+                <span>
+                  <strong>
+                    Enable Fuel Surcharge
+                  </strong>
+
+                  <small>
+                    Apply diesel/fuel surcharge
+                    to chargeable transport.
+                  </small>
+                </span>
+
+                <select
+                  id="owner_fuel_surcharge_enabled"
+                  class="select"
+                  style="width:115px"
+                >
+                  <option value="true">Enabled</option>
+                  <option value="false">Disabled</option>
+                </select>
+
+              </div>
+
+
+              <div
+                class="owner-fields two"
+                data-owner-transport-dependent
+              >
+
+                <div class="field">
+
+                  <label for="owner_fuel_surcharge_percent">
+                    Fuel Surcharge %
+                  </label>
+
+                  <input
+                    id="owner_fuel_surcharge_percent"
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+
+                </div>
+
+              </div>
+
+            </section>
+
+
+            <!-- ==============================================
+                 PRICING DOCUMENT NOTES
+                 ============================================== -->
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">▤</span>
+
+                <div>
+                  <h3>Pricing Document Notes</h3>
+                  <p>
+                    Text displayed on ACK and invoices.
+                  </p>
+                </div>
+
+              </div>
+
+
+              <div class="owner-fields">
+
+                <div class="field owner-wide">
+
+                  <label for="owner_pricing_ack_note">
+                    ACK Pricing Note
+                  </label>
+
+                  <textarea
+                    id="owner_pricing_ack_note"
+                    class="textarea"
+                  ></textarea>
+
+                </div>
+
+                <div class="field owner-wide">
+
+                  <label for="owner_pricing_invoice_note">
+                    Invoice Pricing Note
+                  </label>
+
+                  <textarea
+                    id="owner_pricing_invoice_note"
+                    class="textarea"
+                  ></textarea>
+
+                </div>
+
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ==================================================
+               DEEL 2 BEGINT HIER
+               Operational Settings
+               Contact & Communication
+               Notes
+               Closing HTML tags
+               ================================================== -->
+
+          <!-- ================================================
+               TAB 4 — OPERATIONAL SETTINGS
+               ================================================ -->
+
+          <div
+            class="owner-subpanel"
+            data-owner-panel="operations"
+          >
+
+            <!-- ==============================================
+                 MINIMUM DELIVERY RULES
+                 ============================================== -->
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">⚙</span>
+
+                <div>
+                  <h3>Minimum Delivery Rules</h3>
+                  <p>
+                    Configure minimum delivery volumes,
+                    transport charges and approval rules.
+                  </p>
+                </div>
+
+              </div>
+
+              <div class="note-box">
+                Minimum delivery settings determine how
+                deliveries below the agreed minimum volume
+                are handled. Approval requirements and
+                manual overrides can be configured
+                independently for each product owner.
+              </div>
+
+              <div class="owner-fields">
+
+                <!-- ENABLE MINIMUM DELIVERY -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_enabled">
+                    Enable Minimum Delivery Rule
+                  </label>
+
+                  <select
+                    id="owner_minimum_delivery_enabled"
+                    class="select"
+                  >
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+
+                </div>
+
+
+                <!-- MINIMUM VOLUME -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_volume_m3">
+                    Minimum Delivery Volume (m³)
+                  </label>
+
+                  <input
+                    id="owner_minimum_delivery_volume_m3"
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+
+                </div>
+
+
+                <!-- TRANSPORT TARIFF -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_transport_tariff_per_m3">
+                    Transport Tariff / m³ (£)
+                  </label>
+
+                  <input
+                    id="owner_minimum_delivery_transport_tariff_per_m3"
+                    class="input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                  />
+
+                </div>
+
+
+                <!-- APPROVAL REQUIRED -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_requires_approval">
+                    Require Approval Below Minimum
+                  </label>
+
+                  <select
+                    id="owner_minimum_delivery_requires_approval"
+                    class="select"
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+
+                </div>
+
+
+                <!-- PRODUCT OWNER APPROVAL -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_owner_can_approve">
+                    Product Owner Can Approve
+                  </label>
+
+                  <select
+                    id="owner_minimum_delivery_owner_can_approve"
+                    class="select"
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+
+                </div>
+
+
+                <!-- MANUAL OVERRIDE -->
+
+                <div class="field">
+
+                  <label for="owner_minimum_delivery_manual_override">
+                    Allow Manual Surcharge Override
+                  </label>
+
+                  <select
+                    id="owner_minimum_delivery_manual_override"
+                    class="select"
+                  >
+                    <option value="true">Yes</option>
+                    <option value="false">No</option>
+                  </select>
+
+                </div>
+
+
+                <!-- INVOICE LABEL -->
+
+                <div class="field owner-wide">
+
+                  <label for="owner_minimum_delivery_invoice_label">
+                    Invoice Line Label
+                  </label>
+
+                  <input
+                    id="owner_minimum_delivery_invoice_label"
+                    class="input"
+                    placeholder="Minimum Delivery Charge"
+                  />
+
+                </div>
+
+              </div>
+
+              <div class="owner-billing-warning">
+                Minimum Delivery Charges are transport-related
+                charges. When transport invoicing is disabled,
+                these charges must not be added to invoices
+                for this product owner. Operational approval
+                settings remain available.
+              </div>
+
+            </section>
+
+
+            <!-- ==============================================
+                 DOCUMENT AUTOMATION
+                 ============================================== -->
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">⚡</span>
+
+                <div>
+                  <h3>Document Automation</h3>
+                  <p>
+                    Default automatic document generation
+                    for orders belonging to this product owner.
+                  </p>
+                </div>
+
+              </div>
+
+              <div class="owner-fields two">
+
+                <!-- AUTO ACK -->
+
+                <div class="field">
+
+                  <label for="owner_auto_ack">
+                    Auto ACK
+                  </label>
+
+                  <select
+                    id="owner_auto_ack"
+                    class="select"
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+
+                </div>
+
+
+                <!-- AUTO INVOICE -->
+
+                <div class="field">
+
+                  <label for="owner_auto_invoice">
+                    Auto Invoice
+                  </label>
+
+                  <select
+                    id="owner_auto_invoice"
+                    class="select"
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+
+                </div>
+
+              </div>
+
+              <div class="note-box">
+                Auto ACK and Auto Invoice are configured
+                independently. These settings do not
+                automatically activate scheduled document
+                generation unless the corresponding
+                automation workflow is enabled.
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ================================================
+               TAB 5 — CONTACT & COMMUNICATION
+               ================================================ -->
+
+          <div
+            class="owner-subpanel"
+            data-owner-panel="contacts"
+          >
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">✉</span>
+
+                <div>
+                  <h3>Contact &amp; Communication</h3>
+                  <p>
+                    Email addresses used for invoices,
+                    acknowledgements, PODs and operations.
+                  </p>
+                </div>
+
+              </div>
+
+
+              <div class="owner-fields two">
+
+                <!-- INVOICE EMAIL -->
+
+                <div class="field">
+
+                  <label for="owner_invoice_email">
+                    Invoice Email
+                  </label>
+
+                  <input
+                    id="owner_invoice_email"
+                    class="input"
+                    type="email"
+                    placeholder="accounts@company.co.uk"
+                  />
+
+                </div>
+
+
+                <!-- ACK EMAIL -->
+
+                <div class="field">
+
+                  <label for="owner_ack_email">
+                    ACK Email
+                  </label>
+
+                  <input
+                    id="owner_ack_email"
+                    class="input"
+                    type="email"
+                    placeholder="orders@company.co.uk"
+                  />
+
+                </div>
+
+
+                <!-- POD EMAIL -->
+
+                <div class="field">
+
+                  <label for="owner_pod_email">
+                    POD Email
+                  </label>
+
+                  <input
+                    id="owner_pod_email"
+                    class="input"
+                    type="email"
+                    placeholder="pod@company.co.uk"
+                  />
+
+                </div>
+
+
+                <!-- OPERATIONS EMAIL -->
+
+                <div class="field">
+
+                  <label for="owner_ops_email">
+                    Operations Email
+                  </label>
+
+                  <input
+                    id="owner_ops_email"
+                    class="input"
+                    type="email"
+                    placeholder="operations@company.co.uk"
+                  />
+
+                </div>
+
+              </div>
+
+            </section>
+
+
+            <!-- ==============================================
+                 COMMUNICATION INFORMATION
+                 ============================================== -->
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">ⓘ</span>
+
+                <div>
+                  <h3>Communication Settings</h3>
+                  <p>
+                    How contact details are used
+                    throughout Veynor.
+                  </p>
+                </div>
+
+              </div>
+
+              <div class="note-box">
+
+                <strong>Invoice Email</strong>
+                <p>
+                  Primary address for invoice communication.
+                </p>
+
+                <strong>ACK Email</strong>
+                <p>
+                  Address used for order acknowledgements.
+                </p>
+
+                <strong>POD Email</strong>
+                <p>
+                  Address used for proof-of-delivery documents.
+                </p>
+
+                <strong>Operations Email</strong>
+                <p>
+                  General operational correspondence.
+                </p>
+
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ================================================
+               TAB 6 — NOTES
+               ================================================ -->
+
+          <div
+            class="owner-subpanel"
+            data-owner-panel="notes"
+          >
+
+            <section class="owner-section">
+
+              <div class="owner-section-heading">
+
+                <span class="owner-section-icon">▤</span>
+
+                <div>
+                  <h3>Product Owner Notes</h3>
+                  <p>
+                    Additional information and internal
+                    notes for this product owner.
+                  </p>
+                </div>
+
+              </div>
+
+              <div class="owner-fields">
+
+                <div class="field owner-wide">
+
+                  <label for="owner_notes">
+                    Document / Product Owner Notes
+                  </label>
+
+                  <textarea
+                    id="owner_notes"
+                    class="textarea"
+                    rows="7"
+                    placeholder="Enter additional notes..."
+                  ></textarea>
+
+                </div>
+
+              </div>
+
+              <div class="note-box">
+                Notes are stored with the selected
+                Product Owner profile. Existing notes
+                are preserved when editing other settings.
+              </div>
+
+            </section>
+
+          </div>
+
+
+          <!-- ================================================
+               END PRODUCT OWNER SUBPANELS
+               ================================================ -->
+
+        </div>
+        <!-- END owner-editor-content -->
+
+      </div>
+      <!-- END owner-editor -->
+
+    </div>
+    <!-- END product-owner-layout -->
+
+  </section>
+  <!-- END settings-card -->
+
 </section>
-</section>
+<!-- END tab-customers -->
+
+
 
     <section id="tab-shops" class="settings-panel">
       <section class="card settings-card">
@@ -961,71 +3701,393 @@ Quality inspection charge per colli.
   <label for="next_sales_order_preview">Next Generated SO Number</label>
   <input id="next_sales_order_preview" class="input" readonly value="SO-03246"/>
 </div>
+
 <div class="field" style="grid-column:1 / -1;">
   <label for="doc_damage_note">Damage Note</label>
   <textarea id="doc_damage_note" class="textarea"></textarea>
+
+  <span class="subline">
+    This note will be displayed on both Order
+    Acknowledgements (ACK) and Delivery Notes.
+  </span>
 </div>
 
 </div>
       </section>
     </section>
 
+
 <section id="tab-pricing" class="settings-panel">
+
+  <!-- GENERAL PRICING -->
   <section class="card settings-card">
     <div class="section-head">
       <div>
-        <h2 class="section-title">Pricing</h2>
-        <p class="section-sub">Configure fuel surcharge and regional transport surcharges used on ACKs and invoices.</p>
+        <h2 class="section-title">General Pricing</h2>
+        <p class="section-sub">
+          Configure fuel surcharge, Ireland pricing and document notes.
+        </p>
       </div>
-      <button id="btnSavePricing" class="btn btn-primary" type="button">Save Pricing</button>
+
+      <button
+        id="btnSavePricing"
+        class="btn btn-primary"
+        type="button">
+        Save Pricing
+      </button>
     </div>
 
     <div class="field-grid">
+
       <div class="field">
-        <label for="fuel_surcharge_percent">Fuel Surcharge %</label>
-        <input id="fuel_surcharge_percent" class="input" type="number" step="0.01" value="8.5"/>
+        <label for="fuel_surcharge_enabled">
+          Enable Fuel Surcharge
+        </label>
+        <select id="fuel_surcharge_enabled" class="select">
+          <option value="">Select...</option>
+          <option value="true">Enabled</option>
+          <option value="false">Disabled</option>
+        </select>
       </div>
 
       <div class="field">
-        <label for="surcharge_edinburgh_glasgow_percent">Edinburgh / Glasgow Surcharge %</label>
-        <input id="surcharge_edinburgh_glasgow_percent" class="input" type="number" step="0.01" value="20"/>
+        <label for="fuel_surcharge_percent">
+          Fuel Surcharge %
+        </label>
+        <input
+          id="fuel_surcharge_percent"
+          class="input"
+          type="number"
+          min="0"
+          step="0.01"
+        />
       </div>
 
       <div class="field">
-        <label for="surcharge_highlands_islands_percent">Highlands & Islands Surcharge %</label>
-        <input id="surcharge_highlands_islands_percent" class="input" type="number" step="0.01" value="40"/>
+        <label for="pricing_ireland_mode">
+          Ireland Pricing
+        </label>
+        <select id="pricing_ireland_mode" class="select">
+          <option value="price_on_request">
+            Price on request
+          </option>
+          <option value="standard">
+            Standard pricing
+          </option>
+        </select>
       </div>
-
-      <div class="field">
-    <label for="pricing_ireland_mode">
-        Ireland Pricing
-    </label>
-
-    <select id="pricing_ireland_mode" class="select">
-        <option value="price_on_request">
-            Northern Ireland & Republic of Ireland - Price on request
-        </option>
-
-        <option value="allow_manual_price">
-            Allow manual quotation
-        </option>
-    </select>
-</div>
 
       <div class="field" style="grid-column:1 / -1;">
-        <label for="pricing_invoice_note">Invoice Pricing Note</label>
-        <textarea id="pricing_invoice_note" class="textarea">Fuel surcharge is calculated over the subtotal excluding VAT.</textarea>
+        <label for="pricing_invoice_note">
+          Invoice Pricing Note
+        </label>
+        <textarea
+          id="pricing_invoice_note"
+          class="textarea"></textarea>
       </div>
 
       <div class="field" style="grid-column:1 / -1;">
-        <label for="pricing_ack_note">ACK Pricing Note</label>
-        <textarea id="pricing_ack_note" class="textarea">Prices shown exclude fuel surcharge. Fuel surcharge will be added on the weekly invoice.</textarea>
+        <label for="pricing_ack_note">
+          ACK Pricing Note
+        </label>
+        <textarea
+          id="pricing_ack_note"
+          class="textarea"></textarea>
+      </div>
+
+    </div>
+  </section>
+
+
+  <!-- SCOTLAND REGIONAL PRICING -->
+  <section class="card settings-card">
+
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">
+          Scotland Regional Pricing Zones
+        </h2>
+        <p class="section-sub">
+          Configure postcode-based transport surcharges.
+          Click the map to enlarge.
+        </p>
+      </div>
+    </div>
+
+    <div class="pricing-zone-layout">
+
+      <!-- LEFT: MAP -->
+      <div style="max-width:440px;">
+
+        <img
+          src="/assets/scotland-pricing-zones.png"
+          alt="Scotland Regional Pricing Zones"
+          class="pricing-zone-image"
+          loading="lazy"
+          role="button"
+          tabindex="0"
+          aria-label="Enlarge Scotland pricing zones map"
+          onclick="openPricingImage(this.src,this.alt)"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPricingImage(this.src,this.alt);}"
+        />
+
+        <span class="subline">
+          Illustrative regional pricing map.
+          Exact postcode classifications are determined
+          by the configured pricing rules.
+        </span>
+
+      </div>
+
+      <!-- RIGHT: SETTINGS -->
+      <div class="pricing-zone-settings">
+
+        <div class="field">
+          <label for="regional_surcharge_enabled">
+            Enable Regional Surcharge
+          </label>
+          <select
+            id="regional_surcharge_enabled"
+            class="select">
+            <option value="">Select...</option>
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="surcharge_edinburgh_glasgow_percent">
+            Edinburgh / Glasgow / Lowlands Surcharge %
+          </label>
+          <input
+            id="surcharge_edinburgh_glasgow_percent"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+          />
+        </div>
+
+        <div class="field">
+          <label for="surcharge_highlands_islands_percent">
+            Highlands & Islands Surcharge %
+          </label>
+          <input
+            id="surcharge_highlands_islands_percent"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+          />
+        </div>
+
+        <div class="field">
+          <label for="regional_pricing_zones">
+            Regional Postcode Rules (JSON)
+          </label>
+          <textarea
+            id="regional_pricing_zones"
+            class="textarea"
+            rows="7"
+            placeholder="Configure regional postcode zones"></textarea>
+          <span class="subline">
+            Postcode rules are stored per tenant.
+            Highlands & Islands should take priority
+            where postcode areas overlap.
+          </span>
+        </div>
+
+        <div class="note-box">
+          <strong>Regional Pricing</strong>
+          <p>
+            Regional surcharges are calculated using
+            the configured postcode zones.
+          </p>
+          <p>
+            The map is illustrative and does not
+            determine the actual surcharge.
+          </p>
+        </div>
+
       </div>
     </div>
   </section>
+
+
+  <!-- LONDON TRANSPORT CHARGES -->
+  <section class="card settings-card">
+
+    <div class="section-head">
+      <div>
+        <h2 class="section-title">
+          London Transport Charges
+        </h2>
+        <p class="section-sub">
+          Configure ULEZ, LEZ and Congestion Charge
+          customer charges.
+        </p>
+      </div>
+    </div>
+
+    <div class="pricing-zone-layout">
+
+      <!-- LEFT: ULEZ MAP -->
+      <div style="max-width:440px;">
+
+        <img
+          src="/assets/london-ulez-zone-map.png"
+          alt="London ULEZ Zone Map"
+          class="pricing-zone-image"
+          loading="lazy"
+          role="button"
+          tabindex="0"
+          aria-label="Enlarge London ULEZ map"
+          onclick="openPricingImage(this.src,this.alt)"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPricingImage(this.src,this.alt);}"
+        />
+
+        <span class="subline">
+          Illustrative ULEZ map.
+          For exact boundaries and vehicle eligibility,
+          refer to Transport for London.
+        </span>
+
+        <a
+          href="https://tfl.gov.uk/modes/driving/ultra-low-emission-zone"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn btn-primary"
+          style="
+            display:inline-flex;
+            margin-top:12px;
+            text-decoration:none;
+          ">
+          View official ULEZ information ↗
+        </a>
+
+      </div>
+
+      <!-- RIGHT: LONDON SETTINGS -->
+      <div class="pricing-zone-settings">
+
+        <div class="field">
+          <label for="london_ulez_enabled">
+            ULEZ Surcharge Enabled
+          </label>
+          <select id="london_ulez_enabled" class="select">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="london_ulez_charge">
+            ULEZ Customer Charge (£)
+          </label>
+          <input
+            id="london_ulez_charge"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+          />
+        </div>
+
+        <div class="field">
+          <label for="london_lez_enabled">
+            LEZ Surcharge Enabled
+          </label>
+          <select id="london_lez_enabled" class="select">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="london_lez_charge">
+            LEZ Customer Charge (£)
+          </label>
+          <input
+            id="london_lez_charge"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+          />
+        </div>
+
+        <div class="field">
+          <label for="london_congestion_enabled">
+            Congestion Charge Enabled
+          </label>
+          <select
+            id="london_congestion_enabled"
+            class="select">
+            <option value="false">Disabled</option>
+            <option value="true">Enabled</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="london_congestion_charge">
+            Congestion Customer Charge (£)
+          </label>
+          <input
+            id="london_congestion_charge"
+            class="input"
+            type="number"
+            min="0"
+            step="0.01"
+          />
+        </div>
+
+        <div class="field">
+          <label for="london_charge_method">
+            Charging Method
+          </label>
+          <select id="london_charge_method" class="select">
+            <option value="per_delivery">Per Delivery</option>
+            <option value="per_route">Per Route</option>
+            <option value="per_day">Per Day</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="london_vehicle_applicability">
+            Vehicle Applicability
+          </label>
+          <select
+            id="london_vehicle_applicability"
+            class="select">
+            <option value="non_compliant">
+              Non-compliant vehicles only
+            </option>
+            <option value="all">
+              All vehicles
+            </option>
+          </select>
+        </div>
+
+        <div class="note-box">
+          <strong>London Charging Rules</strong>
+          <p>
+            These are tenant-configured customer charges.
+            They are not necessarily the official TfL fees.
+          </p>
+          <p>
+            Automatic zone detection and vehicle eligibility
+            must be implemented separately in the Pricing Engine.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
 </section>
 
-    <section id="tab-automation" class="settings-panel">
+<section id="tab-automation" class="settings-panel">
+
       <section class="card settings-card">
         <div class="section-head">
           <div>
@@ -1067,5 +4129,425 @@ Quality inspection charge per colli.
     </section>
   </main>
 </div>
+
+<dialog id="pricingImageDialog" class="pricing-image-dialog">
+  <button
+    type="button"
+    class="pricing-dialog-close"
+    onclick="document.getElementById('pricingImageDialog').close()"
+    aria-label="Close image"
+  >
+    &times;
+  </button>
+
+  <img id="pricingDialogImage" alt="">
+</dialog>
+
+<script>
+  function openPricingImage(src, alt) {
+    const dialog = document.getElementById("pricingImageDialog");
+    const image = document.getElementById("pricingDialogImage");
+
+    image.src = src;
+    image.alt = alt || "Pricing zone map";
+
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+  }
+
+  document.getElementById("pricingImageDialog")
+    .addEventListener("click", function(event) {
+      if (event.target === this) {
+        this.close();
+      }
+    });
+</script>
+
+
+<!-- ========================================================
+     TRANSPORT SUBTAB NAVIGATION
+     ======================================================== -->
+
+<script>
+(function () {
+  "use strict";
+
+  function initTransportSubtabs() {
+    const transport = document.getElementById("tab-transport");
+    const navigation = document.getElementById("transportSubtabs");
+
+    if (!transport || !navigation) return;
+
+    const buttons = Array.from(
+      navigation.querySelectorAll("[data-transport-tab]")
+    );
+
+    const panels = Array.from(
+      transport.querySelectorAll("[data-transport-panel]")
+    );
+
+    const validTabs = new Set(
+      panels.map(panel => panel.dataset.transportPanel)
+    );
+
+    function activateTransportTab(tabName) {
+      if (!validTabs.has(tabName)) {
+        tabName = "depot";
+      }
+
+      buttons.forEach(button => {
+        const active =
+          button.dataset.transportTab === tabName;
+
+        button.classList.toggle("active", active);
+        button.setAttribute(
+          "aria-selected",
+          String(active)
+        );
+        button.setAttribute(
+          "aria-current",
+          active ? "page" : "false"
+        );
+      });
+
+      panels.forEach(panel => {
+        const active =
+          panel.dataset.transportPanel === tabName;
+
+        panel.classList.toggle("active", active);
+      });
+    }
+
+    navigation.addEventListener("click", event => {
+      const button = event.target.closest(
+        "[data-transport-tab]"
+      );
+
+      if (!button || !navigation.contains(button)) return;
+
+      activateTransportTab(
+        button.dataset.transportTab
+      );
+    });
+
+    activateTransportTab("depot");
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      initTransportSubtabs,
+      { once: true }
+    );
+  } else {
+    initTransportSubtabs();
+  }
+})();
+</script>
+
+
+<!-- TRANSPORT UNLOADING TIME CALCULATOR -->
+<script>
+(function () {
+  "use strict";
+
+  const ids = [
+    "unloading_time_mode",
+    "stop_time_minutes",
+    "unloading_extra_minutes_per_order",
+    "unloading_volume_threshold_m3",
+    "unloading_extra_minutes_per_m3",
+    "unloading_volume_rounding",
+    "unloadingPreviewOrders",
+    "unloadingPreviewVolume"
+  ];
+
+  function field(id) {
+    return document.getElementById(id);
+  }
+
+  function number(id, fallback = 0) {
+    const value = field(id)?.value;
+
+    if (value === undefined || value === "") {
+      return fallback;
+    }
+
+    const parsed = Number(
+      String(value).replace(",", ".")
+    );
+
+    return Number.isFinite(parsed)
+      ? parsed
+      : fallback;
+  }
+
+  function updateUnloadingPreview() {
+    const mode =
+      field("unloading_time_mode")?.value || "fixed";
+
+    const base = Math.max(
+      0,
+      number("stop_time_minutes", 15)
+    );
+
+    const extraPerOrder = Math.max(
+      0,
+      number("unloading_extra_minutes_per_order", 5)
+    );
+
+    const threshold = Math.max(
+      0,
+      number("unloading_volume_threshold_m3", 1.5)
+    );
+
+    const extraPerM3 = Math.max(
+      0,
+      number("unloading_extra_minutes_per_m3", 5)
+    );
+
+    const orders = Math.max(
+      1,
+      Math.floor(number("unloadingPreviewOrders", 6))
+    );
+
+    const volume = Math.max(
+      0,
+      number("unloadingPreviewVolume", 8)
+    );
+
+    const rounding =
+      field("unloading_volume_rounding")?.value ||
+      "proportional";
+
+    const extraVolume = Math.max(
+      0,
+      volume - threshold
+    );
+
+    const billableVolume =
+      rounding === "round_up"
+        ? Math.ceil(extraVolume)
+        : extraVolume;
+
+    const orderMinutes =
+      Math.max(0, orders - 1) * extraPerOrder;
+
+    const volumeMinutes =
+      billableVolume * extraPerM3;
+
+    let total = base;
+    let breakdown = `${base} min base`;
+
+    if (mode === "orders" || mode === "combined") {
+      total += orderMinutes;
+      breakdown +=
+        ` + ${orderMinutes.toFixed(1)} min orders`;
+    }
+
+    if (mode === "volume" || mode === "combined") {
+      total += volumeMinutes;
+      breakdown +=
+        ` + ${volumeMinutes.toFixed(1)} min volume`;
+    }
+
+    const result = field("unloadingPreviewResult");
+    const detail = field("unloadingPreviewBreakdown");
+
+    if (result) {
+      result.textContent =
+        `${Math.ceil(total)} minutes`;
+    }
+
+    if (detail) {
+      detail.textContent = breakdown;
+    }
+  }
+
+  function init() {
+    ids.forEach(id => {
+      const element = field(id);
+
+      if (!element) return;
+
+      element.addEventListener(
+        "input",
+        updateUnloadingPreview
+      );
+
+      element.addEventListener(
+        "change",
+        updateUnloadingPreview
+      );
+    });
+
+    updateUnloadingPreview();
+
+    window.updateUnloadingPreview =
+      updateUnloadingPreview;
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      init
+    );
+  } else {
+    init();
+  }
+})();
+</script>
+
+
+<!-- ==========================================================
+     VEYNOR — PRODUCT OWNER SUBTAB NAVIGATION
+     ========================================================== -->
+
+<script>
+(function () {
+  "use strict";
+
+  function initOwnerSubtabs() {
+
+    const root = document.getElementById("tab-customers");
+    const navigation = document.getElementById("ownerSubtabs");
+
+    if (!root || !navigation) return;
+
+    const buttons = Array.from(
+      navigation.querySelectorAll("[data-owner-tab]")
+    );
+
+    const panels = Array.from(
+      root.querySelectorAll("[data-owner-panel]")
+    );
+
+    const validTabs = new Set(
+      panels.map(panel => panel.dataset.ownerPanel)
+    );
+
+    function activateOwnerTab(tabName) {
+
+      if (!validTabs.has(tabName)) {
+        tabName = "general";
+      }
+
+      buttons.forEach(button => {
+
+        const active =
+          button.dataset.ownerTab === tabName;
+
+        button.classList.toggle("active", active);
+
+        button.setAttribute(
+          "aria-selected",
+          String(active)
+        );
+
+      });
+
+      panels.forEach(panel => {
+
+        const active =
+          panel.dataset.ownerPanel === tabName;
+
+        panel.classList.toggle("active", active);
+
+      });
+    }
+
+    navigation.addEventListener("click", event => {
+
+      const button = event.target.closest(
+        "[data-owner-tab]"
+      );
+
+      if (!button || !navigation.contains(button)) return;
+
+      activateOwnerTab(button.dataset.ownerTab);
+
+    });
+
+    activateOwnerTab("general");
+  }
+
+
+  /* ========================================================
+     TRANSPORT BILLING DEPENDENCIES
+     ======================================================== */
+
+  function initOwnerBillingDependencies() {
+
+    const root = document.getElementById("tab-customers");
+
+    const transportSwitch = document.getElementById(
+      "owner_invoice_transport_enabled"
+    );
+
+    if (!root || !transportSwitch) return;
+
+    const dependentSections = Array.from(
+      root.querySelectorAll(
+        "[data-owner-transport-dependent]"
+      )
+    );
+
+    function updateTransportDependencies() {
+
+      const enabled = transportSwitch.checked;
+
+      dependentSections.forEach(section => {
+
+        section.classList.toggle(
+          "owner-dependent-disabled",
+          !enabled
+        );
+
+        section.querySelectorAll(
+          "input, select, textarea"
+        ).forEach(field => {
+
+          field.disabled = !enabled;
+
+        });
+
+      });
+    }
+
+    transportSwitch.addEventListener(
+      "change",
+      updateTransportDependencies
+    );
+
+    /* Also available to settings.js after owner changes. */
+    window.updateOwnerTransportDependencies =
+      updateTransportDependencies;
+
+    updateTransportDependencies();
+  }
+
+
+  function init() {
+    initOwnerSubtabs();
+    initOwnerBillingDependencies();
+  }
+
+  if (document.readyState === "loading") {
+
+    document.addEventListener(
+      "DOMContentLoaded",
+      init,
+      { once: true }
+    );
+
+  } else {
+    init();
+  }
+
+})();
+</script>
+
+
 </body>
 </html>

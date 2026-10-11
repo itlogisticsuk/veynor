@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const DEBUG = true;
 
   const DELIVERY_SUCCESS_STATUSES = new Set(["delivered", "completed"]);
@@ -875,21 +874,64 @@ function transportTypeLabel(value) {
     return !!byId("manualFinalizeEta")?.checked;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
 
-    const { data, error } = await client
+async function getCompanyId() {
+  if (companyId) return companyId;
+
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error("No authenticated user found.");
+  }
+
+  const { data: profiles, error: profileError } =
+    await client
+      .from("user_profiles")
+      .select("company_id")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+  if (profileError) throw profileError;
+
+  const companyIds = [
+    ...new Set(
+      (profiles || [])
+        .map(profile => profile.company_id)
+        .filter(Boolean)
+    )
+  ];
+
+  if (companyIds.length !== 1) {
+    throw new Error(
+      "Unable to determine a unique active tenant."
+    );
+  }
+
+  const { data: company, error: companyError } =
+    await client
       .from("companies")
       .select("id")
-      .eq("name", TENANT_NAME)
+      .eq("id", companyIds[0])
       .maybeSingle();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+  if (companyError) throw companyError;
 
-    companyId = data.id;
-    return companyId;
+  if (!company?.id) {
+    throw new Error(
+      "Active tenant is unavailable or inaccessible."
+    );
   }
+
+  companyId = company.id;
+
+  return companyId;
+}
+
 
   async function loadDepotSettings() {
     const cid = await getCompanyId();
@@ -1058,6 +1100,202 @@ async function loadStoredDeliveryGroups() {
   storedDeliveryGroups = data || [];
 }
 
+
+/* ==========================================================
+   VEYNOR — ORDER EMISSION ZONE ALERTS
+   ========================================================== */
+
+function emissionSettingEnabled(value) {
+  return ["true", "1", "yes", "on", "enabled"]
+    .includes(String(value ?? "").trim().toLowerCase());
+}
+
+function parseEmissionPreferences(value) {
+  if (!value) return {};
+
+  try {
+    const parsed = typeof value === "string"
+      ? JSON.parse(value)
+      : value;
+
+    return parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed)
+        ? parsed
+        : {};
+  } catch (error) {
+    console.warn(
+      "[orders.js] Invalid emission preferences:",
+      error
+    );
+    throw new Error("Invalid emission zone preferences.");
+  }
+}
+
+async function loadOrderEmissionZones() {
+  const cid = await getCompanyId();
+
+  // Clear previous results before refreshing.
+
+allOrders.forEach(order => {
+  order.emission_zones = [];
+  order.has_emission_alert = false;
+  order.emission_check_status = "not_checked";
+});
+
+
+  const { data: rows, error: settingsError } =
+    await client
+      .from("settings")
+      .select("setting_key, setting_value")
+      .eq("company_id", cid)
+      .in("setting_key", [
+        "emission_alert_delivery",
+        "emission_zone_preferences"
+      ]);
+
+  if (settingsError) throw settingsError;
+
+  const settings = Object.fromEntries(
+    (rows || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  if (!emissionSettingEnabled(
+    settings.emission_alert_delivery
+  )) {
+    console.info(
+      "[orders.js] Delivery emission alerts disabled."
+    );
+    return;
+  }
+
+  const preferences = parseEmissionPreferences(
+    settings.emission_zone_preferences
+  );
+
+  const zoneEnabled = code =>
+    preferences[String(code || "").toUpperCase()] !== false;
+
+  // Group orders at identical coordinates.
+  const locations = new Map();
+
+  for (const order of allOrders) {
+    const lat = Number(order.delivery_lat);
+    const lng = Number(order.delivery_lng);
+
+    if (
+      order.delivery_lat == null ||
+      order.delivery_lng == null ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 || lat > 90 ||
+      lng < -180 || lng > 180
+    ) {
+      continue;
+    }
+
+    const key = `${lat.toFixed(6)}|${lng.toFixed(6)}`;
+
+    if (!locations.has(key)) {
+      locations.set(key, {
+        location_key: key,
+        latitude: lat,
+        longitude: lng
+      });
+    }
+  }
+
+  const uniqueLocations = [...locations.values()];
+
+  if (!uniqueLocations.length) return;
+
+  const zonesByLocation = new Map();
+  const batchSize = 100;
+
+  for (
+    let index = 0;
+    index < uniqueLocations.length;
+    index += batchSize
+  ) {
+    const batch = uniqueLocations.slice(
+      index,
+      index + batchSize
+    );
+
+    const { data, error } = await client.rpc(
+      "check_emission_zone_deliveries",
+      {
+        p_locations: batch
+      }
+    );
+
+    if (error) throw error;
+
+    for (const zone of data || []) {
+      if (!zoneEnabled(zone.zone_code)) continue;
+
+      const key = String(zone.location_key);
+
+      if (!zonesByLocation.has(key)) {
+        zonesByLocation.set(key, []);
+      }
+
+      const existing = zonesByLocation.get(key);
+
+      if (!existing.some(
+        item => item.zone_code === zone.zone_code
+      )) {
+        existing.push(zone);
+      }
+    }
+  }
+
+
+for (const order of allOrders) {
+  const lat = Number(order.delivery_lat);
+  const lng = Number(order.delivery_lng);
+
+  if (
+    order.delivery_lat == null ||
+    order.delivery_lng == null ||
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180
+  ) {
+    order.emission_check_status = "no_coordinates";
+    continue;
+  }
+
+  const key = `${lat.toFixed(6)}|${lng.toFixed(6)}`;
+
+  order.emission_zones =
+    zonesByLocation.get(key) || [];
+
+  order.has_emission_alert =
+    order.emission_zones.length > 0;
+
+  order.emission_check_status = "checked";
+}
+
+
+  console.info(
+    "[orders.js] Emission zone check completed:",
+    {
+      locations_checked: uniqueLocations.length,
+      affected_orders: allOrders.filter(
+        order => order.has_emission_alert
+      ).length
+    }
+  );
+}
+
+
 async function loadOrders() {
   const cid = await getCompanyId();
 
@@ -1140,77 +1378,101 @@ async function loadOrders() {
 
   await loadOrderRevenueOverlay();
 }
-  async function loadOrderRevenueOverlay() {
-    const cid = await getCompanyId();
-    const ids = allOrders.map(row => row.id).filter(Boolean);
-    if (!ids.length) return;
+
+async function loadOrderRevenueOverlay() {
+  const cid = await getCompanyId();
+
+  const ids = allOrders
+    .map(order => order.id)
+    .filter(Boolean);
+
+  if (!ids.length) return;
+
+  const revenueByOrder = new Map();
+
+  // Process orders in batches to avoid oversized requests.
+  const batchSize = 100;
+
+  for (
+    let index = 0;
+    index < ids.length;
+    index += batchSize
+  ) {
+    const batch = ids.slice(index, index + batchSize);
 
     const { data, error } = await client
       .from("order_lines")
       .select(`
-        id,
-order_id,
-quantity,
-quantity_ordered,
-total_customer_charge,
-        total_line_charge,
-        line_total_gbp,
-        revenue_gbp,
-        products (
-          id,
-          total_customer_charge,
-          transport_tariff,
-          handling_tariff,
-          admin_tariff,
-          storage_tariff
-        )
+        order_id,
+        quantity_ordered,
+        total_customer_charge,
+        manual_amount_gbp,
+        is_credit_line
       `)
       .eq("company_id", cid)
-      .in("order_id", ids);
+      .in("order_id", batch);
 
     if (error) {
-      console.warn("[orders.js] Revenue overlay skipped:", error.message);
-      return;
+      console.error(
+        "[orders.js] Revenue overlay failed:",
+        error
+      );
+      throw error;
     }
 
-    const revenueByOrder = new Map();
-
-    (data || []).forEach(line => {
+    for (const line of data || []) {
       const orderId = String(line.order_id || "");
-      if (!orderId) return;
 
-const qty =
-  toNumber(
-    line.quantity_ordered ??
-    line.quantity,
-    1
-  );
+      if (!orderId) continue;
 
-      const direct =
-        toNumber(line.total_customer_charge, 0) ||
-        toNumber(line.total_line_charge, 0) ||
-        toNumber(line.line_total_gbp, 0) ||
-        toNumber(line.revenue_gbp, 0);
+      const directCharge = Number(
+        line.total_customer_charge
+      );
 
-      const productUnit =
-        toNumber(line.products?.total_customer_charge, 0) ||
-        (
-          toNumber(line.products?.transport_tariff, 0) +
-          toNumber(line.products?.handling_tariff, 0) +
-          toNumber(line.products?.admin_tariff, 0) +
-          toNumber(line.products?.storage_tariff, 0)
-        );
+      const manualCharge = Number(
+        line.manual_amount_gbp
+      );
 
-      const revenue = direct > 0 ? direct : productUnit * qty;
+      let revenue = 0;
 
-      revenueByOrder.set(orderId, (revenueByOrder.get(orderId) || 0) + revenue);
-    });
+      if (Number.isFinite(directCharge) &&
+          line.total_customer_charge !== null) {
+        revenue = directCharge;
+      } else if (
+        Number.isFinite(manualCharge) &&
+        line.manual_amount_gbp !== null
+      ) {
+        revenue = manualCharge;
+      }
 
-    allOrders = allOrders.map(order => ({
-      ...order,
-      __line_revenue_gbp: revenueByOrder.get(String(order.id)) || 0
-    }));
+      // Credit lines are negative unless already negative.
+      if (line.is_credit_line === true) {
+        revenue = -Math.abs(revenue);
+      }
+
+      revenueByOrder.set(
+        orderId,
+        (revenueByOrder.get(orderId) || 0) + revenue
+      );
+    }
   }
+
+  // Apply calculated line revenue to loaded orders.
+  allOrders = allOrders.map(order => ({
+    ...order,
+    __line_revenue_gbp:
+      revenueByOrder.get(String(order.id)) || 0
+  }));
+
+  console.info(
+    "[orders.js] Revenue overlay completed:",
+    {
+      orders: ids.length,
+      orders_with_revenue: [...revenueByOrder.values()]
+        .filter(value => value !== 0).length
+    }
+  );
+}
 
   async function loadRoutes() {
     const cid = await getCompanyId();
@@ -1305,27 +1567,102 @@ async function loadDriverLiveLocations() {
     ].join("");
   }
 
-  function renderSelects() {
-    const manualVehicle = byId("manualVehicleSelect");
-    if (manualVehicle) {
-      const current = selectedVehicleId || manualVehicle.value || "";
-      manualVehicle.innerHTML = vehicleOptionsHtml(current);
-      manualVehicle.value = current;
-    }
 
-    const manualDriver = byId("manualDriverSelect");
-    if (manualDriver) {
-      const current = selectedDriverId || manualDriver.value || "";
-      manualDriver.innerHTML = driverOptionsHtml(current);
-      manualDriver.value = current;
-    }
+function renderSelects() {
+  const manualVehicle = byId("manualVehicleSelect");
 
-    const date = byId("manualRouteDeliveryDate");
-    if (date && !date.value) date.value = selectedPlanningDate;
+  if (manualVehicle) {
+    const current =
+      selectedVehicleId || manualVehicle.value || "";
 
-    const time = byId("manualRouteStartTime");
-    if (time && !time.value) time.value = "08:00";
+    manualVehicle.innerHTML =
+      vehicleOptionsHtml(current);
+
+    manualVehicle.value = current;
   }
+
+  const manualDriver = byId("manualDriverSelect");
+
+  if (manualDriver) {
+    const current =
+      selectedDriverId || manualDriver.value || "";
+
+    manualDriver.innerHTML =
+      driverOptionsHtml(current);
+
+    manualDriver.value = current;
+  }
+
+  // Product Owner filter — tenant order data
+  const ownerSelect = byId("filterProductOwner");
+
+  if (ownerSelect) {
+    const current = ownerSelect.value || "";
+    const owners = new Map();
+
+    for (const order of allOrders) {
+      const id = String(
+        order.customer_id ||
+        order.product_owner_id ||
+        ""
+      ).trim();
+
+      if (!id) continue;
+
+      const name = getProductOwnerName(order);
+
+      if (!owners.has(id)) {
+        owners.set(id, name);
+      }
+    }
+
+    const sorted = [...owners.entries()]
+      .sort((a, b) =>
+        a[1].localeCompare(b[1], "en", {
+          sensitivity: "base"
+        })
+      );
+
+    ownerSelect.innerHTML = [
+      '<option value="">All customers</option>',
+      ...sorted.map(([id, name]) => `
+        <option value="${escapeHtml(id)}">
+          ${escapeHtml(name)}
+        </option>
+      `)
+    ].join("");
+
+    ownerSelect.value =
+      owners.has(current) ? current : "";
+  }
+
+  // Driver filter — active planning drivers
+  const driverSelect = byId("filterDriver");
+
+  if (driverSelect) {
+    const current = driverSelect.value || "";
+
+    driverSelect.innerHTML =
+      driverOptionsHtml(current, "All drivers");
+
+    const exists = [...driverSelect.options]
+      .some(option => option.value === current);
+
+    driverSelect.value = exists ? current : "";
+  }
+
+  const date = byId("manualRouteDeliveryDate");
+
+  if (date && !date.value) {
+    date.value = selectedPlanningDate;
+  }
+
+  const time = byId("manualRouteStartTime");
+
+  if (time && !time.value) {
+    time.value = "08:00";
+  }
+}
 
   function sortValue(order, key) {
     if (key === "order") return normalize(order.order_number);
@@ -1374,18 +1711,59 @@ async function loadDriverLiveLocations() {
     });
   }
 
-  function applyFilters() {
-  const q = normalize(byId("orderSearch")?.value || "");
-  const status = normalize(byId("filterStatus")?.value || "");
-  const completion = normalize(byId("filterCompletion")?.value || "");
-  const routeFilter = normalize(byId("filterRoute")?.value || "");
-  const transport = normalize(byId("filterTransport")?.value || "");
-  const hideCompleted = !!byId("toggleHideCompleted")?.checked;
-  const coordsOnly = !!byId("toggleOnlyWithCoordinates")?.checked;
+
+function applyFilters() {
+  const q = normalize(
+    byId("orderSearch")?.value || ""
+  );
+
+  const status = normalize(
+    byId("filterStatus")?.value || ""
+  );
+
+  const completion = normalize(
+    byId("filterCompletion")?.value || ""
+  );
+
+  const routeFilter = normalize(
+    byId("filterRoute")?.value || ""
+  );
+
+  const ownerId = String(
+    byId("filterProductOwner")?.value || ""
+  );
+
+  const emissionFilter = normalize(
+    byId("filterEmissionZones")?.value || ""
+  );
+
+  const driverId = String(
+    byId("filterDriver")?.value || ""
+  );
+
+  const ownOnly =
+    !!byId("toggleOwnTransportOnly")?.checked;
+
+  const charterOnly =
+    !!byId("toggleCharterOnly")?.checked;
+
+  const coordsOnly =
+    !!byId("toggleOnlyWithCoordinates")?.checked;
+
+  // Delivered is only shown when explicitly requested.
+  const showDelivered =
+    status === "delivered" ||
+    status === "completed" ||
+    completion === "delivered";
 
   filteredOrders = allOrders.filter(order => {
-    if (isDelivered(order)) return false;
 
+    // Default: hide completed deliveries.
+    if (isDelivered(order) && !showDelivered) {
+      return false;
+    }
+
+    // Search across order details.
     if (q) {
       const haystack = [
         order.order_number,
@@ -1398,45 +1776,192 @@ async function loadDriverLiveLocations() {
         order.delivery_address_1,
         order.delivery_address_2,
         getOrderDriverName(order)
-      ].join(" ").toLowerCase();
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-      if (!haystack.includes(q)) return false;
+      if (!haystack.includes(q)) {
+        return false;
+      }
     }
 
-    if (status && normalize(order.status) !== status) return false;
+    // Product Owner.
+    if (ownerId) {
+      const orderOwnerId = String(
+        order.customer_id ||
+        order.product_owner_id ||
+        ""
+      );
 
+      if (orderOwnerId !== ownerId) {
+        return false;
+      }
+    }
+
+    // Order Status.
+    if (status) {
+      if (status === "delivered" ||
+          status === "completed") {
+        if (!isDelivered(order)) return false;
+      } else if (
+        normalize(order.status) !== status
+      ) {
+        return false;
+      }
+    }
+
+    // Completion.
     if (completion) {
       const state = getCompletionState(order);
-      if (completion === "open" && state !== "open" && state !== "stock_complete") return false;
-      if (completion === "stock_complete" && state !== "stock_complete") return false;
-      if (completion === "delivered" && state !== "delivered") return false;
-      if (completion === "issue" && state !== "issue") return false;
-      if (completion === "failed" && state !== "failed") return false;
+
+      if (
+        completion === "open" &&
+        state !== "open" &&
+        state !== "stock_complete"
+      ) {
+        return false;
+      }
+
+      if (
+        completion === "stock_complete" &&
+        state !== "stock_complete"
+      ) {
+        return false;
+      }
+
+      if (
+        completion === "delivered" &&
+        state !== "delivered"
+      ) {
+        return false;
+      }
+
+      if (
+        completion === "issue" &&
+        state !== "issue"
+      ) {
+        return false;
+      }
+
+      if (
+        completion === "failed" &&
+        state !== "failed"
+      ) {
+        return false;
+      }
     }
 
-    if (routeFilter === "planned" && !order.route_id) return false;
-    if (routeFilter === "unplanned" && order.route_id) return false;
-
-    if (transport) {
-      const value = normalize(order.transport_type || "unassigned");
-      if (value !== transport) return false;
+    // Route Assignment.
+    if (
+      routeFilter === "planned" &&
+      !order.route_id
+    ) {
+      return false;
     }
 
-    if (hideCompleted && (isDelivered(order) || isIssue(order) || isFailed(order))) return false;
-    if (coordsOnly && !hasCoordinates(order)) return false;
+    if (
+      routeFilter === "unplanned" &&
+      order.route_id
+    ) {
+      return false;
+    }
+
+    // Driver.
+    if (driverId) {
+      const route = order.route_id
+        ? getRouteById(order.route_id)
+        : null;
+
+      const assignedDriverId = String(
+        route
+          ? getRouteDriverId(route)
+          : getOrderDriverId(order)
+      );
+
+      const selectedDriver = getDriverById(driverId);
+
+      const validIds = [
+        driverId,
+        selectedDriver?.id,
+        selectedDriver?.auth_user_id,
+        selectedDriver?.profile_id
+      ]
+        .filter(Boolean)
+        .map(String);
+
+      if (!validIds.includes(assignedDriverId)) {
+        return false;
+      }
+    }
+
+    // Emission Zones.
+    if (emissionFilter === "inside") {
+      if (order.emission_check_status !== "checked") {
+        return false;
+      }
+
+      if (!order.has_emission_alert) {
+        return false;
+      }
+    }
+
+    if (emissionFilter === "outside") {
+      if (order.emission_check_status !== "checked") {
+        return false;
+      }
+
+      if (order.has_emission_alert) {
+        return false;
+      }
+    }
+
+    // Transport checkboxes.
+    const transportType =
+      normalize(order.transport_type);
+
+    if (ownOnly && charterOnly) {
+      return false;
+    }
+
+    if (
+      ownOnly &&
+      transportType !== "own_transport"
+    ) {
+      return false;
+    }
+
+    if (
+      charterOnly &&
+      transportType !== "charter"
+    ) {
+      return false;
+    }
+
+    // Optional coordinates filter.
+    if (coordsOnly && !hasCoordinates(order)) {
+      return false;
+    }
 
     return true;
   });
 
-  Array.from(selectedOrderIds).forEach(id => {
-    if (!allOrders.some(row => String(row.id) === String(id))) {
+  // Remove selections for orders no longer loaded.
+  for (const id of [...selectedOrderIds]) {
+    if (!allOrders.some(
+      order => String(order.id) === String(id)
+    )) {
       selectedOrderIds.delete(id);
     }
-  });
+  }
 
   sortOrders();
   updateCheckAllState();
-  setText("resultsMeta", `${formatNumber(filteredOrders.length)} orders shown`);
+
+  setText(
+    "resultsMeta",
+    `${formatNumber(filteredOrders.length)} orders shown`
+  );
 }
 
   function updateCheckAllState() {
@@ -1516,132 +2041,260 @@ async function loadDriverLiveLocations() {
     renderKpis();
   }
 
-  function renderOrdersTable() {
-    const tbody = byId("ordersTableBody");
-    if (!tbody) return;
 
-    updateSortIndicators();
+function renderOrdersTable() {
+  const tbody = byId("ordersTableBody");
+  if (!tbody) return;
 
-    if (!filteredOrders.length) {
-      tbody.innerHTML = `<tr><td colspan="18">No orders match the current filters.</td></tr>`;
-      updateCheckAllState();
-      return;
-    }
+  updateSortIndicators();
 
-    tbody.innerHTML = filteredOrders.map(order => {
-      const selected = selectedOrderIds.has(String(order.id));
+  if (!filteredOrders.length) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="18">
+          No orders match the current filters.
+        </td>
+      </tr>
+    `;
 
-      return `
-        <tr data-order-id="${escapeHtml(order.id)}" class="${escapeHtml(rowClass(order))} ${String(selectedOrderId) === String(order.id) ? "active" : ""}">
-          <td class="checkbox-cell">
-            <input class="order-check" type="checkbox" data-order-id="${escapeHtml(order.id)}" ${selected ? "checked" : ""}/>
-          </td>
-
-          <td>
-  <strong>${escapeHtml(order.order_number || "—")}</strong>
-
-${
-  isCollectionOrder(order)
-    ? `
-      <span
-        class="subline"
-        style="
-          color:#0e7490;
-          font-weight:900;
-        "
-      >
-        ↩ COLLECTION FROM RETAILER
-      </span>
-    `
-    : ""
-}
-
-  ${
-    order.external_reference
-      ? `<span class="subline">Supplier Ref: ${escapeHtml(order.external_reference)}</span>`
-      : ""
-  }
-
-  <span class="subline">PO: ${escapeHtml(order.purchase_order || "—")}</span>
-
-${
-  isExpectedStockOrder(order)
-    ? `
-      <span
-        class="subline"
-        style="
-          color:#1d4ed8;
-          font-weight:800;
-        "
-      >
-        Expected stock · Available from
-        ${escapeHtml(
-          formatDate(
-            getEarliestPlanningDate(
-              order
-            )
-          )
-        )}
-      </span>
-    `
-    : ""
-}
-</td>
-
-          <td>
-            ${escapeHtml(getProductOwnerName(order))}
-            <span class="subline">Product owner</span>
-          </td>
-
-          <td>
-            ${escapeHtml(getRetailerName(order))}
-            <span class="subline">${escapeHtml(order.delivery_address_1 || "")}</span>
-          </td>
-
-          <td>${escapeHtml(order.delivery_city || "—")}</td>
-          <td>${escapeHtml(order.delivery_postcode || "—")}</td>
-          <td>${formatNumber(getOrderColli(order))}</td>
-          <td>${formatNumber(getOrderVolume(order), 2)} m³</td>
-          <td>${formatMoney(getOrderRevenue(order))}</td>
-
-          <td>
-            <span class="${hasCoordinates(order) ? "coord-ok" : "coord-missing"}">
-              ${hasCoordinates(order) ? "OK" : "Missing"}
-            </span>
-          </td>
-
-          <td>
-            <span class="status-pill ${statusPillClass(order.status)}" ${statusPillStyle(order.status, order)}>
-              ${escapeHtml(titleCase(order.status || "—"))}
-            </span>
-          </td>
-
-          <td>
-            <span class="completion-pill ${completionClass(order)}">
-              ${escapeHtml(completionLabel(order))}
-            </span>
-          </td>
-
-          <td>
-            <span class="transport-pill ${transportPillClass(order.transport_type)}">
-              ${escapeHtml(
-  transportTypeLabel(order.transport_type)
-)}
-            </span>
-          </td>
-
-          <td>${escapeHtml(getRouteLabel(order.route_id))}</td>
-          <td>${escapeHtml(getOrderDriverName(order))}</td>
-          <td>${escapeHtml(formatDate(getExpectedDelivery(order)))}</td>
-          <td>${escapeHtml(getEtaText(order))}</td>
-          <td>${escapeHtml(formatDate(order.requested_delivery_date))}</td>
-        </tr>
-      `;
-    }).join("");
-
-    bindTableEvents();
     updateCheckAllState();
+    return;
   }
+
+  tbody.innerHTML = filteredOrders.map(order => {
+    const selected = selectedOrderIds.has(String(order.id));
+
+    const emissionZones = Array.isArray(order.emission_zones)
+      ? order.emission_zones
+      : [];
+
+    const emissionTooltip = emissionZones
+      .map(zone => {
+        const name = zone.zone_name || zone.zone_code || "Emission zone";
+        const zoneClass = zone.zone_class
+          ? `Class ${zone.zone_class}`
+          : "";
+
+        return [name, zoneClass]
+          .filter(Boolean)
+          .join(" · ");
+      })
+      .join(" | ");
+
+    const emissionAlertHtml =
+      order.has_emission_alert && emissionZones.length
+        ? `
+          <div
+            class="order-emission-alert"
+            title="${escapeHtml(emissionTooltip)}"
+            style="
+              display:inline-flex;
+              align-items:center;
+              gap:5px;
+              margin-top:5px;
+              padding:4px 8px;
+              border:1px solid #fcd34d;
+              border-radius:7px;
+              background:#fffbeb;
+              color:#92400e;
+              font-size:10px;
+              font-weight:800;
+              white-space:nowrap;
+              cursor:help;
+            "
+          >
+            <span>⚠</span>
+            <span>
+              ${emissionZones.length}
+              emission ${emissionZones.length === 1
+                ? "zone"
+                : "zones"}
+            </span>
+          </div>
+        `
+        : "";
+
+    return `
+      <tr
+        data-order-id="${escapeHtml(order.id)}"
+        class="${escapeHtml(rowClass(order))} ${
+          String(selectedOrderId) === String(order.id)
+            ? "active"
+            : ""
+        }"
+      >
+        <td class="checkbox-cell">
+          <input
+            class="order-check"
+            type="checkbox"
+            data-order-id="${escapeHtml(order.id)}"
+            ${selected ? "checked" : ""}
+          />
+        </td>
+
+        <td>
+          <strong>
+            ${escapeHtml(order.order_number || "—")}
+          </strong>
+
+          ${emissionAlertHtml}
+
+          ${
+            isCollectionOrder(order)
+              ? `
+                <span
+                  class="subline"
+                  style="
+                    color:#0e7490;
+                    font-weight:900;
+                  "
+                >
+                  ↩ COLLECTION FROM RETAILER
+                </span>
+              `
+              : ""
+          }
+
+          ${
+            order.external_reference
+              ? `
+                <span class="subline">
+                  Supplier Ref:
+                  ${escapeHtml(order.external_reference)}
+                </span>
+              `
+              : ""
+          }
+
+          <span class="subline">
+            PO: ${escapeHtml(order.purchase_order || "—")}
+          </span>
+
+          ${
+            isExpectedStockOrder(order)
+              ? `
+                <span
+                  class="subline"
+                  style="
+                    color:#1d4ed8;
+                    font-weight:800;
+                  "
+                >
+                  Expected stock · Available from
+                  ${escapeHtml(
+                    formatDate(
+                      getEarliestPlanningDate(order)
+                    )
+                  )}
+                </span>
+              `
+              : ""
+          }
+        </td>
+
+        <td>
+          ${escapeHtml(getProductOwnerName(order))}
+          <span class="subline">
+            Product owner
+          </span>
+        </td>
+
+        <td>
+          ${escapeHtml(getRetailerName(order))}
+          <span class="subline">
+            ${escapeHtml(order.delivery_address_1 || "")}
+          </span>
+        </td>
+
+        <td>
+          ${escapeHtml(order.delivery_city || "—")}
+        </td>
+
+        <td>
+          ${escapeHtml(order.delivery_postcode || "—")}
+        </td>
+
+        <td>
+          ${formatNumber(getOrderColli(order))}
+        </td>
+
+        <td>
+          ${formatNumber(getOrderVolume(order), 2)} m³
+        </td>
+
+        <td>
+          ${formatMoney(getOrderRevenue(order))}
+        </td>
+
+        <td>
+          <span class="${
+            hasCoordinates(order)
+              ? "coord-ok"
+              : "coord-missing"
+          }">
+            ${hasCoordinates(order) ? "OK" : "Missing"}
+          </span>
+        </td>
+
+        <td>
+          <span
+            class="status-pill ${statusPillClass(order.status)}"
+            ${statusPillStyle(order.status, order)}
+          >
+            ${escapeHtml(
+              titleCase(order.status || "—")
+            )}
+          </span>
+        </td>
+
+        <td>
+          <span class="completion-pill ${
+            completionClass(order)
+          }">
+            ${escapeHtml(completionLabel(order))}
+          </span>
+        </td>
+
+        <td>
+          <span class="transport-pill ${
+            transportPillClass(order.transport_type)
+          }">
+            ${escapeHtml(
+              transportTypeLabel(order.transport_type)
+            )}
+          </span>
+        </td>
+
+        <td>
+          ${escapeHtml(getRouteLabel(order.route_id))}
+        </td>
+
+        <td>
+          ${escapeHtml(getOrderDriverName(order))}
+        </td>
+
+        <td>
+          ${escapeHtml(
+            formatDate(getExpectedDelivery(order))
+          )}
+        </td>
+
+        <td>
+          ${escapeHtml(getEtaText(order))}
+        </td>
+
+        <td>
+          ${escapeHtml(
+            formatDate(order.requested_delivery_date)
+          )}
+        </td>
+      </tr>
+    `;
+  }).join("");
+
+  bindTableEvents();
+  updateCheckAllState();
+}
 
   function bindTableEvents() {
     const tbody = byId("ordersTableBody");
@@ -1761,37 +2414,39 @@ window.driverLiveLocationsMapRows =
     ...selectedOrderIds
   ];
 
-  window.selectedRouteIdForMap =
-    null;
 
-  const selectedTransportFilter =
-    normalize(
-      byId("filterTransport")
-        ?.value ||
-      ""
-    );
+  window.selectedRouteIdForMap = null;
+
+  /* =====================================================
+     VEYNOR — MAP FILTERS
+     ===================================================== */
 
   window.orderMapFilters = {
     ownTransportOnly:
-      selectedTransportFilter ===
-      "own_transport",
+      !!byId("toggleOwnTransportOnly")?.checked,
 
     charterOnly:
-      selectedTransportFilter ===
-      "charter",
+      !!byId("toggleCharterOnly")?.checked,
 
-    warehousePickupOnly:
-      selectedTransportFilter ===
-      "warehouse_pickup"
+    warehousePickupOnly: false
   };
 
-  if (
-    window.OrdersMap?.reload
-  ) {
+  /*
+   * Product Owner, Order Status, Completion,
+   * Driver and Emission Zones are already
+   * applied through filteredOrders.
+   *
+   * The map receives only filtered orders.
+   */
+
+  /* =====================================================
+     REFRESH ORDERS MAP
+     ===================================================== */
+
+  if (window.OrdersMap?.reload) {
     window.OrdersMap.reload();
   } else if (
-    typeof window.reloadOrdersMap ===
-    "function"
+    typeof window.reloadOrdersMap === "function"
   ) {
     window.reloadOrdersMap();
   }
@@ -1981,24 +2636,41 @@ function notifySelectionChanged() {
     }));
   }
 
+
 async function refreshAll() {
   await loadDepotSettings();
   await loadProductOwnerProfiles();
   await loadDrivers();
   await loadActiveVehicles();
-await loadRoutes();
-await loadRouteStops();
-await loadDriverLiveLocations();
-await loadStoredDeliveryGroups();
+  await loadRoutes();
+  await loadRouteStops();
+  await loadDriverLiveLocations();
+  await loadStoredDeliveryGroups();
   await loadOrders();
 
-    renderSelects();
-    renderAll();
+  // Check delivery locations against emission zones.
+  try {
+    await loadOrderEmissionZones();
+  } catch (error) {
+    console.error(
+      "[orders.js] Emission zone detection failed:",
+      error
+    );
 
-    if (window.VeynorAvailableVehicles?.refresh) {
-      window.VeynorAvailableVehicles.refresh();
-    }
+    showToast(
+      "Emission zone alerts could not be verified.",
+      "err"
+    );
   }
+
+  renderSelects();
+  renderAll();
+
+  if (window.VeynorAvailableVehicles?.refresh) {
+    window.VeynorAvailableVehicles.refresh();
+  }
+}
+
 
 function closePlanningModal() {
   const modal = byId("planningConfirmModal");
@@ -3282,11 +3954,13 @@ async function assignSelectedToCarrierNoRoute(
       confirmed_delivery_date:
         null,
 
-      /*
-       * Geen Sofa2U-driver.
-       */
+
+/*
+ * No driver assigned to external carrier orders.
+ */
       driver_user_id:
         null,
+
 
       driver_profile_id:
         null,
@@ -3945,20 +4619,86 @@ function openPlanningCalendarModal() {
   });
 }
     function bindEvents() {
-    [
-      "orderSearch",
-      "filterStatus",
-      "filterCompletion",
-      "filterRoute",
-      "filterTransport",
-      "toggleHideCompleted",
-      "toggleOnlyWithCoordinates"
-    ].forEach(id => {
-      const el = byId(id);
-      if (!el) return;
-      el.addEventListener("input", renderAll);
-      el.addEventListener("change", renderAll);
+
+/* ==========================================================
+   VEYNOR — PLANNER FILTER EVENTS
+   ========================================================== */
+
+[
+  "orderSearch",
+  "filterProductOwner",
+  "filterStatus",
+  "filterEmissionZones",
+  "filterCompletion",
+  "filterRoute",
+  "filterDriver",
+  "toggleOwnTransportOnly",
+  "toggleCharterOnly",
+  "toggleOnlyWithCoordinates"
+].forEach(id => {
+  const element = byId(id);
+
+  if (!element) return;
+
+  const eventName =
+    id === "orderSearch" ? "input" : "change";
+
+  element.addEventListener(eventName, () => {
+    renderAll();
+  });
+});
+
+// Prevent contradictory delivered selections.
+const statusSelect = byId("filterStatus");
+const completionSelect = byId("filterCompletion");
+
+statusSelect?.addEventListener("change", () => {
+  if (
+    normalize(statusSelect.value) === "delivered" &&
+    completionSelect &&
+    completionSelect.value &&
+    completionSelect.value !== "delivered"
+  ) {
+    completionSelect.value = "";
+    renderAll();
+  }
+});
+
+completionSelect?.addEventListener("change", () => {
+  if (
+    normalize(completionSelect.value) === "delivered" &&
+    statusSelect &&
+    statusSelect.value &&
+    statusSelect.value !== "delivered"
+  ) {
+    statusSelect.value = "";
+    renderAll();
+  }
+});
+
+// Keep More Filters expanded state during page refresh.
+const moreFilters = byId("plannerMoreFilters");
+
+if (moreFilters) {
+  try {
+    moreFilters.open =
+      sessionStorage.getItem(
+        "veynor_planner_more_filters"
+      ) === "open";
+
+    moreFilters.addEventListener("toggle", () => {
+      sessionStorage.setItem(
+        "veynor_planner_more_filters",
+        moreFilters.open ? "open" : "closed"
+      );
     });
+  } catch (error) {
+    console.warn(
+      "[orders.js] Filter panel preference unavailable:",
+      error
+    );
+  }
+}
 
     byId("manualVehicleSelect")?.addEventListener("change", event => {
       selectedVehicleId = event.target.value || "";

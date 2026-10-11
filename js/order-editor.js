@@ -508,45 +508,84 @@ function refreshSummary() {
   }
 }
 
-  function bindRows() {
-    const body = byId("orderEditorLinesBody");
-    if (!body) return;
+function bindRows() {
+  const body = byId("orderEditorLinesBody");
+  if (!body) return;
 
-    body.querySelectorAll("[data-oe-product], [data-oe-qty]").forEach(input => {
-body.querySelectorAll("[data-oe-manual-warehouse], [data-oe-manual-transport], [data-oe-manual-packages], [data-oe-manual-volume], [data-oe-manual-weight], [data-oe-qty]").forEach(input => {
-  input.addEventListener("input", () => refreshSummary());
-  input.addEventListener("change", () => refreshSummary());
-});
-      input.addEventListener("input", () => refreshRow(input.closest("tr")));
-      input.addEventListener("change", () => refreshRow(input.closest("tr")));
+  body.querySelectorAll(
+    "[data-oe-product], [data-oe-qty]"
+  ).forEach(input => {
+
+    if (input.dataset.oeRowBound === "1") return;
+    input.dataset.oeRowBound = "1";
+
+    input.addEventListener("input", () => {
+      refreshRow(input.closest("tr"));
+      updateManualCompletionControls();
     });
 
-    body.querySelectorAll("[data-oe-remove]").forEach(button => {
-      button.addEventListener("click", () => {
-        const row = button.closest("tr");
-        if (!row) return;
-
-        const lineId = row.getAttribute("data-oe-line-id");
-        const isNew = row.dataset.oeNew === "1";
-
-        if (lineId && !isNew) removedLineIds.add(String(lineId));
-        row.remove();
-        refreshSummary();
-      });
+    input.addEventListener("change", () => {
+      refreshRow(input.closest("tr"));
+      updateManualCompletionControls();
     });
+  });
 
-    body.querySelectorAll("tr[data-oe-line-id]").forEach(refreshRow);
-  }
+  body.querySelectorAll(
+    "[data-oe-manual-warehouse], " +
+    "[data-oe-manual-transport], " +
+    "[data-oe-manual-packages], " +
+    "[data-oe-manual-volume], " +
+    "[data-oe-manual-weight]"
+  ).forEach(input => {
 
-  function addLine() {
-    const body = byId("orderEditorLinesBody");
-    if (!body) return;
+    if (input.dataset.oeSummaryBound === "1") return;
+    input.dataset.oeSummaryBound = "1";
 
-    body.insertAdjacentHTML("beforeend", rowHtml(null));
-    bindRows();
-    refreshSummary();
-  }
+    input.addEventListener("input", refreshSummary);
+    input.addEventListener("change", refreshSummary);
+  });
 
+  body.querySelectorAll("[data-oe-remove]").forEach(button => {
+
+    if (button.dataset.oeRemoveBound === "1") return;
+    button.dataset.oeRemoveBound = "1";
+
+    button.addEventListener("click", () => {
+      const row = button.closest("tr");
+      if (!row) return;
+
+      const lineId = row.getAttribute("data-oe-line-id");
+      const isNew = row.dataset.oeNew === "1";
+
+      if (lineId && !isNew) {
+        removedLineIds.add(String(lineId));
+      }
+
+      row.remove();
+
+      refreshSummary();
+      updateManualCompletionControls();
+    });
+  });
+
+  body.querySelectorAll(
+    "tr[data-oe-line-id]"
+  ).forEach(refreshRow);
+}
+
+function addLine() {
+  const body = byId("orderEditorLinesBody");
+  if (!body) return;
+
+  body.insertAdjacentHTML(
+    "beforeend",
+    rowHtml(null)
+  );
+
+  bindRows();
+  refreshSummary();
+  updateManualCompletionControls();
+}
 function manualRowHtml() {
   const rowId = `manual-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
@@ -575,9 +614,108 @@ function addManualLine() {
   const body = byId("orderEditorLinesBody");
   if (!body) return;
 
-  body.insertAdjacentHTML("beforeend", manualRowHtml());
+  body.insertAdjacentHTML(
+    "beforeend",
+    manualRowHtml()
+  );
+
   bindRows();
   refreshSummary();
+  updateManualCompletionControls();
+}
+
+function isManualCompletionEligible(order, rows = null) {
+  if (!order) return false;
+
+  const status = String(
+    order.status || ""
+  ).trim().toLowerCase();
+
+  const warehouseStatus = String(
+    order.warehouse_status || ""
+  ).trim().toLowerCase();
+
+  // Afgesloten of geannuleerde orders niet aanpassen.
+  if (
+    ["cancelled", "delivered", "closed"].includes(status) ||
+    ["cancelled", "delivered", "closed"].includes(warehouseStatus)
+  ) {
+    return false;
+  }
+
+  const lines = rows || order.order_lines || [];
+
+  // Een order zonder regels mag niet handmatig compleet.
+  if (!lines.length) {
+    return false;
+  }
+
+  // Alle orderregels moeten MISC of handmatig zijn.
+  return lines.every(line => {
+
+    // Controleer de regels zoals ze in Edit Order staan.
+    if (line instanceof Element) {
+      const isManual =
+        line.dataset.oeManual === "1";
+
+      if (isManual) {
+        return true;
+      }
+
+      const product = productFromRow(line);
+
+      return (
+        String(product?.sku || "")
+          .trim()
+          .toUpperCase() === "MISC"
+      );
+    }
+
+    // Controleer opgeslagen Supabase-orderregels.
+    const lineType = String(
+      line.line_type || ""
+    ).trim().toLowerCase();
+
+    const sku = String(
+      line.sku_base ||
+      line.products?.sku_base ||
+      ""
+    ).trim().toUpperCase();
+
+    return (
+      lineType === "manual" ||
+      sku === "MISC"
+    );
+  });
+}
+
+function updateManualCompletionControls() {
+  const checkbox = byId("oeManualComplete");
+  const reason = byId("oeManualCompleteReason");
+  const help = byId("oeManualCompleteHelp");
+
+  if (!checkbox || !reason) return;
+
+  const eligible = isManualCompletionEligible(
+    currentOrder,
+    getRows()
+  );
+
+  checkbox.disabled = !eligible;
+
+  if (!eligible) {
+    checkbox.checked = false;
+  }
+
+  reason.disabled = !eligible || !checkbox.checked;
+
+  if (help) {
+    help.textContent = eligible
+      ? "Only use this when the required service or MISC items " +
+        "have been confirmed and no stock allocation is required."
+      : "Manual completion is only available for orders " +
+        "containing exclusively MISC or manual service lines.";
+  }
 }
 
   function openModal(order) {
@@ -674,6 +812,40 @@ function addManualLine() {
           <textarea id="oeMemo" class="input" style="min-height:110px;">${escapeHtml(order.memo || "")}</textarea>
         </section>
 
+<section class="oe-section">
+  <h3>Order Completion</h3>
+
+  <label
+    class="select-all-wrap"
+    style="display:flex;align-items:center;gap:10px;"
+  >
+    <input
+      id="oeManualComplete"
+      type="checkbox"
+      ${order.manual_completion_override ? "checked" : ""}
+    >
+
+    <span>
+      <strong>Mark as Complete (Manual Override)</strong>
+    </span>
+  </label>
+
+  <div class="oe-field" style="margin-top:12px;">
+    <label for="oeManualCompleteReason">
+      Completion Reason
+    </label>
+
+    <textarea
+      id="oeManualCompleteReason"
+      class="input"
+      rows="2"
+      placeholder="Explain why stock matching is not required"
+    >${escapeHtml(order.manual_completion_reason || "")}</textarea>
+  </div>
+
+  <p id="oeManualCompleteHelp" class="oe-help"></p>
+</section>
+
         <section class="oe-section">
           <h3>Save Options</h3>
           <label class="select-all-wrap">
@@ -685,13 +857,33 @@ function addManualLine() {
       </div>
     `;
 
-    byId("orderEditorAddLine")?.addEventListener("click", addLine);
-byId("orderEditorAddManualLine")?.addEventListener("click", addManualLine);
-    bindRows();
-    refreshSummary();
+byId("orderEditorAddLine")?.addEventListener(
+  "click",
+  addLine
+);
 
-    modal.classList.add("open");
-    modal.setAttribute("aria-hidden", "false");
+byId("orderEditorAddManualLine")?.addEventListener(
+  "click",
+  addManualLine
+);
+
+bindRows();
+refreshSummary();
+
+updateManualCompletionControls();
+
+byId("oeManualComplete")?.addEventListener(
+  "change",
+  updateManualCompletionControls
+);
+
+byId("orderEditorLinesBody")?.addEventListener(
+  "change",
+  updateManualCompletionControls
+);
+
+modal.classList.add("open");
+modal.setAttribute("aria-hidden", "false");
   }
 
   async function insertActivity(orderId, description, type = "edit_order") {
@@ -993,124 +1185,454 @@ async function recalculateOrderFinance(orderId) {
     });
   }
 
-  async function save() {
-    if (saving) return;
-    if (!currentOrder?.id) throw new Error("No order loaded in editor.");
 
-    saving = true;
-    const loading = byId("orderEditorLoading");
-    const saveBtn = byId("genericActionSaveBtn");
-    const oldText = saveBtn?.textContent || "Save Order";
 
-    try {
-      if (loading) loading.style.display = "flex";
-      if (saveBtn) {
-        saveBtn.disabled = true;
-        saveBtn.textContent = "Saving...";
+async function releaseManualCompleteOrder(order) {
+  const { data, error } = await client
+    .from("orders")
+    .select("*")
+    .eq("company_id", order.company_id)
+    .eq("id", order.id)
+    .single();
+
+  if (error) throw error;
+
+  if (data.manual_completion_override !== true) {
+    throw new Error("Manual completion is not approved.");
+  }
+
+  if (data.route_id) {
+    throw new Error("Order is already assigned to a route.");
+  }
+
+  const validCoordinates = (lat, lng) =>
+    lat != null &&
+    lng != null &&
+    Number.isFinite(Number(lat)) &&
+    Number.isFinite(Number(lng)) &&
+    Number(lat) >= 49 &&
+    Number(lat) <= 61 &&
+    Number(lng) >= -9 &&
+    Number(lng) <= 3;
+
+  // STEP 1: Geocode if coordinates are missing.
+  if (!validCoordinates(data.delivery_lat, data.delivery_lng)) {
+    const address = [
+      data.delivery_address_1,
+      data.delivery_address_2,
+      data.delivery_city,
+      data.delivery_region,
+      data.delivery_postcode,
+      data.delivery_country || "United Kingdom"
+    ].filter(Boolean).join(", ");
+
+    const postcode = String(
+      data.delivery_postcode || ""
+    ).trim();
+
+    const city = String(
+      data.delivery_city || ""
+    ).trim();
+
+    const country = String(
+      data.delivery_country || "United Kingdom"
+    ).trim();
+
+    if (!postcode && !city) {
+      return {
+        released: false,
+        reason: "Missing delivery city and postcode."
+      };
+    }
+
+    const attempts = [
+      { address: "", postcode, city: "", country },
+      { address: "", postcode, city, country },
+      { address, postcode, city, country },
+      { address: "", postcode: "", city, country }
+    ].filter(query =>
+      query.address || query.postcode || query.city
+    );
+
+    let coordinates = null;
+
+    for (const query of attempts) {
+      try {
+        const { data: geoData, error: geoError } =
+          await client.functions.invoke("super-endpoint", {
+            body: {
+              queries: [query]
+            }
+          });
+
+        if (geoError) {
+          console.warn("Geocode attempt failed:", geoError);
+          continue;
+        }
+
+        const result = Array.isArray(geoData?.results)
+          ? geoData.results[0]
+          : null;
+
+        if (
+          result?.ok &&
+          validCoordinates(result.lat, result.lng)
+        ) {
+          coordinates = {
+            delivery_lat: Number(result.lat),
+            delivery_lng: Number(result.lng)
+          };
+
+          if (
+            Object.prototype.hasOwnProperty.call(
+              data,
+              "geocode_display_name"
+            )
+          ) {
+            coordinates.geocode_display_name =
+              result.display_name || null;
+          }
+
+          break;
+        }
+      } catch (geoError) {
+        console.warn("Geocoding failed:", geoError);
       }
+    }
 
-      const order = currentOrder;
+    if (!coordinates) {
+      return {
+        released: false,
+        reason: "Could not determine delivery coordinates."
+      };
+    }
 
-      await client
-        .from("orders")
-        .update({
-          retail_name: byId("oeRetailerName")?.value || "",
-          retailer_code: byId("oeRetailerCode")?.value || "",
-          delivery_address_1: byId("oeAddress1")?.value || "",
-          delivery_address_2: byId("oeAddress2")?.value || "",
-          delivery_address_3: byId("oeAddress3")?.value || "",
-          delivery_address_4: byId("oeAddress4")?.value || "",
-          delivery_city: byId("oeCity")?.value || "",
-          delivery_postcode: byId("oePostcode")?.value || "",
-          delivery_country: byId("oeCountry")?.value || "United Kingdom",
-          memo: byId("oeMemo")?.value || "",
-          last_activity_at: new Date().toISOString()
-        })
-        .eq("id", order.id);
+    const { error: geoSaveError } = await client
+      .from("orders")
+      .update(coordinates)
+      .eq("company_id", order.company_id)
+      .eq("id", order.id)
+      .eq("manual_completion_override", true)
+      .is("route_id", null);
 
-      let removed = 0;
-      let released = 0;
-      let added = 0;
-      let changed = 0;
+    if (geoSaveError) throw geoSaveError;
+  }
 
-      for (const lineId of removedLineIds) {
-        const result = await neutralizeOrderLine(order.id, lineId);
-        removed++;
-        released += toNumber(result?.released_allocations, 0);
-      }
+  // STEP 2: Verify saved coordinates and current order state.
+  const { data: verified, error: verifyError } = await client
+    .from("orders")
+    .select(
+      "id, status, planning_release, route_id, " +
+      "manual_completion_override, delivery_lat, delivery_lng"
+    )
+    .eq("company_id", order.company_id)
+    .eq("id", order.id)
+    .single();
 
-      for (const row of getRows()) {
-        const result = await saveLine(order, row);
-        if (result?.added) added++;
-        if (result?.changed) changed++;
-      }
+  if (verifyError) throw verifyError;
 
-const totals = totalsFromRows();
-const financeTotals = await recalculateOrderFinance(order.id);
-await invalidateEditableDocuments(order.id);
-console.log("Finance totals:", financeTotals);
+  if (verified.manual_completion_override !== true) {
+    throw new Error("Manual completion approval was removed.");
+  }
 
-await client
-  .from("orders")
-.update({
-  planning_volume_m3: totals.totalVolume,
-  volume_m3: totals.totalVolume,
-  total_order_volume_m3: totals.totalVolume,
+  if (verified.route_id) {
+    throw new Error("Order has already been assigned to a route.");
+  }
 
-  weight_kg: totals.totalWeight,
-  total_order_weight_kg: totals.totalWeight,
+  if (
+    !validCoordinates(
+      verified.delivery_lat,
+      verified.delivery_lng
+    )
+  ) {
+    return {
+      released: false,
+      reason: "Delivery coordinates are still missing."
+    };
+  }
 
-  planning_colli: totals.totalPackages,
+  if (verified.planning_release === true) {
+    return {
+      released: true,
+      alreadyReleased: true
+    };
+  }
 
-  total_storage_tariff: financeTotals.storage,
-  total_admin_tariff: financeTotals.admin,
-  total_handling_tariff: financeTotals.handling,
-  total_transport_tariff: financeTotals.transport,
-  total_customer_charge: financeTotals.customer,
-  finance_status: "not_invoiced",
+  // STEP 3: Release to planning.
+  const { data: updated, error: updateError } = await client
+    .from("orders")
+    .update({
+      status: "ready_for_planning",
+      planning_release: true,
+      warehouse_status: "stock_complete",
+      overall_status: "stock_complete",
+      planning_stock_basis: null,
+      earliest_planning_date: null,
+      released_to_planning_at: new Date().toISOString(),
+      released_to_planning_by: "manual_completion",
+      last_activity_at: new Date().toISOString()
+    })
+    .eq("company_id", order.company_id)
+    .eq("id", order.id)
+    .eq("manual_completion_override", true)
+    .eq("planning_release", false)
+    .is("route_id", null)
+    .select("id, status, planning_release")
+    .maybeSingle();
 
-  warehouse_status: "awaiting_goods",
-  overall_status: "awaiting_goods",
-  last_activity_at: new Date().toISOString()
-})        .eq("id", order.id);
+  if (updateError) throw updateError;
+
+  if (!updated?.planning_release) {
+    throw new Error(
+      "Planning release could not be confirmed."
+    );
+  }
+
+  return {
+    released: true,
+    status: updated.status
+  };
+}
+
+async function save() {
+  if (saving) return;
+
+  if (!currentOrder?.id) {
+    throw new Error("No order loaded in editor.");
+  }
+
+  const order = currentOrder;
+
+  const manualCheckbox = byId("oeManualComplete");
+  const manualReason = cleanText(
+    byId("oeManualCompleteReason")?.value || ""
+  );
+
+  const manualComplete = manualCheckbox?.checked === true;
+
+  if (
+    manualComplete &&
+    !isManualCompletionEligible(order, getRows())
+  ) {
+    throw new Error(
+      "Manual completion is only available for orders " +
+      "containing exclusively MISC or manual service lines."
+    );
+  }
+
+  if (manualComplete && !manualReason) {
+    throw new Error(
+      "Enter a reason for manual completion."
+    );
+  }
+
+  saving = true;
+
+  const loading = byId("orderEditorLoading");
+  const saveBtn = byId("genericActionSaveBtn");
+  const oldText = saveBtn?.textContent || "Save Order";
+
+  try {
+    if (loading) loading.style.display = "flex";
+
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving...";
+    }
+
+    const { error: detailsError } = await client
+      .from("orders")
+      .update({
+        retail_name: byId("oeRetailerName")?.value || "",
+        retailer_code: byId("oeRetailerCode")?.value || "",
+
+        delivery_address_1: byId("oeAddress1")?.value || "",
+        delivery_address_2: byId("oeAddress2")?.value || "",
+        delivery_address_3: byId("oeAddress3")?.value || "",
+        delivery_address_4: byId("oeAddress4")?.value || "",
+
+        delivery_city: byId("oeCity")?.value || "",
+        delivery_postcode: byId("oePostcode")?.value || "",
+        delivery_country:
+          byId("oeCountry")?.value || "United Kingdom",
+
+        memo: byId("oeMemo")?.value || "",
+        last_activity_at: new Date().toISOString()
+      })
+      .eq("company_id", order.company_id)
+      .eq("id", order.id);
+
+    if (detailsError) throw detailsError;
+
+    let removed = 0;
+    let released = 0;
+    let added = 0;
+    let changed = 0;
+
+    for (const lineId of removedLineIds) {
+      const result = await neutralizeOrderLine(
+        order.id,
+        lineId
+      );
+
+      removed++;
+
+      released += toNumber(
+        result?.released_allocations,
+        0
+      );
+    }
+
+    for (const row of getRows()) {
+      const result = await saveLine(order, row);
+
+      if (result?.added) added++;
+      if (result?.changed) changed++;
+    }
+
+    const totals = totalsFromRows();
+    const financeTotals = await recalculateOrderFinance(
+      order.id
+    );
+
+    await invalidateEditableDocuments(order.id);
+
+    const completionChanged =
+      Boolean(order.manual_completion_override) !==
+      manualComplete;
+
+    const completionTimestamp = manualComplete
+      ? (
+          order.manual_completion_override &&
+          order.manual_completion_at
+            ? order.manual_completion_at
+            : new Date().toISOString()
+        )
+      : null;
+
+    const { error: updateError } = await client
+      .from("orders")
+      .update({
+        planning_volume_m3: totals.totalVolume,
+        volume_m3: totals.totalVolume,
+        total_order_volume_m3: totals.totalVolume,
+
+        weight_kg: totals.totalWeight,
+        total_order_weight_kg: totals.totalWeight,
+
+        planning_colli: totals.totalPackages,
+
+        total_storage_tariff: financeTotals.storage,
+        total_admin_tariff: financeTotals.admin,
+        total_handling_tariff: financeTotals.handling,
+        total_transport_tariff: financeTotals.transport,
+        total_customer_charge: financeTotals.customer,
+
+        finance_status: "not_invoiced",
+
+        warehouse_status: "awaiting_goods",
+        overall_status: "awaiting_goods",
+
+        manual_completion_override: manualComplete,
+        manual_completion_reason:
+          manualComplete ? manualReason : null,
+        manual_completion_at: completionTimestamp,
+
+        last_activity_at: new Date().toISOString()
+      })
+      .eq("company_id", order.company_id)
+      .eq("id", order.id);
+
+if (updateError) throw updateError;
+
+let manualReleaseResult = null;
+
+if (manualComplete) {
+  manualReleaseResult = await releaseManualCompleteOrder(order);
+}
 
 await insertActivity(
-  order.id,
-  `Order edited in OCC. ACK and Delivery Note invalidated. Finance recalculated.`,
-  "edit_order"
+  order.id,      "Order edited in OCC. ACK and Delivery Note " +
+      "invalidated. Finance recalculated.",
+      "edit_order"
+    );
+
+    if (completionChanged) {
+      await insertActivity(
+        order.id,
+        manualComplete
+          ? `Manual completion approved: ${manualReason}`
+          : "Manual completion approval removed.",
+        "manual_completion"
+      );
+    }
+
+    let matchInfo = "";
+
+    try {
+const matchResult = manualComplete
+  ? { skipped: true }
+  : await runMatching(order.id);
+      if (!matchResult?.skipped) {
+        matchInfo = " Matching completed.";
+
+        await insertActivity(
+          order.id,
+          "Matching executed after order edit.",
+          "edit_order_matching"
+        );
+      }
+    } catch (error) {
+      await insertActivity(
+        order.id,
+        `Matching after edit failed: ${error.message}`,
+        "edit_order_matching_failed"
+      );
+
+      throw error;
+    }
+
+    byId("occGenericActionModal")?.classList.remove("open");
+
+    byId("occGenericActionModal")?.setAttribute(
+      "aria-hidden",
+      "true"
+    );
+
+
+showToast(
+  manualComplete
+    ? (
+        manualReleaseResult?.released
+          ? "Order manually completed and released to planning."
+          : "Manual completion saved. Planning release pending: " +
+            (manualReleaseResult?.reason || "Check delivery location.")
+      )
+    : `Order saved.${matchInfo}`,
+  manualComplete && !manualReleaseResult?.released
+    ? "err"
+    : "ok"
 );
 
-let matchInfo = "";
-try {
-  const matchResult = await runMatching(order.id);
-  if (!matchResult?.skipped) {
-    matchInfo = " Matching completed.";
-    await insertActivity(order.id, "Matching executed after order edit.", "edit_order_matching");
-  }
-} catch (error) {
-  await insertActivity(order.id, `Matching after edit failed: ${error.message}`, "edit_order_matching_failed");
-  throw error;
-}
 
-byId("occGenericActionModal")?.classList.remove("open");
-byId("occGenericActionModal")?.setAttribute("aria-hidden", "true");
+    if (typeof window.OCCReloadOrders === "function") {
+      await window.OCCReloadOrders();
+    } else {
+      window.location.reload();
+    }
 
-showToast(`Order saved.${matchInfo}`, "ok");
+  } finally {
+    saving = false;
 
-if (typeof window.OCCReloadOrders === "function") {
-  await window.OCCReloadOrders();
-} else {
-  window.location.reload();
-}
-} finally {
-  saving = false;
-  if (loading) loading.style.display = "none";
-  if (saveBtn) {
-    saveBtn.disabled = false;
-    saveBtn.textContent = oldText;
+    if (loading) loading.style.display = "none";
+
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = oldText;
+    }
   }
 }
-}
+
   async function open(orderId) {
     try {
       ensureClient();
