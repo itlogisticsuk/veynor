@@ -43,8 +43,7 @@
     loginUrl: "/login.html",
     adminUrl: "/admin/",
 
-    tenantPortalUrl:
-      "/operations-control-center.html",
+tenantPortalUrl: "/index.html",
 
     searchDebounceMs: 150,
 
@@ -2034,6 +2033,11 @@
   // 40. OPEN TENANT PORTAL
   // ==========================================================
 
+  
+  // ==========================================================
+  // 40. OPEN TENANT PORTAL
+  // ==========================================================
+
   async function openTenantPortal() {
     const tenant = getSelectedTenant();
 
@@ -2047,7 +2051,8 @@
 
     if (
       !state.adminVerified ||
-      !state.authenticated
+      !state.authenticated ||
+      !currentUser?.id
     ) {
       showNotice(
         "Super Admin access is required.",
@@ -2072,13 +2077,13 @@
       return;
     }
 
-    // The dashboard must explicitly support and
-    // validate tenant switching before navigation.
-    if (
-      window.VEYNOR_TENANT_DASHBOARD_READY !== true
-    ) {
+    // The target dashboard must support validated
+    // tenant context before cross-tenant navigation.
+    const dashboardSwitchingEnabled = false;
+
+    if (!dashboardSwitchingEnabled) {
       showNotice(
-        "Tenant dashboard switching is not enabled yet.",
+        "Tenant dashboard integration is not ready yet.",
         "error"
       );
       return;
@@ -2089,13 +2094,16 @@
       window.location.origin
     );
 
-    url.pathname = "/index.html";
-    url.searchParams.set("tenant", tenant.id);
+    url.searchParams.set(
+      "tenant",
+      tenant.id
+    );
 
     window.location.assign(
       url.pathname + url.search
     );
   }
+
 
 
   // ==========================================================

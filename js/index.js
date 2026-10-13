@@ -144,6 +144,7 @@ const charts = {};
   }
 
 
+
 async function getCompanyId() {
   if (companyId) {
     return companyId;
@@ -169,7 +170,7 @@ async function getCompanyId() {
   const { data: profiles, error: profileError } =
     await db
       .from("user_profiles")
-      .select("company_id")
+      .select("company_id, role, is_active")
       .eq("auth_user_id", authUserId)
       .eq("is_active", true);
 
@@ -177,17 +178,88 @@ async function getCompanyId() {
     throw profileError;
   }
 
-  if (
-    !profiles ||
-    profiles.length !== 1 ||
-    !profiles[0].company_id
-  ) {
+  if (!profiles || profiles.length !== 1) {
     throw new Error(
-      "Dashboard cannot determine a unique active tenant."
+      "Dashboard cannot determine a unique active user profile."
     );
   }
 
-  companyId = profiles[0].company_id;
+  const profile = profiles[0];
+  const role = normalize(profile.role);
+
+  const requestedTenantId =
+    new URLSearchParams(window.location.search)
+      .get("tenant");
+
+  // Normal users always use their assigned company.
+  if (role !== "veynor_admin") {
+    if (requestedTenantId) {
+      throw new Error(
+        "Tenant switching requires Super Admin access."
+      );
+    }
+
+    if (!profile.company_id) {
+      throw new Error(
+        "No company is linked to this user."
+      );
+    }
+
+    companyId = profile.company_id;
+    return companyId;
+  }
+
+  // Super Admin without tenant selection:
+  // preserve existing company context.
+  if (!requestedTenantId) {
+    if (!profile.company_id) {
+      throw new Error(
+        "Select a tenant from Super Admin first."
+      );
+    }
+
+    companyId = profile.company_id;
+    return companyId;
+  }
+
+  const validUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (!validUuid.test(requestedTenantId)) {
+    throw new Error(
+      "Invalid tenant ID."
+    );
+  }
+
+  // Confirm selected company exists and is active.
+  const { data: tenant, error: tenantError } =
+    await db
+      .from("companies")
+      .select("id, name, company_type, is_active")
+      .eq("id", requestedTenantId)
+      .eq("company_type", "tenant")
+      .eq("is_active", true)
+      .single();
+
+  if (tenantError || !tenant) {
+    throw new Error(
+      "Selected tenant is unavailable."
+    );
+  }
+
+  companyId = tenant.id;
+
+  window.VEYNOR_ACTIVE_TENANT = {
+    id: tenant.id,
+    name: tenant.name,
+    role: "veynor_admin"
+  };
+
+  console.info(
+    "[Veynor Dashboard] Selected tenant:",
+    tenant.name,
+    tenant.id
+  );
 
   return companyId;
 }
@@ -3383,8 +3455,22 @@ function bindEvents() {
 
   async function loadDashboard() {
     try {
-      ensureClient();
-      const cid = await getCompanyId();
+
+ensureClient();
+
+const cid = await getCompanyId();
+
+if (!cid) {
+  throw new Error(
+    "No active tenant could be determined."
+  );
+}
+
+console.info(
+  "[Veynor Dashboard] Loading company:",
+  cid
+);
+
 
       setText("dashboardDateLabel", new Date().toLocaleDateString("en-GB", {
         day: "2-digit",
