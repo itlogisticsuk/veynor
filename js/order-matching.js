@@ -220,56 +220,29 @@ function formatNumber(value, digits = 0) {
    * ======================================================= */
 
 
+
 async function getCompanyId() {
+  if (typeof window.VeynorTenant?.getActiveCompanyId !== "function") {
+    throw new Error(
+      "Central tenant context is unavailable. Check tenant-context.js."
+    );
+  }
+
   if (!client) {
     if (typeof sb !== "function") {
-      throw new Error(
-        "Supabase client is not available."
-      );
+      throw new Error("Supabase client is unavailable.");
     }
 
     client = sb();
   }
 
-  // Controleer de ingelogde gebruiker.
-  const { data: authData, error: authError } =
-    await client.auth.getUser();
-
-  if (authError) throw authError;
-
-  const userId = authData?.user?.id;
-
-  if (!userId) {
-    throw new Error(
-      "No authenticated user found."
-    );
-  }
-
-  // Zoek het actieve gebruikersprofiel.
-  const { data: profiles, error: profileError } =
-    await client
-      .from("user_profiles")
-      .select("id, company_id, is_active")
-      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
-      .eq("is_active", true);
-
-  if (profileError) throw profileError;
-
-  if (!profiles || profiles.length !== 1) {
-    throw new Error(
-      "Unable to resolve a unique active user profile."
-    );
-  }
-
-  const activeCompanyId = profiles[0].company_id;
+  const activeCompanyId =
+    await window.VeynorTenant.getActiveCompanyId();
 
   if (!activeCompanyId) {
-    throw new Error(
-      "No tenant is assigned to this account."
-    );
+    throw new Error("No active tenant was resolved.");
   }
 
-  // Voorkom wisselen van tenant met oude paginagegevens.
   if (
     companyId &&
     String(companyId) !== String(activeCompanyId)
@@ -280,6 +253,11 @@ async function getCompanyId() {
   }
 
   companyId = activeCompanyId;
+
+  console.info(
+    "[Order Matching] Active company:",
+    companyId
+  );
 
   return companyId;
 }
@@ -3206,16 +3184,26 @@ ${renderExpectedAllocationHtml(
     ).trim();
 
     try {
-      const { error } =
-        await client
-          .from("orders")
-          .update({
-            memo: memo || null
-          })
-          .eq(
-            "id",
-            memoOrderId
-          );
+
+const cid = await getCompanyId();
+
+const order = allOrders.find(
+  row => String(row.id) === String(memoOrderId)
+);
+
+if (!order || String(order.company_id) !== String(cid)) {
+  throw new Error(
+    "This order does not belong to the active tenant."
+  );
+}
+
+const { error } = await client
+  .from("orders")
+  .update({
+    memo: memo || null
+  })
+  .eq("company_id", cid)
+  .eq("id", memoOrderId);
 
       if (error) {
         throw error;
@@ -3258,6 +3246,22 @@ ${renderExpectedAllocationHtml(
   
 
 async function runMatchModule() {
+
+  const isSuperAdminTenantTest =
+    window.VEYNOR_CURRENT_PROFILE?.role === "veynor_admin" &&
+    Boolean(
+      new URLSearchParams(window.location.search)
+        .get("tenant")
+    );
+
+  if (isSuperAdminTenantTest) {
+    showToast(
+      "Run Matching is temporarily disabled during Super Admin tenant testing.",
+      "err"
+    );
+    return;
+  }
+
   const progress = window.VeynorProgress;
   let progressOpened = false;
 
@@ -3802,10 +3806,21 @@ async function geocodeOrders(orderIds, onProgress = null) {
           result.display_name || null;
       }
 
-      const { error } = await client
-        .from("orders")
-        .update(payload)
-        .eq("id", order.id);
+
+const cid = await getCompanyId();
+
+if (String(order.company_id) !== String(cid)) {
+  throw new Error(
+    "Geocoding blocked: order belongs to another tenant."
+  );
+}
+
+const { error } = await client
+  .from("orders")
+  .update(payload)
+  .eq("company_id", cid)
+  .eq("id", order.id);
+
 
       if (error) throw error;
 
