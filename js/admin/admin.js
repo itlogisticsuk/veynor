@@ -2,7 +2,6 @@
 /* ============================================================
    VEYNOR SUPER ADMIN PORTAL
    File: /js/admin/admin.js
-
    Version: 1.0.0
 
    - Supabase authentication
@@ -13,28 +12,18 @@
    - Tenant details
    - Session logout
 
-   IMPORTANT:
-   Tenant creation and tenant switching are deliberately
-   disabled until secure server-side authorization exists.
+   Tenant creation and switching remain disabled until
+   the server-side authorization is configured.
    ============================================================ */
 
 (function () {
   "use strict";
 
-  // ==========================================================
-  // CONFIGURATION
-  // ==========================================================
-
   const CONFIG = Object.freeze({
     adminRole: "veynor_admin",
     loginUrl: "/login.html",
-    refreshButtonId: "refreshBtn",
     searchDebounceMs: 150
   });
-
-  // ==========================================================
-  // STATE
-  // ==========================================================
 
   let client = null;
   let currentUser = null;
@@ -48,7 +37,7 @@
   let searchTimer = null;
 
   // ==========================================================
-  // DOM HELPERS
+  // HELPERS
   // ==========================================================
 
   function byId(id) {
@@ -87,17 +76,13 @@
   }
 
   function formatNumber(value) {
-    return Number(value || 0).toLocaleString(
-      "en-GB"
-    );
+    return Number(value || 0).toLocaleString("en-GB");
   }
 
   function shortId(value) {
     const text = clean(value);
 
-    if (!text) {
-      return "—";
-    }
+    if (!text) return "—";
 
     return text.length > 12
       ? `${text.slice(0, 8)}…`
@@ -111,9 +96,7 @@
   function showNotice(message, type = "info") {
     const notice = byId("notice");
 
-    if (!notice) {
-      return;
-    }
+    if (!notice) return;
 
     notice.textContent = message || "";
 
@@ -130,13 +113,11 @@
   }
 
   // ==========================================================
-  // SUPABASE CLIENT
+  // SUPABASE
   // ==========================================================
 
   function getClient() {
-    if (client) {
-      return client;
-    }
+    if (client) return client;
 
     if (typeof window.sb !== "function") {
       throw new Error(
@@ -172,14 +153,10 @@
   async function loadCurrentUser() {
     const db = getClient();
 
-    const {
-      data,
-      error
-    } = await db.auth.getUser();
+    const { data, error } =
+      await db.auth.getUser();
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     currentUser = data?.user || null;
 
@@ -189,10 +166,6 @@
 
     return currentUser;
   }
-
-  // ==========================================================
-  // PROFILE
-  // ==========================================================
 
   async function loadCurrentProfile() {
     const db = getClient();
@@ -217,9 +190,7 @@
       .eq("is_active", true)
       .limit(2);
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
     if (!data || data.length !== 1) {
       throw new Error(
@@ -233,9 +204,7 @@
   }
 
   function verifyAdminRole() {
-    const role = normalize(
-      currentProfile?.role
-    );
+    const role = normalize(currentProfile?.role);
 
     if (role !== CONFIG.adminRole) {
       throw new Error(
@@ -295,11 +264,9 @@
     `;
 
     const title = document.createElement("h1");
-
     title.textContent = "Access denied";
 
     const description = document.createElement("p");
-
     description.textContent = message;
 
     description.style.cssText = `
@@ -325,25 +292,22 @@
 
     panel.append(title, description, link);
     main.appendChild(panel);
-
     document.body.appendChild(main);
   }
 
   // ==========================================================
-  // LOADING STATE
+  // LOADING
   // ==========================================================
 
   function setLoading(value) {
     isLoading = Boolean(value);
 
-    const refreshButton = byId(
-      CONFIG.refreshButtonId
-    );
+    const button = byId("refreshBtn");
 
-    if (refreshButton) {
-      refreshButton.disabled = isLoading;
+    if (button) {
+      button.disabled = isLoading;
 
-      refreshButton.textContent = isLoading
+      button.textContent = isLoading
         ? "Refreshing..."
         : "↻ Refresh";
     }
@@ -363,13 +327,9 @@
         ascending: true
       });
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
-    tenants = Array.isArray(data)
-      ? data
-      : [];
+    tenants = Array.isArray(data) ? data : [];
 
     return tenants;
   }
@@ -390,19 +350,15 @@
         is_active
       `);
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
 
-    profiles = Array.isArray(data)
-      ? data
-      : [];
+    profiles = Array.isArray(data) ? data : [];
 
     return profiles;
   }
 
   // ==========================================================
-  // USER STATISTICS
+  // STATISTICS
   // ==========================================================
 
   function getTenantUsers(tenantId) {
@@ -440,11 +396,7 @@
         String(item.id) === String(tenantId)
     );
 
-    if (!tenant) {
-      selectedTenantId = null;
-    } else {
-      selectedTenantId = tenant.id;
-    }
+    selectedTenantId = tenant?.id || null;
 
     renderTenantDirectory();
     renderTenantDetails();
@@ -452,7 +404,7 @@
   }
 
   // ==========================================================
-  // TENANT FILTERING
+  // SEARCH
   // ==========================================================
 
   function getFilteredTenants() {
@@ -460,9 +412,7 @@
       byId("tenantSearch")?.value
     );
 
-    if (!search) {
-      return tenants;
-    }
+    if (!search) return tenants;
 
     return tenants.filter(tenant => {
       const searchable = [
@@ -481,9 +431,7 @@
   function renderTenantDirectory() {
     const body = byId("tenantRows");
 
-    if (!body) {
-      return;
-    }
+    if (!body) return;
 
     const filtered = getFilteredTenants();
 
@@ -516,7 +464,9 @@
         >
           <td>
             <strong>
-              ${escapeHtml(tenant.name || "Unnamed tenant")}
+              ${escapeHtml(
+                tenant.name || "Unnamed tenant"
+              )}
             </strong>
           </td>
 
@@ -545,9 +495,7 @@
   function renderTenantDetails() {
     const container = byId("tenantDetail");
 
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
     const tenant = getSelectedTenant();
 
@@ -632,15 +580,8 @@
         : "—"
     );
 
-    setText(
-      "platformStatus",
-      "Connected"
-    );
+    setText("platformStatus", "Connected");
   }
-
-  // ==========================================================
-  // COMPLETE RENDER
-  // ==========================================================
 
   function renderAll() {
     renderTenantDirectory();
@@ -649,19 +590,15 @@
   }
 
   // ==========================================================
-  // REFRESH DATA
+  // REFRESH
   // ==========================================================
 
   async function refreshData() {
-    if (isLoading) {
-      return;
-    }
+    if (isLoading) return;
 
     setLoading(true);
 
-    showNotice(
-      "Loading tenant information..."
-    );
+    showNotice("Loading tenant information...");
 
     try {
       await verifyAccess();
@@ -680,7 +617,6 @@
       }
 
       renderAll();
-
       hideNotice();
 
     } catch (error) {
@@ -689,10 +625,7 @@
         error
       );
 
-      setText(
-        "platformStatus",
-        "Issue"
-      );
+      setText("platformStatus", "Issue");
 
       showNotice(
         error.message ||
@@ -716,11 +649,17 @@
       const { error } =
         await db.auth.signOut();
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
-      redirectToLogin();
+      localStorage.removeItem(
+        "veynor_last_activity_at"
+      );
+
+      localStorage.removeItem(
+        "veynor_session_user_id"
+      );
+
+      window.location.replace(CONFIG.loginUrl);
 
     } catch (error) {
       console.error(
@@ -737,22 +676,18 @@
   }
 
   // ==========================================================
-  // RESERVED ADMIN ACTIONS
+  // PROTECTED ACTIONS
   // ==========================================================
 
   function disableProtectedActions() {
-    const ids = [
+    [
       "newTenantBtn",
       "openTenantBtn",
       "tenantSettingsBtn"
-    ];
-
-    ids.forEach(id => {
+    ].forEach(id => {
       const button = byId(id);
 
-      if (!button) {
-        return;
-      }
+      if (!button) return;
 
       button.disabled = true;
 
@@ -781,9 +716,10 @@
       () => {
         clearTimeout(searchTimer);
 
-        searchTimer = setTimeout(() => {
-          renderTenantDirectory();
-        }, CONFIG.searchDebounceMs);
+        searchTimer = setTimeout(
+          renderTenantDirectory,
+          CONFIG.searchDebounceMs
+        );
       }
     );
 
@@ -794,9 +730,7 @@
           "tr[data-id]"
         );
 
-        if (!row) {
-          return;
-        }
+        if (!row) return;
 
         selectTenant(row.dataset.id);
       }
@@ -816,9 +750,7 @@
           "tr[data-id]"
         );
 
-        if (!row) {
-          return;
-        }
+        if (!row) return;
 
         event.preventDefault();
 
@@ -853,7 +785,6 @@
   async function init() {
     try {
       disableProtectedActions();
-
       bindEvents();
 
       await verifyAccess();
