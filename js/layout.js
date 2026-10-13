@@ -378,21 +378,93 @@ async function loadProfile() {
     }[normalize(role)] || "User";
   }
 
+
+  // ==========================================================
+  // SUPER ADMIN - SELECTED TENANT DISPLAY
+  // ==========================================================
+
+  async function getSelectedTenantForLayout() {
+    if (userRole() !== ROLES.VEYNOR_ADMIN) {
+      return null;
+    }
+
+    const tenantId =
+      new URLSearchParams(window.location.search)
+        .get("tenant");
+
+    if (!tenantId) {
+      return null;
+    }
+
+    const validUuid =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (!validUuid.test(tenantId)) {
+      return null;
+    }
+
+    const { data, error } = await sb()
+      .from("companies")
+      .select("id, name, company_type, is_active")
+      .eq("id", tenantId)
+      .eq("company_type", "tenant")
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error || !data) {
+      console.warn(
+        "[Veynor Layout] Selected tenant unavailable.",
+        error
+      );
+      return null;
+    }
+
+    return data;
+  }
+
+
+ 
+  // ==========================================================
+  // ACCOUNT TITLE
+  // ==========================================================
+
   function profileTitle() {
     const role = userRole();
 
-    if (!currentProfile) return "Veynor";
+    if (!currentProfile) {
+      return "Veynor";
+    }
+
+    if (
+      role === ROLES.VEYNOR_ADMIN &&
+      window.VEYNOR_LAYOUT_TENANT?.name
+    ) {
+      return window.VEYNOR_LAYOUT_TENANT.name;
+    }
 
     if (PRODUCT_OWNER_ROLES.includes(role)) {
-      return currentProfile.customers?.name || currentProfile.full_name || "Product Owner";
+      return (
+        currentProfile.customers?.name ||
+        currentProfile.full_name ||
+        "Product Owner"
+      );
     }
 
     if (role === ROLES.RETAILER_USER) {
-      return currentProfile.full_name || currentProfile.retailer_code || "Retailer";
+      return (
+        currentProfile.full_name ||
+        currentProfile.retailer_code ||
+        "Retailer"
+      );
     }
 
-    return currentProfile.companies?.name || currentProfile.full_name || "Veynor";
+    return (
+      currentProfile.companies?.name ||
+      currentProfile.full_name ||
+      "Veynor"
+    );
   }
+
 
   function icon(name) {
     return icons[name] || icons.dashboard;
@@ -445,42 +517,97 @@ async function loadProfile() {
     `;
   }
 
+
+  // ==========================================================
+  // GLOBAL ACCOUNT MENU
+  // ==========================================================
+
   function renderAccountMenu() {
     if (isLoginPage()) return "";
 
     const title = profileTitle();
     const role = roleLabel(currentProfile?.role);
 
+    const isTenantView =
+      userRole() === ROLES.VEYNOR_ADMIN &&
+      Boolean(window.VEYNOR_LAYOUT_TENANT?.id);
+
+    const backToAdmin = isTenantView
+      ? `
+        <a href="/admin/">
+          <span>↩</span>
+          <div>
+            <strong>Back to Super Admin</strong>
+            <small>Return to tenant management</small>
+          </div>
+        </a>
+      `
+      : "";
+
     return `
-      <div id="globalAccountMenu" class="global-account-menu">
-        <button id="globalAccountBtn" class="global-account-btn" type="button">
-          <span class="global-account-avatar">${initials(title)}</span>
+      <div
+        id="globalAccountMenu"
+        class="global-account-menu"
+      >
+        <button
+          id="globalAccountBtn"
+          class="global-account-btn"
+          type="button"
+        >
+          <span class="global-account-avatar">
+            ${initials(title)}
+          </span>
+
           <span class="global-account-text">
             <strong>${title}</strong>
             <small>${role}</small>
           </span>
-          <span class="global-account-chevron">⌄</span>
+
+          <span class="global-account-chevron">
+            ⌄
+          </span>
         </button>
 
-        <div id="globalAccountDropdown" class="global-account-dropdown">
+        <div
+          id="globalAccountDropdown"
+          class="global-account-dropdown"
+        >
+          ${backToAdmin}
+
           <a href="./settings.html">
             <span>👤</span>
-            <div><strong>User profile</strong><small>Account and tenant details</small></div>
+            <div>
+              <strong>User profile</strong>
+              <small>Account and tenant details</small>
+            </div>
           </a>
 
           <a href="./support.html#release-notes">
             <span>📝</span>
-            <div><strong>Release notes</strong><small>Version ${APP_VERSION}</small></div>
+            <div>
+              <strong>Release notes</strong>
+              <small>Version ${APP_VERSION}</small>
+            </div>
           </a>
 
           <a href="./support.html">
             <span>❔</span>
-            <div><strong>Get support</strong><small>Help center and support tickets</small></div>
+            <div>
+              <strong>Get support</strong>
+              <small>Help center and support tickets</small>
+            </div>
           </a>
 
-          <button id="globalLogoutBtn" type="button" data-logout="true">
+          <button
+            id="globalLogoutBtn"
+            type="button"
+            data-logout="true"
+          >
             <span>⎋</span>
-            <div><strong>Log out</strong><small>End current session</small></div>
+            <div>
+              <strong>Log out</strong>
+              <small>End current session</small>
+            </div>
           </button>
         </div>
       </div>
@@ -1231,6 +1358,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 
 await loadProfile();
+
+
+  // ==========================================================
+  // LOAD SUPER ADMIN TENANT DISPLAY
+  // ==========================================================
+
+  window.VEYNOR_LAYOUT_TENANT = null;
+
+  if (
+    currentProfile &&
+    userRole() === ROLES.VEYNOR_ADMIN
+  ) {
+    try {
+      window.VEYNOR_LAYOUT_TENANT =
+        await getSelectedTenantForLayout();
+
+      if (window.VEYNOR_LAYOUT_TENANT) {
+        console.info(
+          "[Veynor Layout] Viewing tenant:",
+          window.VEYNOR_LAYOUT_TENANT.name
+        );
+      }
+    } catch (error) {
+      console.warn(
+        "[Veynor Layout] Tenant display failed:",
+        error
+      );
+    }
+  }
+
 
 if (!isLoginPage() && currentProfile) {
   initializeInactivityTracking();
