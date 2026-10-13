@@ -9,13 +9,13 @@
   const LAST_ACTIVITY_KEY = "veynor_last_activity_at";
   const SESSION_USER_KEY = "veynor_session_user_id";
 
-  const HOME_PAGES = {
-    veynor_admin: "/operations-control-center.html",
-    tenant_admin: "/operations-control-center.html",
-    tenant_user: "/operations-control-center.html",
-    product_owner_admin: "/customer-dashboard.html",
-    product_owner_user: "/customer-dashboard.html"
-  };
+const HOME_PAGES = {
+  veynor_admin: "/admin/",
+  tenant_admin: "/operations-control-center.html",
+  tenant_user: "/operations-control-center.html",
+  product_owner_admin: "/customer-dashboard.html",
+  product_owner_user: "/customer-dashboard.html"
+};
 
   let loginInProgress = false;
 

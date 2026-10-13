@@ -8,9 +8,9 @@ const TENANT_ROLES = ["veynor_admin", "tenant_admin", "tenant_user"];  const PRO
   const CUSTOMER_ROLES = [...PRODUCT_OWNER_ROLES, ...RETAILER_ROLES];
   const ALL_ROLES = [...TENANT_ROLES, ...CUSTOMER_ROLES];
 
-  const PAGE_RULES = {
-    index: TENANT_ROLES,
-    "customer-dashboard": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
+const PAGE_RULES = {
+  index: TENANT_ROLES,
+  "admin": ["veynor_admin"],    "customer-dashboard": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
 
     "order-import": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
     "order-matching": TENANT_ROLES,
@@ -53,17 +53,37 @@ inventory: TENANT_ROLES,
     settings: ["veynor_admin", "tenant_admin"]
   };
 
-  function pageKey() {
-    let name = String(window.location.pathname || "")
-      .split("?")[0]
-      .split("#")[0]
-      .replace(/\\/g, "/")
-      .split("/")
-      .pop();
 
-    if (!name || name === "/") name = "index.html";
-    return name.replace(".html", "").trim().toLowerCase();
+function pageKey() {
+  const pathname = String(
+    window.location.pathname || ""
+  )
+    .split("?")[0]
+    .split("#")[0]
+    .replace(/\\/g, "/")
+    .toLowerCase();
+
+  // Super Admin portal
+  if (
+    pathname === "/admin" ||
+    pathname === "/admin/" ||
+    pathname === "/admin/index.html"
+  ) {
+    return "admin";
   }
+
+  let name = pathname
+    .split("/")
+    .pop();
+
+  if (!name) {
+    name = "index.html";
+  }
+
+  return name
+    .replace(/\.html$/, "")
+    .trim();
+}
 
   function showPage() {
     document.documentElement.classList.remove("auth-loading");
