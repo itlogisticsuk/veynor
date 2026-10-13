@@ -3226,6 +3226,21 @@ function renderCustomerDashboardLinks(productOwners) {
 
 
 function protectTenantDashboardNavigation() {
+
+
+  // ==========================================================
+  // SUPER ADMIN TEST MODE
+  // ==========================================================
+
+  const SUPER_ADMIN_TEST_MODE = true;
+
+  if (SUPER_ADMIN_TEST_MODE) {
+    console.warn(
+      "[Veynor] Super Admin Test Mode enabled."
+    );
+    return;
+  }
+
   const tenant = window.VEYNOR_ACTIVE_TENANT;
 
   if (!tenant?.id || tenant.role !== "veynor_admin") {

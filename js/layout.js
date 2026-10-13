@@ -471,70 +471,92 @@ async function loadProfile() {
   }
 
 
-function renderNav(currentFile) {
-  let lastGroup = "";
 
-  const isSuperAdminTenantView =
-    userRole() === ROLES.VEYNOR_ADMIN &&
-    Boolean(window.VEYNOR_LAYOUT_TENANT?.id);
+  // ==========================================================
+  // SIDEBAR NAVIGATION - SUPER ADMIN TEST MODE
+  // ==========================================================
 
-  return menuItems.filter(canSee).map(item => {
-    const group = item.group !== lastGroup
-      ? `<div class="nav-group-label">${item.group}</div>`
-      : "";
+  function renderNav(currentFile) {
+    let lastGroup = "";
 
-    lastGroup = item.group;
+    // Temporary test mode for Veynor Super Admin.
+    // Allows navigation to all existing modules.
+    const SUPER_ADMIN_TEST_MODE = true;
 
-    const active =
-      fileName(item.href) === currentFile
-        ? "active"
+    const isSuperAdminTenantView =
+      userRole() === ROLES.VEYNOR_ADMIN &&
+      Boolean(window.VEYNOR_LAYOUT_TENANT?.id);
+
+    return menuItems.filter(canSee).map(item => {
+      const group = item.group !== lastGroup
+        ? `<div class="nav-group-label">${item.group}</div>`
         : "";
 
-    // Only the dashboard is tenant-aware for now.
-    const blocked =
-      isSuperAdminTenantView &&
-      fileName(item.href) !== "index.html";
+      lastGroup = item.group;
 
-    const badgeHtml =
-      item.badge && !blocked
-        ? `<span
-             class="nav-badge"
-             data-nav-badge="${item.badge}"
-             style="display:none;"
-           >0</span>`
-        : "";
+      const active =
+        fileName(item.href) === currentFile
+          ? "active"
+          : "";
 
-    if (blocked) {
+      // In test mode, navigation is unrestricted
+      // for the authenticated Super Admin.
+      const blocked =
+        isSuperAdminTenantView &&
+        !SUPER_ADMIN_TEST_MODE &&
+        fileName(item.href) !== "index.html";
+
+      const badgeHtml =
+        item.badge && !blocked
+          ? `<span
+               class="nav-badge"
+               data-nav-badge="${item.badge}"
+               style="display:none;"
+             >0</span>`
+          : "";
+
+      if (blocked) {
+        return `
+          ${group}
+          <a
+            href="#"
+            class="${active}"
+            aria-disabled="true"
+            title="Tenant support not enabled"
+            style="opacity:.48;cursor:not-allowed;"
+            onclick="return false;"
+          >
+            <span class="nav-icon">
+              ${icon(item.icon)}
+            </span>
+
+            <span class="nav-label">
+              ${item.label}
+            </span>
+          </a>
+        `;
+      }
+
       return `
         ${group}
         <a
-          href="#"
+          href="${item.href}"
           class="${active}"
-          aria-disabled="true"
-          title="Tenant support is not enabled for this module yet"
-          style="opacity:.48;cursor:not-allowed;"
-          onclick="return false;"
+          title="${item.label}"
         >
-          <span class="nav-icon">${icon(item.icon)}</span>
-          <span class="nav-label">${item.label}</span>
+          <span class="nav-icon">
+            ${icon(item.icon)}
+          </span>
+
+          <span class="nav-label">
+            ${item.label}
+          </span>
+
+          ${badgeHtml}
         </a>
       `;
-    }
-
-    return `
-      ${group}
-      <a
-        href="${item.href}"
-        class="${active}"
-        title="${item.label}"
-      >
-        <span class="nav-icon">${icon(item.icon)}</span>
-        <span class="nav-label">${item.label}</span>
-        ${badgeHtml}
-      </a>
-    `;
-  }).join("");
-}
+    }).join("");
+  }
 
   function renderSystemStatusBlock() {
     if (isLoginPage()) return "";
