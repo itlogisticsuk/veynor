@@ -2,42 +2,69 @@
 /* ============================================================
    VEYNOR SUPER ADMIN PORTAL
    File: /js/admin/admin.js
-   Version: 1.0.0
+   Version: 1.1.0
 
-   - Supabase authentication
+   PLATFORM STRUCTURE
+
+   IT LOGISTICS UK
+      company_type = platform_owner
+
+   OPERATIONAL TENANTS
+      Sofa2U
+      Future customers
+
+   FEATURES
+   - Existing Supabase authentication
    - Super Admin role verification
-   - Tenant directory
+   - Platform Owner recognition
+   - Operational tenant directory
    - Tenant search and selection
    - User statistics
    - Tenant details
    - Session logout
 
-   Tenant creation and switching remain disabled until
-   the server-side authorization is configured.
+   IMPORTANT
+   - Existing user company_id remains unchanged.
+   - No database writes.
+   - No tenant impersonation.
+   - Protected actions remain disabled.
    ============================================================ */
 
 (function () {
   "use strict";
 
+  // ==========================================================
+  // 1. CONFIGURATION
+  // ==========================================================
+
   const CONFIG = Object.freeze({
     adminRole: "veynor_admin",
+    platformOwnerType: "platform_owner",
     loginUrl: "/login.html",
     searchDebounceMs: 150
   });
 
+  // ==========================================================
+  // 2. STATE
+  // ==========================================================
+
   let client = null;
+
   let currentUser = null;
   let currentProfile = null;
 
+  let companies = [];
+  let platformOwners = [];
   let tenants = [];
   let profiles = [];
+
   let selectedTenantId = null;
 
   let isLoading = false;
   let searchTimer = null;
 
   // ==========================================================
-  // HELPERS
+  // 3. DOM HELPERS
   // ==========================================================
 
   function byId(id) {
@@ -76,27 +103,47 @@
   }
 
   function formatNumber(value) {
-    return Number(value || 0).toLocaleString("en-GB");
+    return Number(value || 0).toLocaleString(
+      "en-GB"
+    );
   }
 
   function shortId(value) {
     const text = clean(value);
 
-    if (!text) return "—";
+    if (!text) {
+      return "—";
+    }
 
     return text.length > 12
       ? `${text.slice(0, 8)}…`
       : text;
   }
 
+  function formatDate(value) {
+    if (!value) {
+      return "—";
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleDateString("en-GB");
+  }
+
   // ==========================================================
-  // NOTIFICATIONS
+  // 4. NOTIFICATIONS
   // ==========================================================
 
   function showNotice(message, type = "info") {
     const notice = byId("notice");
 
-    if (!notice) return;
+    if (!notice) {
+      return;
+    }
 
     notice.textContent = message || "";
 
@@ -113,11 +160,13 @@
   }
 
   // ==========================================================
-  // SUPABASE
+  // 5. SUPABASE CLIENT
   // ==========================================================
 
   function getClient() {
-    if (client) return client;
+    if (client) {
+      return client;
+    }
 
     if (typeof window.sb !== "function") {
       throw new Error(
@@ -137,7 +186,7 @@
   }
 
   // ==========================================================
-  // AUTHENTICATION
+  // 6. AUTHENTICATION
   // ==========================================================
 
   function redirectToLogin() {
@@ -156,7 +205,9 @@
     const { data, error } =
       await db.auth.getUser();
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
     currentUser = data?.user || null;
 
@@ -190,7 +241,9 @@
       .eq("is_active", true)
       .limit(2);
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
     if (!data || data.length !== 1) {
       throw new Error(
@@ -204,7 +257,9 @@
   }
 
   function verifyAdminRole() {
-    const role = normalize(currentProfile?.role);
+    const role = normalize(
+      currentProfile?.role
+    );
 
     if (role !== CONFIG.adminRole) {
       throw new Error(
@@ -225,7 +280,7 @@
   }
 
   // ==========================================================
-  // PAGE ACCESS
+  // 7. PAGE ACCESS
   // ==========================================================
 
   function unlockPage() {
@@ -276,7 +331,7 @@
 
     const link = document.createElement("a");
 
-    link.href = "/login.html";
+    link.href = CONFIG.loginUrl;
     link.textContent = "Return to login";
 
     link.style.cssText = `
@@ -290,13 +345,18 @@
       font-weight:800;
     `;
 
-    panel.append(title, description, link);
+    panel.append(
+      title,
+      description,
+      link
+    );
+
     main.appendChild(panel);
     document.body.appendChild(main);
   }
 
   // ==========================================================
-  // LOADING
+  // 8. LOADING STATE
   // ==========================================================
 
   function setLoading(value) {
@@ -314,28 +374,72 @@
   }
 
   // ==========================================================
-  // TENANTS
+  // 9. COMPANY CLASSIFICATION
   // ==========================================================
 
-  async function loadTenants() {
+  function isPlatformOwner(company) {
+    return normalize(company?.company_type) ===
+      CONFIG.platformOwnerType;
+  }
+
+  function isOperationalTenant(company) {
+    return Boolean(
+      company?.id &&
+      !isPlatformOwner(company)
+    );
+  }
+
+  function classifyCompanies() {
+    platformOwners = companies.filter(
+      isPlatformOwner
+    );
+
+    tenants = companies.filter(
+      isOperationalTenant
+    );
+  }
+
+  function getPlatformOwner() {
+    return platformOwners[0] || null;
+  }
+
+  // ==========================================================
+  // 10. LOAD COMPANIES
+  // ==========================================================
+
+  async function loadCompanies() {
     const db = getClient();
 
     const { data, error } = await db
       .from("companies")
-      .select("id,name")
+      .select(`
+        id,
+        name,
+        company_type,
+        is_active,
+        email,
+        phone,
+        created_at
+      `)
       .order("name", {
         ascending: true
       });
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
-    tenants = Array.isArray(data) ? data : [];
+    companies = Array.isArray(data)
+      ? data
+      : [];
 
-    return tenants;
+    classifyCompanies();
+
+    return companies;
   }
 
   // ==========================================================
-  // USER PROFILES
+  // 11. LOAD USER PROFILES
   // ==========================================================
 
   async function loadProfiles() {
@@ -350,15 +454,19 @@
         is_active
       `);
 
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
 
-    profiles = Array.isArray(data) ? data : [];
+    profiles = Array.isArray(data)
+      ? data
+      : [];
 
     return profiles;
   }
 
   // ==========================================================
-  // STATISTICS
+  // 12. USER STATISTICS
   // ==========================================================
 
   function getTenantUsers(tenantId) {
@@ -378,8 +486,18 @@
     ).length;
   }
 
+  function getTotalTenantUsers() {
+    const tenantIds = new Set(
+      tenants.map(tenant => String(tenant.id))
+    );
+
+    return profiles.filter(profile =>
+      tenantIds.has(String(profile.company_id))
+    ).length;
+  }
+
   // ==========================================================
-  // TENANT SELECTION
+  // 13. TENANT SELECTION
   // ==========================================================
 
   function getSelectedTenant() {
@@ -393,7 +511,8 @@
   function selectTenant(tenantId) {
     const tenant = tenants.find(
       item =>
-        String(item.id) === String(tenantId)
+        String(item.id) ===
+        String(tenantId)
     );
 
     selectedTenantId = tenant?.id || null;
@@ -404,7 +523,7 @@
   }
 
   // ==========================================================
-  // SEARCH
+  // 14. TENANT SEARCH
   // ==========================================================
 
   function getFilteredTenants() {
@@ -412,26 +531,95 @@
       byId("tenantSearch")?.value
     );
 
-    if (!search) return tenants;
+    if (!search) {
+      return tenants;
+    }
 
     return tenants.filter(tenant => {
       const searchable = [
         tenant.name,
-        tenant.id
-      ].map(normalize).join(" ");
+        tenant.id,
+        tenant.email,
+        tenant.company_type
+      ]
+        .map(normalize)
+        .join(" ");
 
       return searchable.includes(search);
     });
   }
 
   // ==========================================================
-  // TENANT DIRECTORY
+  // END OF PART 1
+  // ==========================================================
+
+  /*
+   * CONTINUE DIRECTLY WITH PART 2.
+   *
+   * Do not add })(); here.
+   * Do not close the function.
+   *
+   * Part 2 contains:
+   * - Platform Owner display
+   * - Tenant directory rendering
+   * - Tenant details
+   * - Dashboard statistics
+   * - Refresh
+   * - Logout
+   * - Events
+   * - Initialization
+   */
+
+  // ==========================================================
+  // 15. PLATFORM OWNER DISPLAY
+  // ==========================================================
+
+  function renderPlatformOwner() {
+    const owner = getPlatformOwner();
+
+    // These fields are optional in the current HTML.
+    // They will be used when we extend the dashboard.
+
+    setText(
+      "platformOwnerName",
+      owner?.name || "Not configured"
+    );
+
+    setText(
+      "platformOwnerId",
+      owner?.id || "—"
+    );
+
+    setText(
+      "platformOwnerEmail",
+      owner?.email || "—"
+    );
+
+    setText(
+      "platformOwnerStatus",
+      owner
+        ? owner.is_active === true
+          ? "Active"
+          : "Inactive"
+        : "Missing"
+    );
+
+    setText(
+      "platformOwnerCreated",
+      formatDate(owner?.created_at)
+    );
+  }
+
+  // ==========================================================
+  // 16. TENANT DIRECTORY
   // ==========================================================
 
   function renderTenantDirectory() {
     const body = byId("tenantRows");
 
-    if (!body) return;
+    if (!body) {
+      return;
+    }
 
     const filtered = getFilteredTenants();
 
@@ -439,7 +627,7 @@
       body.innerHTML = `
         <tr>
           <td colspan="4" class="empty">
-            No tenants found.
+            No operational tenants found.
           </td>
         </tr>
       `;
@@ -454,6 +642,8 @@
 
       const userCount =
         getTenantUserCount(tenant.id);
+
+      const active = tenant.is_active === true;
 
       return `
         <tr
@@ -480,7 +670,13 @@
 
           <td>
             <span class="pill">
-              ${selected ? "Selected" : "View"}
+              ${
+                selected
+                  ? "Selected"
+                  : active
+                    ? "View"
+                    : "Inactive"
+              }
             </span>
           </td>
         </tr>
@@ -489,13 +685,15 @@
   }
 
   // ==========================================================
-  // TENANT DETAILS
+  // 17. TENANT DETAILS
   // ==========================================================
 
   function renderTenantDetails() {
     const container = byId("tenantDetail");
 
-    if (!container) return;
+    if (!container) {
+      return;
+    }
 
     const tenant = getSelectedTenant();
 
@@ -532,6 +730,41 @@
       </div>
 
       <div class="detail-row">
+        <span>Company type</span>
+        <strong>
+          ${escapeHtml(tenant.company_type || "—")}
+        </strong>
+      </div>
+
+      <div class="detail-row">
+        <span>Status</span>
+        <strong>
+          ${tenant.is_active ? "Active" : "Inactive"}
+        </strong>
+      </div>
+
+      <div class="detail-row">
+        <span>Email</span>
+        <strong>
+          ${escapeHtml(tenant.email || "—")}
+        </strong>
+      </div>
+
+      <div class="detail-row">
+        <span>Phone</span>
+        <strong>
+          ${escapeHtml(tenant.phone || "—")}
+        </strong>
+      </div>
+
+      <div class="detail-row">
+        <span>Created</span>
+        <strong>
+          ${escapeHtml(formatDate(tenant.created_at))}
+        </strong>
+      </div>
+
+      <div class="detail-row">
         <span>Total users</span>
         <strong>
           ${formatNumber(totalUsers)}
@@ -555,7 +788,7 @@
   }
 
   // ==========================================================
-  // DASHBOARD STATISTICS
+  // 18. DASHBOARD STATISTICS
   // ==========================================================
 
   function renderStatistics() {
@@ -566,7 +799,7 @@
 
     setText(
       "totalUsers",
-      formatNumber(profiles.length)
+      formatNumber(getTotalTenantUsers())
     );
 
     const selected = getSelectedTenant();
@@ -580,32 +813,45 @@
         : "—"
     );
 
-    setText("platformStatus", "Connected");
+    setText(
+      "platformStatus",
+      "Connected"
+    );
   }
 
+  // ==========================================================
+  // 19. COMPLETE RENDER
+  // ==========================================================
+
   function renderAll() {
+    renderPlatformOwner();
     renderTenantDirectory();
     renderTenantDetails();
     renderStatistics();
   }
 
   // ==========================================================
-  // REFRESH
+  // 20. REFRESH DATA
   // ==========================================================
 
   async function refreshData() {
-    if (isLoading) return;
+    if (isLoading) {
+      return;
+    }
 
     setLoading(true);
 
-    showNotice("Loading tenant information...");
+    showNotice(
+      "Loading platform and tenant information..."
+    );
 
     try {
       await verifyAccess();
 
-      await loadTenants();
+      await loadCompanies();
       await loadProfiles();
 
+      // Keep the selected tenant only if it still exists.
       const selectedStillExists = tenants.some(
         tenant =>
           String(tenant.id) ===
@@ -625,11 +871,14 @@
         error
       );
 
-      setText("platformStatus", "Issue");
+      setText(
+        "platformStatus",
+        "Issue"
+      );
 
       showNotice(
         error.message ||
-        "Could not refresh tenant information.",
+        "Could not refresh platform information.",
         "error"
       );
 
@@ -639,7 +888,7 @@
   }
 
   // ==========================================================
-  // LOGOUT
+  // 21. LOGOUT
   // ==========================================================
 
   async function logout() {
@@ -649,7 +898,9 @@
       const { error } =
         await db.auth.signOut();
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
       localStorage.removeItem(
         "veynor_last_activity_at"
@@ -659,7 +910,9 @@
         "veynor_session_user_id"
       );
 
-      window.location.replace(CONFIG.loginUrl);
+      window.location.replace(
+        CONFIG.loginUrl
+      );
 
     } catch (error) {
       console.error(
@@ -676,18 +929,22 @@
   }
 
   // ==========================================================
-  // PROTECTED ACTIONS
+  // 22. PROTECTED ACTIONS
   // ==========================================================
 
   function disableProtectedActions() {
-    [
+    const protectedButtons = [
       "newTenantBtn",
       "openTenantBtn",
       "tenantSettingsBtn"
-    ].forEach(id => {
+    ];
+
+    protectedButtons.forEach(id => {
       const button = byId(id);
 
-      if (!button) return;
+      if (!button) {
+        return;
+      }
 
       button.disabled = true;
 
@@ -697,20 +954,23 @@
   }
 
   // ==========================================================
-  // EVENTS
+  // 23. EVENT HANDLERS
   // ==========================================================
 
   function bindEvents() {
+    // Refresh platform data
     byId("refreshBtn")?.addEventListener(
       "click",
       refreshData
     );
 
+    // Sign out
     byId("logoutBtn")?.addEventListener(
       "click",
       logout
     );
 
+    // Search tenants
     byId("tenantSearch")?.addEventListener(
       "input",
       () => {
@@ -723,6 +983,7 @@
       }
     );
 
+    // Select tenant by mouse
     byId("tenantRows")?.addEventListener(
       "click",
       event => {
@@ -730,12 +991,15 @@
           "tr[data-id]"
         );
 
-        if (!row) return;
+        if (!row) {
+          return;
+        }
 
         selectTenant(row.dataset.id);
       }
     );
 
+    // Select tenant by keyboard
     byId("tenantRows")?.addEventListener(
       "keydown",
       event => {
@@ -750,7 +1014,9 @@
           "tr[data-id]"
         );
 
-        if (!row) return;
+        if (!row) {
+          return;
+        }
 
         event.preventDefault();
 
@@ -758,6 +1024,7 @@
       }
     );
 
+    // Close tenant dialog
     byId("closeDialog")?.addEventListener(
       "click",
       () => {
@@ -765,6 +1032,7 @@
       }
     );
 
+    // Tenant creation placeholder
     byId("tenantForm")?.addEventListener(
       "submit",
       event => {
@@ -779,18 +1047,24 @@
   }
 
   // ==========================================================
-  // INITIALIZATION
+  // 24. INITIALIZATION
   // ==========================================================
 
   async function init() {
     try {
+      // Prevent tenant modification until backend is ready.
       disableProtectedActions();
+
+      // Register UI event handlers.
       bindEvents();
 
+      // Authenticate and verify Super Admin.
       await verifyAccess();
 
+      // Show the page only after access is verified.
       unlockPage();
 
+      // Load platform and tenant information.
       await refreshData();
 
     } catch (error) {
@@ -812,7 +1086,7 @@
   }
 
   // ==========================================================
-  // START
+  // 25. START
   // ==========================================================
 
   if (document.readyState === "loading") {
