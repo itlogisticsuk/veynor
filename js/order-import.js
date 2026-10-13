@@ -7,6 +7,113 @@
   let client = null;
   let companyId = null;
 
+let currentImportProfile = null;
+let currentImportCustomerCode = "";
+
+const PRODUCT_OWNER_ROLES = new Set([
+  "product_owner_admin",
+  "product_owner_user"
+]);
+
+const IMPORT_ROLES = new Set([
+  "veynor_admin",
+  "tenant_admin",
+  "tenant_user",
+  "product_owner_admin",
+  "product_owner_user"
+]);
+
+function isProductOwnerAccount() {
+  return PRODUCT_OWNER_ROLES.has(
+    String(currentImportProfile?.role || "")
+      .trim()
+      .toLowerCase()
+  );
+}
+
+function assertImportAccess() {
+  const profile = currentImportProfile;
+
+  if (!profile || profile.is_active !== true) {
+    throw new Error(
+      "Your Veynor account is not active or could not be verified."
+    );
+  }
+
+  const role = String(profile.role || "")
+    .trim()
+    .toLowerCase();
+
+  if (!IMPORT_ROLES.has(role)) {
+    throw new Error(
+      "Your account is not authorised to import orders."
+    );
+  }
+
+  if (isProductOwnerAccount() && !profile.customer_id) {
+    throw new Error(
+      "Your account is not linked to a Product Owner."
+    );
+  }
+}
+
+async function loadImportProfile() {
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const authId = authData?.user?.id;
+
+  if (!authId) {
+    throw new Error("No authenticated user found.");
+  }
+
+  let result = await client
+    .from("user_profiles")
+    .select(
+      "id, auth_user_id, company_id, customer_id, role, is_active"
+    )
+    .eq("id", authId)
+    .maybeSingle();
+
+  if (result.error) throw result.error;
+
+  if (!result.data) {
+    result = await client
+      .from("user_profiles")
+      .select(
+        "id, auth_user_id, company_id, customer_id, role, is_active"
+      )
+      .eq("auth_user_id", authId)
+      .maybeSingle();
+
+    if (result.error) throw result.error;
+  }
+
+  if (!result.data) {
+    throw new Error(
+      "Your Veynor user profile was not found."
+    );
+  }
+
+  currentImportProfile = result.data;
+
+  assertImportAccess();
+
+  const cid = await getCompanyId();
+
+  if (
+    String(currentImportProfile.company_id) !== String(cid)
+  ) {
+    throw new Error(
+      "Your account is not linked to the active tenant."
+    );
+  }
+
+  return currentImportProfile;
+}
+
   let settingsMap = new Map();
   let ownerProfiles = [];
 let retailerList = [];
@@ -353,78 +460,166 @@ function getStockPriorityClass(value) {
     return companyId;
   }
 
-  async function loadSettings() {
-    const cid = await getCompanyId();
+async function loadSettings() {
+  assertImportAccess();
 
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", cid);
+  const cid = await getCompanyId();
 
-    if (error) throw error;
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", cid);
 
-    settingsMap = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
+  if (error) throw error;
 
-    const raw = settingsMap.get(OWNER_PROFILES_KEY);
+  settingsMap = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
 
-    if (!raw) {
-      ownerProfiles = [];
-      renderProductOwnerSelect();
-      return;
-    }
+  const raw = settingsMap.get(OWNER_PROFILES_KEY);
 
+  if (!raw) {
+    ownerProfiles = [];
+  } else {
     try {
-      const parsed = JSON.parse(raw);
-      ownerProfiles = Array.isArray(parsed) ? parsed : [];
+      const parsed = typeof raw === "string"
+        ? JSON.parse(raw)
+        : raw;
+
+      ownerProfiles = Array.isArray(parsed)
+        ? parsed
+        : [];
     } catch {
       ownerProfiles = [];
     }
-
-    renderProductOwnerSelect();
   }
 
-  function renderProductOwnerSelect() {
-    const select = byId("productOwnerName");
-    if (!select) return;
+  await renderProductOwnerSelect();
+}
 
-    if (!ownerProfiles.length) {
-      select.innerHTML = `<option value="">No product owners configured in Settings</option>`;
-      select.disabled = true;
-      showToast("No product owners found. Add Bellstone/Zoy in Settings first.", "err");
-      return;
+function getOwnerSelectValue(owner) {
+  return String(
+    owner?.key ||
+    owner?.customer_code ||
+    owner?.trading_name ||
+    owner?.name ||
+    ""
+  );
+}
+
+function getOwnerLabel(owner) {
+  return String(
+    owner?.trading_name ||
+    owner?.name ||
+    owner?.customer_code ||
+    owner?.key ||
+    "Product Owner"
+  );
+}
+
+async function getAllowedOwnerProfiles() {
+  assertImportAccess();
+
+  if (!isProductOwnerAccount()) {
+    return ownerProfiles;
+  }
+
+  const cid = await getCompanyId();
+
+  const { data: customer, error } = await client
+    .from("customers")
+    .select(
+      "id, company_id, customer_code, name, is_active"
+    )
+    .eq("id", currentImportProfile.customer_id)
+    .eq("company_id", cid)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!customer || customer.is_active !== true) {
+    throw new Error(
+      "Your Product Owner is inactive or could not be found."
+    );
+  }
+
+  currentImportCustomerCode =
+    String(customer.customer_code || "")
+      .trim()
+      .toUpperCase();
+
+  const matches = ownerProfiles.filter(owner => {
+    if (owner.customer_id) {
+      return String(owner.customer_id) ===
+        String(customer.id);
     }
 
-    select.disabled = false;
+    return Boolean(currentImportCustomerCode) &&
+      normalize(owner.customer_code) ===
+      normalize(currentImportCustomerCode);
+  });
 
-    select.innerHTML = ownerProfiles.map(owner => {
-      const label = owner.trading_name || owner.name || owner.customer_code || owner.key || "Product owner";
-      const value = owner.key || owner.customer_code || owner.trading_name || owner.name || label;
-
-      return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
-    }).join("");
-
-    const defaultOwner =
-      settingsMap.get("system_default_product_owner") ||
-      settingsMap.get("default_product_owner") ||
-      ownerProfiles[0]?.key ||
-      "";
-
-    const match = ownerProfiles.find(owner => {
-      return [
-        owner.key,
-        owner.name,
-        owner.trading_name,
-        owner.customer_code,
-        owner.default_source_name
-      ].map(normalize).includes(normalize(defaultOwner));
-    });
-
-select.value = "";
-select.insertAdjacentHTML(
-  "afterbegin",
-  '<option value="">-- Select Product Owner --</option>'
-);
+  if (matches.length !== 1) {
+    throw new Error(
+      "Your Product Owner could not be uniquely matched " +
+      "to Settings > Product Owners."
+    );
   }
+
+  return matches;
+}
+
+async function renderProductOwnerSelect() {
+  const select = byId("productOwnerName");
+  if (!select) return;
+
+  select.disabled = true;
+  select.replaceChildren();
+
+  const allowedOwners = await getAllowedOwnerProfiles();
+
+  if (!allowedOwners.length) {
+    select.add(new Option(
+      "No authorised Product Owners available",
+      ""
+    ));
+    return;
+  }
+
+  if (isProductOwnerAccount()) {
+    const owner = allowedOwners[0];
+    const value = getOwnerSelectValue(owner);
+
+    select.add(new Option(
+      getOwnerLabel(owner),
+      value
+    ));
+
+    select.value = value;
+    select.disabled = true;
+    return;
+  }
+
+  select.add(new Option(
+    "-- Select Product Owner --",
+    ""
+  ));
+
+  for (const owner of allowedOwners) {
+    select.add(new Option(
+      getOwnerLabel(owner),
+      getOwnerSelectValue(owner)
+    ));
+  }
+
+  select.value = "";
+  select.disabled = false;
+}
 
 function isZoyOwner() {
   const owner = getSelectedProductOwner();
@@ -457,25 +652,55 @@ function isAutoAckEnabledForSelectedOwner() {
   );
 }
 
+function getAuthorizedSelectedOwner() {
+  assertImportAccess();
 
-function getSelectedProductOwner() {
-  const selected = getFieldValue("productOwnerName", "");
+  const selected = getFieldValue(
+    "productOwnerName",
+    ""
+  );
 
-  if (!selected || !ownerProfiles.length) {
+  if (!selected) {
     return null;
   }
 
-  return ownerProfiles.find(profile =>
-    [
-      profile.key,
-      profile.name,
-      profile.trading_name,
-      profile.default_source_name,
-      profile.customer_code
-    ]
-      .filter(Boolean)
-      .some(value => normalize(value) === normalize(selected))
+  if (isProductOwnerAccount()) {
+    const customerId = String(
+      currentImportProfile.customer_id || ""
+    );
+
+    const matchingOwners = ownerProfiles.filter(owner => {
+      if (owner.customer_id) {
+        return String(owner.customer_id) === customerId;
+      }
+
+      return normalize(owner.customer_code) ===
+        normalize(currentImportCustomerCode);
+    });
+
+    if (matchingOwners.length !== 1) {
+      return null;
+    }
+
+    const owner = matchingOwners[0];
+
+    return getOwnerSelectValue(owner) === selected
+      ? owner
+      : null;
+  }
+
+  return ownerProfiles.find(owner =>
+    getOwnerSelectValue(owner) === selected
   ) || null;
+}
+
+
+function getSelectedProductOwner() {
+  if (!currentImportProfile?.is_active) {
+    return null;
+  }
+
+  return getAuthorizedSelectedOwner();
 }
 
   function buildEmptyAddress() {
@@ -2819,55 +3044,106 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
   }
 
 async function getOrCreateProductOwnerCustomer(owner, cid) {
-  if (!owner) throw new Error("No product owner selected.");
+  assertImportAccess();
 
-    const ownerName = dedupeRepeatedWords(owner.name || owner.trading_name || "");
-    const customerCode = String(owner.customer_code || owner.default_source_name || owner.trading_name || ownerName)
-      .trim()
-      .toUpperCase()
-      .replace(/[^A-Z0-9_-]/g, "_");
+  if (!owner) {
+    throw new Error("No Product Owner selected.");
+  }
 
-    if (!ownerName) throw new Error("Selected product owner has no name in Settings.");
+  if (isProductOwnerAccount()) {
+    const allowedOwners = await getAllowedOwnerProfiles();
 
-    const { data: existing, error: selectError } = await client
+    const allowed = allowedOwners.some(profile =>
+      getOwnerSelectValue(profile) ===
+      getOwnerSelectValue(owner)
+    );
+
+    if (!allowed) {
+      throw new Error(
+        "You cannot use another Product Owner."
+      );
+    }
+
+    return currentImportProfile.customer_id;
+  }
+
+  const ownerName = dedupeRepeatedWords(
+    owner.name || owner.trading_name || ""
+  );
+
+  const customerCode = String(
+    owner.customer_code ||
+    owner.default_source_name ||
+    owner.trading_name ||
+    ownerName
+  )
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]/g, "_");
+
+  if (!ownerName) {
+    throw new Error(
+      "Selected Product Owner has no name in Settings."
+    );
+  }
+
+  const { data: existing, error: selectError } =
+    await client
       .from("customers")
       .select("id, name, customer_code")
       .eq("company_id", cid)
-      .or(`customer_code.eq.${customerCode},name.ilike.${ownerName}`)
+      .or(
+        `customer_code.eq.${customerCode},name.ilike.${ownerName}`
+      )
       .limit(1);
 
-    if (selectError) throw selectError;
+  if (selectError) throw selectError;
 
-    const payload = {
-      company_id: cid,
-      name: ownerName,
-      customer_code: customerCode,
-      is_active: true
-    };
+  const payload = {
+    company_id: cid,
+    name: ownerName,
+    customer_code: customerCode,
+    is_active: true
+  };
 
-    if (owner.invoice_email) payload.billing_email = owner.invoice_email;
-    if (owner.ops_email) payload.email = owner.ops_email;
-    if (owner.vat) payload.vat_number = owner.vat;
+  if (owner.invoice_email) {
+    payload.billing_email = owner.invoice_email;
+  }
 
-    if (existing?.[0]?.id) {
-      const { error: updateError } = await client
-        .from("customers")
-        .update(payload)
-        .eq("id", existing[0].id);
+  if (owner.ops_email) {
+    payload.email = owner.ops_email;
+  }
 
-      if (updateError) console.warn("Product owner update skipped:", updateError.message);
-      return existing[0].id;
+  if (owner.vat) {
+    payload.vat_number = owner.vat;
+  }
+
+  if (existing?.[0]?.id) {
+    const { error: updateError } = await client
+      .from("customers")
+      .update(payload)
+      .eq("id", existing[0].id);
+
+    if (updateError) {
+      console.warn(
+        "Product Owner update skipped:",
+        updateError.message
+      );
     }
 
-    const { data, error } = await client
-      .from("customers")
-      .insert(payload)
-      .select("id")
-      .single();
-
-    if (error) throw error;
-    return data.id;
+    return existing[0].id;
   }
+
+  const { data, error } = await client
+    .from("customers")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) throw error;
+
+  return data.id;
+}
 
   async function getOrCreateOwnerBillingAddress(owner, customerId) {
     const address = ownerToBillingAddress(owner);
@@ -4550,59 +4826,74 @@ function bindPdfDropZone() {
 
 
 async function getSelectedProductOwnerCustomerId(cid) {
+  assertImportAccess();
+
   const owner = getSelectedProductOwner();
 
   if (!owner) {
     return null;
   }
 
+  if (isProductOwnerAccount()) {
+    const allowedOwners =
+      await getAllowedOwnerProfiles();
+
+    const allowed = allowedOwners.some(profile =>
+      getOwnerSelectValue(profile) ===
+      getOwnerSelectValue(owner)
+    );
+
+    if (!allowed) {
+      throw new Error(
+        "You cannot import orders for another Product Owner."
+      );
+    }
+
+    return currentImportProfile.customer_id;
+  }
+
   const { data, error } = await client
     .from("customers")
     .select("id, name, customer_code")
-    .eq("company_id", cid)
-    .limit(1000);
+    .eq("company_id", cid);
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
-  const ownerValues = [
-    owner.customer_code,
-    owner.key,
-    owner.name,
-    owner.trading_name,
-    owner.default_source_name
-  ]
-    .filter(Boolean)
-    .map(normalize);
-
-  // Prefer the customer ID stored in Settings,
-  // but only if it belongs to the active tenant.
   if (owner.customer_id) {
-    const matchById = (data || []).find(
-      customer => customer.id === owner.customer_id
+    const match = (data || []).find(customer =>
+      String(customer.id) ===
+      String(owner.customer_id)
     );
 
-    if (matchById) {
-      return matchById.id;
+    if (!match) {
+      throw new Error(
+        "Configured Product Owner customer_id was not found."
+      );
     }
+
+    return match.id;
   }
 
-  // Match exact customer code or name.
-  const match = (data || []).find(customer => {
-    const customerValues = [
-      customer.customer_code,
-      customer.name
-    ]
-      .filter(Boolean)
-      .map(normalize);
+  const code = normalize(owner.customer_code);
 
-    return ownerValues.some(value =>
-      customerValues.includes(value)
+  if (!code) {
+    throw new Error(
+      "Selected Product Owner has no customer code."
     );
-  });
+  }
 
-  return match?.id || null;
+  const matches = (data || []).filter(customer =>
+    normalize(customer.customer_code) === code
+  );
+
+  if (matches.length !== 1) {
+    throw new Error(
+      "Selected Product Owner could not be uniquely " +
+      "matched to a Supabase customer."
+    );
+  }
+
+  return matches[0].id;
 }
 
 function fillManualOwnerFields() {
@@ -4758,52 +5049,93 @@ function fillManualLineFromSku(input) {
   if (hint) hint.textContent = "Product found in master data.";
 }
 
-function syncManualOwnerSelect() {
+async function syncManualOwnerSelect() {
   const select = byId("manualOwnerSelect");
   if (!select) return;
 
-  select.innerHTML = ownerProfiles.map(owner => {
-    const label = owner.trading_name || owner.name || owner.customer_code || owner.key || "Product owner";
-    const value = owner.key || owner.customer_code || owner.trading_name || owner.name || "";
+  const allowedOwners = await getAllowedOwnerProfiles();
 
-    return `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`;
-  }).join("");
+  select.replaceChildren();
 
-  select.value = getFieldValue("productOwnerName", "");
+  for (const owner of allowedOwners) {
+    select.add(new Option(
+      getOwnerLabel(owner),
+      getOwnerSelectValue(owner)
+    ));
+  }
+
+  select.value = getFieldValue(
+    "productOwnerName",
+    ""
+  );
+
+  select.disabled = isProductOwnerAccount();
+
+  const unknownOwner = byId("manualUnknownOwner");
+
+  if (unknownOwner && isProductOwnerAccount()) {
+    unknownOwner.checked = false;
+    unknownOwner.disabled = true;
+  }
 }
 
 function toggleManualUnknownOwnerFields() {
   const checkbox = byId("manualUnknownOwner");
   const fields = byId("manualUnknownOwnerFields");
+
   if (!checkbox || !fields) return;
 
-  fields.classList.toggle("hidden", !checkbox.checked);
+  if (isProductOwnerAccount()) {
+    checkbox.checked = false;
+    checkbox.disabled = true;
+    fields.classList.add("hidden");
+  } else {
+    fields.classList.toggle(
+      "hidden",
+      !checkbox.checked
+    );
+  }
+
   fillManualOwnerFields();
 }
 
 async function openManualOrderModal() {
-  syncManualOwnerSelect();
+  assertImportAccess();
+
+  await syncManualOwnerSelect();
+
+  if (!getSelectedProductOwner()) {
+    throw new Error(
+      "Select a Product Owner before creating a manual order."
+    );
+  }
+
   fillManualOwnerFields();
   toggleManualUnknownOwnerFields();
-const movementSelect =
-  byId("manualMovementType");
 
-if (movementSelect) {
-  movementSelect.value = "delivery";
-}
+  const movementSelect = byId("manualMovementType");
+
+  if (movementSelect) {
+    movementSelect.value = "delivery";
+  }
 
   await loadManualProducts();
 
   byId("manualOrderModal")?.classList.add("open");
 
   const dateInput = byId("manualRequestedDate");
+
   if (dateInput && !dateInput.value) {
-    dateInput.value = new Date().toISOString().slice(0, 10);
+    dateInput.value = new Date()
+      .toISOString()
+      .slice(0, 10);
   }
 
   const orderInput = byId("manualOrderNumber");
+
   if (orderInput && !orderInput.value) {
-    orderInput.value = `MAN-${Date.now().toString().slice(-6)}`;
+    orderInput.value =
+      `MAN-${Date.now().toString().slice(-6)}`;
   }
 }
 
@@ -4812,9 +5144,11 @@ function closeManualOrderModal() {
 }
 
 async function loadManualRetailers() {
+  assertImportAccess();
+
   const cid = await getCompanyId();
 
-  const { data, error } = await client
+  let query = client
     .from("orders")
     .select(`
       retail_name,
@@ -4829,8 +5163,31 @@ async function loadManualRetailers() {
     .order("retail_name", { ascending: true })
     .limit(1000);
 
+  if (isProductOwnerAccount()) {
+    query = query.eq(
+      "customer_id",
+      currentImportProfile.customer_id
+    );
+  } else {
+    const selectedOwnerId =
+      await getSelectedProductOwnerCustomerId(cid);
+
+    if (selectedOwnerId) {
+      query = query.eq(
+        "customer_id",
+        selectedOwnerId
+      );
+    }
+  }
+
+  const { data, error } = await query;
+
   if (error) {
-    console.warn("Manual retailers skipped:", error.message);
+    console.warn(
+      "Manual retailers could not be loaded:",
+      error.message
+    );
+
     manualRetailers = [];
     renderManualRetailerOptions();
     return;
@@ -4839,7 +5196,10 @@ async function loadManualRetailers() {
   const map = new Map();
 
   (data || []).forEach(row => {
-    const key = normalize(`${row.retail_name}|${row.delivery_postcode}`);
+    const key = normalize(
+      `${row.retail_name}|${row.delivery_postcode}`
+    );
+
     if (!key || map.has(key)) return;
 
     map.set(key, {
@@ -4849,13 +5209,19 @@ async function loadManualRetailers() {
       address2: row.delivery_address_2 || "",
       city: row.delivery_city || "",
       postcode: row.delivery_postcode || "",
-      country: row.delivery_country || getDefaultCountry()
+      country:
+        row.delivery_country ||
+        getDefaultCountry()
     });
   });
 
-  manualRetailers = Array.from(map.values()).sort((a, b) =>
-    String(a.name).localeCompare(String(b.name), "en-GB")
-  );
+  manualRetailers = Array.from(map.values())
+    .sort((a, b) =>
+      String(a.name).localeCompare(
+        String(b.name),
+        "en-GB"
+      )
+    );
 
   renderManualRetailerOptions();
 }
@@ -5080,213 +5446,587 @@ let manualOrder = {
 
 function bindEvents() {
 
-  byId("detailLineList")?.addEventListener("change", event => {
-    const select = event.target.closest(
-      "[data-stock-priority-line-index]"
-    );
+  // ============================================
+  // STOCK PRIORITY
+  // ============================================
 
-    if (!select) return;
+  byId("detailLineList")?.addEventListener(
+    "change",
+    event => {
+      const select = event.target.closest(
+        "[data-stock-priority-line-index]"
+      );
 
-    const order = groupedOrders.find(
-      row =>
-        String(row.orderNumber) ===
-        String(selectedOrderNo)
-    );
+      if (!select) return;
 
-    if (!order) return;
+      const order = groupedOrders.find(
+        row =>
+          String(row.orderNumber) ===
+          String(selectedOrderNo)
+      );
 
-    const lineIndex = Number(
-      select.dataset.stockPriorityLineIndex
-    );
+      if (!order) return;
 
-    if (
-      !Number.isInteger(lineIndex) ||
-      !order.lines?.[lineIndex]
-    ) {
-      return;
+      const lineIndex = Number(
+        select.dataset.stockPriorityLineIndex
+      );
+
+      if (
+        !Number.isInteger(lineIndex) ||
+        !order.lines?.[lineIndex]
+      ) {
+        return;
+      }
+
+      order.lines[lineIndex].stockPriorityLevel =
+        normalizeStockPriorityLevel(select.value);
+
+      renderDetail();
     }
+  );
 
-    order.lines[lineIndex].stockPriorityLevel =
-      normalizeStockPriorityLevel(select.value);
+  // ============================================
+  // EXCEL FILE SELECTION
+  // ============================================
 
-    renderDetail();
-  });
   const excelInput = byId("ordersImportFile");
 
   if (excelInput) {
     excelInput.addEventListener("change", event => {
-      selectedExcelFile = event.target.files?.[0] || null;
+      selectedExcelFile =
+        event.target.files?.[0] || null;
+
       setText(
         "excelFileStatus",
-        selectedExcelFile ? `${selectedExcelFile.name} selected` : "No Excel file selected."
+        selectedExcelFile
+          ? `${selectedExcelFile.name} selected`
+          : "No Excel file selected."
       );
     });
   }
 
-  byId("manualOwnerSelect")?.addEventListener("change", async event => {
-    event.preventDefault();
+  // ============================================
+  // MANUAL PRODUCT OWNER SELECTION
+  // ============================================
 
-    const mainOwnerSelect = byId("productOwnerName");
-    if (mainOwnerSelect) mainOwnerSelect.value = event.target.value;
+  byId("manualOwnerSelect")?.addEventListener(
+    "change",
+    async event => {
+      event.preventDefault();
 
-    fillManualOwnerFields();
-    await loadManualProducts();
-  });
+      try {
+        assertImportAccess();
 
-  byId("manualLines")?.addEventListener("change", event => {
-    const input = event.target.closest(".manualSku");
-    if (!input) return;
-    fillManualLineFromSku(input);
-  });
+        if (isProductOwnerAccount()) {
+          await syncManualOwnerSelect();
+          return;
+        }
 
-  byId("manualRetailerSelect")?.addEventListener("change", fillManualRetailerFromSelect);
-  byId("manualUnknownOwner")?.addEventListener("change", toggleManualUnknownOwnerFields);
+        const mainOwnerSelect =
+          byId("productOwnerName");
 
-  byId("productOwnerName")?.addEventListener("change", async () => {
-    fillManualOwnerFields();
-    await loadManualProducts();
+        if (!mainOwnerSelect) return;
 
-    groupedOrders = groupedOrders.map(finalizeOrder);
-    renderAll();
-  });
+        const requestedValue = event.target.value;
+
+        const allowedOwners =
+          await getAllowedOwnerProfiles();
+
+        const allowed = allowedOwners.some(owner =>
+          getOwnerSelectValue(owner) === requestedValue
+        );
+
+        if (!allowed) {
+          throw new Error(
+            "Selected Product Owner is not authorised."
+          );
+        }
+
+        mainOwnerSelect.value = requestedValue;
+
+        fillManualOwnerFields();
+
+        await loadManualProducts();
+        await loadManualRetailers();
+
+        clearPreview();
+
+      } catch (error) {
+        console.error(error);
+
+        showToast(
+          error.message ||
+          "Could not change Product Owner.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // MANUAL PRODUCT LINES
+  // ============================================
+
+  byId("manualLines")?.addEventListener(
+    "change",
+    event => {
+      const input = event.target.closest(".manualSku");
+
+      if (!input) return;
+
+      fillManualLineFromSku(input);
+    }
+  );
+
+  // ============================================
+  // MANUAL RETAILER
+  // ============================================
+
+  byId("manualRetailerSelect")?.addEventListener(
+    "change",
+    fillManualRetailerFromSelect
+  );
+
+  byId("manualUnknownOwner")?.addEventListener(
+    "change",
+    toggleManualUnknownOwnerFields
+  );
+
+  // ============================================
+  // MAIN PRODUCT OWNER SELECTION
+  // ============================================
+
+  byId("productOwnerName")?.addEventListener(
+    "change",
+    async () => {
+      try {
+        assertImportAccess();
+
+        if (isProductOwnerAccount()) {
+          await renderProductOwnerSelect();
+          return;
+        }
+
+        fillManualOwnerFields();
+
+        await loadManualProducts();
+        await loadManualRetailers();
+
+        // Een bestaande preview mag niet aan een
+        // andere Product Owner gekoppeld worden.
+        clearPreview();
+
+      } catch (error) {
+        console.error(error);
+
+        showToast(
+          error.message ||
+          "Could not update Product Owner.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // PDF DROP ZONE
+  // ============================================
 
   bindPdfDropZone();
 
-  firstEl(["btnReadExcelFile", "btnReadFile"])?.addEventListener("click", async event => {
-    event.preventDefault();
+  // ============================================
+  // READ EXCEL
+  // ============================================
 
-    try {
-      if (!getSelectedProductOwner()) {
-        showToast("Select a product owner first.", "err");
+  firstEl([
+    "btnReadExcelFile",
+    "btnReadFile"
+  ])?.addEventListener(
+    "click",
+    async event => {
+      event.preventDefault();
+
+      try {
+        assertImportAccess();
+
+        if (!getSelectedProductOwner()) {
+          showToast(
+            "Select a Product Owner first.",
+            "err"
+          );
+          return;
+        }
+
+        await readExcelFile();
+
+      } catch (error) {
+        console.error(error);
+        setProgress(false);
+
+        showToast(
+          error.message ||
+          "Could not read Excel file.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // READ PDF
+  // ============================================
+
+  byId("btnReadPdfFile")?.addEventListener(
+    "click",
+    async event => {
+      event.preventDefault();
+
+      try {
+        assertImportAccess();
+
+        if (!getSelectedProductOwner()) {
+          throw new Error(
+            "Select a Product Owner first."
+          );
+        }
+
+        await readPdfFile();
+
+      } catch (error) {
+        console.error(error);
+        setProgress(false);
+
+        showToast(
+          error.message ||
+          "Could not read PDF file.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // SHOW EXTRACTED PDF TEXT
+  // ============================================
+
+  byId("btnShowPdfText")?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      togglePdfTextPanel();
+    }
+  );
+
+  // ============================================
+  // IMPORT ORDERS
+  // ============================================
+
+  byId("btnImportOrders")?.addEventListener(
+    "click",
+    async event => {
+      event.preventDefault();
+
+      try {
+        assertImportAccess();
+
+        if (!getSelectedProductOwner()) {
+          throw new Error(
+            "No authorised Product Owner selected."
+          );
+        }
+
+        await importOrders();
+
+      } catch (error) {
+        console.error(error);
+        setProgress(false);
+
+        showToast(
+          error.message || "Import failed.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // CLEAR PREVIEW
+  // ============================================
+
+  byId("btnClearPreview")?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      clearPreview();
+    }
+  );
+
+  // ============================================
+  // IMPORT OPTIONS
+  // ============================================
+
+  [
+    "optSkipExisting",
+    "optSkipZeroQtyPdfLines",
+    "optUsePdfTotalVolume"
+  ].forEach(id => {
+    byId(id)?.addEventListener(
+      "change",
+      renderAll
+    );
+  });
+
+  // ============================================
+  // OPEN MANUAL ORDER
+  // ============================================
+
+  byId("btnOpenManualOrder")?.addEventListener(
+    "click",
+    async event => {
+      event.preventDefault();
+
+      try {
+        assertImportAccess();
+        await openManualOrderModal();
+
+      } catch (error) {
+        console.error(error);
+
+        showToast(
+          error.message ||
+          "Manual order popup could not be opened.",
+          "err"
+        );
+      }
+    }
+  );
+
+  // ============================================
+  // CLOSE MANUAL ORDER
+  // ============================================
+
+  byId("btnCloseManualOrder")?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      closeManualOrderModal();
+    }
+  );
+
+  byId("btnCancelManualOrder")?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      closeManualOrderModal();
+    }
+  );
+
+  // ============================================
+  // ADD MANUAL PRODUCT LINE
+  // ============================================
+
+  byId("btnAddManualLine")?.addEventListener(
+    "click",
+    event => {
+      event.preventDefault();
+      addManualLine();
+    }
+  );
+
+  // ============================================
+  // CLOSE MODAL ON BACKDROP
+  // ============================================
+
+  byId("manualOrderModal")?.addEventListener(
+    "click",
+    event => {
+      if (event.target.id === "manualOrderModal") {
+        closeManualOrderModal();
+      }
+    }
+  );
+
+  // ============================================
+  // REMOVE MANUAL PRODUCT LINE
+  // ============================================
+
+  byId("manualLines")?.addEventListener(
+    "click",
+    event => {
+      const btn = event.target.closest(
+        ".btnRemoveManualLine"
+      );
+
+      if (!btn) return;
+
+      event.preventDefault();
+
+      const rows = document.querySelectorAll(
+        "#manualLines .manual-line-row"
+      );
+
+      if (rows.length <= 1) {
+        showToast(
+          "At least one product line is required.",
+          "err"
+        );
         return;
       }
 
-      await readExcelFile();
-    } catch (error) {
-      console.error(error);
-      setProgress(false);
-      showToast(error.message || "Could not read Excel file.", "err");
+      btn.closest(".manual-line-row")?.remove();
     }
-  });
+  );
 
-  byId("btnReadPdfFile")?.addEventListener("click", async event => {
-    event.preventDefault();
+  // ============================================
+  // SAVE MANUAL ORDER
+  // ============================================
 
-    try {
-      await readPdfFile();
-    } catch (error) {
-      console.error(error);
-      setProgress(false);
-      showToast(error.message || "Could not read PDF file.", "err");
+  byId("btnSaveManualOrder")?.addEventListener(
+    "click",
+    async event => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      try {
+        assertImportAccess();
+
+        await saveManualOrder();
+
+      } catch (error) {
+        console.error(error);
+
+        showToast(
+          error.message ||
+          "Manual order could not be created.",
+          "err"
+        );
+      }
     }
-  });
+  );
 
-  byId("btnShowPdfText")?.addEventListener("click", event => {
-    event.preventDefault();
-    togglePdfTextPanel();
-  });
-
-  byId("btnImportOrders")?.addEventListener("click", async event => {
-    event.preventDefault();
-
-    try {
-      await importOrders();
-    } catch (error) {
-      console.error(error);
-      setProgress(false);
-      showToast(error.message || "Import failed.", "err");
-    }
-  });
-
-  byId("btnClearPreview")?.addEventListener("click", event => {
-    event.preventDefault();
-    clearPreview();
-  });
-
-  ["optSkipExisting", "optSkipZeroQtyPdfLines", "optUsePdfTotalVolume"].forEach(id => {
-    byId(id)?.addEventListener("change", renderAll);
-  });
-
-  byId("btnOpenManualOrder")?.addEventListener("click", async event => {
-    event.preventDefault();
-
-    try {
-      await openManualOrderModal();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Manual order popup could not be opened.", "err");
-    }
-  });
-
-  byId("btnCloseManualOrder")?.addEventListener("click", event => {
-    event.preventDefault();
-    closeManualOrderModal();
-  });
-
-  byId("btnCancelManualOrder")?.addEventListener("click", event => {
-    event.preventDefault();
-    closeManualOrderModal();
-  });
-
-  byId("btnAddManualLine")?.addEventListener("click", event => {
-    event.preventDefault();
-    addManualLine();
-  });
-
-  byId("manualOrderModal")?.addEventListener("click", event => {
-    if (event.target.id === "manualOrderModal") {
-      closeManualOrderModal();
-    }
-  });
-
-  byId("manualLines")?.addEventListener("click", event => {
-    const btn = event.target.closest(".btnRemoveManualLine");
-    if (!btn) return;
-
-    event.preventDefault();
-
-    const rows = document.querySelectorAll("#manualLines .manual-line-row");
-    if (rows.length <= 1) {
-      showToast("At least one product line is required.", "err");
-      return;
-    }
-
-    btn.closest(".manual-line-row")?.remove();
-  });
-
-  byId("btnSaveManualOrder")?.addEventListener("click", async event => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    try {
-      await saveManualOrder();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || "Manual order could not be created.", "err");
-    }
-  });
+  // ============================================
+  // EXISTING LEGACY OPTIONS
+  // ============================================
 
   hideDeprecatedOptions();
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
   try {
+    // ==================================================
+    // 1. SUPABASE INITIALISEREN
+    // ==================================================
+
     if (typeof sb !== "function") {
-      throw new Error("Supabase helper sb() is not available.");
+      throw new Error(
+        "Supabase helper sb() is not available."
+      );
     }
 
     client = sb();
 
+    if (!client) {
+      throw new Error(
+        "Could not initialise Supabase client."
+      );
+    }
+
+    // ==================================================
+    // 2. ACTIEVE TENANT OPHALEN
+    // ==================================================
+
     await getCompanyId();
+
+    // ==================================================
+    // 3. INGELOGDE GEBRUIKER CONTROLEREN
+    // ==================================================
+
+    await loadImportProfile();
+
+    assertImportAccess();
+
+    // ==================================================
+    // 4. INSTELLINGEN EN PRODUCT OWNER LADEN
+    // ==================================================
+
+    // loadSettings() roept automatisch
+    // renderProductOwnerSelect() aan.
+    //
+    // Product Owner accounts krijgen uitsluitend
+    // hun eigen Product Owner te zien.
+    //
+    // Tenant accounts behouden hun normale
+    // selectiemogelijkheden.
+
     await loadSettings();
+
+    // ==================================================
+    // 5. PRODUCTEN EN RETAILERS LADEN
+    // ==================================================
+
+    // Producten worden gekoppeld aan de
+    // geselecteerde Product Owner.
+
     await loadManualProducts();
+
+    // Retailers worden geladen volgens
+    // de gebruikersrechten en Product Owner.
+
     await loadManualRetailers();
 
+    // ==================================================
+    // 6. EVENT LISTENERS REGISTREREN
+    // ==================================================
+
     bindEvents();
+
+    // ==================================================
+    // 7. PAGINA WEERGEVEN
+    // ==================================================
+
     renderAll();
+
+    console.info(
+      "[Veynor Order Import] Initialised successfully.",
+      {
+        role: currentImportProfile?.role,
+        companyId: currentImportProfile?.company_id,
+        productOwnerId: isProductOwnerAccount()
+          ? currentImportProfile?.customer_id
+          : null
+      }
+    );
+
   } catch (error) {
-    console.error(error);
-    showToast(error.message || "Order import page failed to load.", "err");
+    console.error(
+      "[Veynor Order Import] Initialisation failed:",
+      error
+    );
+
+    // Voorkom dat een gedeeltelijk geladen pagina
+    // alsnog gebruikt wordt om orders te importeren.
+
+    [
+      "btnImportOrders",
+      "btnReadExcelFile",
+      "btnReadFile",
+      "btnReadPdfFile",
+      "btnOpenManualOrder",
+      "btnSaveManualOrder",
+      "productOwnerName"
+    ].forEach(id => {
+      const element = byId(id);
+
+      if (element) {
+        element.disabled = true;
+      }
+    });
+
+    showToast(
+      error.message ||
+      "Order Import could not be initialised.",
+      "err"
+    );
   }
 });
 })();
