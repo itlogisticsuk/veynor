@@ -2653,44 +2653,53 @@ if (isProductOwnerRole()) {
 
 setText("portalRole", roleLabel);  }
 
+
 async function getCompanyId() {
-  const db = ensureClient();
-
-  if (!currentUser?.id) {
+  if (
+    typeof window.VeynorTenant
+      ?.getActiveCompanyId !== "function"
+  ) {
     throw new Error(
-      "No authenticated user is available."
+      "Veynor tenant context is not loaded."
     );
   }
 
-  if (!currentProfile?.id) {
-    throw new Error(
-      "No active user profile is available."
-    );
+  if (!client) {
+    if (typeof sb !== "function") {
+      throw new Error(
+        "Supabase client is not available."
+      );
+    }
+
+    client = sb();
   }
 
-  const profileCompanyId =
-    currentProfile.company_id || null;
+  const cid =
+    await window.VeynorTenant.getActiveCompanyId();
 
-  if (!profileCompanyId) {
+  if (!cid) {
     throw new Error(
-      "Your user profile is not linked to a company. " +
-      "Please contact your Veynor administrator."
+      "No active tenant could be determined."
     );
   }
 
   if (
     companyId &&
-    String(companyId) !== String(profileCompanyId)
+    String(companyId) !== String(cid)
   ) {
     throw new Error(
-      "Company context mismatch. " +
-      "Please sign out and sign in again."
+      "Tenant context changed. Reload the page."
     );
   }
 
-  companyId = profileCompanyId;
+  companyId = cid;
 
-  return companyId;
+  console.info(
+    "[Veynor OCC] Active tenant:",
+    cid
+  );
+
+  return cid;
 }
 
 async function requireOccTenantOrder(orderId) {
