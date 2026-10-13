@@ -476,7 +476,51 @@ async function loadProfile() {
   // SIDEBAR NAVIGATION - SUPER ADMIN TEST MODE
   // ==========================================================
 
-  function renderNav(currentFile) {
+
+function getTenantAwareUrl(href) {
+  if (!href) return href;
+
+  const tenantId = new URLSearchParams(
+    window.location.search
+  ).get("tenant");
+
+  // Only Super Admin may carry tenant selection.
+  if (
+    userRole() !== ROLES.VEYNOR_ADMIN ||
+    !tenantId
+  ) {
+    return href;
+  }
+
+  const validUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  if (!validUuid.test(tenantId)) {
+    return href;
+  }
+
+  const url = new URL(
+    href,
+    window.location.href
+  );
+
+  // Do not modify external links.
+  if (url.origin !== window.location.origin) {
+    return href;
+  }
+
+  // Super Admin itself must remain outside tenant view.
+  if (url.pathname.startsWith("/admin/")) {
+    return href;
+  }
+
+  url.searchParams.set("tenant", tenantId);
+
+  return url.pathname + url.search + url.hash;
+}
+  
+
+function renderNav(currentFile) {
     let lastGroup = "";
 
     // Temporary test mode for Veynor Super Admin.
@@ -540,7 +584,7 @@ async function loadProfile() {
       return `
         ${group}
         <a
-          href="${item.href}"
+href="${getTenantAwareUrl(item.href)}"
           class="${active}"
           title="${item.label}"
         >
