@@ -1588,56 +1588,76 @@
   // 31. NEW TENANT DIALOG
   // ==========================================================
 
+ 
+  // ==========================================================
+  // 31. NEW TENANT DIALOG
+  // ==========================================================
+
   function openNewTenantDialog() {
-    if (!isBackendAvailable()) {
+    console.log(
+      "[Veynor Admin] Opening New Tenant dialog"
+    );
+
+    const dialog = byId("tenantDialog");
+
+    if (!dialog) {
       showNotice(
-        "Tenant creation backend is not available.",
+        "New Tenant dialog not found in HTML.",
+        "error"
+      );
+      return;
+    }
+
+    if (!state.adminVerified) {
+      showNotice(
+        "Administrator access is not verified.",
         "error"
       );
       return;
     }
 
     const form = byId("tenantForm");
-
     form?.reset();
 
     setValue("newCompanyType", "tenant");
     setValue("newCompanyStatus", "true");
 
-    // Not implemented in backend yet.
-    const defaultSettings =
-      byId("newTenantDefaultSettings");
+    // Features not implemented in backend yet.
+    [
+      "newTenantDefaultSettings",
+      "newTenantSendInvite"
+    ].forEach(id => {
+      const checkbox = byId(id);
 
-    const sendInvite =
-      byId("newTenantSendInvite");
+      if (checkbox) {
+        checkbox.checked = false;
+        checkbox.disabled = true;
+      }
+    });
 
-    if (defaultSettings) {
-      defaultSettings.checked = false;
-      defaultSettings.disabled = true;
+    [
+      "newAdminName",
+      "newAdminEmail"
+    ].forEach(id => {
+      const input = byId(id);
+
+      if (input) {
+        input.value = "";
+        input.disabled = true;
+        input.required = false;
+      }
+    });
+
+    try {
+      openDialog("tenantDialog");
+    } catch (error) {
+      showError(
+        error,
+        "Unable to open New Tenant form."
+      );
     }
-
-    if (sendInvite) {
-      sendInvite.checked = false;
-      sendInvite.disabled = true;
-    }
-
-    // Initial administrator is not created yet.
-    const adminName = byId("newAdminName");
-    const adminEmail = byId("newAdminEmail");
-
-    if (adminName) {
-      adminName.value = "";
-      adminName.disabled = true;
-    }
-
-    if (adminEmail) {
-      adminEmail.value = "";
-      adminEmail.required = false;
-      adminEmail.disabled = true;
-    }
-
-    openDialog("tenantDialog");
   }
+
 
   // ==========================================================
   // 32. VALIDATE NEW TENANT
