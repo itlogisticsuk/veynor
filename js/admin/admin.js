@@ -1365,12 +1365,100 @@
    * administration functions have been deployed.
    */
 
+
+  // ==========================================================
+  // 28. BACKEND AVAILABILITY
+  // ==========================================================
+
   async function checkBackendAvailability() {
     state.backendReady = false;
 
-    updateActionAvailability();
+    try {
+      if (
+        !state.adminVerified ||
+        !state.authenticated
+      ) {
+        updateActionAvailability();
+        return false;
+      }
 
-    return false;
+      const db = getClient();
+
+      // Verify the current authenticated session.
+      const { data, error } =
+        await db.auth.getUser();
+
+      if (error || !data?.user?.id) {
+        throw new Error(
+          "Administrator session is not valid."
+        );
+      }
+
+      // The create-tenant backend has been deployed.
+      // Other administration endpoints are not ready yet.
+      state.backendReady = true;
+
+      console.info(
+        "[Veynor Admin] Tenant creation backend configured."
+      );
+
+
+  // ==========================================================
+  // 29. ACTION AVAILABILITY
+  // ==========================================================
+
+  function updateActionAvailability() {
+    const adminReady =
+      state.adminVerified &&
+      state.authenticated;
+
+    const canCreateTenant =
+      adminReady &&
+      state.backendReady &&
+      !isSubmitting &&
+      !isLoading;
+
+    const tenantSelected =
+      Boolean(getSelectedTenant());
+
+    // New Tenant - enabled
+    setDisabled(
+      "newTenantBtn",
+      !canCreateTenant
+    );
+
+    setDisabled(
+      "sideNewTenantBtn",
+      !canCreateTenant
+    );
+
+    setDisabled(
+      "createTenantSubmitBtn",
+      !canCreateTenant
+    );
+
+    // Tenant details - read-only access
+    setDisabled(
+      "tenantSettingsBtn",
+      !adminReady || !tenantSelected
+    );
+
+    setDisabled(
+      "sideUsersBtn",
+      !adminReady || !tenantSelected
+    );
+
+    setDisabled(
+      "sidePlatformSettingsBtn",
+      !adminReady
+    );
+
+    // Other protected backend functions
+    // are not implemented yet.
+    setDisabled("openTenantBtn", true);
+    setDisabled("saveTenantCompanyBtn", true);
+    setDisabled("inviteTenantUserBtn", true);
+    setDisabled("sendInviteUserBtn", true);
   }
 
   // ==========================================================
@@ -1495,13 +1583,17 @@
   // 31. NEW TENANT DIALOG
   // ==========================================================
 
+
+  // ==========================================================
+  // 31. NEW TENANT DIALOG
+  // ==========================================================
+
   function openNewTenantDialog() {
     if (!isBackendAvailable()) {
       showNotice(
-        "Tenant creation will become available after the administration backend has been configured.",
+        "Tenant creation backend is not available.",
         "error"
       );
-
       return;
     }
 
@@ -1509,16 +1601,10 @@
 
     form?.reset();
 
-    setValue(
-      "newCompanyType",
-      "tenant"
-    );
+    setValue("newCompanyType", "tenant");
+    setValue("newCompanyStatus", "true");
 
-    setValue(
-      "newCompanyStatus",
-      "true"
-    );
-
+    // Not implemented in backend yet.
     const defaultSettings =
       byId("newTenantDefaultSettings");
 
@@ -1526,15 +1612,37 @@
       byId("newTenantSendInvite");
 
     if (defaultSettings) {
-      defaultSettings.checked = true;
+      defaultSettings.checked = false;
+      defaultSettings.disabled = true;
     }
 
     if (sendInvite) {
-      sendInvite.checked = true;
+      sendInvite.checked = false;
+      sendInvite.disabled = true;
+    }
+
+    // Initial administrator is not created yet.
+    const adminName = byId("newAdminName");
+    const adminEmail = byId("newAdminEmail");
+
+    if (adminName) {
+      adminName.value = "";
+      adminName.disabled = true;
+    }
+
+    if (adminEmail) {
+      adminEmail.value = "";
+      adminEmail.required = false;
+      adminEmail.disabled = true;
     }
 
     openDialog("tenantDialog");
   }
+
+  // ==========================================================
+  // 32. VALIDATE NEW TENANT
+  // ==========================================================
+
 
   // ==========================================================
   // 32. VALIDATE NEW TENANT
@@ -1550,32 +1658,12 @@
     const phone =
       clean(getValue("newCompanyPhone"));
 
-    const adminName =
-      clean(getValue("newAdminName"));
-
-    const adminEmail =
-      clean(getValue("newAdminEmail"));
-
     const isActive =
       getValue("newCompanyStatus") === "true";
 
-    const createDefaultSettings =
-      byId("newTenantDefaultSettings")
-        ?.checked === true;
-
-    const sendInvitation =
-      byId("newTenantSendInvite")
-        ?.checked === true;
-
-    if (!name) {
+    if (!name || name.length > 150) {
       throw new Error(
-        "Company name is required."
-      );
-    }
-
-    if (name.length > 150) {
-      throw new Error(
-        "Company name is too long."
+        "Enter a company name (maximum 150 characters)."
       );
     }
 
@@ -1585,33 +1673,26 @@
       );
     }
 
-    if (!isValidEmail(adminEmail)) {
+    if (phone.length > 100) {
       throw new Error(
-        "Enter a valid administrator email address."
+        "Company phone number is too long."
       );
     }
 
     return {
       company: {
-        name,
+        name: name,
         email: email || null,
         phone: phone || null,
         company_type: "tenant",
         is_active: isActive
       },
 
-      administrator: {
-        full_name: adminName || null,
-        email: adminEmail,
-        role: "tenant_admin"
-      },
+      administrator: null,
 
       options: {
-        create_default_settings:
-          createDefaultSettings,
-
-        send_invitation:
-          sendInvitation
+        create_default_settings: false,
+        send_invitation: false
       }
     };
   }
