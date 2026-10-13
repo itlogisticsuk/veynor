@@ -470,34 +470,71 @@ async function loadProfile() {
     return icons[name] || icons.dashboard;
   }
 
-  function renderNav(currentFile) {
-    let lastGroup = "";
 
-    return menuItems.filter(canSee).map(item => {
-      const group = item.group !== lastGroup
-        ? `<div class="nav-group-label">${item.group}</div>`
+function renderNav(currentFile) {
+  let lastGroup = "";
+
+  const isSuperAdminTenantView =
+    userRole() === ROLES.VEYNOR_ADMIN &&
+    Boolean(window.VEYNOR_LAYOUT_TENANT?.id);
+
+  return menuItems.filter(canSee).map(item => {
+    const group = item.group !== lastGroup
+      ? `<div class="nav-group-label">${item.group}</div>`
+      : "";
+
+    lastGroup = item.group;
+
+    const active =
+      fileName(item.href) === currentFile
+        ? "active"
         : "";
 
-      lastGroup = item.group;
+    // Only the dashboard is tenant-aware for now.
+    const blocked =
+      isSuperAdminTenantView &&
+      fileName(item.href) !== "index.html";
 
-      const active = fileName(item.href) === currentFile ? "active" : "";
+    const badgeHtml =
+      item.badge && !blocked
+        ? `<span
+             class="nav-badge"
+             data-nav-badge="${item.badge}"
+             style="display:none;"
+           >0</span>`
+        : "";
 
+    if (blocked) {
       return `
         ${group}
-        <a href="${item.href}" class="${active}" title="${item.label}">
-  <span class="nav-icon">${icon(item.icon)}</span>
-
-  <span class="nav-label">${item.label}</span>
-
-  ${
-    item.badge
-      ? `<span class="nav-badge" data-nav-badge="${item.badge}" style="display:none;">0</span>`
-      : ""
-  }
-</a>
+        <a
+          href="#"
+          class="${active}"
+          aria-disabled="true"
+          title="Tenant support is not enabled for this module yet"
+          style="opacity:.48;cursor:not-allowed;"
+          onclick="return false;"
+        >
+          <span class="nav-icon">${icon(item.icon)}</span>
+          <span class="nav-label">${item.label}</span>
+        </a>
       `;
-    }).join("");
-  }
+    }
+
+    return `
+      ${group}
+      <a
+        href="${item.href}"
+        class="${active}"
+        title="${item.label}"
+      >
+        <span class="nav-icon">${icon(item.icon)}</span>
+        <span class="nav-label">${item.label}</span>
+        ${badgeHtml}
+      </a>
+    `;
+  }).join("");
+}
 
   function renderSystemStatusBlock() {
     if (isLoginPage()) return "";
@@ -1180,8 +1217,41 @@ async function logout() {
     });
   }
 
+
 async function updateMessageCenterNavBadge() {
   try {
+    const badge = document.querySelector(
+      '[data-nav-badge="message-center"]'
+    );
+
+    const isSuperAdminTenantView =
+      userRole() === ROLES.VEYNOR_ADMIN &&
+      Boolean(window.VEYNOR_LAYOUT_TENANT?.id);
+
+    // Message Center is not yet tenant-aware.
+    // Do not display unread counts from the
+    // administrator's original company.
+    if (isSuperAdminTenantView) {
+      if (badge) {
+        badge.textContent = "0";
+        badge.style.display = "none";
+      }
+
+      window.VeynorUnreadCounts = {
+        messages: 0,
+        notifications: 0,
+        total: 0
+      };
+
+      window.dispatchEvent(
+        new CustomEvent("veynor:unread-counts", {
+          detail: window.VeynorUnreadCounts
+        })
+      );
+
+      return;
+    }
+
     if (!currentProfile || typeof sb !== "function") {
       return;
     }
@@ -1192,9 +1262,6 @@ async function updateMessageCenterNavBadge() {
     const role = currentProfile.role;
 
     if (!companyId) {
-      console.warn(
-        "[Veynor] No company assigned to current profile."
-      );
       return;
     }
 
@@ -1202,14 +1269,20 @@ async function updateMessageCenterNavBadge() {
 
     let messagesQuery = db
       .from("messages")
-      .select("id", { count: "exact", head: true })
+      .select("id", {
+        count: "exact",
+        head: true
+      })
       .eq("company_id", companyId)
       .is("read_at", null)
       .neq("sender_profile_id", profileId);
 
     let notificationsQuery = db
       .from("system_notifications")
-      .select("id", { count: "exact", head: true })
+      .select("id", {
+        count: "exact",
+        head: true
+      })
       .eq("company_id", companyId)
       .eq("is_read", false);
 
@@ -1230,10 +1303,13 @@ async function updateMessageCenterNavBadge() {
       `recipient_role.eq.${role},` +
       `recipient_role.is.null`;
 
-    messagesQuery = messagesQuery.or(recipientFilter);
+    messagesQuery = messagesQuery.or(
+      recipientFilter
+    );
 
-    notificationsQuery =
-      notificationsQuery.or(recipientFilter);
+    notificationsQuery = notificationsQuery.or(
+      recipientFilter
+    );
 
     const [
       messagesResult,
@@ -1259,10 +1335,6 @@ async function updateMessageCenterNavBadge() {
 
     const total =
       unreadMessages + unreadNotifications;
-
-    const badge = document.querySelector(
-      '[data-nav-badge="message-center"]'
-    );
 
     if (badge) {
       badge.textContent = String(total);

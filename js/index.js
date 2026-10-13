@@ -3224,6 +3224,65 @@ function renderCustomerDashboardLinks(productOwners) {
     }
   }
 
+
+function protectTenantDashboardNavigation() {
+  const tenant = window.VEYNOR_ACTIVE_TENANT;
+
+  if (!tenant?.id || tenant.role !== "veynor_admin") {
+    return;
+  }
+
+  document.addEventListener(
+    "click",
+    event => {
+      const target = event.target.closest(
+        "a[href], [data-go]"
+      );
+
+      if (!target) return;
+
+      const destination =
+        target.getAttribute("data-go") ||
+        target.getAttribute("href");
+
+      if (!destination) return;
+
+      const url = new URL(
+        destination,
+        window.location.href
+      );
+
+      if (url.origin !== window.location.origin) {
+        return;
+      }
+
+      const path = url.pathname.toLowerCase();
+
+      if (
+        path === "/index.html" ||
+        path === "/admin/" ||
+        path === "/admin/index.html"
+      ) {
+        return;
+      }
+
+      if (!path.endsWith(".html")) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+
+      showToast(
+        "This module is not yet enabled for Super Admin tenant switching.",
+        "err"
+      );
+    },
+    true
+  );
+}
+
+
 function bindEvents() {
   /*
    * Normal dashboard controls
@@ -3453,12 +3512,54 @@ function bindEvents() {
   );
 }
 
+
+function updateDashboardTenantHeader() {
+  const tenant = window.VEYNOR_ACTIVE_TENANT;
+
+  if (!tenant?.id || !tenant?.name) {
+    return;
+  }
+
+  const topbar = document.querySelector(
+    ".page-topbar"
+  );
+
+  if (!topbar) {
+    return;
+  }
+
+  // Only update the separate dashboard company label.
+  // Never replace the account menu.
+  const candidates = [
+    "#dashboardCompanyName",
+    "#dashboardTenantName",
+    "[data-dashboard-company]",
+    "[data-dashboard-tenant]"
+  ];
+
+  for (const selector of candidates) {
+    const element = topbar.querySelector(selector);
+
+    if (element) {
+      element.textContent = tenant.name;
+      return;
+    }
+  }
+
+  console.info(
+    "[Veynor Dashboard] Tenant selected:",
+    tenant.name
+  );
+}
+
+
   async function loadDashboard() {
     try {
 
 ensureClient();
 
 const cid = await getCompanyId();
+updateDashboardTenantHeader();
 
 if (!cid) {
   throw new Error(
@@ -3574,9 +3675,15 @@ renderKpis(
     }
   }
 
-  document.addEventListener("DOMContentLoaded", async () => {
-    bindEvents();
-    initDashboardMap();
-    await loadDashboard();
-  });
+
+document.addEventListener("DOMContentLoaded", async () => {
+  protectTenantDashboardNavigation();
+
+  bindEvents();
+
+  initDashboardMap();
+
+  await loadDashboard();
+});
+
 })();

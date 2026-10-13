@@ -2038,71 +2038,119 @@ tenantPortalUrl: "/index.html",
   // 40. OPEN TENANT PORTAL
   // ==========================================================
 
+  
+  // ==========================================================
+  // 40. OPEN TENANT PORTAL
+  // ==========================================================
+
   async function openTenantPortal() {
-    const tenant = getSelectedTenant();
+    try {
+      const tenant = getSelectedTenant();
 
-    if (!tenant?.id) {
-      showNotice(
-        "Select a tenant first.",
-        "error"
+      if (!tenant?.id) {
+        showNotice(
+          "Select a tenant first.",
+          "error"
+        );
+        return;
+      }
+
+      if (
+        !state.adminVerified ||
+        !state.authenticated ||
+        !currentUser?.id
+      ) {
+        showNotice(
+          "Super Admin access is required.",
+          "error"
+        );
+        return;
+      }
+
+      if (!isValidUuid(tenant.id)) {
+        showNotice(
+          "Invalid tenant ID.",
+          "error"
+        );
+        return;
+      }
+
+      if (
+        tenant.company_type !== "tenant" ||
+        tenant.is_active !== true
+      ) {
+        showNotice(
+          "Only active operational tenants can be opened.",
+          "error"
+        );
+        return;
+      }
+
+      // Recheck the authenticated Supabase session.
+      const db = getClient();
+
+      const {
+        data: authData,
+        error: authError
+      } = await db.auth.getUser();
+
+      if (
+        authError ||
+        authData?.user?.id !== currentUser.id
+      ) {
+        throw new Error(
+          "Administrator session could not be verified."
+        );
+      }
+
+      // Recheck selected company in the database.
+      const {
+        data: activeTenant,
+        error: tenantError
+      } = await db
+        .from("companies")
+        .select("id, name, company_type, is_active")
+        .eq("id", tenant.id)
+        .eq("company_type", "tenant")
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (tenantError || !activeTenant) {
+        throw new Error(
+          "Selected tenant is no longer available."
+        );
+      }
+
+      // Dashboard supports tenant selection through
+      // the URL. No profile or company_id is modified.
+      const url = new URL(
+        CONFIG.tenantPortalUrl,
+        window.location.origin
       );
-      return;
-    }
 
-    if (
-      !state.adminVerified ||
-      !state.authenticated ||
-      !currentUser?.id
-    ) {
-      showNotice(
-        "Super Admin access is required.",
-        "error"
+      url.searchParams.set(
+        "tenant",
+        activeTenant.id
       );
-      return;
-    }
 
-    if (!isValidUuid(tenant.id)) {
-      showNotice(
-        "Invalid tenant ID.",
-        "error"
+      console.info(
+        "[Veynor Super Admin] Opening tenant:",
+        activeTenant.name,
+        activeTenant.id
       );
-      return;
-    }
 
-    if (tenant.is_active !== true) {
-      showNotice(
-        "This tenant is inactive.",
-        "error"
+      window.location.assign(
+        url.pathname + url.search
       );
-      return;
-    }
 
-    // The target dashboard must support validated
-    // tenant context before cross-tenant navigation.
-    const dashboardSwitchingEnabled = false;
-
-    if (!dashboardSwitchingEnabled) {
-      showNotice(
-        "Tenant dashboard integration is not ready yet.",
-        "error"
+    } catch (error) {
+      showError(
+        error,
+        "Unable to open the selected tenant."
       );
-      return;
     }
-
-    const url = new URL(
-      CONFIG.tenantPortalUrl,
-      window.location.origin
-    );
-
-    url.searchParams.set(
-      "tenant",
-      tenant.id
-    );
-
-    window.location.assign(
-      url.pathname + url.search
-    );
   }
+
 
 
 
