@@ -1370,6 +1370,11 @@
   // 28. BACKEND AVAILABILITY
   // ==========================================================
 
+
+  // ==========================================================
+  // 28. BACKEND AVAILABILITY
+  // ==========================================================
+
   async function checkBackendAvailability() {
     state.backendReady = false;
 
@@ -1384,7 +1389,6 @@
 
       const db = getClient();
 
-      // Verify the current authenticated session.
       const { data, error } =
         await db.auth.getUser();
 
@@ -1394,14 +1398,29 @@
         );
       }
 
-      // The create-tenant backend has been deployed.
-      // Other administration endpoints are not ready yet.
       state.backendReady = true;
 
       console.info(
-        "[Veynor Admin] Tenant creation backend configured."
+        "[Veynor Admin] Tenant creation enabled."
       );
 
+      updateActionAvailability();
+
+      return true;
+
+    } catch (error) {
+      state.backendReady = false;
+
+      console.error(
+        "[Veynor Admin] Backend check failed:",
+        error
+      );
+
+      updateActionAvailability();
+
+      return false;
+    }
+  }
 
   // ==========================================================
   // 29. ACTION AVAILABILITY
@@ -1421,7 +1440,7 @@
     const tenantSelected =
       Boolean(getSelectedTenant());
 
-    // New Tenant - enabled
+    // New Tenant
     setDisabled(
       "newTenantBtn",
       !canCreateTenant
@@ -1437,7 +1456,7 @@
       !canCreateTenant
     );
 
-    // Tenant details - read-only access
+    // Read-only management
     setDisabled(
       "tenantSettingsBtn",
       !adminReady || !tenantSelected
@@ -1453,89 +1472,11 @@
       !adminReady
     );
 
-    // Other protected backend functions
-    // are not implemented yet.
+    // Backend functions not implemented yet
     setDisabled("openTenantBtn", true);
     setDisabled("saveTenantCompanyBtn", true);
     setDisabled("inviteTenantUserBtn", true);
     setDisabled("sendInviteUserBtn", true);
-  }
-
-  // ==========================================================
-  // 29. ACTION AVAILABILITY
-  // ==========================================================
-
-  function updateActionAvailability() {
-    const adminReady =
-      state.adminVerified &&
-      state.authenticated;
-
-    const backendReady =
-      adminReady &&
-      isBackendAvailable();
-
-    const tenantSelected =
-      Boolean(getSelectedTenant());
-
-    const canSubmit =
-      backendReady &&
-      !isSubmitting &&
-      !isLoading;
-
-    // New tenant
-    setDisabled(
-      "newTenantBtn",
-      !canSubmit
-    );
-
-    setDisabled(
-      "sideNewTenantBtn",
-      !canSubmit
-    );
-
-    setDisabled(
-      "createTenantSubmitBtn",
-      !canSubmit
-    );
-
-    // Selected tenant
-    setDisabled(
-      "openTenantBtn",
-      !canSubmit || !tenantSelected
-    );
-
-    setDisabled(
-      "tenantSettingsBtn",
-      !adminReady || !tenantSelected
-    );
-
-    // Tenant updates
-    setDisabled(
-      "saveTenantCompanyBtn",
-      !canSubmit || !tenantSelected
-    );
-
-    // User invitations
-    setDisabled(
-      "inviteTenantUserBtn",
-      !canSubmit || !tenantSelected
-    );
-
-    setDisabled(
-      "sendInviteUserBtn",
-      !canSubmit || !tenantSelected
-    );
-
-    // Informational navigation
-    setDisabled(
-      "sideUsersBtn",
-      !adminReady || !tenantSelected
-    );
-
-    setDisabled(
-      "sidePlatformSettingsBtn",
-      !adminReady
-    );
   }
 
   // ==========================================================
