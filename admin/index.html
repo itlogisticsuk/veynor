@@ -1,517 +1,2456 @@
 
 <!doctype html>
 <html lang="en" class="auth-loading">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Super Admin · Veynor</title>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
 
-<link rel="stylesheet" href="/css/theme.css">
+  <title>Veynor · Super Admin Control</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/js/supabase.js"></script>
-<script src="/js/admin/admin.js" defer></script>
+  <!-- VEYNOR GLOBAL THEME -->
+  <link rel="stylesheet" href="/css/theme.css">
 
-<style>
-:root {
-  --adm-navy: #071b43;
-  --adm-blue: #0864f9;
-  --adm-border: #e0e8f4;
-  --adm-muted: #61718b;
-}
+  <!-- SUPABASE -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/js/supabase.js"></script>
 
-* { box-sizing: border-box; }
+  <!-- ACCESS CONTROL -->
+  <script src="/js/page-guard.js" defer></script>
 
-body {
-  margin: 0;
-  background: #f3f6fb;
-  color: #112444;
-  font-family: Inter, Segoe UI, Arial, sans-serif;
-}
+  <!-- SUPER ADMIN -->
+  <script src="/js/admin/admin.js" defer></script>
 
-.auth-loading body { visibility: hidden; }
+  <style>
 
-.admin-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 244px minmax(0,1fr);
-}
+    /* =====================================================
+       VEYNOR SUPER ADMIN V1.2
+       PART 1 OF 4
+       ===================================================== */
 
-.admin-side {
-  background: linear-gradient(180deg,#061632,#0a2555);
-  color: #fff;
-  padding: 26px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 26px;
-}
+    :root {
+      --adm-navy: #071b43;
+      --adm-dark: #061632;
+      --adm-blue: #0864f9;
+      --adm-blue-light: #eaf2ff;
 
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  font-size: 23px;
-  font-weight: 850;
-}
+      --adm-bg: #f3f6fb;
+      --adm-surface: #ffffff;
 
-.brand img {
-  width: 43px;
-  height: 43px;
-  object-fit: contain;
-}
+      --adm-text: #112444;
+      --adm-muted: #61718b;
+      --adm-border: #e0e8f4;
 
-.side-caption {
-  font-size: 10px;
-  letter-spacing: .18em;
-  color: #a3bbdf;
-  padding: 0 12px;
-  font-weight: 800;
-}
+      --adm-green: #159568;
+      --adm-orange: #d99527;
+      --adm-red: #dc4756;
 
-.side-link {
-  padding: 13px 14px;
-  border-radius: 11px;
-  background: #ffffff16;
-  font-size: 13px;
-  font-weight: 750;
-}
+      --adm-radius: 14px;
+      --adm-shadow: 0 5px 22px rgba(24,62,112,.05);
+    }
 
-.side-foot {
-  margin-top: auto;
-  font-size: 11px;
-  color: #a6b9d8;
-  padding: 10px;
-}
+    /* =====================================================
+       GLOBAL RESET
+       ===================================================== */
 
-.admin-main {
-  padding: 30px clamp(18px,3vw,52px);
-  max-width: 1600px;
-  width: 100%;
-  margin: auto;
-}
+    * {
+      box-sizing: border-box;
+    }
 
-.top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-bottom: 26px;
-}
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+    }
 
-.eyebrow {
-  color: #0b64eb;
-  font-size: 11px;
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  font-weight: 850;
-}
+    body {
+      background: var(--adm-bg);
+      color: var(--adm-text);
 
-.top h1 {
-  font-size: 29px;
-  letter-spacing: -.03em;
-  margin: 5px 0;
-}
+      font-family:
+        Inter,
+        "Segoe UI",
+        Arial,
+        sans-serif;
 
-.muted {
-  color: var(--adm-muted);
-  font-size: 13px;
-}
+      font-size: 13px;
+      line-height: 1.5;
+    }
 
-.btn {
-  border: 1px solid var(--adm-border);
-  background: white;
-  border-radius: 10px;
-  padding: 11px 16px;
-  font-size: 12px;
-  font-weight: 800;
-  color: #173257;
-  cursor: pointer;
-}
+    html.auth-loading body {
+      visibility: hidden;
+    }
 
-.btn.primary {
-  background: var(--adm-blue);
-  color: white;
-  border-color: var(--adm-blue);
-}
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
 
-.btn:disabled {
-  opacity: .45;
-  cursor: not-allowed;
-}
+    button {
+      cursor: pointer;
+    }
 
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(4,minmax(0,1fr));
-  gap: 15px;
-  margin-bottom: 22px;
-}
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
 
-.panel, .kpi {
-  background: #fff;
-  border: 1px solid var(--adm-border);
-  border-radius: 16px;
-  box-shadow: 0 5px 25px #183e7010;
-}
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    a:focus-visible {
+      outline: 3px solid #8cb8ff;
+      outline-offset: 2px;
+    }
 
-.kpi { padding: 20px; }
+    [hidden],
+    .hidden {
+      display: none !important;
+    }
 
-.kpi span {
-  display: block;
-  color: var(--adm-muted);
-  font-size: 12px;
-  font-weight: 750;
-}
+    /* =====================================================
+       APPLICATION SHELL
+       ===================================================== */
 
-.kpi strong {
-  display: block;
-  margin-top: 12px;
-  font-size: 30px;
-  color: #071b43;
-}
+    .admin-shell {
+      display: grid;
 
-.panel { padding: 22px; }
+      grid-template-columns:
+        248px minmax(0, 1fr);
 
-.panel h2 {
-  font-size: 17px;
-  margin: 0 0 7px;
-}
+      min-height: 100vh;
+    }
 
-.panel-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 17px;
-}
+    /* =====================================================
+       SIDEBAR
+       ===================================================== */
 
-.search {
-  width: min(320px,100%);
-  padding: 12px;
-  border: 1px solid var(--adm-border);
-  border-radius: 10px;
-  font: inherit;
-  font-size: 13px;
-}
+    .admin-side {
+      min-height: 100vh;
 
-.layout {
-  display: grid;
-  grid-template-columns: minmax(0,1.6fr) minmax(300px,1fr);
-  gap: 18px;
-}
+      background:
+        linear-gradient(
+          180deg,
+          #061632 0%,
+          #0a2555 100%
+        );
 
-.table-wrap { overflow: auto; }
+      color: #ffffff;
 
-table {
-  width: 100%;
-  border-collapse: collapse;
-  text-align: left;
-  font-size: 13px;
-}
+      padding: 24px 15px;
 
-th {
-  font-size: 10px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  color: #70809a;
-  background: #f7f9fd;
-}
+      display: flex;
+      flex-direction: column;
 
-td, th {
-  padding: 14px 12px;
-  border-bottom: 1px solid #edf1f8;
-}
+      gap: 22px;
+    }
 
-tr[data-id] { cursor: pointer; }
-tr[data-id]:hover { background: #f5f9ff; }
-tr.selected { background: #eaf2ff; }
+    .admin-brand {
+      display: flex;
+      align-items: center;
 
-.pill {
-  display: inline-block;
-  padding: 5px 9px;
-  background: #e7f6ed;
-  color: #15784b;
-  border-radius: 30px;
-  font-size: 10px;
-  font-weight: 800;
-}
+      gap: 12px;
 
-.detail { display: grid; gap: 14px; }
+      padding: 8px 10px;
 
-.detail-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 14px;
-  border-bottom: 1px solid #edf1f8;
-  padding: 9px 0;
-  font-size: 12px;
-}
+      min-height: 55px;
+    }
 
-.detail-row span { color: var(--adm-muted); }
+    .admin-brand img {
+      width: 46px;
+      height: 46px;
 
-.detail-row strong {
-  overflow-wrap: anywhere;
-  text-align: right;
-}
+      object-fit: contain;
+    }
 
-.notice {
-  margin-bottom: 16px;
-  border: 1px solid #c5d9f5;
-  background: #edf5ff;
-  padding: 12px 14px;
-  border-radius: 10px;
-  font-size: 12px;
-}
+    .admin-brand-name {
+      color: #ffffff;
 
-.notice.error {
-  background: #fff1f0;
-  border-color: #f1c6c1;
-  color: #9d2b20;
-}
+      font-size: 23px;
+      font-weight: 900;
 
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 18px;
-}
+      letter-spacing: -.04em;
+    }
 
-.empty {
-  padding: 28px 12px;
-  text-align: center;
-  color: var(--adm-muted);
-  font-size: 13px;
-}
+    .admin-brand-sub {
+      margin-top: 3px;
 
-.hidden { display: none!important; }
+      color: #a3bbdf;
 
-dialog {
-  border: 1px solid var(--adm-border);
-  border-radius: 18px;
-  padding: 26px;
-  max-width: 470px;
-  width: calc(100% - 32px);
-  box-shadow: 0 24px 80px #06163245;
-}
+      font-size: 9px;
+      font-weight: 750;
 
-dialog::backdrop { background: #061632a8; }
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
 
-.form-field {
-  display: grid;
-  gap: 6px;
-  margin: 15px 0;
-  font-size: 12px;
-  font-weight: 800;
-}
+    /* =====================================================
+       SIDEBAR NAVIGATION
+       ===================================================== */
 
-.form-field input {
-  padding: 12px;
-  border: 1px solid var(--adm-border);
-  border-radius: 9px;
-  font: inherit;
-}
+    .side-section {
+      display: grid;
+      gap: 8px;
+    }
 
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 22px;
-}
+    .side-caption {
+      padding: 0 12px;
 
-@media(max-width:1050px) {
-  .kpis { grid-template-columns: repeat(2,1fr); }
-  .layout { grid-template-columns: 1fr; }
-}
+      color: #91aacf;
 
-@media(max-width:650px) {
-  .admin-shell { grid-template-columns: 1fr; }
-  .admin-side { padding: 14px; gap: 10px; }
-  .side-foot { display: none; }
-  .admin-main { padding: 20px 14px; }
-  .kpis { gap: 10px; }
-  .kpi { padding: 14px; }
-  .kpi strong { font-size: 24px; }
-}
-</style>
+      font-size: 10px;
+      font-weight: 850;
+
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .side-navigation {
+      display: grid;
+      gap: 5px;
+    }
+
+    .side-link {
+      display: flex;
+      align-items: center;
+
+      gap: 11px;
+
+      width: 100%;
+      min-height: 43px;
+
+      padding: 11px 13px;
+
+      border: 1px solid transparent;
+      border-radius: 10px;
+
+      background: transparent;
+      color: #dce8fb;
+
+      text-decoration: none;
+      text-align: left;
+
+      font-size: 12px;
+      font-weight: 750;
+
+      transition:
+        background .15s ease,
+        border-color .15s ease;
+    }
+
+    .side-link:hover {
+      background: rgba(255,255,255,.08);
+      color: #ffffff;
+    }
+
+    .side-link.active {
+      background: rgba(8,100,249,.30);
+
+      border-color:
+        rgba(255,255,255,.13);
+
+      color: #ffffff;
+    }
+
+    .side-link svg {
+      width: 17px;
+      height: 17px;
+
+      flex-shrink: 0;
+
+      stroke: currentColor;
+      fill: none;
+
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .side-divider {
+      height: 1px;
+
+      margin: 2px 8px;
+
+      background:
+        rgba(255,255,255,.10);
+    }
+
+    .side-foot {
+      margin-top: auto;
+
+      padding: 15px 10px 4px;
+
+      color: #a6b9d8;
+
+      font-size: 10px;
+      line-height: 1.7;
+    }
+
+    .side-foot strong {
+      color: #ffffff;
+      font-weight: 850;
+    }
+
+    /* =====================================================
+       MAIN CONTENT
+       ===================================================== */
+
+    .admin-main {
+      min-width: 0;
+      width: 100%;
+
+      max-width: 1700px;
+
+      margin: 0 auto;
+
+      padding:
+        28px clamp(18px, 3vw, 48px);
+
+      align-self: start;
+    }
+
+    .admin-top {
+      display: flex;
+
+      align-items: center;
+      justify-content: space-between;
+
+      gap: 18px;
+      flex-wrap: wrap;
+
+      margin-bottom: 22px;
+    }
+
+    .admin-eyebrow {
+      color: var(--adm-blue);
+
+      font-size: 10px;
+      font-weight: 850;
+
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    .admin-top h1 {
+      margin: 5px 0;
+
+      color: var(--adm-navy);
+
+      font-size: 27px;
+      line-height: 1.2;
+
+      font-weight: 900;
+      letter-spacing: -.035em;
+    }
+
+    .admin-muted,
+    .muted {
+      color: var(--adm-muted);
+
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    /* =====================================================
+       BUTTONS
+       ===================================================== */
+
+    .admin-actions,
+    .actions {
+      display: flex;
+      align-items: center;
+
+      gap: 9px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      display: inline-flex;
+
+      justify-content: center;
+      align-items: center;
+
+      gap: 8px;
+
+      min-height: 39px;
+
+      padding: 10px 15px;
+
+      border:
+        1px solid var(--adm-border);
+
+      border-radius: 10px;
+
+      background: #ffffff;
+      color: #173257;
+
+      text-decoration: none;
+
+      font-size: 12px;
+      font-weight: 850;
+
+      white-space: nowrap;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: #f4f8ff;
+    }
+
+    .btn.primary {
+      background: var(--adm-blue);
+      border-color: var(--adm-blue);
+
+      color: #ffffff;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+      background: #0755d4;
+    }
+
+    .btn.danger {
+      background: #fff4f3;
+      border-color: #f4cfcb;
+
+      color: #b8322c;
+    }
+
+    .btn.small {
+      min-height: 32px;
+
+      padding: 7px 11px;
+
+      font-size: 11px;
+    }
+
+    /* =====================================================
+       PANELS
+       ===================================================== */
+
+    .panel,
+    .admin-card,
+    .kpi {
+      background: var(--adm-surface);
+
+      border:
+        1px solid var(--adm-border);
+
+      border-radius: var(--adm-radius);
+
+      box-shadow: var(--adm-shadow);
+    }
+
+    .panel,
+    .admin-card {
+      padding: 20px;
+    }
+
+    .panel h2,
+    .admin-card h2 {
+      margin: 0 0 6px;
+
+      color: var(--adm-navy);
+
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .panel-head,
+    .admin-card-head {
+      display: flex;
+
+      justify-content: space-between;
+      align-items: center;
+
+      gap: 14px;
+      flex-wrap: wrap;
+
+      margin-bottom: 17px;
+    }
+
+    /* =====================================================
+       END PART 1
+
+       PART 2 CONTINUES WITH:
+       - Platform Owner
+       - KPI cards
+       - Tenant Directory
+       - Tenant Details
+       - Forms and dialogs
+       - Responsive styling
+
+       Do not close style/head yet.
+       ===================================================== */
+
+    /* =====================================================
+       VEYNOR SUPER ADMIN V1.2
+       PART 2 OF 4
+       ===================================================== */
+
+    /* =====================================================
+       PLATFORM OWNER
+       ===================================================== */
+
+    .platform-owner-panel {
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .platform-owner-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-bottom: 17px;
+    }
+
+    .platform-owner-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .platform-owner-icon {
+      width: 46px;
+      height: 46px;
+      flex: 0 0 46px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: var(--adm-blue-light);
+      color: var(--adm-blue);
+      font-size: 23px;
+    }
+
+    .platform-owner-title h2 {
+      margin: 0 0 4px;
+    }
+
+    .platform-owner-grid {
+      display: grid;
+      grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .platform-owner-field {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid #e6edf7;
+      border-radius: 10px;
+      background: #f9fbff;
+    }
+
+    .platform-owner-field span {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--adm-muted);
+      font-size: 10px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .platform-owner-field strong {
+      display: block;
+      color: var(--adm-navy);
+      font-size: 12px;
+      font-weight: 850;
+      overflow-wrap: anywhere;
+    }
+
+    /* =====================================================
+       STATUS BADGES
+       ===================================================== */
+
+    .pill,
+    .admin-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      padding: 5px 9px;
+      border-radius: 30px;
+      background: #e7f6ed;
+      color: #15784b;
+      font-size: 10px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .pill.platform {
+      background: #eaf2ff;
+      color: #155ac5;
+    }
+
+    .admin-badge.warning {
+      background: #fff5e7;
+      color: #a96b11;
+    }
+
+    .admin-badge.inactive {
+      background: #f0f2f6;
+      color: #667085;
+    }
+
+    .admin-badge.danger {
+      background: #fff0ef;
+      color: #b8322c;
+    }
+
+    /* =====================================================
+       KPI CARDS
+       ===================================================== */
+
+    .kpis {
+      display: grid;
+      grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 19px;
+    }
+
+    .kpi {
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .kpi span {
+      display: block;
+      color: var(--adm-muted);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .kpi strong {
+      display: block;
+      margin-top: 11px;
+      color: var(--adm-navy);
+      font-size: 29px;
+      font-weight: 900;
+      letter-spacing: -.03em;
+      overflow-wrap: anywhere;
+    }
+
+    /* =====================================================
+       TENANT DIRECTORY LAYOUT
+       ===================================================== */
+
+    .layout,
+    .admin-content-grid {
+      display: grid;
+      grid-template-columns:
+        minmax(0, 1.55fr)
+        minmax(310px, 1fr);
+      gap: 17px;
+      align-items: start;
+    }
+
+    .search {
+      width: min(320px, 100%);
+      min-height: 40px;
+      padding: 10px 12px;
+      border: 1px solid var(--adm-border);
+      border-radius: 10px;
+      background: #ffffff;
+      color: var(--adm-text);
+      font-size: 12px;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    th {
+      background: #f7f9fd;
+      color: #70809a;
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+
+    td,
+    th {
+      padding: 13px 11px;
+      border-bottom: 1px solid #edf1f8;
+      vertical-align: middle;
+    }
+
+    tr[data-id] {
+      cursor: pointer;
+    }
+
+    tr[data-id]:hover {
+      background: #f5f9ff;
+    }
+
+    tr.selected {
+      background: #eaf2ff;
+    }
+
+    tr[data-id]:focus-visible {
+      outline: 2px solid var(--adm-blue);
+      outline-offset: -2px;
+    }
+
+    /* =====================================================
+       TENANT DETAILS
+       ===================================================== */
+
+    .detail {
+      display: grid;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .detail-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 0;
+      border-bottom: 1px solid #edf1f8;
+      font-size: 12px;
+    }
+
+    .detail-row span {
+      color: var(--adm-muted);
+    }
+
+    .detail-row strong {
+      color: var(--adm-navy);
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .tenant-actions {
+      margin-top: 19px;
+    }
+
+    .tenant-help {
+      margin-top: 17px;
+      padding: 13px;
+      background: #f7faff;
+      border: 1px solid #dce8f9;
+      border-radius: 10px;
+      color: var(--adm-muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    /* =====================================================
+       NOTIFICATIONS
+       ===================================================== */
+
+    .notice,
+    .admin-notice {
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border: 1px solid #c5d9f5;
+      border-radius: 10px;
+      background: #edf5ff;
+      color: #173257;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .notice.error,
+    .admin-notice.error {
+      background: #fff1f0;
+      border-color: #f1c6c1;
+      color: #9d2b20;
+    }
+
+    .notice.success,
+    .admin-notice.success {
+      background: #eaf8f1;
+      border-color: #bce9d0;
+      color: #16764c;
+    }
+
+    .empty {
+      padding: 28px 12px;
+      text-align: center;
+      color: var(--adm-muted);
+      font-size: 12px;
+    }
+
+    /* =====================================================
+       ADMIN MODALS
+       ===================================================== */
+
+    .admin-modal,
+    dialog.admin-dialog {
+      width: min(760px, calc(100vw - 32px));
+      max-height: calc(100vh - 48px);
+      padding: 0;
+      border: 1px solid var(--adm-border);
+      border-radius: 17px;
+      background: #ffffff;
+      color: var(--adm-text);
+      box-shadow:
+        0 28px 85px rgba(6,22,50,.30);
+      overflow: auto;
+    }
+
+    .admin-modal::backdrop,
+    dialog.admin-dialog::backdrop {
+      background: rgba(6,22,50,.65);
+      backdrop-filter: blur(3px);
+    }
+
+    .admin-modal-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 24px;
+      border-bottom: 1px solid var(--adm-border);
+      background: #ffffff;
+    }
+
+    .admin-modal-header h2 {
+      margin: 0 0 5px;
+      color: var(--adm-navy);
+      font-size: 19px;
+      font-weight: 900;
+    }
+
+    .admin-modal-body {
+      display: grid;
+      gap: 17px;
+      padding: 22px 24px;
+    }
+
+    .admin-modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 16px 24px;
+      border-top: 1px solid var(--adm-border);
+      background: #f9fbff;
+    }
+
+    .admin-modal-close {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      border: 1px solid var(--adm-border);
+      border-radius: 9px;
+      background: #ffffff;
+      color: #64748b;
+      font-size: 22px;
+      line-height: 1;
+    }
+
+    /* =====================================================
+       FORM FIELDS
+       ===================================================== */
+
+    .admin-form-grid {
+      display: grid;
+      grid-template-columns:
+        repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .admin-form-field,
+    .form-field {
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .admin-form-field.full {
+      grid-column: 1 / -1;
+    }
+
+    .admin-form-field label,
+    .form-field label {
+      color: #334155;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .admin-form-field input,
+    .admin-form-field select,
+    .admin-form-field textarea,
+    .form-field input {
+      width: 100%;
+      min-height: 41px;
+      padding: 10px 12px;
+      border: 1px solid #cfdbea;
+      border-radius: 9px;
+      background: #ffffff;
+      color: var(--adm-text);
+      font-size: 12px;
+    }
+
+    .admin-form-field textarea {
+      min-height: 85px;
+      resize: vertical;
+    }
+
+    .admin-field-help {
+      color: var(--adm-muted);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+
+    .admin-form-section {
+      display: grid;
+      gap: 13px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid #edf1f8;
+    }
+
+    .admin-form-section:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .admin-form-section h3 {
+      margin: 0;
+      color: var(--adm-navy);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    /* =====================================================
+       SETTINGS TABS
+       ===================================================== */
+
+    .admin-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      padding: 5px;
+      border-radius: 11px;
+      background: #f0f4fa;
+    }
+
+    .admin-tab {
+      min-height: 35px;
+      padding: 8px 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #60708b;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .admin-tab.active {
+      background: #ffffff;
+      border-color: #dce6f4;
+      color: var(--adm-blue);
+      box-shadow: 0 2px 7px rgba(20,40,80,.06);
+    }
+
+    .admin-tab-panel {
+      display: none;
+    }
+
+    .admin-tab-panel.active {
+      display: grid;
+      gap: 15px;
+    }
+
+    /* =====================================================
+       USER MANAGEMENT
+       ===================================================== */
+
+    .admin-user-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .admin-user-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid var(--adm-border);
+      border-radius: 10px;
+      background: #ffffff;
+    }
+
+    .admin-user-info {
+      min-width: 0;
+    }
+
+    .admin-user-info strong {
+      display: block;
+      font-size: 12px;
+      color: var(--adm-navy);
+      overflow-wrap: anywhere;
+    }
+
+    .admin-user-info span {
+      display: block;
+      margin-top: 3px;
+      color: var(--adm-muted);
+      font-size: 10px;
+      overflow-wrap: anywhere;
+    }
+
+    /* =====================================================
+       END PART 2 OF 4
+
+       PART 3:
+       - Responsive CSS
+       - Close head
+       - Sidebar
+       - Header
+       - Platform Owner
+       - KPI cards
+
+       PART 4:
+       - Tenant Directory
+       - Tenant Details
+       - New Tenant modal
+       - Tenant Settings modal
+       - User Management
+       - Closing HTML
+       ===================================================== */
+
+    /* =====================================================
+       VEYNOR SUPER ADMIN V1.2
+       PART 3 OF 4
+       ===================================================== */
+
+    /* =====================================================
+       RESPONSIVE DESIGN
+       ===================================================== */
+
+    @media (max-width: 1200px) {
+
+      .platform-owner-grid {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .kpis {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+      }
+
+      .layout,
+      .admin-content-grid {
+        grid-template-columns: 1fr;
+      }
+
+    }
+
+    @media (max-width: 800px) {
+
+      .admin-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .admin-side {
+        min-height: auto;
+        padding: 15px;
+        gap: 12px;
+      }
+
+      .admin-brand {
+        padding: 4px 8px;
+      }
+
+      .side-navigation {
+        display: flex;
+        flex-wrap: wrap;
+      }
+
+      .side-link {
+        width: auto;
+        min-height: 38px;
+      }
+
+      .side-foot {
+        display: none;
+      }
+
+      .admin-main {
+        padding: 20px 15px;
+      }
+
+      .admin-top h1 {
+        font-size: 24px;
+      }
+
+    }
+
+    @media (max-width: 600px) {
+
+      .admin-top {
+        align-items: stretch;
+      }
+
+      .admin-actions {
+        width: 100%;
+      }
+
+      .admin-actions .btn {
+        flex: 1 1 auto;
+      }
+
+      .platform-owner-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .kpis {
+        grid-template-columns:
+          repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .kpi {
+        padding: 13px;
+      }
+
+      .kpi strong {
+        font-size: 23px;
+      }
+
+      .panel,
+      .admin-card {
+        padding: 15px;
+      }
+
+      .admin-form-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .admin-form-field.full {
+        grid-column: auto;
+      }
+
+      .admin-modal-header,
+      .admin-modal-body {
+        padding: 17px;
+      }
+
+      .admin-modal-footer {
+        padding: 14px 17px;
+      }
+
+      .admin-modal-footer .btn {
+        flex: 1 1 auto;
+      }
+
+      .admin-user-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .admin-user-row .btn {
+        width: 100%;
+      }
+
+    }
+
+    /* =====================================================
+       UTILITY CLASSES
+       ===================================================== */
+
+    .admin-section-gap {
+      margin-top: 19px;
+    }
+
+    .admin-text-right {
+      text-align: right;
+    }
+
+    .admin-flex-between {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .admin-divider {
+      height: 1px;
+      background: var(--adm-border);
+      margin: 15px 0;
+    }
+
+    .admin-help-box {
+      padding: 13px 15px;
+      border: 1px solid #dce8f9;
+      border-radius: 10px;
+      background: #f7faff;
+      color: #526783;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .admin-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 25px;
+      padding: 16px 0;
+      border-top: 1px solid var(--adm-border);
+      color: var(--adm-muted);
+      font-size: 11px;
+    }
+
+  </style>
 </head>
 
 <body>
+
 <div class="admin-shell">
 
+  <!-- =====================================================
+       SIDEBAR
+       ===================================================== -->
+
   <aside class="admin-side">
-    <div class="brand">
-      <img src="/veynor-symbol.png" alt=""
-           onerror="this.style.display='none'">
-      Veynor
+
+    <div class="admin-brand">
+
+      <img
+        src="/assets/veynor-symbol.png"
+        alt="Veynor"
+        onerror="this.style.display='none'"
+      >
+
+      <div>
+        <div class="admin-brand-name">
+          Veynor
+        </div>
+
+        <div class="admin-brand-sub">
+          Platform Control
+        </div>
+      </div>
+
     </div>
 
-    <div class="side-caption">
-      PLATFORM ADMINISTRATION
+    <!-- PLATFORM NAVIGATION -->
+
+    <div class="side-section">
+
+      <div class="side-caption">
+        Administration
+      </div>
+
+      <nav
+        class="side-navigation"
+        aria-label="Super Admin Navigation"
+      >
+
+        <a
+          href="/admin/"
+          class="side-link active"
+          aria-current="page"
+        >
+          <svg viewBox="0 0 24 24">
+            <rect
+              x="3" y="3"
+              width="7" height="7"
+              rx="1"
+            />
+            <rect
+              x="14" y="3"
+              width="7" height="7"
+              rx="1"
+            />
+            <rect
+              x="3" y="14"
+              width="7" height="7"
+              rx="1"
+            />
+            <rect
+              x="14" y="14"
+              width="7" height="7"
+              rx="1"
+            />
+          </svg>
+
+          Tenant Management
+        </a>
+
+        <button
+          type="button"
+          class="side-link"
+          id="sideNewTenantBtn"
+        >
+          <svg viewBox="0 0 24 24">
+            <rect
+              x="3" y="5"
+              width="18" height="16"
+              rx="2"
+            />
+            <path d="M8 5V3h8v2"/>
+            <path d="M12 10v7"/>
+            <path d="M8.5 13.5h7"/>
+          </svg>
+
+          New Tenant
+        </button>
+
+        <button
+          type="button"
+          class="side-link"
+          id="sideUsersBtn"
+        >
+          <svg viewBox="0 0 24 24">
+            <path
+              d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"
+            />
+            <circle cx="9" cy="7" r="4"/>
+            <path
+              d="M22 21v-2a4 4 0 0 0-3-3.87"
+            />
+            <path
+              d="M16 3.13a4 4 0 0 1 0 7.75"
+            />
+          </svg>
+
+          User Management
+        </button>
+
+      </nav>
+
     </div>
 
-    <div class="side-link">
-      ▦ &nbsp; Tenant Management
+    <div class="side-divider"></div>
+
+    <!-- PLATFORM OWNER NAVIGATION -->
+
+    <div class="side-section">
+
+      <div class="side-caption">
+        Platform
+      </div>
+
+      <nav class="side-navigation">
+
+        <button
+          type="button"
+          class="side-link"
+          id="sidePlatformSettingsBtn"
+        >
+          <svg viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"/>
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06-2 2-.06-.06A1.65 1.65 0 0 0 16 18.5a1.65 1.65 0 0 0-1 .5 1.65 1.65 0 0 0-.5 1V21h-3v-.09a1.65 1.65 0 0 0-1.5-1.65 1.65 1.65 0 0 0-1 .5l-.06.06-2-2 .06-.06A1.65 1.65 0 0 0 7.5 16a1.65 1.65 0 0 0-.5-1 1.65 1.65 0 0 0-1-.5H5v-3h.09A1.65 1.65 0 0 0 6.74 10a1.65 1.65 0 0 0-.5-1l-.06-.06 2-2 .06.06A1.65 1.65 0 0 0 10 7.5a1.65 1.65 0 0 0 1-.5 1.65 1.65 0 0 0 .5-1V5h3v.09A1.65 1.65 0 0 0 16 6.74a1.65 1.65 0 0 0 1-.5l.06-.06 2 2-.06.06A1.65 1.65 0 0 0 18.5 10a1.65 1.65 0 0 0 .5 1 1.65 1.65 0 0 0 1 .5H21v3h-.09A1.65 1.65 0 0 0 19.4 15z"
+            />
+          </svg>
+
+          Platform Settings
+        </button>
+
+      </nav>
+
     </div>
 
     <div class="side-foot">
-      VEYNOR SYSTEMS · RESTRICTED ACCESS
+      <strong>VEYNOR SYSTEMS</strong>
+      <div>Restricted Platform Access</div>
+      <div>Super Admin v1.2</div>
     </div>
+
   </aside>
+
+  <!-- =====================================================
+       MAIN CONTENT
+       ===================================================== -->
 
   <main class="admin-main">
 
-    <header class="top">
+    <!-- ===================================================
+         PAGE HEADER
+         =================================================== -->
+
+    <header class="admin-top">
+
       <div>
-        <div class="eyebrow">
-          Platform administration
+
+        <div class="admin-eyebrow">
+          Platform Administration
         </div>
-        <h1>Super Admin Control</h1>
-        <div class="muted">
-          Manage tenants, access and platform configuration
+
+        <h1>
+          Super Admin Control
+        </h1>
+
+        <div class="admin-muted">
+          Manage the Veynor platform,
+          operational tenants and account access.
         </div>
+
       </div>
 
-      <div class="actions">
-        <button class="btn" id="refreshBtn">
+      <div class="admin-actions">
+
+        <button
+          type="button"
+          class="btn"
+          id="refreshBtn"
+        >
           ↻ Refresh
         </button>
-        <button class="btn" id="logoutBtn">
+
+        <button
+          type="button"
+          class="btn"
+          id="logoutBtn"
+        >
           Sign out
         </button>
-        <button class="btn primary"
-                id="newTenantBtn" disabled>
+
+        <button
+          type="button"
+          class="btn primary"
+          id="newTenantBtn"
+        >
           + New Tenant
         </button>
+
       </div>
+
     </header>
 
-    <div id="notice" class="notice">
-      Verifying administrator access…
+    <!-- ===================================================
+         SYSTEM NOTIFICATIONS
+         =================================================== -->
+
+    <div
+      id="notice"
+      class="notice"
+      role="status"
+      aria-live="polite"
+    >
+      Verifying administrator access...
     </div>
 
-    <section class="kpis">
-      <div class="kpi">
-        <span>Total tenants</span>
-        <strong id="totalTenants">—</strong>
+    <!-- ===================================================
+         PLATFORM OWNER
+         =================================================== -->
+
+    <section
+      class="panel platform-owner-panel"
+      aria-labelledby="platformOwnerHeading"
+    >
+
+      <div class="platform-owner-head">
+
+        <div class="platform-owner-title">
+
+          <div
+            class="platform-owner-icon"
+            aria-hidden="true"
+          >
+            ◈
+          </div>
+
+          <div>
+
+            <h2 id="platformOwnerHeading">
+              Platform Owner
+            </h2>
+
+            <div class="admin-muted">
+              Registered owner of the Veynor platform
+            </div>
+
+          </div>
+
+        </div>
+
+        <span class="pill platform">
+          PLATFORM ADMINISTRATION
+        </span>
+
       </div>
-      <div class="kpi">
-        <span>Visible users</span>
-        <strong id="totalUsers">—</strong>
+
+      <div class="platform-owner-grid">
+
+        <div class="platform-owner-field">
+          <span>Company Name</span>
+
+          <strong id="platformOwnerName">
+            Loading...
+          </strong>
+        </div>
+
+        <div class="platform-owner-field">
+          <span>Company ID</span>
+
+          <strong id="platformOwnerId">
+            —
+          </strong>
+        </div>
+
+        <div class="platform-owner-field">
+          <span>Company Email</span>
+
+          <strong id="platformOwnerEmail">
+            —
+          </strong>
+        </div>
+
+        <div class="platform-owner-field">
+          <span>Account Status</span>
+
+          <strong id="platformOwnerStatus">
+            Checking...
+          </strong>
+        </div>
+
       </div>
-      <div class="kpi">
-        <span>Selected tenant users</span>
-        <strong id="selectedUsers">—</strong>
+
+      <div
+        class="admin-muted"
+        style="margin-top:12px;"
+      >
+        Registered on:
+        <strong id="platformOwnerCreated">
+          —
+        </strong>
       </div>
+
+    </section>
+
+    <!-- ===================================================
+         DASHBOARD STATISTICS
+         =================================================== -->
+
+    <section
+      class="kpis"
+      aria-label="Platform statistics"
+    >
+
       <div class="kpi">
-        <span>Platform status</span>
-        <strong id="platformStatus"
-                style="font-size:20px">
+        <span>Operational Tenants</span>
+
+        <strong id="totalTenants">
+          —
+        </strong>
+      </div>
+
+      <div class="kpi">
+        <span>Tenant Users</span>
+
+        <strong id="totalUsers">
+          —
+        </strong>
+      </div>
+
+      <div class="kpi">
+        <span>Selected Tenant Users</span>
+
+        <strong id="selectedUsers">
+          —
+        </strong>
+      </div>
+
+      <div class="kpi">
+        <span>Platform Status</span>
+
+        <strong
+          id="platformStatus"
+          style="font-size:20px;"
+        >
           Checking
         </strong>
       </div>
+
     </section>
 
-    <div class="layout">
+    <!-- ===================================================
+         END PART 3 OF 4
 
-      <section class="panel">
+         PART 4 CONTINUES WITH:
+         - Tenant Directory
+         - Tenant Details
+         - New Tenant modal
+         - Tenant Settings modal
+         - User Management
+         - Platform Settings modal
+         - Footer and closing tags
+         =================================================== -->
+
+    <!-- ===================================================
+         VEYNOR SUPER ADMIN V1.2
+         PART 4 OF 4
+         =================================================== -->
+
+    <!-- ===================================================
+         TENANT MANAGEMENT
+         =================================================== -->
+
+    <div class="layout admin-content-grid">
+
+      <!-- ================================================
+           TENANT DIRECTORY
+           ================================================ -->
+
+      <section
+        class="panel"
+        aria-labelledby="tenantDirectoryHeading"
+      >
+
         <div class="panel-head">
+
           <div>
-            <h2>Tenant Directory</h2>
-            <div class="muted">
-              Select a company to inspect its account
+            <h2 id="tenantDirectoryHeading">
+              Tenant Directory
+            </h2>
+
+            <div class="admin-muted">
+              Operational customers registered
+              on the Veynor platform.
             </div>
           </div>
-          <input id="tenantSearch"
-                 class="search"
-                 placeholder="Search tenants…"
-                 aria-label="Search tenants">
+
+          <input
+            type="search"
+            id="tenantSearch"
+            class="search"
+            placeholder="Search tenants..."
+            aria-label="Search tenants"
+            autocomplete="off"
+          >
+
         </div>
 
         <div class="table-wrap">
+
           <table>
             <thead>
               <tr>
-                <th>Company</th>
-                <th>Tenant ID</th>
-                <th>Users</th>
-                <th>Action</th>
+                <th scope="col">Company</th>
+                <th scope="col">Tenant ID</th>
+                <th scope="col">Users</th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
+
             <tbody id="tenantRows">
               <tr>
                 <td colspan="4" class="empty">
-                  Loading…
+                  Loading operational tenants...
                 </td>
               </tr>
             </tbody>
           </table>
+
         </div>
+
+        <div
+          class="admin-muted"
+          style="margin-top:15px;"
+        >
+          Platform Owner accounts are excluded
+          from this directory.
+        </div>
+
       </section>
 
-      <section class="panel">
-        <h2>Tenant Details</h2>
-        <div class="muted">
-          Account information and management options
+      <!-- ================================================
+           TENANT DETAILS
+           ================================================ -->
+
+      <section
+        class="panel"
+        aria-labelledby="tenantDetailsHeading"
+      >
+
+        <div class="panel-head">
+          <div>
+            <h2 id="tenantDetailsHeading">
+              Tenant Details
+            </h2>
+
+            <div class="admin-muted">
+              Account information and management options
+              for the selected tenant.
+            </div>
+          </div>
         </div>
 
-        <div id="tenantDetail" class="empty">
+        <div
+          id="tenantDetail"
+          class="empty"
+          aria-live="polite"
+        >
           Select a tenant from the directory.
         </div>
 
-        <div class="actions">
-          <button id="openTenantBtn"
-                  class="btn primary" disabled>
+        <div class="actions tenant-actions">
+
+          <button
+            type="button"
+            id="openTenantBtn"
+            class="btn primary"
+            disabled
+          >
             Open Tenant Portal
           </button>
-          <button id="tenantSettingsBtn"
-                  class="btn" disabled>
+
+          <button
+            type="button"
+            id="tenantSettingsBtn"
+            class="btn"
+            disabled
+          >
             Tenant Settings
           </button>
+
         </div>
 
-        <p class="muted" style="margin-top:20px">
-          Tenant switching and tenant creation require
-          a secure server-side authorization endpoint.
-          These actions remain disabled until configured.
-        </p>
+        <div class="tenant-help">
+          <strong>Tenant Management</strong>
+
+          <div style="margin-top:6px;">
+            Select an operational tenant to view
+            its company information, user accounts
+            and available management options.
+          </div>
+
+          <div style="margin-top:8px;">
+            Tenant switching and changes to
+            customer environments require
+            authorised backend operations.
+          </div>
+        </div>
+
       </section>
 
     </div>
+
+    <!-- ===================================================
+         FOOTER
+         =================================================== -->
+
+    <footer class="admin-footer">
+      <span>
+        © Veynor Systems
+      </span>
+
+      <span>
+        Super Admin Portal · Version 1.2.0
+      </span>
+    </footer>
+
   </main>
+
 </div>
 
-<dialog id="tenantDialog">
+<!-- =====================================================
+     NEW TENANT MODAL
+     ===================================================== -->
+
+<dialog
+  id="tenantDialog"
+  class="admin-modal admin-dialog"
+  aria-labelledby="createTenantHeading"
+>
+
   <form id="tenantForm">
-    <h2>Create Tenant</h2>
-    <p class="muted">
-      This requires the protected tenant-creation endpoint.
-    </p>
 
-    <label class="form-field">
-      Company name
-      <input id="newCompanyName"
-             required maxlength="150">
-    </label>
+    <div class="admin-modal-header">
 
-    <label class="form-field">
-      Administrator email
-      <input id="newAdminEmail"
-             type="email" required>
-    </label>
+      <div>
+        <h2 id="createTenantHeading">
+          Create New Tenant
+        </h2>
 
-    <div class="modal-actions">
-      <button type="button"
-              class="btn"
-              id="closeDialog">
+        <div class="admin-muted">
+          Register a new operational company
+          on the Veynor platform.
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="admin-modal-close"
+        id="closeDialog"
+        aria-label="Close"
+      >
+        ×
+      </button>
+
+    </div>
+
+    <div class="admin-modal-body">
+
+      <section class="admin-form-section">
+
+        <h3>Company Information</h3>
+
+        <div class="admin-form-grid">
+
+          <div class="admin-form-field full">
+            <label for="newCompanyName">
+              Company Name *
+            </label>
+
+            <input
+              type="text"
+              id="newCompanyName"
+              name="company_name"
+              maxlength="150"
+              placeholder="Enter company name"
+              required
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="newCompanyEmail">
+              Company Email
+            </label>
+
+            <input
+              type="email"
+              id="newCompanyEmail"
+              name="company_email"
+              placeholder="info@company.com"
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="newCompanyPhone">
+              Company Phone
+            </label>
+
+            <input
+              type="tel"
+              id="newCompanyPhone"
+              name="company_phone"
+              placeholder="+44..."
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="newCompanyType">
+              Company Type
+            </label>
+
+            <select
+              id="newCompanyType"
+              name="company_type"
+            >
+              <option value="tenant" selected>
+                Operational Tenant
+              </option>
+            </select>
+          </div>
+
+          <div class="admin-form-field">
+            <label for="newCompanyStatus">
+              Initial Status
+            </label>
+
+            <select
+              id="newCompanyStatus"
+              name="company_status"
+            >
+              <option value="true" selected>
+                Active
+              </option>
+
+              <option value="false">
+                Inactive
+              </option>
+            </select>
+          </div>
+
+        </div>
+
+      </section>
+
+      <section class="admin-form-section">
+
+        <h3>Initial Administrator</h3>
+
+        <div class="admin-form-grid">
+
+          <div class="admin-form-field">
+            <label for="newAdminName">
+              Administrator Name
+            </label>
+
+            <input
+              type="text"
+              id="newAdminName"
+              name="admin_name"
+              maxlength="150"
+              placeholder="Full name"
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="newAdminEmail">
+              Administrator Email *
+            </label>
+
+            <input
+              type="email"
+              id="newAdminEmail"
+              name="admin_email"
+              placeholder="admin@company.com"
+              required
+            >
+          </div>
+
+        </div>
+
+        <div class="admin-help-box">
+          The tenant administrator will be linked
+          to the new company through a secure
+          invitation process. No password is
+          stored in this form.
+        </div>
+
+      </section>
+
+      <section class="admin-form-section">
+
+        <h3>Tenant Setup</h3>
+
+        <label
+          style="
+            display:flex;
+            align-items:flex-start;
+            gap:9px;
+            font-size:12px;
+          "
+        >
+          <input
+            type="checkbox"
+            id="newTenantDefaultSettings"
+            checked
+          >
+
+          <span>
+            Create default tenant settings
+            and initial configuration.
+          </span>
+        </label>
+
+        <label
+          style="
+            display:flex;
+            align-items:flex-start;
+            gap:9px;
+            font-size:12px;
+          "
+        >
+          <input
+            type="checkbox"
+            id="newTenantSendInvite"
+            checked
+          >
+
+          <span>
+            Send an invitation to the
+            initial tenant administrator.
+          </span>
+        </label>
+
+      </section>
+
+    </div>
+
+    <div class="admin-modal-footer">
+
+      <button
+        type="button"
+        class="btn"
+        id="cancelNewTenantBtn"
+      >
         Cancel
       </button>
-      <button class="btn primary" type="submit">
-        Create
+
+      <button
+        type="submit"
+        class="btn primary"
+        id="createTenantSubmitBtn"
+        disabled
+      >
+        Create Tenant
       </button>
+
     </div>
+
   </form>
+
+</dialog>
+
+<!-- =====================================================
+     TENANT SETTINGS MODAL
+     ===================================================== -->
+
+<dialog
+  id="tenantSettingsDialog"
+  class="admin-modal admin-dialog"
+  aria-labelledby="tenantSettingsHeading"
+>
+
+  <div class="admin-modal-header">
+
+    <div>
+      <h2 id="tenantSettingsHeading">
+        Tenant Settings
+      </h2>
+
+      <div class="admin-muted">
+        Manage the selected tenant configuration.
+      </div>
+    </div>
+
+    <button
+      type="button"
+      class="admin-modal-close"
+      id="closeTenantSettingsBtn"
+      aria-label="Close"
+    >
+      ×
+    </button>
+
+  </div>
+
+  <div class="admin-modal-body">
+
+    <div class="admin-tabs">
+
+      <button
+        type="button"
+        class="admin-tab active"
+        data-admin-tab="company"
+      >
+        Company
+      </button>
+
+      <button
+        type="button"
+        class="admin-tab"
+        data-admin-tab="users"
+      >
+        Users
+      </button>
+
+      <button
+        type="button"
+        class="admin-tab"
+        data-admin-tab="configuration"
+      >
+        Configuration
+      </button>
+
+    </div>
+
+    <!-- COMPANY SETTINGS -->
+
+    <section
+      class="admin-tab-panel active"
+      data-admin-panel="company"
+    >
+
+      <form id="tenantCompanyForm">
+
+        <div class="admin-form-grid">
+
+          <div class="admin-form-field full">
+            <label for="editTenantName">
+              Company Name
+            </label>
+
+            <input
+              type="text"
+              id="editTenantName"
+              maxlength="150"
+              required
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="editTenantEmail">
+              Company Email
+            </label>
+
+            <input
+              type="email"
+              id="editTenantEmail"
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="editTenantPhone">
+              Company Phone
+            </label>
+
+            <input
+              type="tel"
+              id="editTenantPhone"
+            >
+          </div>
+
+          <div class="admin-form-field">
+            <label for="editTenantStatus">
+              Status
+            </label>
+
+            <select id="editTenantStatus">
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+          </div>
+
+          <div class="admin-form-field">
+            <label for="editTenantType">
+              Company Type
+            </label>
+
+            <input
+              type="text"
+              id="editTenantType"
+              readonly
+            >
+          </div>
+
+        </div>
+
+        <div
+          class="admin-modal-footer"
+          style="padding:16px 0 0;"
+        >
+          <button
+            type="submit"
+            id="saveTenantCompanyBtn"
+            class="btn primary"
+            disabled
+          >
+            Save Company
+          </button>
+        </div>
+
+      </form>
+
+    </section>
+
+    <!-- USER MANAGEMENT -->
+
+    <section
+      class="admin-tab-panel"
+      data-admin-panel="users"
+    >
+
+      <div class="admin-flex-between">
+
+        <div>
+          <h3>Tenant Users</h3>
+
+          <div class="admin-muted">
+            Accounts associated with this tenant.
+          </div>
+        </div>
+
+        <button
+          type="button"
+          id="inviteTenantUserBtn"
+          class="btn small primary"
+          disabled
+        >
+          + Invite User
+        </button>
+
+      </div>
+
+      <div
+        id="tenantUsersList"
+        class="admin-user-list"
+      >
+        <div class="empty">
+          Select a tenant to view users.
+        </div>
+      </div>
+
+    </section>
+
+    <!-- TENANT CONFIGURATION -->
+
+    <section
+      class="admin-tab-panel"
+      data-admin-panel="configuration"
+    >
+
+      <div class="admin-help-box">
+        Tenant-specific operational settings
+        remain managed through the existing
+        Veynor Settings module.
+
+        This panel will provide central access
+        to those settings once tenant switching
+        has been configured.
+      </div>
+
+      <div class="admin-form-grid">
+
+        <div class="admin-form-field">
+          <label for="tenantConfigCompanyId">
+            Tenant ID
+          </label>
+
+          <input
+            type="text"
+            id="tenantConfigCompanyId"
+            readonly
+          >
+        </div>
+
+        <div class="admin-form-field">
+          <label for="tenantConfigStatus">
+            Configuration Status
+          </label>
+
+          <input
+            type="text"
+            id="tenantConfigStatus"
+            value="Pending"
+            readonly
+          >
+        </div>
+
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="admin-modal-footer">
+
+    <button
+      type="button"
+      class="btn"
+      id="doneTenantSettingsBtn"
+    >
+      Close
+    </button>
+
+  </div>
+
+</dialog>
+
+<!-- =====================================================
+     USER INVITATION MODAL
+     ===================================================== -->
+
+<dialog
+  id="inviteUserDialog"
+  class="admin-modal admin-dialog"
+  aria-labelledby="inviteUserHeading"
+>
+
+  <form id="inviteUserForm">
+
+    <div class="admin-modal-header">
+
+      <div>
+        <h2 id="inviteUserHeading">
+          Invite Tenant User
+        </h2>
+
+        <div class="admin-muted">
+          Invite a new user to the selected tenant.
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="admin-modal-close"
+        id="closeInviteUserBtn"
+      >
+        ×
+      </button>
+
+    </div>
+
+    <div class="admin-modal-body">
+
+      <div class="admin-form-grid">
+
+        <div class="admin-form-field">
+          <label for="inviteUserName">
+            Full Name
+          </label>
+
+          <input
+            type="text"
+            id="inviteUserName"
+            maxlength="150"
+          >
+        </div>
+
+        <div class="admin-form-field">
+          <label for="inviteUserEmail">
+            Email Address
+          </label>
+
+          <input
+            type="email"
+            id="inviteUserEmail"
+            required
+          >
+        </div>
+
+        <div class="admin-form-field full">
+          <label for="inviteUserRole">
+            User Role
+          </label>
+
+          <select id="inviteUserRole">
+            <option value="tenant_admin">
+              Tenant Administrator
+            </option>
+
+            <option value="tenant_user">
+              Tenant User
+            </option>
+          </select>
+        </div>
+
+      </div>
+
+    </div>
+
+    <div class="admin-modal-footer">
+
+      <button
+        type="button"
+        class="btn"
+        id="cancelInviteUserBtn"
+      >
+        Cancel
+      </button>
+
+      <button
+        type="submit"
+        class="btn primary"
+        id="sendInviteUserBtn"
+        disabled
+      >
+        Send Invitation
+      </button>
+
+    </div>
+
+  </form>
+
+</dialog>
+
+<!-- =====================================================
+     PLATFORM SETTINGS MODAL
+     ===================================================== -->
+
+<dialog
+  id="platformSettingsDialog"
+  class="admin-modal admin-dialog"
+  aria-labelledby="platformSettingsHeading"
+>
+
+  <div class="admin-modal-header">
+
+    <div>
+      <h2 id="platformSettingsHeading">
+        Platform Settings
+      </h2>
+
+      <div class="admin-muted">
+        Platform Owner information and administration.
+      </div>
+    </div>
+
+    <button
+      type="button"
+      class="admin-modal-close"
+      id="closePlatformSettingsBtn"
+    >
+      ×
+    </button>
+
+  </div>
+
+  <div class="admin-modal-body">
+
+    <div class="admin-help-box">
+      Platform Owner information is retrieved
+      from the companies table using
+      company_type = platform_owner.
+    </div>
+
+    <div class="admin-form-grid">
+
+      <div class="admin-form-field full">
+        <label for="platformSettingsName">
+          Platform Owner
+        </label>
+
+        <input
+          type="text"
+          id="platformSettingsName"
+          readonly
+        >
+      </div>
+
+      <div class="admin-form-field full">
+        <label for="platformSettingsCompanyId">
+          Company ID
+        </label>
+
+        <input
+          type="text"
+          id="platformSettingsCompanyId"
+          readonly
+        >
+      </div>
+
+    </div>
+
+  </div>
+
+  <div class="admin-modal-footer">
+
+    <button
+      type="button"
+      class="btn"
+      id="donePlatformSettingsBtn"
+    >
+      Close
+    </button>
+
+  </div>
+
 </dialog>
 
 </body>
