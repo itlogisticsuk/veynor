@@ -2,32 +2,29 @@
 /* ============================================================
    VEYNOR SUPER ADMIN PORTAL
    File: /js/admin/admin.js
-   Version: 1.1.0
+   Version: 1.2.0
 
    PLATFORM STRUCTURE
-
-   IT LOGISTICS UK
-      company_type = platform_owner
-
-   OPERATIONAL TENANTS
-      Sofa2U
-      Future customers
+   - IT LOGISTICS UK: platform_owner
+   - Sofa2U and future customers: operational tenants
 
    FEATURES
-   - Existing Supabase authentication
-   - Super Admin role verification
+   - Existing Supabase login
+   - Super Admin verification
    - Platform Owner recognition
-   - Operational tenant directory
-   - Tenant search and selection
-   - User statistics
-   - Tenant details
-   - Session logout
+   - Tenant directory
+   - Tenant management dialogs
+   - User management
+   - Tenant creation through protected backend
+   - Tenant portal access through protected backend
 
    IMPORTANT
-   - Existing user company_id remains unchanged.
-   - No database writes.
-   - No tenant impersonation.
-   - Protected actions remain disabled.
+   - No service_role key in browser code.
+   - Existing user company_id is not changed.
+   - Sofa2U operational data remains untouched.
+   - All protected operations require server authorization.
+
+   PART 1 OF 4
    ============================================================ */
 
 (function () {
@@ -38,14 +35,33 @@
   // ==========================================================
 
   const CONFIG = Object.freeze({
+    version: "1.2.0",
+
     adminRole: "veynor_admin",
     platformOwnerType: "platform_owner",
+
     loginUrl: "/login.html",
-    searchDebounceMs: 150
+    adminUrl: "/admin/",
+
+    tenantPortalUrl:
+      "/operations-control-center.html",
+
+    searchDebounceMs: 150,
+
+    // Supabase Edge Functions.
+    // These endpoints must be deployed and authorised
+    // before protected actions can be enabled.
+
+    functions: Object.freeze({
+      createTenant: "admin-create-tenant",
+      updateTenant: "admin-update-tenant",
+      inviteUser: "admin-invite-user",
+      openTenant: "admin-open-tenant"
+    })
   });
 
   // ==========================================================
-  // 2. STATE
+  // 2. APPLICATION STATE
   // ==========================================================
 
   let client = null;
@@ -61,7 +77,20 @@
   let selectedTenantId = null;
 
   let isLoading = false;
+  let isSubmitting = false;
+
   let searchTimer = null;
+
+  let activeSettingsTab = "company";
+
+  const state = {
+    initialized: false,
+    authenticated: false,
+    adminVerified: false,
+    backendReady: false,
+    selectedTenant: null,
+    lastRefreshAt: null
+  };
 
   // ==========================================================
   // 3. DOM HELPERS
@@ -74,9 +103,47 @@
   function setText(id, value) {
     const element = byId(id);
 
-    if (element) {
-      element.textContent = String(value ?? "");
+    if (!element) {
+      return;
     }
+
+    element.textContent = String(value ?? "");
+  }
+
+  function setValue(id, value) {
+    const element = byId(id);
+
+    if (!element) {
+      return;
+    }
+
+    element.value = String(value ?? "");
+  }
+
+  function getValue(id) {
+    return String(
+      byId(id)?.value ?? ""
+    ).trim();
+  }
+
+  function setDisabled(id, disabled) {
+    const element = byId(id);
+
+    if (!element) {
+      return;
+    }
+
+    element.disabled = Boolean(disabled);
+  }
+
+  function setVisible(id, visible) {
+    const element = byId(id);
+
+    if (!element) {
+      return;
+    }
+
+    element.hidden = !visible;
   }
 
   function escapeHtml(value) {
@@ -103,8 +170,33 @@
   }
 
   function formatNumber(value) {
-    return Number(value || 0).toLocaleString(
-      "en-GB"
+    const number = Number(value ?? 0);
+
+    if (!Number.isFinite(number)) {
+      return "0";
+    }
+
+    return number.toLocaleString("en-GB");
+  }
+
+  function formatDate(value) {
+    if (!value) {
+      return "—";
+    }
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleDateString(
+      "en-GB",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+      }
     );
   }
 
@@ -120,18 +212,16 @@
       : text;
   }
 
-  function formatDate(value) {
-    if (!value) {
-      return "—";
-    }
+  function isValidEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+      clean(value)
+    );
+  }
 
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return "—";
-    }
-
-    return date.toLocaleDateString("en-GB");
+  function isValidUuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      clean(value)
+    );
   }
 
   // ==========================================================
@@ -145,18 +235,45 @@
       return;
     }
 
-    notice.textContent = message || "";
+    notice.textContent = String(
+      message || ""
+    );
 
     notice.className =
       type === "error"
         ? "notice error"
-        : "notice";
+        : type === "success"
+          ? "notice success"
+          : "notice";
 
     notice.classList.remove("hidden");
+
+    notice.hidden = false;
   }
 
   function hideNotice() {
-    byId("notice")?.classList.add("hidden");
+    const notice = byId("notice");
+
+    if (!notice) {
+      return;
+    }
+
+    notice.classList.add("hidden");
+    notice.hidden = true;
+  }
+
+  function showError(error, fallback) {
+    const message =
+      error?.message ||
+      fallback ||
+      "An unexpected error occurred.";
+
+    console.error(
+      "[Veynor Super Admin]",
+      error
+    );
+
+    showNotice(message, "error");
   }
 
   // ==========================================================
@@ -170,15 +287,18 @@
 
     if (typeof window.sb !== "function") {
       throw new Error(
-        "Supabase helper sb() is not available."
+        "Supabase helper sb() is unavailable."
       );
     }
 
     client = window.sb();
 
-    if (!client?.auth) {
+    if (
+      !client?.auth ||
+      typeof client.from !== "function"
+    ) {
       throw new Error(
-        "Supabase authentication is unavailable."
+        "Supabase client is invalid."
       );
     }
 
@@ -191,7 +311,8 @@
 
   function redirectToLogin() {
     const next = encodeURIComponent(
-      window.location.pathname
+      window.location.pathname +
+      window.location.search
     );
 
     window.location.replace(
@@ -212,11 +333,19 @@
     currentUser = data?.user || null;
 
     if (!currentUser?.id) {
-      throw new Error("Not authenticated.");
+      throw new Error(
+        "Not authenticated."
+      );
     }
+
+    state.authenticated = true;
 
     return currentUser;
   }
+
+  // ==========================================================
+  // 7. USER PROFILE
+  // ==========================================================
 
   async function loadCurrentProfile() {
     const db = getClient();
@@ -235,9 +364,14 @@
         company_id,
         customer_id,
         role,
-        is_active
+        is_active,
+        full_name,
+        email
       `)
-      .eq("auth_user_id", currentUser.id)
+      .eq(
+        "auth_user_id",
+        currentUser.id
+      )
       .eq("is_active", true)
       .limit(2);
 
@@ -245,7 +379,10 @@
       throw error;
     }
 
-    if (!data || data.length !== 1) {
+    if (
+      !Array.isArray(data) ||
+      data.length !== 1
+    ) {
       throw new Error(
         "No unique active user profile found."
       );
@@ -263,9 +400,11 @@
 
     if (role !== CONFIG.adminRole) {
       throw new Error(
-        "Access denied. Super Admin permission required."
+        "Access denied. Super Admin role required."
       );
     }
+
+    state.adminVerified = true;
 
     return true;
   }
@@ -280,7 +419,7 @@
   }
 
   // ==========================================================
-  // 7. PAGE ACCESS
+  // 8. PAGE ACCESS
   // ==========================================================
 
   function unlockPage() {
@@ -322,7 +461,9 @@
     title.textContent = "Access denied";
 
     const description = document.createElement("p");
-    description.textContent = message;
+    description.textContent = String(
+      message || "Administrator access required."
+    );
 
     description.style.cssText = `
       color:#61718b;
@@ -356,7 +497,7 @@
   }
 
   // ==========================================================
-  // 8. LOADING STATE
+  // 9. LOADING STATE
   // ==========================================================
 
   function setLoading(value) {
@@ -373,13 +514,35 @@
     }
   }
 
+  function setSubmitting(value) {
+    isSubmitting = Boolean(value);
+
+    [
+      "createTenantSubmitBtn",
+      "saveTenantCompanyBtn",
+      "sendInviteUserBtn"
+    ].forEach(id => {
+      const button = byId(id);
+
+      if (!button) {
+        return;
+      }
+
+      button.dataset.submitting =
+        isSubmitting ? "true" : "false";
+    });
+
+    updateActionAvailability();
+  }
+
   // ==========================================================
-  // 9. COMPANY CLASSIFICATION
+  // 10. COMPANY CLASSIFICATION
   // ==========================================================
 
   function isPlatformOwner(company) {
-    return normalize(company?.company_type) ===
-      CONFIG.platformOwnerType;
+    return normalize(
+      company?.company_type
+    ) === CONFIG.platformOwnerType;
   }
 
   function isOperationalTenant(company) {
@@ -404,7 +567,7 @@
   }
 
   // ==========================================================
-  // 10. LOAD COMPANIES
+  // 11. LOAD COMPANIES
   // ==========================================================
 
   async function loadCompanies() {
@@ -421,9 +584,10 @@
         phone,
         created_at
       `)
-      .order("name", {
-        ascending: true
-      });
+      .order(
+        "name",
+        { ascending: true }
+      );
 
     if (error) {
       throw error;
@@ -439,7 +603,7 @@
   }
 
   // ==========================================================
-  // 11. LOAD USER PROFILES
+  // 12. LOAD USER PROFILES
   // ==========================================================
 
   async function loadProfiles() {
@@ -449,10 +613,19 @@
       .from("user_profiles")
       .select(`
         id,
+        auth_user_id,
         company_id,
+        customer_id,
+        full_name,
+        email,
         role,
-        is_active
-      `);
+        is_active,
+        created_at
+      `)
+      .order(
+        "created_at",
+        { ascending: true }
+      );
 
     if (error) {
       throw error;
@@ -466,7 +639,7 @@
   }
 
   // ==========================================================
-  // 12. USER STATISTICS
+  // 13. USER STATISTICS
   // ==========================================================
 
   function getTenantUsers(tenantId) {
@@ -482,22 +655,27 @@
 
   function getActiveTenantUserCount(tenantId) {
     return getTenantUsers(tenantId).filter(
-      profile => profile.is_active === true
+      profile =>
+        profile.is_active === true
     ).length;
   }
 
   function getTotalTenantUsers() {
     const tenantIds = new Set(
-      tenants.map(tenant => String(tenant.id))
+      tenants.map(
+        tenant => String(tenant.id)
+      )
     );
 
     return profiles.filter(profile =>
-      tenantIds.has(String(profile.company_id))
+      tenantIds.has(
+        String(profile.company_id)
+      )
     ).length;
   }
 
   // ==========================================================
-  // 13. TENANT SELECTION
+  // 14. TENANT SELECTION
   // ==========================================================
 
   function getSelectedTenant() {
@@ -515,20 +693,26 @@
         String(tenantId)
     );
 
-    selectedTenantId = tenant?.id || null;
+    selectedTenantId =
+      tenant?.id || null;
+
+    state.selectedTenant =
+      tenant || null;
 
     renderTenantDirectory();
     renderTenantDetails();
     renderStatistics();
+
+    updateActionAvailability();
   }
 
   // ==========================================================
-  // 14. TENANT SEARCH
+  // 15. TENANT SEARCH
   // ==========================================================
 
   function getFilteredTenants() {
     const search = normalize(
-      byId("tenantSearch")?.value
+      getValue("tenantSearch")
     );
 
     if (!search) {
@@ -550,35 +734,26 @@
   }
 
   // ==========================================================
-  // END OF PART 1
+  // END OF PART 1 OF 4
+  //
+  // PART 2:
+  // - Platform Owner rendering
+  // - Tenant Directory
+  // - Tenant Details
+  // - Dashboard statistics
+  // - User list
+  //
+  // Do not close the IIFE here.
+  // Continue directly with Part 2.
   // ==========================================================
 
-  /*
-   * CONTINUE DIRECTLY WITH PART 2.
-   *
-   * Do not add })(); here.
-   * Do not close the function.
-   *
-   * Part 2 contains:
-   * - Platform Owner display
-   * - Tenant directory rendering
-   * - Tenant details
-   * - Dashboard statistics
-   * - Refresh
-   * - Logout
-   * - Events
-   * - Initialization
-   */
 
   // ==========================================================
-  // 15. PLATFORM OWNER DISPLAY
+  // 16. PLATFORM OWNER DISPLAY
   // ==========================================================
 
   function renderPlatformOwner() {
     const owner = getPlatformOwner();
-
-    // These fields are optional in the current HTML.
-    // They will be used when we extend the dashboard.
 
     setText(
       "platformOwnerName",
@@ -608,10 +783,22 @@
       "platformOwnerCreated",
       formatDate(owner?.created_at)
     );
+
+    // Platform Settings modal
+
+    setValue(
+      "platformSettingsName",
+      owner?.name || ""
+    );
+
+    setValue(
+      "platformSettingsCompanyId",
+      owner?.id || ""
+    );
   }
 
   // ==========================================================
-  // 16. TENANT DIRECTORY
+  // 17. TENANT DIRECTORY
   // ==========================================================
 
   function renderTenantDirectory() {
@@ -643,7 +830,18 @@
       const userCount =
         getTenantUserCount(tenant.id);
 
-      const active = tenant.is_active === true;
+      const active =
+        tenant.is_active === true;
+
+      const statusLabel = selected
+        ? "Selected"
+        : active
+          ? "View"
+          : "Inactive";
+
+      const statusClass = active
+        ? "pill"
+        : "admin-badge inactive";
 
       return `
         <tr
@@ -669,14 +867,8 @@
           </td>
 
           <td>
-            <span class="pill">
-              ${
-                selected
-                  ? "Selected"
-                  : active
-                    ? "View"
-                    : "Inactive"
-              }
+            <span class="${statusClass}">
+              ${statusLabel}
             </span>
           </td>
         </tr>
@@ -685,7 +877,7 @@
   }
 
   // ==========================================================
-  // 17. TENANT DETAILS
+  // 18. TENANT DETAILS
   // ==========================================================
 
   function renderTenantDetails() {
@@ -730,9 +922,11 @@
       </div>
 
       <div class="detail-row">
-        <span>Company type</span>
+        <span>Company Type</span>
         <strong>
-          ${escapeHtml(tenant.company_type || "—")}
+          ${escapeHtml(
+            tenant.company_type || "—"
+          )}
         </strong>
       </div>
 
@@ -760,35 +954,41 @@
       <div class="detail-row">
         <span>Created</span>
         <strong>
-          ${escapeHtml(formatDate(tenant.created_at))}
+          ${escapeHtml(
+            formatDate(tenant.created_at)
+          )}
         </strong>
       </div>
 
       <div class="detail-row">
-        <span>Total users</span>
+        <span>Total Users</span>
         <strong>
           ${formatNumber(totalUsers)}
         </strong>
       </div>
 
       <div class="detail-row">
-        <span>Active users</span>
+        <span>Active Users</span>
         <strong>
           ${formatNumber(activeUsers)}
         </strong>
       </div>
 
       <div class="detail-row">
-        <span>Tenant access</span>
+        <span>Tenant Access</span>
         <strong>
-          Pending configuration
+          ${
+            state.backendReady
+              ? "Available"
+              : "Pending configuration"
+          }
         </strong>
       </div>
     `;
   }
 
   // ==========================================================
-  // 18. DASHBOARD STATISTICS
+  // 19. DASHBOARD STATISTICS
   // ==========================================================
 
   function renderStatistics() {
@@ -815,12 +1015,237 @@
 
     setText(
       "platformStatus",
-      "Connected"
+      state.adminVerified
+        ? "Connected"
+        : "Checking"
     );
   }
 
   // ==========================================================
-  // 19. COMPLETE RENDER
+  // 20. TENANT COMPANY FORM
+  // ==========================================================
+
+  function populateTenantCompanyForm() {
+    const tenant = getSelectedTenant();
+
+    setValue(
+      "editTenantName",
+      tenant?.name || ""
+    );
+
+    setValue(
+      "editTenantEmail",
+      tenant?.email || ""
+    );
+
+    setValue(
+      "editTenantPhone",
+      tenant?.phone || ""
+    );
+
+    setValue(
+      "editTenantStatus",
+      tenant?.is_active === false
+        ? "false"
+        : "true"
+    );
+
+    setValue(
+      "editTenantType",
+      tenant?.company_type || ""
+    );
+  }
+
+  // ==========================================================
+  // 21. TENANT CONFIGURATION DISPLAY
+  // ==========================================================
+
+  function populateTenantConfiguration() {
+    const tenant = getSelectedTenant();
+
+    setValue(
+      "tenantConfigCompanyId",
+      tenant?.id || ""
+    );
+
+    setValue(
+      "tenantConfigStatus",
+      state.backendReady
+        ? "Available"
+        : "Pending"
+    );
+  }
+
+  // ==========================================================
+  // 22. TENANT USER LIST
+  // ==========================================================
+
+  function renderTenantUsers() {
+    const container = byId(
+      "tenantUsersList"
+    );
+
+    if (!container) {
+      return;
+    }
+
+    const tenant = getSelectedTenant();
+
+    if (!tenant) {
+      container.innerHTML = `
+        <div class="empty">
+          Select a tenant to view users.
+        </div>
+      `;
+
+      return;
+    }
+
+    const users = getTenantUsers(
+      tenant.id
+    );
+
+    if (!users.length) {
+      container.innerHTML = `
+        <div class="empty">
+          No users are linked to this tenant.
+        </div>
+      `;
+
+      return;
+    }
+
+    container.innerHTML = users.map(user => {
+      const name =
+        clean(user.full_name) ||
+        clean(user.email) ||
+        "Unnamed user";
+
+      const role =
+        clean(user.role) ||
+        "Unknown role";
+
+      const status =
+        user.is_active === true
+          ? "Active"
+          : "Inactive";
+
+      const statusClass =
+        user.is_active === true
+          ? "pill"
+          : "admin-badge inactive";
+
+      return `
+        <div class="admin-user-row">
+
+          <div class="admin-user-info">
+
+            <strong>
+              ${escapeHtml(name)}
+            </strong>
+
+            <span>
+              ${escapeHtml(user.email || "—")}
+            </span>
+
+            <span>
+              Role:
+              ${escapeHtml(
+                role.replaceAll("_", " ")
+              )}
+            </span>
+
+          </div>
+
+          <span class="${statusClass}">
+            ${status}
+          </span>
+
+        </div>
+      `;
+    }).join("");
+  }
+
+  // ==========================================================
+  // 23. TENANT SETTINGS TABS
+  // ==========================================================
+
+  function setSettingsTab(tabName) {
+    const allowedTabs = [
+      "company",
+      "users",
+      "configuration"
+    ];
+
+    const selectedTab =
+      allowedTabs.includes(tabName)
+        ? tabName
+        : "company";
+
+    activeSettingsTab = selectedTab;
+
+    document.querySelectorAll(
+      "[data-admin-tab]"
+    ).forEach(button => {
+      const active =
+        button.dataset.adminTab ===
+        selectedTab;
+
+      button.classList.toggle(
+        "active",
+        active
+      );
+
+      button.setAttribute(
+        "aria-selected",
+        String(active)
+      );
+    });
+
+    document.querySelectorAll(
+      "[data-admin-panel]"
+    ).forEach(panel => {
+      const active =
+        panel.dataset.adminPanel ===
+        selectedTab;
+
+      panel.classList.toggle(
+        "active",
+        active
+      );
+
+      panel.hidden = !active;
+    });
+
+    if (selectedTab === "users") {
+      renderTenantUsers();
+    }
+
+    if (selectedTab === "company") {
+      populateTenantCompanyForm();
+    }
+
+    if (selectedTab === "configuration") {
+      populateTenantConfiguration();
+    }
+  }
+
+  // ==========================================================
+  // 24. COMPLETE TENANT SETTINGS RENDER
+  // ==========================================================
+
+  function renderTenantSettings() {
+    populateTenantCompanyForm();
+    populateTenantConfiguration();
+    renderTenantUsers();
+
+    setSettingsTab(
+      activeSettingsTab
+    );
+  }
+
+  // ==========================================================
+  // 25. COMPLETE DASHBOARD RENDER
   // ==========================================================
 
   function renderAll() {
@@ -828,10 +1253,826 @@
     renderTenantDirectory();
     renderTenantDetails();
     renderStatistics();
+    renderTenantSettings();
   }
 
   // ==========================================================
-  // 20. REFRESH DATA
+  // END OF PART 2 OF 4
+  //
+  // PART 3:
+  // - Backend availability
+  // - Secure Edge Function calls
+  // - New Tenant creation
+  // - Tenant updates
+  // - User invitations
+  // - Tenant portal access
+  //
+  // Do not close the IIFE here.
+  // Continue directly with Part 3.
+  // ==========================================================
+
+
+  // ==========================================================
+  // 26. BACKEND CONFIGURATION
+  // ==========================================================
+
+  /*
+   * Protected operations use Supabase Edge Functions.
+   *
+   * Required functions:
+   *
+   * admin-create-tenant
+   * admin-update-tenant
+   * admin-invite-user
+   * admin-open-tenant
+   *
+   * Each function must verify:
+   * - Authenticated user
+   * - Active veynor_admin profile
+   * - Allowed company / tenant
+   * - Requested operation
+   *
+   * Browser-side role checks are not sufficient.
+   */
+
+  function isBackendAvailable() {
+    return Boolean(
+      state.backendReady &&
+      state.adminVerified &&
+      currentUser?.id
+    );
+  }
+
+  // ==========================================================
+  // 27. EDGE FUNCTION HELPER
+  // ==========================================================
+
+  async function invokeAdminFunction(
+    functionName,
+    payload = {}
+  ) {
+    if (!state.adminVerified) {
+      throw new Error(
+        "Super Admin authorization is required."
+      );
+    }
+
+    if (!state.backendReady) {
+      throw new Error(
+        "Administration backend is not configured."
+      );
+    }
+
+    const db = getClient();
+
+    const { data, error } =
+      await db.functions.invoke(
+        functionName,
+        {
+          body: payload
+        }
+      );
+
+    if (error) {
+      throw new Error(
+        error.message ||
+        `Administration function failed: ${functionName}`
+      );
+    }
+
+    if (data?.error) {
+      throw new Error(
+        typeof data.error === "string"
+          ? data.error
+          : "Administration request failed."
+      );
+    }
+
+    return data || {};
+  }
+
+  // ==========================================================
+  // 28. BACKEND AVAILABILITY
+  // ==========================================================
+
+  /*
+   * Backend is disabled by default.
+   *
+   * We do not assume Edge Functions exist merely because
+   * their names are configured.
+   *
+   * This flag will be enabled only after the protected
+   * administration functions have been deployed.
+   */
+
+  async function checkBackendAvailability() {
+    state.backendReady = false;
+
+    updateActionAvailability();
+
+    return false;
+  }
+
+  // ==========================================================
+  // 29. ACTION AVAILABILITY
+  // ==========================================================
+
+  function updateActionAvailability() {
+    const adminReady =
+      state.adminVerified &&
+      state.authenticated;
+
+    const backendReady =
+      adminReady &&
+      isBackendAvailable();
+
+    const tenantSelected =
+      Boolean(getSelectedTenant());
+
+    const canSubmit =
+      backendReady &&
+      !isSubmitting &&
+      !isLoading;
+
+    // New tenant
+    setDisabled(
+      "newTenantBtn",
+      !canSubmit
+    );
+
+    setDisabled(
+      "sideNewTenantBtn",
+      !canSubmit
+    );
+
+    setDisabled(
+      "createTenantSubmitBtn",
+      !canSubmit
+    );
+
+    // Selected tenant
+    setDisabled(
+      "openTenantBtn",
+      !canSubmit || !tenantSelected
+    );
+
+    setDisabled(
+      "tenantSettingsBtn",
+      !adminReady || !tenantSelected
+    );
+
+    // Tenant updates
+    setDisabled(
+      "saveTenantCompanyBtn",
+      !canSubmit || !tenantSelected
+    );
+
+    // User invitations
+    setDisabled(
+      "inviteTenantUserBtn",
+      !canSubmit || !tenantSelected
+    );
+
+    setDisabled(
+      "sendInviteUserBtn",
+      !canSubmit || !tenantSelected
+    );
+
+    // Informational navigation
+    setDisabled(
+      "sideUsersBtn",
+      !adminReady || !tenantSelected
+    );
+
+    setDisabled(
+      "sidePlatformSettingsBtn",
+      !adminReady
+    );
+  }
+
+  // ==========================================================
+  // 30. MODAL HELPERS
+  // ==========================================================
+
+  function openDialog(id) {
+    const dialog = byId(id);
+
+    if (!dialog) {
+      throw new Error(
+        `Dialog not found: ${id}`
+      );
+    }
+
+    if (typeof dialog.showModal !== "function") {
+      throw new Error(
+        "This browser does not support modal dialogs."
+      );
+    }
+
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+  }
+
+  function closeDialog(id) {
+    const dialog = byId(id);
+
+    if (dialog?.open) {
+      dialog.close();
+    }
+  }
+
+  function closeAllDialogs() {
+    [
+      "tenantDialog",
+      "tenantSettingsDialog",
+      "inviteUserDialog",
+      "platformSettingsDialog"
+    ].forEach(closeDialog);
+  }
+
+  // ==========================================================
+  // 31. NEW TENANT DIALOG
+  // ==========================================================
+
+  function openNewTenantDialog() {
+    if (!isBackendAvailable()) {
+      showNotice(
+        "Tenant creation will become available after the administration backend has been configured.",
+        "error"
+      );
+
+      return;
+    }
+
+    const form = byId("tenantForm");
+
+    form?.reset();
+
+    setValue(
+      "newCompanyType",
+      "tenant"
+    );
+
+    setValue(
+      "newCompanyStatus",
+      "true"
+    );
+
+    const defaultSettings =
+      byId("newTenantDefaultSettings");
+
+    const sendInvite =
+      byId("newTenantSendInvite");
+
+    if (defaultSettings) {
+      defaultSettings.checked = true;
+    }
+
+    if (sendInvite) {
+      sendInvite.checked = true;
+    }
+
+    openDialog("tenantDialog");
+  }
+
+  // ==========================================================
+  // 32. VALIDATE NEW TENANT
+  // ==========================================================
+
+  function getNewTenantPayload() {
+    const name =
+      clean(getValue("newCompanyName"));
+
+    const email =
+      clean(getValue("newCompanyEmail"));
+
+    const phone =
+      clean(getValue("newCompanyPhone"));
+
+    const adminName =
+      clean(getValue("newAdminName"));
+
+    const adminEmail =
+      clean(getValue("newAdminEmail"));
+
+    const isActive =
+      getValue("newCompanyStatus") === "true";
+
+    const createDefaultSettings =
+      byId("newTenantDefaultSettings")
+        ?.checked === true;
+
+    const sendInvitation =
+      byId("newTenantSendInvite")
+        ?.checked === true;
+
+    if (!name) {
+      throw new Error(
+        "Company name is required."
+      );
+    }
+
+    if (name.length > 150) {
+      throw new Error(
+        "Company name is too long."
+      );
+    }
+
+    if (email && !isValidEmail(email)) {
+      throw new Error(
+        "Enter a valid company email address."
+      );
+    }
+
+    if (!isValidEmail(adminEmail)) {
+      throw new Error(
+        "Enter a valid administrator email address."
+      );
+    }
+
+    return {
+      company: {
+        name,
+        email: email || null,
+        phone: phone || null,
+        company_type: "tenant",
+        is_active: isActive
+      },
+
+      administrator: {
+        full_name: adminName || null,
+        email: adminEmail,
+        role: "tenant_admin"
+      },
+
+      options: {
+        create_default_settings:
+          createDefaultSettings,
+
+        send_invitation:
+          sendInvitation
+      }
+    };
+  }
+
+  // ==========================================================
+  // 33. CREATE TENANT
+  // ==========================================================
+
+  async function createTenant(event) {
+    event?.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
+
+    try {
+      if (!isBackendAvailable()) {
+        throw new Error(
+          "Tenant creation backend is not available."
+        );
+      }
+
+      const payload =
+        getNewTenantPayload();
+
+      setSubmitting(true);
+
+      showNotice(
+        "Creating the new tenant..."
+      );
+
+      const result =
+        await invokeAdminFunction(
+          CONFIG.functions.createTenant,
+          payload
+        );
+
+      const newTenantId =
+        result.company_id ||
+        result.tenant_id ||
+        result.company?.id ||
+        null;
+
+      if (!newTenantId || !isValidUuid(newTenantId)) {
+        throw new Error(
+          "Tenant creation did not return a valid company ID."
+        );
+      }
+
+      closeDialog("tenantDialog");
+
+      await refreshData();
+
+      selectTenant(newTenantId);
+
+      showNotice(
+        "Tenant created successfully.",
+        "success"
+      );
+
+    } catch (error) {
+      showError(
+        error,
+        "Could not create tenant."
+      );
+
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ==========================================================
+  // 34. TENANT SETTINGS DIALOG
+  // ==========================================================
+
+  function openTenantSettingsDialog(
+    initialTab = "company"
+  ) {
+    const tenant =
+      getSelectedTenant();
+
+    if (!tenant) {
+      showNotice(
+        "Select a tenant first.",
+        "error"
+      );
+
+      return;
+    }
+
+    activeSettingsTab = initialTab;
+
+    renderTenantSettings();
+
+    openDialog(
+      "tenantSettingsDialog"
+    );
+  }
+
+  // ==========================================================
+  // 35. VALIDATE TENANT UPDATE
+  // ==========================================================
+
+  function getTenantUpdatePayload() {
+    const tenant =
+      getSelectedTenant();
+
+    if (!tenant?.id) {
+      throw new Error(
+        "No tenant selected."
+      );
+    }
+
+    const name =
+      clean(getValue("editTenantName"));
+
+    const email =
+      clean(getValue("editTenantEmail"));
+
+    const phone =
+      clean(getValue("editTenantPhone"));
+
+    const isActive =
+      getValue("editTenantStatus") === "true";
+
+    if (!name) {
+      throw new Error(
+        "Company name is required."
+      );
+    }
+
+    if (email && !isValidEmail(email)) {
+      throw new Error(
+        "Enter a valid company email address."
+      );
+    }
+
+    return {
+      company_id: tenant.id,
+
+      changes: {
+        name,
+        email: email || null,
+        phone: phone || null,
+        is_active: isActive
+      }
+    };
+  }
+
+  // ==========================================================
+  // 36. UPDATE TENANT
+  // ==========================================================
+
+  async function updateTenant(event) {
+    event?.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
+
+    try {
+      if (!isBackendAvailable()) {
+        throw new Error(
+          "Tenant update backend is not available."
+        );
+      }
+
+      const payload =
+        getTenantUpdatePayload();
+
+      setSubmitting(true);
+
+      showNotice(
+        "Saving tenant information..."
+      );
+
+      await invokeAdminFunction(
+        CONFIG.functions.updateTenant,
+        payload
+      );
+
+      await refreshData();
+
+      renderTenantSettings();
+
+      showNotice(
+        "Tenant information updated successfully.",
+        "success"
+      );
+
+    } catch (error) {
+      showError(
+        error,
+        "Could not update tenant."
+      );
+
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ==========================================================
+  // 37. USER INVITATION DIALOG
+  // ==========================================================
+
+  function openInviteUserDialog() {
+    const tenant =
+      getSelectedTenant();
+
+    if (!tenant) {
+      showNotice(
+        "Select a tenant first.",
+        "error"
+      );
+
+      return;
+    }
+
+    if (!isBackendAvailable()) {
+      showNotice(
+        "User invitations require the administration backend.",
+        "error"
+      );
+
+      return;
+    }
+
+    byId("inviteUserForm")?.reset();
+
+    setValue(
+      "inviteUserRole",
+      "tenant_user"
+    );
+
+    openDialog(
+      "inviteUserDialog"
+    );
+  }
+
+  // ==========================================================
+  // 38. VALIDATE USER INVITATION
+  // ==========================================================
+
+  function getUserInvitationPayload() {
+    const tenant =
+      getSelectedTenant();
+
+    if (!tenant?.id) {
+      throw new Error(
+        "No tenant selected."
+      );
+    }
+
+    const name =
+      clean(getValue("inviteUserName"));
+
+    const email =
+      clean(getValue("inviteUserEmail"));
+
+    const role =
+      normalize(getValue("inviteUserRole"));
+
+    if (!isValidEmail(email)) {
+      throw new Error(
+        "Enter a valid email address."
+      );
+    }
+
+    if (
+      role !== "tenant_admin" &&
+      role !== "tenant_user"
+    ) {
+      throw new Error(
+        "Invalid tenant user role."
+      );
+    }
+
+    return {
+      company_id: tenant.id,
+      full_name: name || null,
+      email,
+      role
+    };
+  }
+
+  // ==========================================================
+  // 39. INVITE USER
+  // ==========================================================
+
+  async function inviteTenantUser(event) {
+    event?.preventDefault();
+
+    if (isSubmitting) {
+      return;
+    }
+
+    try {
+      if (!isBackendAvailable()) {
+        throw new Error(
+          "User invitation backend is not available."
+        );
+      }
+
+      const payload =
+        getUserInvitationPayload();
+
+      setSubmitting(true);
+
+      showNotice(
+        "Sending user invitation..."
+      );
+
+      await invokeAdminFunction(
+        CONFIG.functions.inviteUser,
+        payload
+      );
+
+      closeDialog(
+        "inviteUserDialog"
+      );
+
+      await refreshData();
+
+      renderTenantUsers();
+
+      showNotice(
+        "User invitation processed successfully.",
+        "success"
+      );
+
+    } catch (error) {
+      showError(
+        error,
+        "Could not invite user."
+      );
+
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ==========================================================
+  // 40. OPEN TENANT PORTAL
+  // ==========================================================
+
+  /*
+   * Tenant portal access must be handled by a protected
+   * server-side authorization process.
+   *
+   * Do not modify the current user's company_id.
+   * Do not rely on a browser-only tenant override.
+   */
+
+  async function openTenantPortal() {
+    const tenant =
+      getSelectedTenant();
+
+    if (!tenant?.id) {
+      showNotice(
+        "Select a tenant first.",
+        "error"
+      );
+
+      return;
+    }
+
+    if (!isBackendAvailable()) {
+      showNotice(
+        "Tenant portal access requires the administration backend.",
+        "error"
+      );
+
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      showNotice(
+        `Preparing access to ${tenant.name}...`
+      );
+
+      const result =
+        await invokeAdminFunction(
+          CONFIG.functions.openTenant,
+          {
+            company_id: tenant.id
+          }
+        );
+
+      const destination =
+        clean(result?.redirect_url);
+
+      if (!destination) {
+        throw new Error(
+          "Tenant access did not return a destination."
+        );
+      }
+
+      // Only permit navigation within this Veynor origin.
+      const target = new URL(
+        destination,
+        window.location.origin
+      );
+
+      if (
+        target.origin !==
+        window.location.origin
+      ) {
+        throw new Error(
+          "External tenant redirects are not allowed."
+        );
+      }
+
+      window.location.assign(
+        target.pathname +
+        target.search +
+        target.hash
+      );
+
+    } catch (error) {
+      showError(
+        error,
+        "Could not open tenant portal."
+      );
+
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ==========================================================
+  // 41. PLATFORM SETTINGS DIALOG
+  // ==========================================================
+
+  function openPlatformSettingsDialog() {
+    renderPlatformOwner();
+
+    openDialog(
+      "platformSettingsDialog"
+    );
+  }
+
+  // ==========================================================
+  // END OF PART 3 OF 4
+  //
+  // PART 4:
+  // - Refresh data
+  // - Modal events
+  // - Button events
+  // - Logout
+  // - Initialization
+  // - Complete file closure
+  //
+  // Do not close the IIFE here.
+  // Continue directly with Part 4.
+  // ==========================================================
+
+
+  // ==========================================================
+  // 42. REFRESH PLATFORM DATA
   // ==========================================================
 
   async function refreshData() {
@@ -848,10 +2089,13 @@
     try {
       await verifyAccess();
 
+      // Load all registered companies.
       await loadCompanies();
+
+      // Load user profiles.
       await loadProfiles();
 
-      // Keep the selected tenant only if it still exists.
+      // Preserve selection if tenant still exists.
       const selectedStillExists = tenants.some(
         tenant =>
           String(tenant.id) ===
@@ -860,35 +2104,40 @@
 
       if (!selectedStillExists) {
         selectedTenantId = null;
+        state.selectedTenant = null;
+      } else {
+        state.selectedTenant =
+          getSelectedTenant();
       }
 
+      state.lastRefreshAt =
+        new Date().toISOString();
+
       renderAll();
+
+      updateActionAvailability();
+
       hideNotice();
 
     } catch (error) {
-      console.error(
-        "[Veynor Admin] Refresh failed:",
-        error
-      );
-
       setText(
         "platformStatus",
         "Issue"
       );
 
-      showNotice(
-        error.message ||
-        "Could not refresh platform information.",
-        "error"
+      showError(
+        error,
+        "Could not refresh platform information."
       );
 
     } finally {
       setLoading(false);
+      updateActionAvailability();
     }
   }
 
   // ==========================================================
-  // 21. LOGOUT
+  // 43. LOGOUT
   // ==========================================================
 
   async function logout() {
@@ -902,6 +2151,7 @@
         throw error;
       }
 
+      // Clear existing Veynor session tracking.
       localStorage.removeItem(
         "veynor_last_activity_at"
       );
@@ -910,81 +2160,40 @@
         "veynor_session_user_id"
       );
 
+      // Clear current Super Admin state.
+      currentUser = null;
+      currentProfile = null;
+
+      state.authenticated = false;
+      state.adminVerified = false;
+
       window.location.replace(
         CONFIG.loginUrl
       );
 
     } catch (error) {
-      console.error(
-        "[Veynor Admin] Logout failed:",
-        error
-      );
-
-      showNotice(
-        "Could not sign out: " +
-        (error.message || "Unknown error"),
-        "error"
+      showError(
+        error,
+        "Could not sign out."
       );
     }
   }
 
   // ==========================================================
-  // 22. PROTECTED ACTIONS
+  // 44. TENANT DIRECTORY EVENTS
   // ==========================================================
 
-  function disableProtectedActions() {
-    const protectedButtons = [
-      "newTenantBtn",
-      "openTenantBtn",
-      "tenantSettingsBtn"
-    ];
-
-    protectedButtons.forEach(id => {
-      const button = byId(id);
-
-      if (!button) {
-        return;
-      }
-
-      button.disabled = true;
-
-      button.title =
-        "Requires secure server-side tenant authorization.";
-    });
-  }
-
-  // ==========================================================
-  // 23. EVENT HANDLERS
-  // ==========================================================
-
-  function bindEvents() {
-    // Refresh platform data
-    byId("refreshBtn")?.addEventListener(
-      "click",
-      refreshData
+  function bindTenantDirectoryEvents() {
+    const tenantRows = byId(
+      "tenantRows"
     );
 
-    // Sign out
-    byId("logoutBtn")?.addEventListener(
-      "click",
-      logout
-    );
+    if (!tenantRows) {
+      return;
+    }
 
-    // Search tenants
-    byId("tenantSearch")?.addEventListener(
-      "input",
-      () => {
-        clearTimeout(searchTimer);
-
-        searchTimer = setTimeout(
-          renderTenantDirectory,
-          CONFIG.searchDebounceMs
-        );
-      }
-    );
-
-    // Select tenant by mouse
-    byId("tenantRows")?.addEventListener(
+    // Select tenant by mouse.
+    tenantRows.addEventListener(
       "click",
       event => {
         const row = event.target.closest(
@@ -995,12 +2204,14 @@
           return;
         }
 
-        selectTenant(row.dataset.id);
+        selectTenant(
+          row.dataset.id
+        );
       }
     );
 
-    // Select tenant by keyboard
-    byId("tenantRows")?.addEventListener(
+    // Select tenant by keyboard.
+    tenantRows.addEventListener(
       "keydown",
       event => {
         if (
@@ -1020,56 +2231,332 @@
 
         event.preventDefault();
 
-        selectTenant(row.dataset.id);
-      }
-    );
-
-    // Close tenant dialog
-    byId("closeDialog")?.addEventListener(
-      "click",
-      () => {
-        byId("tenantDialog")?.close();
-      }
-    );
-
-    // Tenant creation placeholder
-    byId("tenantForm")?.addEventListener(
-      "submit",
-      event => {
-        event.preventDefault();
-
-        showNotice(
-          "Tenant creation is not configured yet.",
-          "error"
+        selectTenant(
+          row.dataset.id
         );
       }
     );
   }
 
   // ==========================================================
-  // 24. INITIALIZATION
+  // 45. SEARCH EVENTS
+  // ==========================================================
+
+  function bindSearchEvents() {
+    const search = byId(
+      "tenantSearch"
+    );
+
+    if (!search) {
+      return;
+    }
+
+    search.addEventListener(
+      "input",
+      () => {
+        clearTimeout(
+          searchTimer
+        );
+
+        searchTimer = setTimeout(
+          () => {
+            renderTenantDirectory();
+          },
+          CONFIG.searchDebounceMs
+        );
+      }
+    );
+  }
+
+  // ==========================================================
+  // 46. MAIN BUTTON EVENTS
+  // ==========================================================
+
+  function bindMainButtonEvents() {
+    // Refresh platform information.
+    byId("refreshBtn")?.addEventListener(
+      "click",
+      refreshData
+    );
+
+    // Sign out.
+    byId("logoutBtn")?.addEventListener(
+      "click",
+      logout
+    );
+
+    // Create new tenant.
+    byId("newTenantBtn")?.addEventListener(
+      "click",
+      openNewTenantDialog
+    );
+
+    // Open selected tenant portal.
+    byId("openTenantBtn")?.addEventListener(
+      "click",
+      openTenantPortal
+    );
+
+    // Open selected tenant settings.
+    byId("tenantSettingsBtn")?.addEventListener(
+      "click",
+      () => {
+        openTenantSettingsDialog(
+          "company"
+        );
+      }
+    );
+  }
+
+  // ==========================================================
+  // 47. SIDEBAR EVENTS
+  // ==========================================================
+
+  function bindSidebarEvents() {
+    // New Tenant.
+    byId("sideNewTenantBtn")?.addEventListener(
+      "click",
+      openNewTenantDialog
+    );
+
+    // User Management.
+    byId("sideUsersBtn")?.addEventListener(
+      "click",
+      () => {
+        openTenantSettingsDialog(
+          "users"
+        );
+      }
+    );
+
+    // Platform Settings.
+    byId("sidePlatformSettingsBtn")
+      ?.addEventListener(
+        "click",
+        openPlatformSettingsDialog
+      );
+  }
+
+  // ==========================================================
+  // 48. NEW TENANT MODAL EVENTS
+  // ==========================================================
+
+  function bindNewTenantEvents() {
+    // Submit tenant creation.
+    byId("tenantForm")?.addEventListener(
+      "submit",
+      createTenant
+    );
+
+    // Close buttons.
+    [
+      "closeDialog",
+      "cancelNewTenantBtn"
+    ].forEach(id => {
+      byId(id)?.addEventListener(
+        "click",
+        () => {
+          closeDialog(
+            "tenantDialog"
+          );
+        }
+      );
+    });
+  }
+
+  // ==========================================================
+  // 49. TENANT SETTINGS EVENTS
+  // ==========================================================
+
+  function bindTenantSettingsEvents() {
+    // Save company changes.
+    byId("tenantCompanyForm")
+      ?.addEventListener(
+        "submit",
+        updateTenant
+      );
+
+    // Settings tabs.
+    document.querySelectorAll(
+      "[data-admin-tab]"
+    ).forEach(button => {
+      button.addEventListener(
+        "click",
+        () => {
+          setSettingsTab(
+            button.dataset.adminTab
+          );
+        }
+      );
+    });
+
+    // Open user invitation.
+    byId("inviteTenantUserBtn")
+      ?.addEventListener(
+        "click",
+        openInviteUserDialog
+      );
+
+    // Close tenant settings.
+    [
+      "closeTenantSettingsBtn",
+      "doneTenantSettingsBtn"
+    ].forEach(id => {
+      byId(id)?.addEventListener(
+        "click",
+        () => {
+          closeDialog(
+            "tenantSettingsDialog"
+          );
+        }
+      );
+    });
+  }
+
+  // ==========================================================
+  // 50. USER INVITATION EVENTS
+  // ==========================================================
+
+  function bindUserInvitationEvents() {
+    // Submit invitation.
+    byId("inviteUserForm")
+      ?.addEventListener(
+        "submit",
+        inviteTenantUser
+      );
+
+    // Close invitation dialog.
+    [
+      "closeInviteUserBtn",
+      "cancelInviteUserBtn"
+    ].forEach(id => {
+      byId(id)?.addEventListener(
+        "click",
+        () => {
+          closeDialog(
+            "inviteUserDialog"
+          );
+        }
+      );
+    });
+  }
+
+  // ==========================================================
+  // 51. PLATFORM SETTINGS EVENTS
+  // ==========================================================
+
+  function bindPlatformSettingsEvents() {
+    [
+      "closePlatformSettingsBtn",
+      "donePlatformSettingsBtn"
+    ].forEach(id => {
+      byId(id)?.addEventListener(
+        "click",
+        () => {
+          closeDialog(
+            "platformSettingsDialog"
+          );
+        }
+      );
+    });
+  }
+
+  // ==========================================================
+  // 52. MODAL KEYBOARD EVENTS
+  // ==========================================================
+
+  function bindModalKeyboardEvents() {
+    [
+      "tenantDialog",
+      "tenantSettingsDialog",
+      "inviteUserDialog",
+      "platformSettingsDialog"
+    ].forEach(id => {
+      const dialog = byId(id);
+
+      if (!dialog) {
+        return;
+      }
+
+      dialog.addEventListener(
+        "close",
+        () => {
+          // Restore available actions after closing.
+          updateActionAvailability();
+        }
+      );
+    });
+  }
+
+  // ==========================================================
+  // 53. ALL EVENT HANDLERS
+  // ==========================================================
+
+  function bindEvents() {
+    bindTenantDirectoryEvents();
+    bindSearchEvents();
+
+    bindMainButtonEvents();
+    bindSidebarEvents();
+
+    bindNewTenantEvents();
+    bindTenantSettingsEvents();
+
+    bindUserInvitationEvents();
+    bindPlatformSettingsEvents();
+
+    bindModalKeyboardEvents();
+  }
+
+  // ==========================================================
+  // 54. INITIALIZATION
   // ==========================================================
 
   async function init() {
-    try {
-      // Prevent tenant modification until backend is ready.
-      disableProtectedActions();
+    if (state.initialized) {
+      return;
+    }
 
-      // Register UI event handlers.
+    state.initialized = true;
+
+    try {
+      // Keep protected operations disabled initially.
+      state.backendReady = false;
+
+      // Register all UI events.
       bindEvents();
 
-      // Authenticate and verify Super Admin.
+      // Verify existing Veynor login.
       await verifyAccess();
 
-      // Show the page only after access is verified.
+      // Unlock the administration interface.
       unlockPage();
 
-      // Load platform and tenant information.
+      // Load Platform Owner and tenant data.
       await refreshData();
+
+      // Check whether protected backend is configured.
+      await checkBackendAvailability();
+
+      // Update button states.
+      updateActionAvailability();
+
+      console.info(
+        "[Veynor Super Admin] Initialized",
+        {
+          version: CONFIG.version,
+          platformOwners:
+            platformOwners.length,
+          operationalTenants:
+            tenants.length,
+          backendReady:
+            state.backendReady
+        }
+      );
 
     } catch (error) {
       console.error(
-        "[Veynor Admin] Access failed:",
+        "[Veynor Super Admin] Initialization failed:",
         error
       );
 
@@ -1079,14 +2566,14 @@
       }
 
       blockPage(
-        error.message ||
+        error?.message ||
         "Administrator access could not be verified."
       );
     }
   }
 
   // ==========================================================
-  // 25. START
+  // 55. START
   // ==========================================================
 
   if (document.readyState === "loading") {
@@ -1100,3 +2587,6 @@
   }
 
 })();
+
+
+
