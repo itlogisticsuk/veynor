@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const GEOCODE_FUNCTION_NAME = "super-endpoint";
   const CANCELLED_ALLOCATION_STATUS = "cancelled";
 
@@ -220,30 +219,70 @@ function formatNumber(value, digits = 0) {
    * COMPANY / ADDRESS
    * ======================================================= */
 
-  async function getCompanyId() {
-    if (companyId) {
-      return companyId;
-    }
 
-    const { data, error } = await client
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
+async function getCompanyId() {
+  if (!client) {
+    if (typeof sb !== "function") {
       throw new Error(
-        `Company "${TENANT_NAME}" not found.`
+        "Supabase client is not available."
       );
     }
 
-    companyId = data.id;
-    return companyId;
+    client = sb();
   }
+
+  // Controleer de ingelogde gebruiker.
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error(
+      "No authenticated user found."
+    );
+  }
+
+  // Zoek het actieve gebruikersprofiel.
+  const { data: profiles, error: profileError } =
+    await client
+      .from("user_profiles")
+      .select("id, company_id, is_active")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+  if (profileError) throw profileError;
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active user profile."
+    );
+  }
+
+  const activeCompanyId = profiles[0].company_id;
+
+  if (!activeCompanyId) {
+    throw new Error(
+      "No tenant is assigned to this account."
+    );
+  }
+
+  // Voorkom wisselen van tenant met oude paginagegevens.
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
 
   function hasCoordinates(order) {
     const latitude = Number(

@@ -1,8 +1,9 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-  const VAT_RATE = 0.20;
+let billingCompany = null;
+let billingSettings = {};
+let billingVatRate = null;
 
   let client = null;
   let companyId = null;
@@ -163,28 +164,136 @@ let invoiceSnapshots = new Map();
     companyId = currentProfile.company_id || null;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
-
-    if (currentProfile?.company_id) {
-      companyId = currentProfile.company_id;
-      return companyId;
-    }
-
-    const db = ensureClient();
-
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
+async function getCompanyId() {
+  if (companyId) {
     return companyId;
   }
+
+  if (!currentProfile) {
+    await loadProfile();
+  }
+
+  const tenantId = currentProfile?.company_id;
+
+  if (!tenantId) {
+    throw new Error(
+      "No tenant is assigned to the current user."
+    );
+  }
+
+  companyId = tenantId;
+
+  return companyId;
+}
+
+async function loadBillingTenantSettings() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const [companyResult, settingsResult] =
+    await Promise.all([
+      db
+        .from("companies")
+        .select("id, name")
+        .eq("id", cid)
+        .single(),
+
+      db
+        .from("settings")
+        .select("setting_key, setting_value")
+        .eq("company_id", cid)
+    ]);
+
+  if (companyResult.error) {
+    throw companyResult.error;
+  }
+
+  if (settingsResult.error) {
+    throw settingsResult.error;
+  }
+
+  billingSettings = Object.fromEntries(
+    (settingsResult.data || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  const getSetting = key =>
+    String(billingSettings[key] ?? "").trim();
+
+  const companyName =
+    getSetting("main_company_name") ||
+    companyResult.data?.name ||
+    "";
+
+  if (!companyName) {
+    throw new Error(
+      "Tenant company name is missing."
+    );
+  }
+
+  billingCompany = {
+    id: cid,
+    name: companyName,
+
+    displayName:
+      getSetting("main_display_name") ||
+      companyName,
+
+    address:
+      getSetting("main_address"),
+
+    phone:
+      getSetting("main_phone"),
+
+    email:
+      getSetting("main_email"),
+
+    vat:
+      getSetting("main_vat")
+  };
+
+  const rawVatRate =
+    getSetting("doc_vat_rate");
+
+  if (!rawVatRate) {
+    throw new Error(
+      "VAT rate is missing in Tenant Settings."
+    );
+  }
+
+  const rate = Number(
+    rawVatRate.replace(",", ".")
+  );
+
+  if (
+    !Number.isFinite(rate) ||
+    rate < 0 ||
+    rate > 1
+  ) {
+    throw new Error(
+      "Invalid VAT rate. Use a decimal such as 0.20."
+    );
+  }
+
+  billingVatRate = rate;
+
+  return billingCompany;
+}
+
+function getBillingVatRate() {
+  if (
+    billingVatRate === null ||
+    !Number.isFinite(billingVatRate)
+  ) {
+    throw new Error(
+      "Billing VAT settings have not been loaded."
+    );
+  }
+
+  return billingVatRate;
+}
 
   function role() {
     return normalize(currentProfile?.role || "");
@@ -294,10 +403,14 @@ let invoiceSnapshots = new Map();
    Final snapshots + historical fallback
    ========================================================== */
 
-function calculateOrderRevenue(order, invoiceId = null) {
-  const snapshotKey = invoiceId && order?.id
-    ? `${invoiceId}:${order.id}`
-    : null;
+function calculateOrderRevenue(
+  order,
+  invoiceId = null
+) {
+  const snapshotKey =
+    invoiceId && order?.id
+      ? `${invoiceId}:${order.id}`
+      : null;
 
   const snapshot = snapshotKey
     ? invoiceSnapshots.get(snapshotKey)
@@ -329,7 +442,10 @@ function calculateOrderRevenue(order, invoiceId = null) {
     );
 
     const minimum = round2(
-      toNumber(snapshot.minimum_delivery_charge_amount, 0)
+      toNumber(
+        snapshot.minimum_delivery_charge_amount,
+        0
+      )
     );
 
     return {
@@ -338,7 +454,10 @@ function calculateOrderRevenue(order, invoiceId = null) {
       admin: 0,
 
       transport: round2(
-        transportBase + regional + fuel + minimum
+        transportBase +
+        regional +
+        fuel +
+        minimum
       ),
 
       net: round2(snapshot.subtotal_ex_vat),
@@ -356,7 +475,8 @@ function calculateOrderRevenue(order, invoiceId = null) {
     };
   }
 
-  // Historical invoices: preserve existing order tariffs.
+  // Historical invoices: retain stored tariffs.
+
   const pick = round2(
     toNumber(order?.total_handling_tariff, 0)
   );
@@ -377,7 +497,9 @@ function calculateOrderRevenue(order, invoiceId = null) {
     pick + warehouse + admin + transport
   );
 
-  const vat = round2(net * VAT_RATE);
+  const vat = round2(
+    net * getBillingVatRate()
+  );
 
   return {
     pick,
@@ -387,8 +509,10 @@ function calculateOrderRevenue(order, invoiceId = null) {
     net,
     vat,
     gross: round2(net + vat),
+
     colli,
     volume,
+
     hasSnapshot: false,
     transportBase: transport,
     regional: 0,
@@ -1123,6 +1247,9 @@ async function loadBilling() {
   ensureClient();
 
   await getCompanyId();
+
+  await loadBillingTenantSettings();
+
   await loadCustomers();
 
   await Promise.all([
@@ -1138,11 +1265,15 @@ async function loadBilling() {
   await loadOrdersForDocuments();
 
   buildBillingRows();
+
   applyFilters(false);
   sortInvoices();
   renderAll();
 
-  showToast("Billing refreshed.", "ok");
+  showToast(
+    "Billing refreshed.",
+    "ok"
+  );
 }
 
   function getSearchText(invoice) {
@@ -1630,7 +1761,10 @@ const internalCellsHtml = "";
 
   async function markInvoiceSent(invoice) {
     if (!isTenantRole()) {
-      showToast("Only Sofa2U users can update invoice status.", "err");
+      showToast(
+  "Only authorised tenant users can update invoice status.",
+  "err"
+);
       return;
     }
 
@@ -1687,7 +1821,10 @@ const internalCellsHtml = "";
 
   async function markInvoicePaid(invoice) {
     if (!isTenantRole()) {
-      showToast("Only Sofa2U users can update invoice status.", "err");
+      showToast(
+  "Only authorised tenant users can update invoice status.",
+  "err"
+);
       return;
     }
 
@@ -1785,17 +1922,20 @@ function addBillingPdfHeader(
   title,
   subtitle = ""
 ) {
+  if (!billingCompany) {
+    throw new Error(
+      "Tenant company details have not been loaded."
+    );
+  }
+
+  const company = billingCompany;
+
   doc.setTextColor(34, 34, 34);
-
-  doc.setFont(
-    "helvetica",
-    "bold"
-  );
-
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
 
   doc.text(
-    "Sofa2U Ltd",
+    company.displayName,
     14,
     18
   );
@@ -1803,70 +1943,84 @@ function addBillingPdfHeader(
   doc.setFontSize(14);
 
   doc.text(
-    title,
+    String(title || ""),
     196,
     18,
-    {
-      align: "right"
-    }
+    { align: "right" }
   );
 
-  doc.setFont(
-    "helvetica",
-    "normal"
-  );
-
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
 
-  doc.text(
-    "860-862 Garratt Lane, London, SW17 0NB",
-    14,
-    25
-  );
+  const address = company.address || "";
 
-  doc.text(
-    "Phone +44 (0) 7894 469947   Email sales@sofa2u.co.uk",
-    14,
-    30
-  );
+  const contact = [
+    company.phone
+      ? `Phone ${company.phone}`
+      : "",
 
-  doc.text(
-    "VAT No GB 368 665 249",
-    14,
-    35
-  );
+    company.email
+      ? `Email ${company.email}`
+      : ""
+  ].filter(Boolean).join("   ");
+
+  const vat = company.vat
+    ? `VAT No ${company.vat}`
+    : "";
+
+  if (address) {
+    doc.text(
+      doc.splitTextToSize(address, 110).slice(0, 2),
+      14,
+      25
+    );
+  }
+
+  if (contact) {
+    doc.text(
+      doc.splitTextToSize(contact, 110).slice(0, 1),
+      14,
+      30
+    );
+  }
+
+  if (vat) {
+    doc.text(vat, 14, 35);
+  }
 
   if (subtitle) {
     doc.setFontSize(8);
 
     doc.text(
-      subtitle,
+      doc.splitTextToSize(
+        String(subtitle),
+        75
+      ).slice(0, 2),
       196,
       26,
-      {
-        align: "right"
-      }
+      { align: "right" }
     );
   }
 
-  doc.setDrawColor(
-    200,
-    200,
-    200
-  );
-
-  doc.line(
-    14,
-    41,
-    196,
-    41
-  );
+  doc.setDrawColor(200, 200, 200);
+  doc.line(14, 41, 196, 41);
 }
 
-
 function addBillingPdfFooter(doc) {
-  const pageCount =
-    doc.getNumberOfPages();
+  if (!billingCompany) {
+    throw new Error(
+      "Tenant company details have not been loaded."
+    );
+  }
+
+  const company = billingCompany;
+
+  const footerText = [
+    company.displayName,
+    company.address
+  ].filter(Boolean).join(" · ");
+
+  const pageCount = doc.getNumberOfPages();
 
   for (
     let page = 1;
@@ -1875,11 +2029,7 @@ function addBillingPdfFooter(doc) {
   ) {
     doc.setPage(page);
 
-    doc.setDrawColor(
-      190,
-      190,
-      190
-    );
+    doc.setDrawColor(190, 190, 190);
 
     doc.line(
       14,
@@ -1888,39 +2038,28 @@ function addBillingPdfFooter(doc) {
       277
     );
 
-    doc.setFont(
-      "helvetica",
-      "normal"
-    );
-
+    doc.setFont("helvetica", "normal");
     doc.setFontSize(7);
 
-    doc.setTextColor(
-      90,
-      90,
-      90
-    );
+    doc.setTextColor(90, 90, 90);
 
     doc.text(
-      "Sofa2U Ltd · 860-862 Garratt Lane, London, SW17 0NB",
-      105,
-      282,
-      {
-        align: "center"
-      }
+      doc.splitTextToSize(
+        footerText,
+        140
+      ).slice(0, 1),
+      14,
+      282
     );
 
     doc.text(
       `Page ${page} of ${pageCount}`,
       196,
       282,
-      {
-        align: "right"
-      }
+      { align: "right" }
     );
   }
 }
-
 
 function getBillingPdfTotals(invoices) {
   let totals =

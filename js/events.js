@@ -20,61 +20,152 @@ function toast(msg,type="ok"){
 
 }
 
-async function loadEvents(){
 
-  const client = sb()
+async function getActiveTenantId(client) {
+  const { data: auth, error: authError } =
+    await client.auth.getUser();
 
-  const {data,error} = await client
-  .from("warehouse_events")
-  .select("*")
-  .order("created_at",{ascending:false})
-  .limit(200)
+  if (authError) throw authError;
 
-  if(error){
-    toast(error.message,"error")
-    return
+  const userId = auth?.user?.id;
+
+  if (!userId) {
+    throw new Error(
+      "Cannot load warehouse events: user is not authenticated."
+    );
   }
 
-  renderEvents(data)
+  const { data: profiles, error } = await client
+    .from("user_profiles")
+    .select("company_id")
+    .eq("auth_user_id", userId)
+    .eq("is_active", true);
 
+  if (error) throw error;
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Cannot determine a unique active tenant."
+    );
+  }
+
+  if (!profiles[0].company_id) {
+    throw new Error(
+      "Active user profile has no company_id."
+    );
+  }
+
+  return profiles[0].company_id;
 }
 
-function renderEvents(rows){
 
-  const tbody = byId("eventsBody")
-  tbody.innerHTML=""
 
-  rows.forEach(row=>{
+async function loadEvents() {
+  try {
+    const client = sb();
+    const companyId = await getActiveTenantId(client);
 
-    const tr=document.createElement("tr")
+    const { data, error } = await client
+      .from("warehouse_events")
+      .select("*")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .limit(200);
 
-    const time = new Date(row.created_at).toLocaleString()
+    if (error) throw error;
 
-    tr.innerHTML = `
-    <td>${time}</td>
-    <td>${row.event_type}</td>
-    <td>${row.entity_type}</td>
-  <td>
-  ${row.reference_no ?? "-"}
-  ${
-    row.payload?.order_number
-      ? `<span class="subline">Order: ${row.payload.order_number}</span>`
-      : ""
+    const rows = (data || []).filter(
+      row => row.company_id === companyId
+    );
+
+    renderEvents(rows);
+
+  } catch (error) {
+    console.error(
+      "Warehouse events load failed:",
+      error
+    );
+
+    renderEvents([]);
+
+    toast(
+      error.message || "Could not load warehouse events.",
+      "error"
+    );
   }
-  ${
-    row.payload?.supplier_reference || row.payload?.external_reference
-      ? `<span class="subline">Supplier Ref: ${row.payload.supplier_reference || row.payload.external_reference}</span>`
-      : ""
-  }
-</td>
-    <td>${row.source_module ?? "-"}</td>
-    <td>${row.old_status ?? ""} → ${row.new_status ?? ""}</td>
-    `
+}
 
-    tbody.appendChild(tr)
 
-  })
 
+function renderEvents(rows) {
+  const tbody = byId("eventsBody");
+
+  if (!tbody) return;
+
+  tbody.replaceChildren();
+
+  const createCell = (tr, value) => {
+    const td = document.createElement("td");
+    td.textContent = String(value ?? "");
+    tr.appendChild(td);
+    return td;
+  };
+
+  const addSubline = (cell, label, value) => {
+    if (!value) return;
+
+    const span = document.createElement("span");
+    span.className = "subline";
+    span.textContent = `${label}: ${value}`;
+    cell.appendChild(span);
+  };
+
+  (rows || []).forEach(row => {
+    const tr = document.createElement("tr");
+
+    const date = row.created_at
+      ? new Date(row.created_at)
+      : null;
+
+    const time =
+      date && !Number.isNaN(date.getTime())
+        ? date.toLocaleString("en-GB")
+        : "—";
+
+    createCell(tr, time);
+    createCell(tr, row.event_type || "—");
+    createCell(tr, row.entity_type || "—");
+
+    const referenceCell = createCell(
+      tr,
+      row.reference_no || "—"
+    );
+
+    addSubline(
+      referenceCell,
+      "Order",
+      row.payload?.order_number
+    );
+
+    addSubline(
+      referenceCell,
+      "Supplier Ref",
+      row.payload?.supplier_reference ||
+        row.payload?.external_reference
+    );
+
+    createCell(
+      tr,
+      row.source_module || "—"
+    );
+
+    createCell(
+      tr,
+      `${row.old_status || ""} → ${row.new_status || ""}`
+    );
+
+    tbody.appendChild(tr);
+  });
 }
 
 function init(){

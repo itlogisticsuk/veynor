@@ -100,12 +100,17 @@ warehouse_storage_per_m3_gbp: "0.00",
 warehouse_repack_per_colli_gbp: "0.00",
 warehouse_qc_per_colli_gbp: "0.00",
 
-    home_depot_name: "",
-    home_depot_postcode: "",
-    home_depot_city: "",
-    home_depot_country: "United Kingdom",
-    home_depot_lat: "",
-    home_depot_lng: "",
+
+home_depot_name: "",
+home_depot_address_1: "",
+home_depot_address_2: "",
+home_depot_postcode: "",
+home_depot_city: "",
+home_depot_country: "United Kingdom",
+home_depot_lat: "",
+home_depot_lng: "",
+home_depot_pickup_instructions: "",
+home_depot_pickup_pdf_path: "",
     average_speed_kmh: "50",
 stop_time_minutes: "15",
 unloading_time_mode: "fixed",
@@ -1213,6 +1218,57 @@ async function saveSettingsByIds(
 
     return "png";
   }
+
+
+function getSelectedDepotPdfFile() {
+  const input = byId("home_depot_pickup_pdf_file");
+  return input?.files?.[0] || null;
+}
+
+async function uploadDepotPdfIfSelected() {
+  const file = getSelectedDepotPdfFile();
+
+  if (!file) return null;
+
+  const isPdf =
+    file.type === "application/pdf" ||
+    file.name.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf) {
+    throw new Error("Only PDF files are allowed.");
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    throw new Error("PDF must not exceed 10 MB.");
+  }
+
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  const path =
+    `${cid}/depot/collection-instructions-${crypto.randomUUID()}.pdf`;
+
+  const { error: uploadError } = await db.storage
+    .from(COMPANY_ASSETS_BUCKET)
+    .upload(path, file, {
+      contentType: "application/pdf",
+      cacheControl: "3600",
+      upsert: false
+    });
+
+  if (uploadError) throw uploadError;
+
+  const confirmedCid = await getCompanyId();
+
+  if (confirmedCid !== cid) {
+    throw new Error("Active tenant changed during upload.");
+  }
+
+  setFieldValue("home_depot_pickup_pdf_path", path);
+
+  return path;
+}
+
 
   function getSelectedLogoFile() {
     const input = byId("main_logo_file");
@@ -2476,10 +2532,8 @@ use_in_planning: active
       company_id: cid,
       name: getFieldValue("newVehicleName"),
       vehicle_code: getFieldValue("newVehicleCode"),
-     vehicle_type: getFieldValue("newVehicleType", "van"),
 vehicle_type: getFieldValue("newVehicleType", "van"),
 registration: getFieldValue("newVehicleRegistration"),
-      registration: getFieldValue("newVehicleRegistration"),
 
       driver_user_id: newDriverUserId || null,
       default_driver_profile_id: newDriverUserId || null,
@@ -4522,16 +4576,26 @@ byId("owner_logo_file")?.addEventListener("change", previewSelectedOwnerLogoFile
       }
     });
 
+
 byId("btnSaveTransport")?.addEventListener("click", async () => {
+  const button = byId("btnSaveTransport");
+
   try {
-    // Controleer eerst de nieuwe lostijdinstellingen.
+    if (button) button.disabled = true;
+
     validateUnloadingSettings();
 
-    // Sla alle transportinstellingen op in Supabase.
+    const uploadedPath = await uploadDepotPdfIfSelected();
+
     await saveSettingsByIds(
       collectFieldsInside("tab-transport"),
-      "Transport and unloading settings saved."
+      "Transport and depot settings saved."
     );
+
+    if (uploadedPath) {
+      const input = byId("home_depot_pickup_pdf_file");
+      if (input) input.value = "";
+    }
 
   } catch (error) {
     console.error("Transport settings error:", error);
@@ -4540,6 +4604,8 @@ byId("btnSaveTransport")?.addEventListener("click", async () => {
       error.message || "Could not save transport settings.",
       "err"
     );
+  } finally {
+    if (button) button.disabled = false;
   }
 });
 
@@ -4603,16 +4669,31 @@ byId("btnSavePricing")?.addEventListener("click", async () => {
       }
     });
 
-    byId("btnResetDefaults")?.addEventListener("click", () => {
-      Object.entries(DEFAULT_SETTINGS).forEach(([key, value]) => {
-        setFieldValue(key, value);
-      });
 
-      renderLogoPreview();
-updateSalesOrderPreview();
-updateSummary();
-      showToast("Default values loaded.", "ok");
-    });
+byId("btnResetDefaults")?.addEventListener("click", () => {
+  const confirmed = window.confirm(
+    "Load default transport settings? Unsaved transport changes will be discarded."
+  );
+
+  if (!confirmed) return;
+
+  collectFieldsInside("tab-transport").forEach(id => {
+    if (Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS, id)) {
+      setFieldValue(id, DEFAULT_SETTINGS[id]);
+    }
+  });
+
+  updateSummary();
+
+  if (typeof window.updateUnloadingPreview === "function") {
+    window.updateUnloadingPreview();
+  }
+
+  showToast(
+    "Default transport values loaded. Save to apply.",
+    "ok"
+  );
+});
 
     byId("btnAddOwnerProfile")?.addEventListener("click", async () => {
       try {
@@ -4680,23 +4761,26 @@ byId("btnRefreshPortalUsers")?.addEventListener("click", async () => {
 });
 
 
-    byId("btnResetNewVehicle")?.addEventListener("click", () => {
-      [
-        "newVehicleName",
-        "newVehicleCode",
-        "newVehicleRegistration",
-        "newVehicleDriverUserId",
-        "newVehicleDriverEmail",
-        "newVehicleMaxVolume",
-        "newVehicleMaxStops",
-        "newVehicleMaxHours",
-        "newVehicleAverageSpeed",
-        "newVehicleCostPerMile",
-        "newVehicleLabourPerHour"
-      ].forEach(id => setFieldValue(id, ""));
 
-      setFieldValue("newVehicleType", "van");
-    });
+byId("btnResetNewVehicle")?.addEventListener("click", () => {
+  [
+    "newVehicleName",
+    "newVehicleCode",
+    "newVehicleRegistration",
+    "newVehicleDriverUserId",
+    "newVehicleDriverEmail",
+    "newVehicleMaxVolume",
+    "newVehicleMaxStops",
+    "newVehicleMaxHours",
+    "newVehicleAverageSpeed",
+    "newVehicleCostPerHour",
+    "newVehicleFuelLitresPer100km",
+    "newVehicleLabourPerHour"
+  ].forEach(id => setFieldValue(id, ""));
+
+  setFieldValue("newVehicleType", "van");
+});
+
 
     byId("btnRefreshShops")?.addEventListener("click", loadShops);
 

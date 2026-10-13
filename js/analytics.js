@@ -1,18 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-
-const DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT = 8.5;
-const DEFAULT_FDS_FUEL_SURCHARGE_PCT = 8.0;
-
-/*
- * Interne operationele pickingkosten.
- * Bellstone wordt volgens het producttarief gefactureerd,
- * maar intern rekenen we £2 per besteld product.
- */
-const DEFAULT_PICKING_COST_PER_PRODUCT_GBP = 2.0;
-
 let client = null;
 let companyId = null;
 let charts = {};
@@ -201,21 +189,54 @@ let fdsDraftAllocations = new Map();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
+async function getCompanyId() {
+  if (companyId) return companyId;
 
-    const { data, error } = await ensureClient()
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
+  const db = ensureClient();
+
+  const { data: userData, error: userError } =
+    await db.auth.getUser();
+
+  if (userError) throw userError;
+
+  const userId = userData?.user?.id;
+
+  if (!userId) {
+    throw new Error("User is not authenticated.");
+  }
+
+  let { data: profile, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select("id, auth_user_id, company_id, is_active")
+      .eq("auth_user_id", userId)
+      .eq("is_active", true)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+  if (!profile && !profileError) {
+    const result = await db
+      .from("user_profiles")
+      .select("id, auth_user_id, company_id, is_active")
+      .eq("id", userId)
+      .eq("is_active", true)
+      .maybeSingle();
 
-    companyId = data.id;
-    return companyId;
+    profile = result.data;
+    profileError = result.error;
   }
+
+  if (profileError) throw profileError;
+
+  if (!profile?.company_id) {
+    throw new Error(
+      "No active tenant is assigned to this user."
+    );
+  }
+
+  companyId = profile.company_id;
+
+  return companyId;
+}
 
   async function loadData() {
     const db = ensureClient();
@@ -460,32 +481,81 @@ function orderTransportBaseRevenue(order) {
   );
 }
 
+
 function bellstoneFuelSurchargePct(order) {
-  return Math.max(
-    toNumber(
-      order?.transport_fuel_surcharge_pct,
-      0
-    ),
-    toNumber(
-      state.settings.transport_fuel_surcharge_pct,
-      0
-    ),
-    DEFAULT_BELLSTONE_FUEL_SURCHARGE_PCT
-  );
+  const enabledSetting =
+    state.settings.fuel_surcharge_enabled;
+
+  const enabled =
+    enabledSetting === true ||
+    String(enabledSetting).toLowerCase() === "true";
+
+  if (!enabled) {
+    return 0;
+  }
+
+  const orderRate =
+    order?.transport_fuel_surcharge_pct;
+
+  if (
+    orderRate !== null &&
+    orderRate !== undefined &&
+    orderRate !== ""
+  ) {
+    return Math.max(
+      0,
+      toNumber(orderRate, 0)
+    );
+  }
+
+  const settingRate =
+    state.settings.fuel_surcharge_percent;
+
+  if (
+    settingRate !== null &&
+    settingRate !== undefined &&
+    settingRate !== ""
+  ) {
+    return Math.max(
+      0,
+      toNumber(settingRate, 0)
+    );
+  }
+
+  return 0;
 }
 
+
 function fdsFuelSurchargePct(order) {
-  return Math.max(
-    toNumber(
-      order?.fds_fuel_surcharge_pct,
-      0
-    ),
-    toNumber(
-      state.settings.fds_fuel_surcharge_pct,
-      0
-    ),
-    DEFAULT_FDS_FUEL_SURCHARGE_PCT
-  );
+  const orderRate =
+    order?.fds_fuel_surcharge_pct;
+
+  if (
+    orderRate !== null &&
+    orderRate !== undefined &&
+    orderRate !== ""
+  ) {
+    return Math.max(
+      0,
+      toNumber(orderRate, 0)
+    );
+  }
+
+  const settingRate =
+    state.settings.fds_fuel_surcharge_pct;
+
+  if (
+    settingRate !== null &&
+    settingRate !== undefined &&
+    settingRate !== ""
+  ) {
+    return Math.max(
+      0,
+      toNumber(settingRate, 0)
+    );
+  }
+
+  return 0;
 }
 
 function orderFuelSurchargeRevenue(order) {
@@ -530,29 +600,35 @@ function orderTotalRevenue(order) {
   );
 }
 
+
 function warehouseRates() {
-  return {
-    storageRate: toNumber(
+  const storageRate = Math.max(
+    0,
+    toNumber(
       state.settings.warehouse_storage_per_m3_gbp,
       0
-    ),
+    )
+  );
 
-    pickingRate: toNumber(
-      state.settings.warehouse_picking_per_product_gbp,
-      DEFAULT_PICKING_COST_PER_PRODUCT_GBP
-    ) || DEFAULT_PICKING_COST_PER_PRODUCT_GBP
+  const pickingSetting =
+    state.settings.warehouse_picking_per_product_gbp;
+
+  const pickingRate =
+    pickingSetting !== null &&
+    pickingSetting !== undefined &&
+    pickingSetting !== ""
+      ? Math.max(
+          0,
+          toNumber(pickingSetting, 0)
+        )
+      : 0;
+
+  return {
+    storageRate,
+    pickingRate
   };
 }
 
-/*
- * Operationele warehousekosten:
- *
- * - Storage cost
- * - Picking cost £2 per besteld product
- *
- * Handling-in, handling-out en VAS worden hier niet meer
- * als aparte operationele kosten meegenomen.
- */
 function calcWarehouseCost(order) {
   const rates = warehouseRates();
 
@@ -821,13 +897,15 @@ function buildOrderRows() {
       String(order.route_id || "")
     );
 
-    const route =
-      routeRow?.route ||
-      (
-        normal(order.transport_type) === "charter"
-          ? "FDS / Charter"
-          : "—"
-      );
+const route =
+  routeRow?.route ||
+  (
+    ["fds", "charter", "carrier", "third_party"].includes(
+      normal(order.transport_type)
+    )
+      ? "External Carrier"
+      : "—"
+  );
 
     const transportType =
       orderTransportType(
@@ -1354,9 +1432,11 @@ function renderOrderProfitTables() {
           ${escapeHtml(row.route)}
         </td>
 
-        <td>
-          ${escapeHtml(row.transportType)}
-        </td>
+<td>
+  ${row.transportType === "fds"
+    ? "External Carrier"
+    : "Own Transport"}
+</td>
 
         <td>
           ${num(row.colli)}
@@ -1697,7 +1777,10 @@ function revenueBreakdownHtml(row) {
   `;
 }
 
+
 function operationalCostHtml(row) {
+  const rates = warehouseRates();
+
   return `
     <div class="order-finance-breakdown">
       <span>Storage Cost</span>
@@ -1706,7 +1789,7 @@ function operationalCostHtml(row) {
       <span>
         Picking Cost
         <small>
-          (${num(row.productQuantity)} × £2)
+          (${num(row.productQuantity)} × ${money(rates.pickingRate)})
         </small>
       </span>
 
@@ -1722,6 +1805,7 @@ function operationalCostHtml(row) {
     </div>
   `;
 }
+
 
 function pendingOrderCellHtml(row) {
   return `
@@ -1823,183 +1907,131 @@ function updateFdsAllocationSummary() {
   }
 }
 
-function renderPendingTransportRows(rows) {
-  const body =
-    byId("pendingTransportCostBody");
 
+function renderPendingTransportRows(rows) {
+  const body = byId("pendingTransportCostBody");
   if (!body) return;
 
-  body.innerHTML =
-    rows.map(row => {
-      const isCarrier =
-        row.transportType === "fds";
+  body.innerHTML = rows.map(row => {
+    const isCarrier = row.transportType === "fds";
+    const orderId = String(row.orderId);
 
-      const orderId =
-        String(row.orderId);
+    const draft =
+      fdsDraftAllocations.get(orderId) || {};
 
-      const draft =
-        fdsDraftAllocations.get(
-          orderId
-        ) || {};
+    const selected =
+      selectedFdsInvoiceOrders.has(orderId);
 
-      const selected =
-        selectedFdsInvoiceOrders.has(
-          orderId
-        );
+    const ownInputValue =
+      !isCarrier && row.suggestedTransportCost > 0
+        ? row.suggestedTransportCost.toFixed(2)
+        : "";
 
-      const ownInputValue =
-        !isCarrier &&
-        row.suggestedTransportCost > 0
-          ? row.suggestedTransportCost.toFixed(2)
-          : "";
+    const baseValue = isCarrier
+      ? draft.base !== undefined
+        ? toNumber(draft.base, 0).toFixed(2)
+        : ""
+      : ownInputValue;
 
-      const baseValue =
-        isCarrier
-          ? (
-              draft.base !== undefined
-                ? toNumber(draft.base, 0).toFixed(2)
-                : ""
-            )
-          : ownInputValue;
+    const fuelValue = isCarrier
+      ? toNumber(draft.fuel, 0)
+      : 0;
 
-      const fuelValue =
-        isCarrier
-          ? toNumber(draft.fuel, 0)
-          : 0;
+    const finalValue = isCarrier
+      ? draft.final !== undefined
+        ? toNumber(draft.final, 0)
+        : toNumber(baseValue, 0)
+      : toNumber(baseValue, 0);
 
-      const finalValue =
-        isCarrier
-          ? (
-              draft.final !== undefined
-                ? toNumber(draft.final, 0)
-                : toNumber(baseValue, 0)
-            )
-          : toNumber(baseValue, 0);
-
-      return `
-        <tr
-          data-order-cost-row="${escapeHtml(orderId)}"
-          data-order-cost-type="${
-            isCarrier
-              ? "carrier"
-              : "own_transport"
-          }"
-        >
-          <td>
-            ${
-              isCarrier
-                ? `
-                  <input
-                    type="checkbox"
-                    data-fds-order-select="${escapeHtml(orderId)}"
-                    ${selected ? "checked" : ""}
-                    aria-label="Select carrier order"
-                  >
-                `
-                : "—"
-            }
-          </td>
-
-          <td>
-            ${pendingOrderCellHtml(row)}
-          </td>
-
-          <td>
-            ${escapeHtml(row.retailer)}
-          </td>
-
-          <td>
-            <span class="order-cost-type ${
-              isCarrier
-                ? "carrier"
-                : "own"
-            }">
-              ${
-                isCarrier
-                  ? "Carrier / FDS"
-                  : "Own Transport"
-              }
-            </span>
-          </td>
-
-          <td class="order-cost-money">
-            ${money(row.transportRevenue)}
-          </td>
-
-          <td class="order-cost-money">
-            ${
-              row.suggestedTransportCost > 0
-                ? money(
-                    row.suggestedTransportCost
-                  )
-                : "—"
-            }
-          </td>
-
-          <td>
-            <div class="order-cost-input-wrap">
-              <span class="order-cost-currency">
-                £
-              </span>
-
-              <input
-                class="order-cost-input"
-                type="number"
-                min="0"
-                step="0.01"
-                value="${escapeHtml(baseValue)}"
-                placeholder="0.00"
-                data-order-base-cost
-              >
-            </div>
-          </td>
-
-          <td
-            class="order-cost-money"
-            data-order-fuel-cost
-          >
-            ${money(fuelValue)}
-          </td>
-
-          <td
-            class="order-cost-money"
-            data-order-final-cost
-          >
-            ${money(finalValue)}
-          </td>
-
-          <td>
+    return `
+      <tr
+        data-order-cost-row="${escapeHtml(orderId)}"
+        data-order-cost-type="${isCarrier ? "carrier" : "own_transport"}"
+      >
+        <td>
+          ${isCarrier ? `
             <input
-              class="order-cost-reference-input"
-              type="text"
-              value="${escapeHtml(
-                draft.reference ||
-                row.transportCostReference ||
-                ""
-              )}"
-              placeholder="${
-                isCarrier
-                  ? "Invoice / FDS reference"
-                  : "Route / cost reference"
-              }"
-              data-order-cost-reference
+              type="checkbox"
+              data-fds-order-select="${escapeHtml(orderId)}"
+              ${selected ? "checked" : ""}
+              aria-label="Select carrier order"
             >
-          </td>
+          ` : "—"}
+        </td>
 
-          <td>
-            <div class="order-cost-action-group">
-              <button
-                class="order-cost-confirm-btn"
-                type="button"
-                data-confirm-order-cost="${escapeHtml(orderId)}"
-              >
-                Confirm
-              </button>
-            </div>
-          </td>
-        </tr>
-      `;
-    }).join("") ||
+        <td>${pendingOrderCellHtml(row)}</td>
+
+        <td>${escapeHtml(row.retailer)}</td>
+
+        <td>
+          <span class="order-cost-type ${isCarrier ? "carrier" : "own"}">
+            ${isCarrier ? "External Carrier" : "Own Transport"}
+          </span>
+        </td>
+
+        <td class="order-cost-money">
+          ${money(row.transportRevenue)}
+        </td>
+
+        <td class="order-cost-money">
+          ${row.suggestedTransportCost > 0
+            ? money(row.suggestedTransportCost)
+            : "—"}
+        </td>
+
+        <td>
+          <div class="order-cost-input-wrap">
+            <span class="order-cost-currency">£</span>
+            <input
+              class="order-cost-input"
+              type="number"
+              min="0"
+              step="0.01"
+              value="${escapeHtml(baseValue)}"
+              placeholder="0.00"
+              data-order-base-cost
+            >
+          </div>
+        </td>
+
+        <td class="order-cost-money" data-order-fuel-cost>
+          ${money(fuelValue)}
+        </td>
+
+        <td class="order-cost-money" data-order-final-cost>
+          ${money(finalValue)}
+        </td>
+
+        <td>
+          <input
+            class="order-cost-reference-input"
+            type="text"
+            value="${escapeHtml(
+              draft.reference ||
+              row.transportCostReference ||
+              ""
+            )}"
+            placeholder="${isCarrier
+              ? "Carrier invoice reference"
+              : "Route / cost reference"}"
+            data-order-cost-reference
+          >
+        </td>
+
+        <td>
+          <div class="order-cost-action-group">
+            <button
+              class="order-cost-confirm-btn"
+              type="button"
+              data-confirm-order-cost="${escapeHtml(orderId)}"
+            >
+              Confirm
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("") ||
     emptyRow(
       11,
       "All transport costs in this selection have been confirmed."
@@ -2490,7 +2522,7 @@ function bindFdsSelectionActions() {
       updateFdsAllocationSummary();
 
       showToast(
-        "FDS fuel surcharge distributed automatically.",
+        "Carrier fuel surcharge distributed automatically.",
         "ok"
       );
     }
@@ -2923,170 +2955,217 @@ function renderWarehouseResultTable() {
     );
 }
 
-  function renderTransportResultTable() {
-    const wrap = byId("transportRouteList");
-    if (!wrap) return;
 
-    const fdsOrders = state.orderRows.filter(row => row.transportType === "fds");
+function renderTransportResultTable() {
+  const wrap = byId("transportRouteList");
+  if (!wrap) return;
 
-    const fdsVirtualRow = fdsOrders.length
-      ? {
-          routeId: "fds-charter",
-          route: "FDS / Charter",
-          date: "FDS batch",
-          transportType: "fds",
-          vehicle: "FDS",
-          driver: "External",
-          orders: fdsOrders.map(row => row.order),
-          ordersCount: fdsOrders.length,
-          stopsCount: 0,
-          miles: 0,
-          hours: 0,
-          transportBaseRevenue: fdsOrders.reduce((s, r) => s + r.transportBaseRevenue, 0),
-          fuelSurchargeRevenue: fdsOrders.reduce((s, r) => s + r.fuelSurchargeRevenue, 0),
-          transportRevenue: fdsOrders.reduce((s, r) => s + r.transportRevenue, 0),
-          transportCost: fdsOrders.reduce((s, r) => s + r.transportCost, 0)
-        }
-      : null;
+  const carrierOrders = state.orderRows.filter(
+    row => row.transportType === "fds"
+  );
 
-    let rows = transportViewMode === "total"
-      ? [...state.routeRows]
-      : state.routeRows.filter(row => row.transportType === transportViewMode);
+  const carrierVirtualRow = carrierOrders.length
+    ? {
+        routeId: "fds-charter",
+        route: "External Carrier",
+        date: "Carrier batch",
+        transportType: "fds",
+        vehicle: "External",
+        driver: "External",
+        orders: carrierOrders.map(row => row.order),
+        ordersCount: carrierOrders.length,
+        stopsCount: 0,
+        miles: 0,
+        hours: 0,
+        transportBaseRevenue: carrierOrders.reduce(
+          (s, r) => s + r.transportBaseRevenue, 0
+        ),
+        fuelSurchargeRevenue: carrierOrders.reduce(
+          (s, r) => s + r.fuelSurchargeRevenue, 0
+        ),
+        transportRevenue: carrierOrders.reduce(
+          (s, r) => s + r.transportRevenue, 0
+        ),
+        transportCost: carrierOrders.reduce(
+          (s, r) => s + r.transportCost, 0
+        )
+      }
+    : null;
 
-    if (fdsVirtualRow && (transportViewMode === "total" || transportViewMode === "fds")) {
-      rows = [...rows, fdsVirtualRow];
-    }
+  let rows = transportViewMode === "total"
+    ? [...state.routeRows]
+    : state.routeRows.filter(
+        row => row.transportType === transportViewMode
+      );
 
-    if (!rows.length) {
-      wrap.innerHTML = `<div style="padding:14px;">No transport result found.</div>`;
-      return;
-    }
+  if (
+    carrierVirtualRow &&
+    (transportViewMode === "total" ||
+     transportViewMode === "fds")
+  ) {
+    rows = [...rows, carrierVirtualRow];
+  }
 
-    wrap.innerHTML = `
-      <table class="data-table transport-master-table">
-        <thead>
-          <tr>
-            <th style="width:40px;"></th>
-            <th style="width:180px;">Route / Batch</th>
-            <th style="width:100px;">Date</th>
-            <th style="width:120px;">Type</th>
-            <th style="width:90px;">Vehicle</th>
-            <th style="width:90px;">Driver</th>
-            <th style="width:60px;">Orders</th>
-            <th style="width:60px;">Stops</th>
-            <th style="width:70px;">Miles</th>
-            <th style="width:70px;">Hours</th>
-            <th style="width:95px;">Base Rev</th>
-            <th style="width:90px;">Fuel</th>
-            <th style="width:95px;">Revenue</th>
-            <th style="width:95px;">Cost</th>
-            <th style="width:100px;">Result</th>
-            <th style="width:70px;">Margin</th>
-          </tr>
-        </thead>
+  if (!rows.length) {
+    wrap.innerHTML =
+      `<div style="padding:14px;">No transport result found.</div>`;
+    return;
+  }
 
-        <tbody>
-          ${rows.map(row => {
-            const open = expandedTransportRoutes.has(String(row.routeId));
-            const margin = row.transportRevenue
-              ? (row.transportRevenue - row.transportCost) / row.transportRevenue
-              : 0;
+  wrap.innerHTML = `
+    <table class="data-table transport-master-table">
+      <thead>
+        <tr>
+          <th style="width:40px;"></th>
+          <th style="width:180px;">Route / Batch</th>
+          <th style="width:100px;">Date</th>
+          <th style="width:120px;">Type</th>
+          <th style="width:90px;">Vehicle</th>
+          <th style="width:90px;">Driver</th>
+          <th style="width:60px;">Orders</th>
+          <th style="width:60px;">Stops</th>
+          <th style="width:70px;">Miles</th>
+          <th style="width:70px;">Hours</th>
+          <th style="width:95px;">Base Rev</th>
+          <th style="width:90px;">Fuel</th>
+          <th style="width:95px;">Revenue</th>
+          <th style="width:95px;">Cost</th>
+          <th style="width:100px;">Result</th>
+          <th style="width:70px;">Margin</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(row => {
+          const open = expandedTransportRoutes.has(
+            String(row.routeId)
+          );
 
-            const orderRows = row.orders.map(order => {
-              const orderRow = state.orderRows.find(r => String(r.orderId) === String(order.id));
-              if (!orderRow) return "";
+          const margin = row.transportRevenue
+            ? (row.transportRevenue - row.transportCost) /
+              row.transportRevenue
+            : 0;
 
-              return `
-                <tr class="transport-order-row">
-                  <td></td>
-                  <td colspan="2"><strong>${escapeHtml(orderRow.orderNumber)}</strong></td>
-                  <td colspan="3">${escapeHtml(orderRow.retailer)}</td>
-                  <td>${num(orderRow.colli)}</td>
-                  <td>${num(orderRow.volume, 2)} m³</td>
-                  <td colspan="2"></td>
-                  <td>${money(orderRow.transportBaseRevenue)}</td>
-                  <td>${money(orderRow.fuelSurchargeRevenue)}</td>
-                  <td>${money(orderRow.transportRevenue)}</td>
-                  <td>${money(orderRow.transportCost)}</td>
-                  <td>
-                    <span class="pill ${resultClass(orderRow.transportResult)}">
-                      ${money(orderRow.transportResult)}
-                    </span>
-                  </td>
-                  <td>${pct(orderRow.transportRevenue ? orderRow.transportResult / orderRow.transportRevenue : 0)}</td>
-                </tr>
-              `;
-            }).join("");
+          const orderRows = row.orders.map(order => {
+            const orderRow = state.orderRows.find(
+              r => String(r.orderId) === String(order.id)
+            );
+
+            if (!orderRow) return "";
 
             return `
-              <tr class="transport-route-row" data-transport-route="${escapeHtml(row.routeId)}">
-                <td>
-                  <button class="transport-expand-btn" type="button" data-transport-expand="${escapeHtml(row.routeId)}">
-                    ${open ? "−" : "+"}
-                  </button>
+              <tr class="transport-order-row">
+                <td></td>
+                <td colspan="2">
+                  <strong>${escapeHtml(orderRow.orderNumber)}</strong>
                 </td>
-                <td><strong>${escapeHtml(row.route)}</strong></td>
-                <td>${escapeHtml(String(row.date || "—").slice(0, 10))}</td>
-                <td>${escapeHtml(row.transportType === "fds" ? "FDS / Charter" : "Own Transport")}</td>
-                <td>${escapeHtml(row.vehicle)}</td>
-                <td>${escapeHtml(row.driver)}</td>
-                <td>${num(row.ordersCount)}</td>
-                <td>${num(row.stopsCount)}</td>
-                <td>${num(row.miles, 1)}</td>
-                <td>${num(row.hours, 1)}</td>
-                <td>${money(row.transportBaseRevenue)}</td>
-                <td>${money(row.fuelSurchargeRevenue)}</td>
-                <td>${money(row.transportRevenue)}</td>
-                <td>${money(row.transportCost)}</td>
+                <td colspan="3">${escapeHtml(orderRow.retailer)}</td>
+                <td>${num(orderRow.colli)}</td>
+                <td>${num(orderRow.volume, 2)} m³</td>
+                <td colspan="2"></td>
+                <td>${money(orderRow.transportBaseRevenue)}</td>
+                <td>${money(orderRow.fuelSurchargeRevenue)}</td>
+                <td>${money(orderRow.transportRevenue)}</td>
+                <td>${money(orderRow.transportCost)}</td>
                 <td>
-                  <span class="pill ${resultClass(row.transportRevenue - row.transportCost)}">
-                    ${money(row.transportRevenue - row.transportCost)}
+                  <span class="pill ${resultClass(orderRow.transportResult)}">
+                    ${money(orderRow.transportResult)}
                   </span>
                 </td>
-                <td>${pct(margin)}</td>
+                <td>${pct(
+                  orderRow.transportRevenue
+                    ? orderRow.transportResult /
+                      orderRow.transportRevenue
+                    : 0
+                )}</td>
               </tr>
-
-              ${
-                open
-                  ? `
-                    <tr>
-                      <td colspan="16">
-                        <div class="transport-order-detail">
-                          <table class="data-table">
-                            <thead>
-                              <tr>
-                                <th></th>
-                                <th>Order</th>
-                                <th>Retailer</th>
-                                <th>Packages</th>
-                                <th>Volume</th>
-                                <th>Base Revenue</th>
-                                <th>Fuel Surcharge</th>
-                                <th>Transport Revenue</th>
-                                <th>Allocated Cost</th>
-                                <th>Transport Result</th>
-                                <th>Margin</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              ${orderRows || emptyRow(11, "No orders found for this route.")}
-                            </tbody>
-                          </table>
-                        </div>
-                      </td>
-                    </tr>
-                  `
-                  : ""
-              }
             `;
-          }).join("")}
-        </tbody>
-      </table>
-    `;
+          }).join("");
 
-    wrap.querySelectorAll("[data-transport-expand]").forEach(button => {
+          return `
+            <tr
+              class="transport-route-row"
+              data-transport-route="${escapeHtml(row.routeId)}"
+            >
+              <td>
+                <button
+                  class="transport-expand-btn"
+                  type="button"
+                  data-transport-expand="${escapeHtml(row.routeId)}"
+                >
+                  ${open ? "−" : "+"}
+                </button>
+              </td>
+
+              <td><strong>${escapeHtml(row.route)}</strong></td>
+              <td>${escapeHtml(String(row.date || "—").slice(0, 10))}</td>
+              <td>${escapeHtml(
+                row.transportType === "fds"
+                  ? "External Carrier"
+                  : "Own Transport"
+              )}</td>
+              <td>${escapeHtml(row.vehicle)}</td>
+              <td>${escapeHtml(row.driver)}</td>
+              <td>${num(row.ordersCount)}</td>
+              <td>${num(row.stopsCount)}</td>
+              <td>${num(row.miles, 1)}</td>
+              <td>${num(row.hours, 1)}</td>
+              <td>${money(row.transportBaseRevenue)}</td>
+              <td>${money(row.fuelSurchargeRevenue)}</td>
+              <td>${money(row.transportRevenue)}</td>
+              <td>${money(row.transportCost)}</td>
+              <td>
+                <span class="pill ${
+                  resultClass(row.transportRevenue - row.transportCost)
+                }">
+                  ${money(row.transportRevenue - row.transportCost)}
+                </span>
+              </td>
+              <td>${pct(margin)}</td>
+            </tr>
+
+            ${open ? `
+              <tr>
+                <td colspan="16">
+                  <div class="transport-order-detail">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th></th>
+                          <th>Order</th>
+                          <th>Retailer</th>
+                          <th>Packages</th>
+                          <th>Volume</th>
+                          <th>Base Revenue</th>
+                          <th>Fuel Surcharge</th>
+                          <th>Transport Revenue</th>
+                          <th>Allocated Cost</th>
+                          <th>Transport Result</th>
+                          <th>Margin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${orderRows || emptyRow(
+                          11,
+                          "No orders found for this route."
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </td>
+              </tr>
+            ` : ""}
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+
+  wrap.querySelectorAll("[data-transport-expand]").forEach(
+    button => {
       button.addEventListener("click", () => {
-        const id = String(button.dataset.transportExpand || "");
+        const id = String(
+          button.dataset.transportExpand || ""
+        );
 
         if (expandedTransportRoutes.has(id)) {
           expandedTransportRoutes.delete(id);
@@ -3096,8 +3175,9 @@ function renderWarehouseResultTable() {
 
         renderTransportResultTable();
       });
-    });
-  }
+    }
+  );
+}
 
   function renderCustomerProfitTable() {
     const body = byId("customerProfitTableBody");

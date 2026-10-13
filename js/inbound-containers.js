@@ -361,55 +361,42 @@ function getProductLabel(product) {
      USER / COMPANY
      ========================================================= */
 
-  async function loadCurrentProfile() {
-    const db = getDb();
 
-    const {
-      data: authData,
-      error: authError
-    } = await db.auth.getUser();
+async function loadCurrentProfile() {
+  const db = getDb();
 
-    if (authError) {
-      throw authError;
-    }
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
 
-    const authUser = authData?.user;
+  if (authError) throw authError;
 
-    if (!authUser) {
-      throw new Error("No signed-in user found.");
-    }
+  const authUserId = authData?.user?.id;
 
-    let profileResult = await db
-      .from("user_profiles")
-      .select("*")
-      .eq("id", authUser.id)
-      .maybeSingle();
-
-    if (
-      !profileResult.data &&
-      !profileResult.error
-    ) {
-      profileResult = await db
-        .from("user_profiles")
-        .select("*")
-        .eq("auth_user_id", authUser.id)
-        .maybeSingle();
-    }
-
-    if (profileResult.error) {
-      throw profileResult.error;
-    }
-
-    if (!profileResult.data?.company_id) {
-      throw new Error(
-        "No company is linked to the current user."
-      );
-    }
-
-    state.profile = profileResult.data;
-    state.companyId =
-      profileResult.data.company_id;
+  if (!authUserId) {
+    throw new Error("No signed-in user found.");
   }
+
+  const { data: profiles, error } = await db
+    .from("user_profiles")
+    .select("*")
+    .eq("auth_user_id", authUserId)
+    .eq("is_active", true);
+
+  if (error) throw error;
+
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "Cannot determine a unique active tenant profile."
+    );
+  }
+
+  state.profile = profiles[0];
+  state.companyId = profiles[0].company_id;
+}
 
   /* =========================================================
      REFERENCE DATA
@@ -547,101 +534,109 @@ function getProductLabel(product) {
     renderContainers();
   }
 
- async function loadContainerLines(containerId) {
-  const cacheKey =
-    String(containerId);
+ 
+async function loadContainerLines(containerId) {
+  const cacheKey = String(containerId);
 
-  if (
-    state.loadedContainerLines.has(
-      cacheKey
-    )
-  ) {
-    return state.loadedContainerLines.get(
-      cacheKey
+  if (!state.companyId) {
+    throw new Error(
+      "Cannot load container lines: active tenant is missing."
     );
   }
 
-  const db =
-    getDb();
+  if (!containerId) {
+    throw new Error(
+      "Cannot load container lines: container ID is missing."
+    );
+  }
+
+  if (state.loadedContainerLines.has(cacheKey)) {
+    return state.loadedContainerLines.get(cacheKey);
+  }
+
+  const db = getDb();
 
   /*
    * ==========================================================
-   * CONTAINER PRODUCT LINES
+   * 1. VERIFY CONTAINER BELONGS TO ACTIVE TENANT
    * ==========================================================
    */
 
-  const {
-    data: lines,
-    error: linesError
-  } =
+  const { data: container, error: containerError } =
     await db
-      .from(
-        "inbound_container_lines"
-      )
+      .from("inbound_containers")
+      .select("id, company_id")
+      .eq("company_id", state.companyId)
+      .eq("id", containerId)
+      .maybeSingle();
+
+  if (containerError) {
+    throw containerError;
+  }
+
+  if (!container) {
+    throw new Error(
+      "Container does not belong to the active tenant."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 2. CONTAINER PRODUCT LINES
+   * ==========================================================
+   */
+
+  const { data: lines, error: linesError } =
+    await db
+      .from("inbound_container_lines")
       .select("*")
-      .eq(
-        "container_id",
-        containerId
-      )
-      .order(
-        "line_number",
-        {
-          ascending: true,
-          nullsFirst: false
-        }
-      )
-      .order(
-        "created_at",
-        {
-          ascending: true
-        }
-      );
+      .eq("company_id", state.companyId)
+      .eq("container_id", containerId)
+      .order("line_number", {
+        ascending: true,
+        nullsFirst: false
+      })
+      .order("created_at", {
+        ascending: true
+      });
 
   if (linesError) {
     throw linesError;
   }
 
-  const safeLines =
-    lines || [];
+  const safeLines = lines || [];
 
-  const lineIds =
-    safeLines.map(
-      line => line.id
-    );
+  const lineIds = safeLines
+    .map(line => line.id)
+    .filter(Boolean);
 
   /*
    * ==========================================================
-   * EXPECTED ORDER ALLOCATIONS
+   * 3. EXPECTED ORDER ALLOCATIONS
+   *
+   * Only allocations belonging to the active tenant.
    * ==========================================================
    */
 
-  let allocations =
-    [];
+  let allocations = [];
 
   if (lineIds.length) {
     const {
       data: allocationRows,
       error: allocationError
-    } =
-      await db
-        .from(
-          "inbound_expected_allocations"
+    } = await db
+      .from("inbound_expected_allocations")
+      .select(`
+        *,
+        orders (
+          id,
+          order_number
         )
-        .select(`
-          *,
-          orders (
-            id,
-            order_number
-          )
-        `)
-        .in(
-          "container_line_id",
-          lineIds
-        )
-        .eq(
-          "status",
-          "expected"
-        );
+      `)
+      .eq("company_id", state.companyId)
+      .eq("container_id", containerId)
+      .in("container_line_id", lineIds)
+      .eq("status", "expected");
 
     if (allocationError) {
       console.warn(
@@ -649,63 +644,47 @@ function getProductLabel(product) {
         allocationError.message
       );
     } else {
-      allocations =
-        allocationRows || [];
+      allocations = allocationRows || [];
     }
   }
 
-  const allocationsByLine =
-    new Map();
+  const allocationsByLine = new Map();
 
-  allocations.forEach(
-    allocation => {
-      const lineKey =
-        String(
-          allocation.container_line_id
-        );
+  allocations.forEach(allocation => {
+    const lineKey = String(
+      allocation.container_line_id
+    );
 
-      if (
-        !allocationsByLine.has(
-          lineKey
-        )
-      ) {
-        allocationsByLine.set(
-          lineKey,
-          []
-        );
-      }
-
-      allocationsByLine
-        .get(lineKey)
-        .push(allocation);
+    if (!allocationsByLine.has(lineKey)) {
+      allocationsByLine.set(lineKey, []);
     }
-  );
+
+    allocationsByLine
+      .get(lineKey)
+      .push(allocation);
+  });
 
   /*
    * ==========================================================
-   * PHYSICAL PACKAGES ACTUALLY RECEIVED
+   * 4. PHYSICAL PACKAGES ACTUALLY RECEIVED
    *
-   * Alle voorraad die door deze container is aangemaakt heeft:
+   * Physical stock created by this container uses:
    *
    * inbound_reference = INBOUND:<container-id>
    *
-   * Hiermee kunnen we na ontvangst reconstrueren:
-   *
+   * Example:
    * package 1/2 = 15
    * package 2/2 = 11
+   *
    * complete = 11
    * missing = 4x package 2/2
    * overstock = 4x package 1/2
    * ==========================================================
    */
 
-  let physicalItems =
-    [];
+  let physicalItems = [];
 
-  const {
-    data: itemRows,
-    error: itemError
-  } =
+  const { data: itemRows, error: itemError } =
     await db
       .from("items")
       .select(`
@@ -718,10 +697,7 @@ function getProductLabel(product) {
         stock_set_id,
         stock_set_status
       `)
-      .eq(
-        "company_id",
-        state.companyId
-      )
+      .eq("company_id", state.companyId)
       .eq(
         "inbound_reference",
         `INBOUND:${containerId}`
@@ -733,114 +709,103 @@ function getProductLabel(product) {
       itemError.message
     );
   } else {
-    physicalItems =
-      itemRows || [];
+    physicalItems = itemRows || [];
   }
 
   /*
-   * Packages groeperen per product.
+   * ==========================================================
+   * 5. GROUP PHYSICAL PACKAGES BY PRODUCT
+   * ==========================================================
    */
-  const packagesByProduct =
-    new Map();
+
+  const packagesByProduct = new Map();
 
   physicalItems.forEach(item => {
     if (!item.product_id) {
       return;
     }
 
-    const productKey =
-      String(
-        item.product_id
-      );
+    const productKey = String(item.product_id);
 
-    if (
-      !packagesByProduct.has(
-        productKey
-      )
-    ) {
+    if (!packagesByProduct.has(productKey)) {
       packagesByProduct.set(
         productKey,
         new Map()
       );
     }
 
-    const packageNo =
-      Math.max(
-        1,
-        integerValue(
-          item.package_no,
-          1
-        )
-      );
+    const packageNo = Math.max(
+      1,
+      integerValue(item.package_no, 1)
+    );
 
     const productPackages =
-      packagesByProduct.get(
-        productKey
-      );
+      packagesByProduct.get(productKey);
 
     productPackages.set(
       packageNo,
-      (
-        productPackages.get(
-          packageNo
-        ) || 0
-      ) + 1
+      (productPackages.get(packageNo) || 0) + 1
     );
   });
 
   /*
    * ==========================================================
-   * COMBINE
+   * 6. COMBINE EXPECTED AND PHYSICAL DATA
+   *
+   * Preserve existing data structure used by:
+   *
+   * - Expected Containers
+   * - Received Containers
+   * - Package split calculations
+   * - Missing packages
+   * - Overstock
+   * - Expected order allocations
    * ==========================================================
    */
 
-  const combined =
-    safeLines.map(line => {
-      const productPackages =
-        packagesByProduct.get(
-          String(
-            line.product_id
-          )
-        ) ||
-        new Map();
+  const combined = safeLines.map(line => {
+    const productPackages =
+      packagesByProduct.get(
+        String(line.product_id)
+      ) || new Map();
 
-      const packageTotal =
-        Math.max(
-          1,
-          integerValue(
-            line.packages_per_unit,
-            1
-          )
-        );
+    const packageTotal = Math.max(
+      1,
+      integerValue(
+        line.packages_per_unit,
+        1
+      )
+    );
 
-      const receivedPackages =
-        {};
+    const receivedPackages = {};
 
-      for (
-        let packageNo = 1;
-        packageNo <= packageTotal;
-        packageNo++
-      ) {
-        receivedPackages[
-          packageNo
-        ] =
-          productPackages.get(
-            packageNo
-          ) || 0;
-      }
+    for (
+      let packageNo = 1;
+      packageNo <= packageTotal;
+      packageNo++
+    ) {
+      receivedPackages[packageNo] =
+        productPackages.get(packageNo) || 0;
+    }
 
-      return {
-        ...line,
+    return {
+      ...line,
 
-        expected_allocations:
-          allocationsByLine.get(
-            String(line.id)
-          ) || [],
+      expected_allocations:
+        allocationsByLine.get(
+          String(line.id)
+        ) || [],
 
-        received_packages:
-          receivedPackages
-      };
-    });
+      received_packages:
+        receivedPackages
+    };
+  });
+
+  /*
+   * ==========================================================
+   * 7. CACHE RESULTS
+   * ==========================================================
+   */
 
   state.loadedContainerLines.set(
     cacheKey,
@@ -849,7 +814,6 @@ function getProductLabel(product) {
 
   return combined;
 }
-
 
 async function loadContainerAttachments(containerId) {
   const cacheKey = String(containerId);
@@ -879,10 +843,13 @@ async function loadContainerAttachments(containerId) {
       uploaded_by,
       uploaded_at
     `)
-    .eq("container_id", containerId)
-    .order("uploaded_at", {
-      ascending: false
-    });
+
+.eq("company_id", state.companyId)
+.eq("container_id", containerId)
+.order("uploaded_at", {
+  ascending: false
+});
+
 
   if (error) {
     throw error;
@@ -919,8 +886,11 @@ async function loadContainerNotes(containerId) {
       created_by,
       created_at
     `)
-    .eq("container_id", containerId)
-    .in("event_type", [
+
+.eq("company_id", state.companyId)
+.eq("container_id", containerId)
+.in("event_type", [
+
       "general_note",
       "damage_reported",
       "missing_reported",
@@ -1053,6 +1023,31 @@ async function createAttachmentSignedUrl(
   attachment,
   expiresIn = 600
 ) {
+
+
+if (!state.companyId) {
+  throw new Error("Active tenant is missing.");
+}
+
+if (
+  !attachment?.container_id ||
+  !attachment?.storage_path
+) {
+  throw new Error("Invalid attachment.");
+}
+
+const expectedPrefix =
+  `${state.companyId}/${attachment.container_id}/`;
+
+if (
+  !attachment.storage_path.startsWith(expectedPrefix)
+) {
+  throw new Error(
+    "Attachment storage path does not belong to the active tenant."
+  );
+}
+
+
   const bucket =
     attachment.storage_bucket ||
     "inbound-assets";
@@ -1506,48 +1501,98 @@ function bindAttachmentActions() {
 }
 
 
+
 async function deleteContainerAttachment(attachment) {
   const db = getDb();
 
-  const bucket =
-    attachment.storage_bucket ||
-    "inbound-assets";
-
-  const { error: storageError } = await db
-    .storage
-    .from(bucket)
-    .remove([
-      attachment.storage_path
-    ]);
-
-  if (storageError) {
-    throw storageError;
+  if (
+    !state.companyId ||
+    !attachment?.id ||
+    !attachment?.container_id
+  ) {
+    throw new Error(
+      "Invalid attachment or active tenant."
+    );
   }
 
-  const { error: databaseError } = await db
-    .from("inbound_attachments")
-    .delete()
-    .eq("id", attachment.id);
+  const { data: verified, error: verifyError } =
+    await db
+      .from("inbound_attachments")
+      .select(`
+        id,
+        company_id,
+        container_id,
+        attachment_type,
+        storage_bucket,
+        storage_path
+      `)
+      .eq("id", attachment.id)
+      .eq("company_id", state.companyId)
+      .eq("container_id", attachment.container_id)
+      .single();
 
-  if (databaseError) {
-    throw databaseError;
+  if (verifyError) throw verifyError;
+
+  if (!verified) {
+    throw new Error(
+      "Attachment not found within the active tenant."
+    );
+  }
+
+  const expectedPrefix =
+    `${state.companyId}/${verified.container_id}/`;
+
+  if (
+    !verified.storage_path ||
+    !verified.storage_path.startsWith(expectedPrefix)
+  ) {
+    throw new Error(
+      "Attachment storage path does not match the active tenant."
+    );
+  }
+
+  const bucket =
+    verified.storage_bucket || "inbound-assets";
+
+  const { error: storageError } =
+    await db.storage
+      .from(bucket)
+      .remove([verified.storage_path]);
+
+  if (storageError) throw storageError;
+
+  const { data: deletedRows, error: databaseError } =
+    await db
+      .from("inbound_attachments")
+      .delete()
+      .eq("id", verified.id)
+      .eq("company_id", state.companyId)
+      .eq("container_id", verified.container_id)
+      .select("id");
+
+  if (databaseError) throw databaseError;
+
+  if (!deletedRows?.length) {
+    throw new Error(
+      "Attachment file was removed, but its database record was not deleted."
+    );
   }
 
   if (
-    normalize(attachment.attachment_type) ===
+    normalize(verified.attachment_type) ===
     "packing_list"
   ) {
-    const { error: updateError } = await db
-      .from("inbound_containers")
-      .update({
-        packing_list_path: null,
-        packing_list_name: null,
-        packing_list_uploaded_at: null
-      })
-      .eq(
-        "id",
-        attachment.container_id
-      );
+    const { error: updateError } =
+      await db
+        .from("inbound_containers")
+        .update({
+          packing_list_path: null,
+          packing_list_name: null,
+          packing_list_uploaded_at: null
+        })
+        .eq("id", verified.container_id)
+        .eq("company_id", state.companyId)
+        .eq("packing_list_path", verified.storage_path);
 
     if (updateError) {
       console.warn(
@@ -1558,23 +1603,20 @@ async function deleteContainerAttachment(attachment) {
   }
 
   state.loadedContainerAttachments.delete(
-    String(attachment.container_id)
+    String(verified.container_id)
   );
 
   await loadContainerAttachments(
-    attachment.container_id
+    verified.container_id
   );
 
   renderLoadedContainerAttachments(
-    attachment.container_id
+    verified.container_id
   );
 
   await loadContainers();
 
-  showToast(
-    "File deleted.",
-    "ok"
-  );
+  showToast("File deleted.", "ok");
 }
 
   /* =========================================================
@@ -5018,14 +5060,11 @@ async function loadExpectedAllocationsForContainer(
         status,
         created_at
       `)
-      .eq(
-        "container_id",
-        containerId
-      )
-      .eq(
-        "status",
-        "expected"
-      )
+
+.eq("company_id", state.companyId)
+.eq("container_id", containerId)
+.eq("status", "expected")
+
       .order(
         "created_at",
         {
@@ -5058,6 +5097,17 @@ async function convertExpectedAllocationsToPhysical(
     const expectedAllocation
     of expectedAllocations
   ) {
+
+
+if (
+  expectedAllocation.company_id !== state.companyId
+) {
+  throw new Error(
+    "Expected allocation belongs to another tenant."
+  );
+}
+
+
     const lineKey =
       String(
         expectedAllocation
@@ -5219,10 +5269,10 @@ async function convertExpectedAllocationsToPhysical(
               reserved_at:
                 receivedAt
             })
-            .in(
-              "id",
-              itemIds
-            );
+
+.eq("company_id", state.companyId)
+.in("id", itemIds);
+
 
         if (reserveError) {
           throw reserveError;
@@ -5257,10 +5307,10 @@ async function convertExpectedAllocationsToPhysical(
           converted_at:
             receivedAt
         })
-        .eq(
-          "id",
-          expectedAllocation.id
-        );
+
+.eq("company_id", state.companyId)
+.eq("id", expectedAllocation.id);
+
 
     if (expectedUpdateError) {
       throw expectedUpdateError;
@@ -5348,10 +5398,10 @@ async function updatePhysicalPlanningBasis(
             new Date()
               .toISOString()
         })
-        .eq(
-          "id",
-          summary.order_id
-        );
+
+.eq("company_id", state.companyId)
+.eq("id", summary.order_id);
+
 
     if (error) {
       throw error;
@@ -7257,12 +7307,32 @@ async function saveContainerAttachment() {
   }
 
 
-  const db =
-    getDb();
 
+if (!state.companyId) {
+  throw new Error(
+    "Cannot upload attachment: active tenant is missing."
+  );
+}
 
-  let uploadedCount =
-    0;
+const db = getDb();
+
+const { data: verifiedContainer, error: verifyError } =
+  await db
+    .from("inbound_containers")
+    .select("id")
+    .eq("company_id", state.companyId)
+    .eq("id", containerId)
+    .maybeSingle();
+
+if (verifyError) throw verifyError;
+
+if (!verifiedContainer) {
+  throw new Error(
+    "Cannot upload attachment: container does not belong to the active tenant."
+  );
+}
+
+let uploadedCount = 0;
 
 
   for (const file of files) {
@@ -8069,7 +8139,10 @@ async function saveContainerAttachment() {
         packing_list_uploaded_at:
           new Date().toISOString()
       })
-      .eq("id", containerId);
+      
+.eq("company_id", state.companyId)
+.eq("id", containerId);
+
 
     if (containerUpdateError) {
       throw containerUpdateError;
@@ -8183,10 +8256,13 @@ async function saveContainerAttachment() {
        * productregels niet konden worden opgeslagen.
        */
 
-      await db
-        .from("inbound_containers")
-        .delete()
-        .eq("id", container.id);
+
+await db
+  .from("inbound_containers")
+  .delete()
+  .eq("company_id", state.companyId)
+  .eq("id", container.id);
+
 
       throw error;
     }

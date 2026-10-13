@@ -57,76 +57,113 @@
     doc.setTextColor(90, 90, 90);
   }
 
-  async function loadCompanySettings(client, companyId) {
-    const fallback = {
-      name: "Sofa2U Ltd",
-      displayName: "Sofa2U",
-      address: "860-862 Garratt Lane, London, SW17 0NB",
-      phone: "+44 (0) 7894 469947",
-      email: "sales@sofa2u.co.uk",
-      vat: "GB 368 665 249",
-      logoUrl: "",
-      footerText: ""
-    };
 
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
-
-    if (error) {
-      console.warn("Credit note settings skipped:", error.message);
-      return fallback;
-    }
-
-    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
-
-    return {
-      name: map.get("main_company_name") || fallback.name,
-      displayName: map.get("main_display_name") || fallback.displayName,
-      registration: map.get("main_company_registration") || "",
-      address: map.get("main_address") || fallback.address,
-      phone: map.get("main_phone") || fallback.phone,
-      email: map.get("main_email") || fallback.email,
-      vat: map.get("main_vat") || fallback.vat,
-      logoUrl: map.get("main_logo_url") || "",
-      footerText: map.get("document_footer_text") || ""
-    };
+async function loadCompanySettings(client, companyId) {
+  if (!companyId) {
+    throw new Error("Company ID is missing.");
   }
 
-  async function loadProductOwner(client, customerId) {
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
+
+  const company = {
+    name: map.get("main_company_name") || "",
+    displayName:
+      map.get("main_display_name") ||
+      map.get("main_company_name") ||
+      "",
+    registration:
+      map.get("main_company_registration") || "",
+    address: map.get("main_address") || "",
+    phone: map.get("main_phone") || "",
+    email: map.get("main_email") || "",
+    vat: map.get("main_vat") || "",
+    logoUrl: map.get("main_logo_url") || "",
+    footerText: map.get("document_footer_text") || ""
+  };
+
+  if (!company.name) {
+    throw new Error(
+      "Company name is missing in tenant Settings."
+    );
+  }
+
+  return company;
+}
+
+
+async function loadProductOwner(client, customerId, companyId) {
   if (!customerId) return null;
+
+  if (!companyId) {
+    throw new Error("Company ID is missing.");
+  }
 
   const { data: customer, error: customerError } = await client
     .from("customers")
     .select("*")
     .eq("id", customerId)
+    .eq("company_id", companyId)
     .maybeSingle();
 
   if (customerError) throw customerError;
 
+  if (!customer) {
+    throw new Error("Product Owner not found for this tenant.");
+  }
+
   let address = null;
 
-  const { data: addresses } = await client
+  const { data: addresses, error: addressError } = await client
     .from("customer_addresses")
     .select("*")
     .eq("customer_id", customerId)
     .order("is_default", { ascending: false })
     .limit(1);
 
-  if (addresses?.length) address = addresses[0];
+  if (addressError) throw addressError;
+
+  if (addresses?.length) {
+    address = addresses[0];
+  }
 
   return {
     id: customer.id,
     name: customer.name || customer.trading_name || "Product Owner",
     vat: customer.vat_number || customer.vat || "",
     email: customer.billing_email || customer.email || "",
-    address1: address?.street || customer.address1 || customer.address_1 || "",
-    address2: address?.address2 || customer.address2 || customer.address_2 || "",
+    address1:
+      address?.street ||
+      customer.address1 ||
+      customer.address_1 ||
+      "",
+    address2:
+      address?.address2 ||
+      customer.address2 ||
+      customer.address_2 ||
+      "",
     city: address?.city || customer.city || "",
     county: address?.county || customer.county || "",
-    postcode: address?.postal_code || address?.postcode || customer.postcode || "",
-    country: address?.country || customer.country || "United Kingdom"
+    postcode:
+      address?.postal_code ||
+      address?.postcode ||
+      customer.postcode ||
+      "",
+    country:
+      address?.country ||
+      customer.country ||
+      "United Kingdom"
   };
 }
 
@@ -189,8 +226,9 @@
     const { data, error } = await client
       .from("orders")
       .select("order_number")
-      .eq("id", creditOrder.credit_for_order_id)
-      .maybeSingle();
+.eq("id", creditOrder.credit_for_order_id)
+.eq("company_id", creditOrder.company_id)
+.maybeSingle();
 
     if (error) {
       console.warn("Original order lookup skipped:", error.message);
@@ -625,39 +663,92 @@ const lines = [
     }
   }
 
-  async function generate(orderId, clientArg, companyIdArg) {
-    const client = clientArg || sbClient();
-    const companyId = companyIdArg;
+ 
+async function generate(orderId, clientArg, companyIdArg) {
+  const client = clientArg || sbClient();
+  const companyId = companyIdArg;
 
-    if (!companyId) throw new Error("Company ID is missing.");
-    if (!orderId) throw new Error("Credit order ID is missing.");
-
-    const order = await loadCreditOrder(client, companyId, orderId);
-
-    if (!order.is_credit && order.order_type !== "credit") {
-      throw new Error("Selected order is not a credit order.");
-    }
-
-    const company = await loadCompanySettings(client, companyId);
-    const productOwner = await loadProductOwner(client, order.customer_id);
-    const originalOrderNo = await loadOriginalOrderNumber(client, order);
-
-    const blob = await createPdfBlob(order, company, productOwner, originalOrderNo);
-    const uploaded = await uploadPdf(client, companyId, order.order_number, blob);
-
-    if (!uploaded.fileUrl || !uploaded.storagePath) {
-      throw new Error("Credit note PDF was uploaded, but no file URL/storage path was returned.");
-    }
-
-    const documentId = await upsertCreditNoteDocument(client, companyId, order, uploaded);
-    await insertActivity(client, companyId, order, uploaded);
-
-    return {
-      documentId,
-      documentNumber: order.order_number,
-      ...uploaded
-    };
+  if (!companyId) {
+    throw new Error("Company ID is missing.");
   }
+
+  if (!orderId) {
+    throw new Error("Credit order ID is missing.");
+  }
+
+  // Load credit order for the active tenant
+  const order = await loadCreditOrder(
+    client,
+    companyId,
+    orderId
+  );
+
+  if (!order.is_credit && order.order_type !== "credit") {
+    throw new Error("Selected order is not a credit order.");
+  }
+
+  // Load company settings and Product Owner
+  const company = await loadCompanySettings(
+    client,
+    companyId
+  );
+
+  const productOwner = await loadProductOwner(
+    client,
+    order.customer_id,
+    companyId
+  );
+
+  const originalOrderNo = await loadOriginalOrderNumber(
+    client,
+    order
+  );
+
+  // Generate credit note PDF
+  const blob = await createPdfBlob(
+    order,
+    company,
+    productOwner,
+    originalOrderNo
+  );
+
+  // Upload PDF to tenant-specific storage path
+  const uploaded = await uploadPdf(
+    client,
+    companyId,
+    order.order_number,
+    blob
+  );
+
+  if (!uploaded.fileUrl || !uploaded.storagePath) {
+    throw new Error(
+      "Credit note PDF was uploaded, but no file URL/storage path was returned."
+    );
+  }
+
+  // Register credit note document
+  const documentId = await upsertCreditNoteDocument(
+    client,
+    companyId,
+    order,
+    uploaded
+  );
+
+  // Register activity
+  await insertActivity(
+    client,
+    companyId,
+    order,
+    uploaded
+  );
+
+  return {
+    documentId,
+    documentNumber: order.order_number,
+    ...uploaded
+  };
+}
+
 
   window.CreditNoteGenerator = {
     generate

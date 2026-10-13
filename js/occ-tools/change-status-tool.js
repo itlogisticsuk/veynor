@@ -41,18 +41,77 @@ function cancellationReasonLabel(value) {
   return map[key] || String(value || "—").replaceAll("_", " ");
 }
 
-  async function open(orderId) {
-    if (!window.getOrderById) {
-      console.error("getOrderById not available");
-      return;
-    }
 
-    const order = window.getOrderById(orderId);
-    if (!order) return;
-
-    currentOrder = order;
-    renderModal(order);
+async function getCompanyId(client) {
+  if (!client) {
+    throw new Error("Supabase client not available.");
   }
+
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error("Not authenticated.");
+  }
+
+  let result = await client
+    .from("user_profiles")
+    .select("company_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!result.data && !result.error) {
+    result = await client
+      .from("user_profiles")
+      .select("company_id")
+      .eq("auth_user_id", userId)
+      .maybeSingle();
+  }
+
+  if (result.error) throw result.error;
+
+  if (!result.data?.company_id) {
+    throw new Error("No tenant found for current user.");
+  }
+
+  return result.data.company_id;
+}
+
+
+
+async function open(orderId) {
+  const client = window.sb ? window.sb() : null;
+
+  if (!client) {
+    throw new Error("Supabase client not available.");
+  }
+
+  if (!orderId) {
+    throw new Error("Order ID is missing.");
+  }
+
+  const companyId = await getCompanyId(client);
+
+  const { data: order, error } = await client
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!order) {
+    throw new Error("Order not found for active tenant.");
+  }
+
+  currentOrder = order;
+  renderModal(order);
+}
 
   function getStatusPayload(status) {
 if (status === "order_received") {
@@ -361,235 +420,341 @@ ${
     modal.setAttribute("aria-hidden", "false");
   }
 
-  async function releaseAllocationsForCancelledOrder(order) {
-    const client = window.sb ? window.sb() : null;
-    if (!client) return;
 
-    const lineIds = (order.order_lines || []).map(line => line.id).filter(Boolean);
-    if (!lineIds.length) return;
 
-    const { data: allocations, error } = await client
+async function releaseAllocationsForCancelledOrder(order) {
+  const client = window.sb ? window.sb() : null;
+
+  if (!client) {
+    throw new Error("Supabase client not available.");
+  }
+
+  if (!order?.id || !order?.company_id) {
+    throw new Error("Order or tenant is missing.");
+  }
+
+  const companyId = await getCompanyId(client);
+
+  if (companyId !== order.company_id) {
+    throw new Error("Tenant mismatch.");
+  }
+
+  // Load order lines directly from the database
+  const { data: lines, error: lineError } = await client
+    .from("order_lines")
+    .select("id")
+    .eq("order_id", order.id)
+    .eq("company_id", companyId);
+
+  if (lineError) throw lineError;
+
+  const lineIds = (lines || [])
+    .map(line => line.id)
+    .filter(Boolean);
+
+  if (!lineIds.length) return;
+
+  // Load allocations for this tenant's order lines
+  const { data: allocations, error: allocationError } =
+    await client
       .from("order_allocations")
-      .select(`
-        id,
-        item_id,
-        order_line_id,
-        items (
-          id,
-          physical_product_id,
-          stock_set_id
-        )
-      `)
-      .in("order_line_id", lineIds);
+      .select("id, item_id, allocation_status")
+      .in("order_line_id", lineIds)
+      .eq("company_id", companyId);
+
+  if (allocationError) throw allocationError;
+
+  const activeAllocations = (allocations || []).filter(
+    allocation =>
+      String(allocation.allocation_status || "")
+        .toLowerCase() !== "cancelled"
+  );
+
+  if (!activeAllocations.length) return;
+
+  // Release only individual items linked to this order
+  const itemIds = [...new Set(
+    activeAllocations
+      .map(allocation => allocation.item_id)
+      .filter(Boolean)
+  )];
+
+  for (const itemId of itemIds) {
+    const { error: itemError } = await client
+      .from("items")
+      .update({
+        status: "in_stock",
+        linked_order_id: null,
+        reserved_at: null
+      })
+      .eq("id", itemId)
+      .eq("company_id", companyId)
+      .eq("linked_order_id", order.id)
+      .in("status", ["reserved", "in_stock"]);
+
+    if (itemError) throw itemError;
+  }
+
+  // Cancel the allocations for this order only
+  const allocationIds = activeAllocations
+    .map(allocation => allocation.id)
+    .filter(Boolean);
+
+  if (allocationIds.length) {
+    const { error } = await client
+      .from("order_allocations")
+      .update({
+        allocation_status: "cancelled"
+      })
+      .in("id", allocationIds)
+      .eq("company_id", companyId);
 
     if (error) throw error;
-
-    for (const allocation of allocations || []) {
-      const physicalProductId = allocation.items?.physical_product_id || null;
-      const stockSetId = allocation.items?.stock_set_id || null;
-      const itemId = allocation.item_id || allocation.items?.id || null;
-
-      let query = client
-        .from("items")
-        .update({
-          status: "in_stock",
-          linked_order_id: null,
-          reserved_at: null
-        });
-
-      if (physicalProductId) query = query.eq("physical_product_id", physicalProductId);
-      else if (stockSetId) query = query.eq("stock_set_id", stockSetId);
-      else if (itemId) query = query.eq("id", itemId);
-      else continue;
-
-      const { error: itemError } = await query;
-      if (itemError) throw itemError;
-    }
-
-    const allocationIds = (allocations || []).map(a => a.id).filter(Boolean);
-
-    if (allocationIds.length) {
-      const { error: allocationError } = await client
-        .from("order_allocations")
-        .update({ allocation_status: "cancelled" })
-        .in("id", allocationIds);
-
-      if (allocationError) throw allocationError;
-    }
   }
+}
+
 
 async function removeCancelledOrderFromPlanning(order) {
   const client = window.sb ? window.sb() : null;
 
-  if (!client || !order?.id) return;
+  if (!client) {
+    throw new Error("Supabase client not available.");
+  }
 
-  const { error: stopError } = await client
+  if (!order?.id || !order?.company_id) {
+    throw new Error("Order or tenant is missing.");
+  }
+
+  const { error } = await client
     .from("route_stops")
     .delete()
-    .eq("order_id", order.id);
+    .eq("order_id", order.id)
+    .eq("company_id", order.company_id);
 
-  if (stopError) {
-    console.warn(
-      "Could not remove cancelled order from route stops:",
-      stopError.message
-    );
-  }
-}
-
-  async function save() {
-    const client = window.sb ? window.sb() : null;
-    if (!client) throw new Error("Supabase client not available.");
-
-    const order = currentOrder;
-    if (!order?.id) throw new Error("No order selected.");
-
-    const selectedStatus = byId("changeStatusSelect")?.value || "";
-    if (!selectedStatus) throw new Error("Select a new status first.");
-
-    const payload = getStatusPayload(selectedStatus);
-    if (!payload) throw new Error("Invalid status selected.");
-
-    const reason = clean(byId("changeStatusReason")?.value);
-
-    payload.last_activity_at = new Date().toISOString();
-if (selectedStatus !== "cancelled") {
-  payload.cancellation_reason = null;
-  payload.cancellation_notes = null;
-}
-
-    if (selectedStatus === "planned_transport") {
-      const deliveryDate = byId("statusDeliveryDate")?.value || "";
-      const etaFrom = byId("statusEtaFrom")?.value || "";
-      const etaTo = byId("statusEtaTo")?.value || "";
-
-      if (deliveryDate) {
-        payload.confirmed_delivery_date = deliveryDate;
-        payload.expected_delivery_date = deliveryDate;
-      }
-
-      if (etaFrom) payload.delivery_eta_from = etaFrom;
-      if (etaTo) payload.delivery_eta_to = etaTo;
-      if (etaFrom || etaTo) payload.delivery_eta_status = "confirmed";
-    }
-
-    if (selectedStatus === "delivered") {
-      const receivedBy = clean(byId("statusReceivedBy")?.value);
-      if (receivedBy) payload.pod_signed_by = receivedBy;
-
-      payload.pod_completed_at = new Date().toISOString();
-
-      if (!payload.confirmed_delivery_date && !order.confirmed_delivery_date) {
-        payload.confirmed_delivery_date = new Date().toISOString().slice(0, 10);
-      }
-    }
-
-if (selectedStatus === "cancelled") {
-  const cancelReason =
-    clean(byId("statusCancelReason")?.value);
-
-  const cancelNotes =
-    clean(byId("statusCancelNotes")?.value);
-
-  const chargeableValue =
-    byId("statusCancelChargeable")?.value || "";
-
-  if (!cancelReason) {
-    throw new Error("Select a cancellation reason.");
-  }
-
-  if (!["true", "false"].includes(chargeableValue)) {
+  if (error) {
     throw new Error(
-      "Choose whether the customer should be charged."
+      `Could not remove cancelled order from planning: ${error.message}`
     );
   }
-
-  const isChargeable =
-    chargeableValue === "true";
-
-  payload.cancellation_reason = cancelReason;
-  payload.cancellation_notes = cancelNotes || null;
-
-  payload.is_chargeable = isChargeable;
-
-  payload.finance_status = isChargeable
-    ? "not_invoiced"
-    : "cancelled";
-
-  await releaseAllocationsForCancelledOrder(order);
-  await removeCancelledOrderFromPlanning(order);
 }
 
-    const { error } = await client
+
+async function save() {
+  const client = window.sb ? window.sb() : null;
+
+  if (!client) {
+    throw new Error("Supabase client not available.");
+  }
+
+  const order = currentOrder;
+
+  if (!order?.id || !order?.company_id) {
+    throw new Error("No valid tenant order selected.");
+  }
+
+  const companyId = await getCompanyId(client);
+
+  if (order.company_id !== companyId) {
+    throw new Error("Order does not belong to active tenant.");
+  }
+
+  const selectedStatus =
+    byId("changeStatusSelect")?.value || "";
+
+  if (!selectedStatus) {
+    throw new Error("Select a new status first.");
+  }
+
+  const payload = getStatusPayload(selectedStatus);
+
+  if (!payload) {
+    throw new Error("Invalid status selected.");
+  }
+
+  const reason = clean(byId("changeStatusReason")?.value);
+
+  payload.last_activity_at = new Date().toISOString();
+
+  if (selectedStatus !== "cancelled") {
+    payload.cancellation_reason = null;
+    payload.cancellation_notes = null;
+  }
+
+  if (selectedStatus === "planned_transport") {
+    const deliveryDate =
+      byId("statusDeliveryDate")?.value || "";
+
+    const etaFrom =
+      byId("statusEtaFrom")?.value || "";
+
+    const etaTo =
+      byId("statusEtaTo")?.value || "";
+
+    if (deliveryDate) {
+      payload.confirmed_delivery_date = deliveryDate;
+      payload.expected_delivery_date = deliveryDate;
+    }
+
+    if (etaFrom) payload.delivery_eta_from = etaFrom;
+    if (etaTo) payload.delivery_eta_to = etaTo;
+
+    if (etaFrom || etaTo) {
+      payload.delivery_eta_status = "confirmed";
+    }
+  }
+
+  if (selectedStatus === "delivered") {
+    const receivedBy =
+      clean(byId("statusReceivedBy")?.value);
+
+    if (receivedBy) {
+      payload.pod_signed_by = receivedBy;
+    }
+
+    payload.pod_completed_at = new Date().toISOString();
+
+    if (
+      !payload.confirmed_delivery_date &&
+      !order.confirmed_delivery_date
+    ) {
+      payload.confirmed_delivery_date =
+        new Date().toISOString().slice(0, 10);
+    }
+  }
+
+  if (selectedStatus === "cancelled") {
+    const cancelReason =
+      clean(byId("statusCancelReason")?.value);
+
+    const cancelNotes =
+      clean(byId("statusCancelNotes")?.value);
+
+    const chargeableValue =
+      byId("statusCancelChargeable")?.value || "";
+
+    if (!cancelReason) {
+      throw new Error("Select a cancellation reason.");
+    }
+
+    if (!["true", "false"].includes(chargeableValue)) {
+      throw new Error(
+        "Choose whether the customer should be charged."
+      );
+    }
+
+    const isChargeable = chargeableValue === "true";
+
+    payload.cancellation_reason = cancelReason;
+    payload.cancellation_notes = cancelNotes || null;
+    payload.is_chargeable = isChargeable;
+
+    payload.finance_status = isChargeable
+      ? "not_invoiced"
+      : "cancelled";
+  }
+
+  // Update order within active tenant
+  const { data: updatedOrder, error: updateError } =
+    await client
       .from("orders")
       .update(payload)
-      .eq("id", order.id);
+      .eq("id", order.id)
+      .eq("company_id", companyId)
+      .select("id")
+      .maybeSingle();
 
-    if (error) throw error;
+  if (updateError) throw updateError;
 
-    let description = `Status changed manually to ${label(selectedStatus)}.`;
-
-if (selectedStatus === "cancelled") {
-  const cancelReasonValue =
-    clean(byId("statusCancelReason")?.value);
-
-  const cancelNotes =
-    clean(byId("statusCancelNotes")?.value);
-
-  const chargeable =
-    byId("statusCancelChargeable")?.value === "true";
-
-  const cancelReasonLabels = {
-    customer_cancelled: "Customer cancelled",
-    duplicate_order: "Duplicate order",
-    stock_unavailable: "Stock unavailable",
-    damaged: "Damaged",
-    other: "Other"
-  };
-
-  const cancelReason =
-    cancelReasonLabels[cancelReasonValue] ||
-    cancelReasonValue;
-
-  if (cancelReason) {
-    description += ` Cancellation reason: ${cancelReason}.`;
+  if (!updatedOrder?.id) {
+    throw new Error("Order update failed or tenant mismatch.");
   }
 
-  if (cancelNotes) {
-    description += ` Notes: ${cancelNotes}.`;
+  // Release stock and planning after successful cancellation
+  if (selectedStatus === "cancelled") {
+    await releaseAllocationsForCancelledOrder(order);
+    await removeCancelledOrderFromPlanning(order);
   }
 
-  description += chargeable
-    ? " Customer charge retained; order remains available for invoicing."
-    : " Order marked as not chargeable and excluded from invoicing.";
+  let description =
+    `Status changed manually to ${label(selectedStatus)}.`;
+
+  if (selectedStatus === "cancelled") {
+    const cancelReasonValue =
+      clean(byId("statusCancelReason")?.value);
+
+    const cancelNotes =
+      clean(byId("statusCancelNotes")?.value);
+
+    const chargeable =
+      byId("statusCancelChargeable")?.value === "true";
+
+    const cancelReason = cancellationReasonLabel(
+      cancelReasonValue
+    );
+
+    if (cancelReason) {
+      description += ` Cancellation reason: ${cancelReason}.`;
+    }
+
+    if (cancelNotes) {
+      description += ` Notes: ${cancelNotes}.`;
+    }
+
+    description += chargeable
+      ? " Customer charge retained; order remains available for invoicing."
+      : " Order marked as not chargeable and excluded from invoicing.";
+  }
+
+  if (selectedStatus === "delivered") {
+    const receivedBy =
+      clean(byId("statusReceivedBy")?.value);
+
+    const notes =
+      clean(byId("statusDeliveryNotes")?.value);
+
+    if (receivedBy) {
+      description += ` Received by: ${receivedBy}.`;
+    }
+
+    if (notes) {
+      description += ` Notes: ${notes}.`;
+    }
+  }
+
+  if (reason) {
+    description += ` Reason: ${reason}.`;
+  }
+
+  const { error: activityError } = await client
+    .from("order_activity_log")
+    .insert({
+      company_id: companyId,
+      order_id: order.id,
+      activity_type: "change_status",
+      old_status: order.status || null,
+      new_status: payload.status || null,
+      description,
+      created_at: new Date().toISOString()
+    });
+
+  if (activityError) {
+    console.warn(
+      "Status updated, but activity logging failed:",
+      activityError.message
+    );
+  }
+
+  byId("occGenericActionModal")?.classList.remove("open");
+
+  byId("occGenericActionModal")?.setAttribute(
+    "aria-hidden",
+    "true"
+  );
+
+  if (window.OCCReloadOrders) {
+    await window.OCCReloadOrders();
+  }
 }
-
-    if (selectedStatus === "delivered") {
-      const receivedBy = clean(byId("statusReceivedBy")?.value);
-      const notes = clean(byId("statusDeliveryNotes")?.value);
-      if (receivedBy) description += ` Received by: ${receivedBy}.`;
-      if (notes) description += ` Notes: ${notes}.`;
-    }
-
-    if (reason) description += ` Reason: ${reason}.`;
-
-    await client
-      .from("order_activity_log")
-      .insert({
-        order_id: order.id,
-        activity_type: "change_status",
-        old_status: order.status || null,
-        new_status: payload.status || null,
-        description,
-        created_at: new Date().toISOString()
-      });
-
-    byId("occGenericActionModal")?.classList.remove("open");
-    byId("occGenericActionModal")?.setAttribute("aria-hidden", "true");
-
-    if (window.OCCReloadOrders) {
-      await window.OCCReloadOrders();
-    }
-  }
 
   document.addEventListener("click", async event => {
     const button = event.target.closest("#genericActionSaveBtn");

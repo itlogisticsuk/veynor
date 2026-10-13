@@ -1,0 +1,518 @@
+
+<!doctype html>
+<html lang="en" class="auth-loading">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Admin · Veynor</title>
+
+<link rel="stylesheet" href="/css/theme.css">
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/admin/admin.js" defer></script>
+
+<style>
+:root {
+  --adm-navy: #071b43;
+  --adm-blue: #0864f9;
+  --adm-border: #e0e8f4;
+  --adm-muted: #61718b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #f3f6fb;
+  color: #112444;
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+}
+
+.auth-loading body { visibility: hidden; }
+
+.admin-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 244px minmax(0,1fr);
+}
+
+.admin-side {
+  background: linear-gradient(180deg,#061632,#0a2555);
+  color: #fff;
+  padding: 26px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  font-size: 23px;
+  font-weight: 850;
+}
+
+.brand img {
+  width: 43px;
+  height: 43px;
+  object-fit: contain;
+}
+
+.side-caption {
+  font-size: 10px;
+  letter-spacing: .18em;
+  color: #a3bbdf;
+  padding: 0 12px;
+  font-weight: 800;
+}
+
+.side-link {
+  padding: 13px 14px;
+  border-radius: 11px;
+  background: #ffffff16;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.side-foot {
+  margin-top: auto;
+  font-size: 11px;
+  color: #a6b9d8;
+  padding: 10px;
+}
+
+.admin-main {
+  padding: 30px clamp(18px,3vw,52px);
+  max-width: 1600px;
+  width: 100%;
+  margin: auto;
+}
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 26px;
+}
+
+.eyebrow {
+  color: #0b64eb;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  font-weight: 850;
+}
+
+.top h1 {
+  font-size: 29px;
+  letter-spacing: -.03em;
+  margin: 5px 0;
+}
+
+.muted {
+  color: var(--adm-muted);
+  font-size: 13px;
+}
+
+.btn {
+  border: 1px solid var(--adm-border);
+  background: white;
+  border-radius: 10px;
+  padding: 11px 16px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #173257;
+  cursor: pointer;
+}
+
+.btn.primary {
+  background: var(--adm-blue);
+  color: white;
+  border-color: var(--adm-blue);
+}
+
+.btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4,minmax(0,1fr));
+  gap: 15px;
+  margin-bottom: 22px;
+}
+
+.panel, .kpi {
+  background: #fff;
+  border: 1px solid var(--adm-border);
+  border-radius: 16px;
+  box-shadow: 0 5px 25px #183e7010;
+}
+
+.kpi { padding: 20px; }
+
+.kpi span {
+  display: block;
+  color: var(--adm-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.kpi strong {
+  display: block;
+  margin-top: 12px;
+  font-size: 30px;
+  color: #071b43;
+}
+
+.panel { padding: 22px; }
+
+.panel h2 {
+  font-size: 17px;
+  margin: 0 0 7px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 17px;
+}
+
+.search {
+  width: min(320px,100%);
+  padding: 12px;
+  border: 1px solid var(--adm-border);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0,1.6fr) minmax(300px,1fr);
+  gap: 18px;
+}
+
+.table-wrap { overflow: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+th {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #70809a;
+  background: #f7f9fd;
+}
+
+td, th {
+  padding: 14px 12px;
+  border-bottom: 1px solid #edf1f8;
+}
+
+tr[data-id] { cursor: pointer; }
+tr[data-id]:hover { background: #f5f9ff; }
+tr.selected { background: #eaf2ff; }
+
+.pill {
+  display: inline-block;
+  padding: 5px 9px;
+  background: #e7f6ed;
+  color: #15784b;
+  border-radius: 30px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.detail { display: grid; gap: 14px; }
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #edf1f8;
+  padding: 9px 0;
+  font-size: 12px;
+}
+
+.detail-row span { color: var(--adm-muted); }
+
+.detail-row strong {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.notice {
+  margin-bottom: 16px;
+  border: 1px solid #c5d9f5;
+  background: #edf5ff;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.notice.error {
+  background: #fff1f0;
+  border-color: #f1c6c1;
+  color: #9d2b20;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--adm-muted);
+  font-size: 13px;
+}
+
+.hidden { display: none!important; }
+
+dialog {
+  border: 1px solid var(--adm-border);
+  border-radius: 18px;
+  padding: 26px;
+  max-width: 470px;
+  width: calc(100% - 32px);
+  box-shadow: 0 24px 80px #06163245;
+}
+
+dialog::backdrop { background: #061632a8; }
+
+.form-field {
+  display: grid;
+  gap: 6px;
+  margin: 15px 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.form-field input {
+  padding: 12px;
+  border: 1px solid var(--adm-border);
+  border-radius: 9px;
+  font: inherit;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+@media(max-width:1050px) {
+  .kpis { grid-template-columns: repeat(2,1fr); }
+  .layout { grid-template-columns: 1fr; }
+}
+
+@media(max-width:650px) {
+  .admin-shell { grid-template-columns: 1fr; }
+  .admin-side { padding: 14px; gap: 10px; }
+  .side-foot { display: none; }
+  .admin-main { padding: 20px 14px; }
+  .kpis { gap: 10px; }
+  .kpi { padding: 14px; }
+  .kpi strong { font-size: 24px; }
+}
+</style>
+</head>
+
+<body>
+<div class="admin-shell">
+
+  <aside class="admin-side">
+    <div class="brand">
+      <img src="/veynor-symbol.png" alt=""
+           onerror="this.style.display='none'">
+      Veynor
+    </div>
+
+    <div class="side-caption">
+      PLATFORM ADMINISTRATION
+    </div>
+
+    <div class="side-link">
+      ▦ &nbsp; Tenant Management
+    </div>
+
+    <div class="side-foot">
+      VEYNOR SYSTEMS · RESTRICTED ACCESS
+    </div>
+  </aside>
+
+  <main class="admin-main">
+
+    <header class="top">
+      <div>
+        <div class="eyebrow">
+          Platform administration
+        </div>
+        <h1>Super Admin Control</h1>
+        <div class="muted">
+          Manage tenants, access and platform configuration
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn" id="refreshBtn">
+          ↻ Refresh
+        </button>
+        <button class="btn" id="logoutBtn">
+          Sign out
+        </button>
+        <button class="btn primary"
+                id="newTenantBtn" disabled>
+          + New Tenant
+        </button>
+      </div>
+    </header>
+
+    <div id="notice" class="notice">
+      Verifying administrator access…
+    </div>
+
+    <section class="kpis">
+      <div class="kpi">
+        <span>Total tenants</span>
+        <strong id="totalTenants">—</strong>
+      </div>
+      <div class="kpi">
+        <span>Visible users</span>
+        <strong id="totalUsers">—</strong>
+      </div>
+      <div class="kpi">
+        <span>Selected tenant users</span>
+        <strong id="selectedUsers">—</strong>
+      </div>
+      <div class="kpi">
+        <span>Platform status</span>
+        <strong id="platformStatus"
+                style="font-size:20px">
+          Checking
+        </strong>
+      </div>
+    </section>
+
+    <div class="layout">
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Tenant Directory</h2>
+            <div class="muted">
+              Select a company to inspect its account
+            </div>
+          </div>
+          <input id="tenantSearch"
+                 class="search"
+                 placeholder="Search tenants…"
+                 aria-label="Search tenants">
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Tenant ID</th>
+                <th>Users</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="tenantRows">
+              <tr>
+                <td colspan="4" class="empty">
+                  Loading…
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Tenant Details</h2>
+        <div class="muted">
+          Account information and management options
+        </div>
+
+        <div id="tenantDetail" class="empty">
+          Select a tenant from the directory.
+        </div>
+
+        <div class="actions">
+          <button id="openTenantBtn"
+                  class="btn primary" disabled>
+            Open Tenant Portal
+          </button>
+          <button id="tenantSettingsBtn"
+                  class="btn" disabled>
+            Tenant Settings
+          </button>
+        </div>
+
+        <p class="muted" style="margin-top:20px">
+          Tenant switching and tenant creation require
+          a secure server-side authorization endpoint.
+          These actions remain disabled until configured.
+        </p>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<dialog id="tenantDialog">
+  <form id="tenantForm">
+    <h2>Create Tenant</h2>
+    <p class="muted">
+      This requires the protected tenant-creation endpoint.
+    </p>
+
+    <label class="form-field">
+      Company name
+      <input id="newCompanyName"
+             required maxlength="150">
+    </label>
+
+    <label class="form-field">
+      Administrator email
+      <input id="newAdminEmail"
+             type="email" required>
+    </label>
+
+    <div class="modal-actions">
+      <button type="button"
+              class="btn"
+              id="closeDialog">
+        Cancel
+      </button>
+      <button class="btn primary" type="submit">
+        Create
+      </button>
+    </div>
+  </form>
+</dialog>
+
+</body>
+</html>

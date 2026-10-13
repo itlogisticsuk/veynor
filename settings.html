@@ -1547,7 +1547,7 @@ Quality inspection charge per colli.
     <section id="tab-transport" class="settings-panel">
       <section class="summary-grid">
         <div class="summary-box"><div class="summary-label">Labour</div><div id="summaryLabour" class="summary-value">£38.50 / hour</div><div class="summary-sub">Driver + labour</div></div>
-        <div class="summary-box"><div class="summary-label">Vehicle</div><div id="summaryVehicle" class="summary-value">£0.55 / mile</div><div class="summary-sub">Fuel + vehicle</div></div>
+        <div class="summary-box"><div class="summary-label">Vehicle</div><div id="summaryVehicle" class="summary-value">£8.50 / hour</div><div class="summary-sub">Fuel + vehicle</div></div>
         <div class="summary-box"><div class="summary-label">Average Speed</div><div id="summarySpeed" class="summary-value">50 km/h</div><div class="summary-sub">Default speed</div></div>
         <div class="summary-box"><div class="summary-label">Stop Time</div><div id="summaryStopTime" class="summary-value">15 min</div><div class="summary-sub">Unload per stop</div></div>
         <div class="summary-box"><div class="summary-label">Max Hours</div><div id="summaryMaxHours" class="summary-value">9.0 h</div><div class="summary-sub">Per route</div></div>
@@ -1667,10 +1667,36 @@ Quality inspection charge per colli.
       <input id="home_depot_name" class="input"/>
     </div>
 
+
+<div class="field">
+  <label for="home_depot_address_1">
+    Depot Address Line 1
+  </label>
+  <input
+    id="home_depot_address_1"
+    class="input"
+    placeholder="Street and building number"
+  />
+</div>
+
+<div class="field">
+  <label for="home_depot_address_2">
+    Depot Address Line 2
+  </label>
+  <input
+    id="home_depot_address_2"
+    class="input"
+    placeholder="Unit, industrial estate or additional details"
+  />
+</div>
+
+
     <div class="field">
       <label for="home_depot_postcode">Depot Postcode</label>
       <input id="home_depot_postcode" class="input"/>
     </div>
+
+
 
     <div class="field">
       <label for="home_depot_city">Depot City</label>
@@ -1707,6 +1733,44 @@ Quality inspection charge per colli.
       <input id="distance_factor" class="input"
              type="number" step="0.01"/>
     </div>
+
+
+<div class="field" style="grid-column:1 / -1;">
+  <label for="home_depot_pickup_instructions">
+    Depot Collection Instructions
+  </label>
+  <textarea
+    id="home_depot_pickup_instructions"
+    class="textarea"
+    rows="5"
+    placeholder="Collection procedure, loading entrance, booking instructions..."
+  ></textarea>
+</div>
+
+<div class="field">
+  <label for="home_depot_pickup_pdf_file">
+    Collection Instructions PDF
+  </label>
+  <input
+    id="home_depot_pickup_pdf_file"
+    class="input"
+    type="file"
+    accept="application/pdf,.pdf"
+  />
+</div>
+
+<div class="field">
+  <label for="home_depot_pickup_pdf_path">
+    Saved PDF Storage Path
+  </label>
+  <input
+    id="home_depot_pickup_pdf_path"
+    class="input"
+    readonly
+    placeholder="No PDF uploaded"
+  />
+</div>
+
 
   </div>
 </section>

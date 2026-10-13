@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const CANCELLED_ALLOCATION_STATUS = "cancelled";
 
   let client = null;
@@ -103,23 +102,66 @@
     return client;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
 
-    const db = ensureClient();
+async function getCompanyId() {
+  const db = ensureClient();
 
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
+  // Controleer de ingelogde gebruiker.
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
-    return companyId;
+  if (authError) {
+    throw authError;
   }
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error(
+      "No authenticated user found."
+    );
+  }
+
+  // Zoek het actieve gebruikersprofiel.
+  const { data: profiles, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select("id, company_id, is_active")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active user profile."
+    );
+  }
+
+  const activeCompanyId = profiles[0].company_id;
+
+  if (!activeCompanyId) {
+    throw new Error(
+      "No tenant is assigned to this account."
+    );
+  }
+
+  // Voorkom gebruik van oude gegevens na een tenantwissel.
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
 
   function shortSku(item) {
     return item.sku_base || item.products?.sku_base || String(item.sku_unique || "").split("-IN-")[0] || "—";

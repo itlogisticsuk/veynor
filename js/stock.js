@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const STOCK_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
   const CANCELLED_ALLOCATION_STATUS = "cancelled";
 
@@ -375,48 +374,38 @@ let productStockLedger = new Map();
     return isTenantRole();
   }
 
-  async function getCompanyId() {
-    if (companyId) {
-      return companyId;
-    }
 
-    if (
-      currentProfile?.company_id
-    ) {
-      companyId =
-        currentProfile.company_id;
+async function getCompanyId() {
+  // Gebruik uitsluitend de tenant uit het actieve gebruikersprofiel.
+  const activeCompanyId =
+    currentProfile?.company_id || null;
 
-      return companyId;
-    }
-
-    const {
-      data,
-      error
-    } =
-      await ensureClient()
-        .from("companies")
-        .select("id")
-        .eq(
-          "name",
-          TENANT_NAME
-        )
-        .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error(
-        `Company "${TENANT_NAME}" not found.`
-      );
-    }
-
-    companyId =
-      data.id;
-
-    return companyId;
+  if (!currentProfile?.is_active) {
+    throw new Error(
+      "No active user profile is available."
+    );
   }
+
+  if (!activeCompanyId) {
+    throw new Error(
+      "No company is assigned to this user."
+    );
+  }
+
+  // Voorkom dat oude tenantgegevens worden hergebruikt.
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
 
 
   // ============================================================

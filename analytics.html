@@ -899,7 +899,7 @@
           <select id="transportTypeFilter" class="select">
             <option value="">All transport</option>
             <option value="own_transport">Own fleet</option>
-            <option value="fds">FDS / Charter</option>
+            <option value="fds">External Carrier</option>
           </select>
         </div>
       </div>
@@ -1091,22 +1091,28 @@
 
         <div class="table-wrap">
           <table class="data-table">
-            <thead>
-              <tr>
-  <th>Order</th>
-  <th>Retailer</th>
-  <th>Products</th>
-  <th>Volume</th>
-  <th>Storage Revenue</th>
-  <th>Admin Revenue</th>
-  <th>Picking Revenue</th>
-  <th>Storage Cost</th>
-  <th>Picking Cost</th>
-  <th>Warehouse Cost</th>
-  <th>Total Warehouse Revenue</th>
-  <th>Warehouse Result</th>
-</tr>
-            </thead>
+
+<thead>
+  <tr>
+    <th>Order</th>
+    <th>Retailer</th>
+    <th>Customer</th>
+    <th>Route</th>
+    <th>Transport Type</th>
+    <th>Colli</th>
+    <th>Volume</th>
+    <th>Warehouse Revenue</th>
+    <th>Transport Revenue</th>
+    <th>Total Revenue</th>
+    <th>Warehouse Cost</th>
+    <th>Transport Cost</th>
+    <th>Total Cost</th>
+    <th>Warehouse Result</th>
+    <th>Transport Result</th>
+    <th>Total Result</th>
+    <th>Margin</th>
+  </tr>
+</thead>
             <tbody id="orderProfitTableBody"></tbody>
           </table>
         </div>
@@ -1144,21 +1150,23 @@
 
         <div class="table-wrap">
           <table class="data-table">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>Retailer</th>
-                <th>Colli</th>
-                <th>Volume</th>
-                <th>Handling In Cost</th>
-                <th>Handling Out Cost</th>
-                <th>Storage Cost</th>
-                <th>VAS Cost</th>
-                <th>Warehouse Cost</th>
-                <th>Warehouse Revenue</th>
-                <th>Warehouse Result</th>
-              </tr>
-            </thead>
+
+<thead>
+  <tr>
+    <th>Order</th>
+    <th>Retailer</th>
+    <th>Products</th>
+    <th>Volume</th>
+    <th>Storage Revenue</th>
+    <th>Admin Revenue</th>
+    <th>Picking Revenue</th>
+    <th>Storage Cost</th>
+    <th>Picking Cost</th>
+    <th>Warehouse Cost</th>
+    <th>Total Warehouse Revenue</th>
+    <th>Warehouse Result</th>
+  </tr>
+</thead>
             <tbody id="warehouseResultTableBody"></tbody>
           </table>
         </div>
@@ -1170,7 +1178,7 @@
         <div id="transportViewSwitch" class="tabs">
           <button id="btnTransportTotal" class="transport-switch-btn active" type="button">Total</button>
           <button id="btnTransportOwn" class="transport-switch-btn" type="button">Own Transport</button>
-          <button id="btnTransportFds" class="transport-switch-btn" type="button">FDS / Charter</button>
+          <button id="btnTransportFds" class="transport-switch-btn" type="button">External Carrier</button>
         </div>
       </section>
 
@@ -1192,13 +1200,13 @@
           <article class="card kpi-card">
             <div class="kpi-label">Fuel Surcharge Revenue</div>
             <div id="trFuelSurchargeRevenue" class="kpi-value">£0</div>
-            <div class="kpi-sub">Bellstone 8.5% forecast</div>
+            <div class="kpi-sub">Configured fuel surcharge</div>
           </article>
 
           <article class="card kpi-card">
             <div class="kpi-label">Total Transport Cost</div>
             <div id="trTotalCost" class="kpi-value">£0</div>
-            <div class="kpi-sub">Own route or FDS cost</div>
+            <div class="kpi-sub">Own fleet or carrier cost</div>
           </article>
 
           <article class="card kpi-card">
@@ -1245,28 +1253,28 @@
       </section>
 
       <section class="transport-kpi-group">
-        <h3>FDS / Charter</h3>
+        <h3>External Carrier</h3>
         <div class="kpi-grid">
           <article class="card kpi-card">
-            <div class="kpi-label">FDS Revenue</div>
+            <div class="kpi-label">Carrier Revenue</div>
             <div id="trFdsRevenue" class="kpi-value">£0</div>
             <div class="kpi-sub">Charter transport revenue</div>
           </article>
 
           <article class="card kpi-card">
-            <div class="kpi-label">FDS Cost</div>
+            <div class="kpi-label">Carrier Cost</div>
             <div id="trFdsCost" class="kpi-value">£0</div>
             <div class="kpi-sub">Carrier invoice cost</div>
           </article>
 
           <article class="card kpi-card">
-            <div class="kpi-label">FDS Result</div>
+            <div class="kpi-label">Carrier Result</div>
             <div id="trFdsResult" class="kpi-value">£0</div>
             <div class="kpi-sub">Charter result</div>
           </article>
 
           <article class="card kpi-card">
-            <div class="kpi-label">FDS Margin</div>
+            <div class="kpi-label">Carrier Margin</div>
             <div id="trFdsMargin" class="kpi-value">0%</div>
             <div class="kpi-sub">Charter margin</div>
           </article>
@@ -1310,7 +1318,7 @@
       <h2>Carrier Invoice Import</h2>
 
       <p>
-        Upload an FDS Excel invoice to match carrier charges
+        Upload a carrier Excel invoice to match carrier charges
         against Veynor orders.
       </p>
     </div>
@@ -1328,7 +1336,7 @@
         class="btn btn-primary"
         type="button"
       >
-        Upload FDS Invoice
+        Upload Carrier Invoice
       </button>
     </div>
   </div>
@@ -1376,22 +1384,20 @@
 
   <div class="table-wrap">
     <table class="data-table">
-      <thead>
-<tr>
-  <th>Job Ref</th>
-  <th>Type</th>
-  <th>Source Reference</th>
-  <th>Postcode</th>
-  <th>Date</th>
-  <th>Suggested Match</th>
-  <th>Reason</th>
-  <th>Base Cost</th>
-  <th>Adjustment</th>
-  <th>Total Cost</th>
-  <th>Assign to Order</th>
-  <th>Status</th>
-</tr>
-      </thead>
+
+<thead>
+  <tr>
+    <th>Job Ref</th>
+    <th>Source Reference</th>
+    <th>Matched Order</th>
+    <th>Match Method</th>
+    <th>Confidence</th>
+    <th>Base Cost</th>
+    <th>Adjustment</th>
+    <th>Total Cost</th>
+    <th>Status</th>
+  </tr>
+</thead>
 
       <tbody id="carrierImportPreviewBody"></tbody>
     </table>
@@ -1417,18 +1423,23 @@
 
   <div class="table-wrap">
     <table class="data-table">
-      <thead>
-        <tr>
-          <th>Job Ref</th>
-          <th>Source Reference</th>
-          <th>Suggested Match</th>
-          <th>Reason</th>
-          <th>Base Cost</th>
-          <th>Adjustment</th>
-          <th>Total Cost</th>
-          <th>Status</th>
-        </tr>
-      </thead>
+
+<thead>
+  <tr>
+    <th>Job Ref</th>
+    <th>Type</th>
+    <th>Source Reference</th>
+    <th>Postcode</th>
+    <th>Date</th>
+    <th>Matched Reference</th>
+    <th>Reason</th>
+    <th>Base Cost</th>
+    <th>Adjustment</th>
+    <th>Total Cost</th>
+    <th>Assign to Order</th>
+    <th>Status</th>
+  </tr>
+</thead>
 
       <tbody id="carrierImportUnprocessedBody"></tbody>
     </table>
@@ -1464,8 +1475,8 @@
       <br>
 
       <strong>Operational cost:</strong>
-      storage cost, picking cost at £2.00 per product and confirmed
-      transport cost.
+storage cost, picking cost based on the configured tenant rates,
+and confirmed transport cost.
       <br>
 
       Own transport estimates are suggestions only until confirmed.
@@ -1501,7 +1512,7 @@
         class="order-cost-filter-btn"
         type="button"
       >
-        Carrier / FDS
+        External Carrier
       </button>
     </div>
 
@@ -1520,11 +1531,11 @@
 
     <div class="card-head">
       <div>
-        <h2>FDS Invoice Allocation</h2>
+        <h2>Carrier Invoice Allocation</h2>
 
         <p>
           Enter the base amount per order below and the total fuel
-          surcharge from the FDS invoice here. Veynor will distribute
+          surcharge from the carrier invoice here. Veynor will distribute
           the surcharge proportionally.
         </p>
       </div>
@@ -1730,7 +1741,7 @@
           </div>
 
           <div class="order-cost-description">
-            Confirmed Sofa2U fleet orders
+            Confirmed own-fleet orders
           </div>
         </div>
       </div>
@@ -1777,21 +1788,25 @@
 
         <table class="data-table order-cost-table confirmed">
 
-          <thead>
-            <tr>
-              <th>Order</th>
-              <th>Retailer</th>
-              <th>Revenue Breakdown</th>
-              <th>Operational Cost</th>
-              <th>Transport Cost</th>
-              <th>Total Revenue</th>
-              <th>Total Cost</th>
-              <th>Result</th>
-              <th>Margin</th>
-              <th>Reference</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+
+<thead>
+  <tr>
+    <th>Order</th>
+    <th>Retailer</th>
+    <th>Revenue Breakdown</th>
+    <th>Operational Cost</th>
+    <th>Transport Cost</th>
+    <th>Transport Revenue</th>
+    <th>Transport Result</th>
+    <th>Transport Margin</th>
+    <th>Total Revenue</th>
+    <th>Total Cost</th>
+    <th>Total Result</th>
+    <th>Total Margin</th>
+    <th>Invoice / Reference</th>
+    <th>Actions</th>
+  </tr>
+</thead>
 
           <tbody id="confirmedOwnTransportBody"></tbody>
 
@@ -1824,7 +1839,7 @@
           </div>
 
           <div class="order-cost-description">
-            Confirmed FDS and external carrier orders
+            Confirmed external carrier orders
           </div>
         </div>
       </div>

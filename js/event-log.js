@@ -9,6 +9,46 @@
     return sb();
   }
 
+
+async function getActiveTenantId(client) {
+  const { data: auth, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = auth?.user?.id;
+
+  if (!userId) {
+    throw new Error(
+      "Cannot log warehouse event: user is not authenticated."
+    );
+  }
+
+  const { data: profiles, error } =
+    await client
+      .from("user_profiles")
+      .select("company_id")
+      .eq("auth_user_id", userId)
+      .eq("is_active", true);
+
+  if (error) throw error;
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Cannot determine a unique active tenant."
+    );
+  }
+
+  if (!profiles[0].company_id) {
+    throw new Error(
+      "Active user profile has no company_id."
+    );
+  }
+
+  return profiles[0].company_id;
+}
+
+
   function sanitizeRow(row) {
     if (!row || typeof row !== "object") {
       throw new Error("Invalid warehouse event row.");
@@ -40,36 +80,62 @@
     };
   }
 
-  async function logWarehouseEvent(row) {
-    const client = ensureClient();
-    const payload = sanitizeRow(row);
 
-    const { data, error } = await client
-      .from("warehouse_events")
-      .insert(payload)
-      .select("id")
-      .single();
+async function logWarehouseEvent(row) {
+  const client = ensureClient();
+  const activeTenantId =
+    await getActiveTenantId(client);
 
-    if (error) throw error;
-    return data?.id || null;
+  const payload = sanitizeRow(row);
+
+  if (payload.company_id !== activeTenantId) {
+    throw new Error(
+      "Warehouse event rejected: company_id does not match the active tenant."
+    );
   }
 
-  async function logWarehouseEvents(rows) {
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return [];
-    }
+  const { data, error } = await client
+    .from("warehouse_events")
+    .insert(payload)
+    .select("id")
+    .single();
 
-    const client = ensureClient();
-    const payload = rows.map(sanitizeRow);
+  if (error) throw error;
 
-    const { data, error } = await client
-      .from("warehouse_events")
-      .insert(payload)
-      .select("id");
+  return data?.id || null;
+}
 
-    if (error) throw error;
-    return data || [];
+
+async function logWarehouseEvents(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return [];
   }
+
+  const client = ensureClient();
+  const activeTenantId =
+    await getActiveTenantId(client);
+
+  const payload = rows.map(sanitizeRow);
+
+  const invalidRows = payload.filter(
+    row => row.company_id !== activeTenantId
+  );
+
+  if (invalidRows.length > 0) {
+    throw new Error(
+      `Warehouse event batch rejected: ${invalidRows.length} event(s) belong to another tenant.`
+    );
+  }
+
+  const { data, error } = await client
+    .from("warehouse_events")
+    .insert(payload)
+    .select("id");
+
+  if (error) throw error;
+
+  return data || [];
+}
 
   window.EventLog = {
     logWarehouseEvent,

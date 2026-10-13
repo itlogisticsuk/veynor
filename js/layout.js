@@ -5,6 +5,22 @@
   const APP_VERSION = "v1.4.8";
   const PORTAL_EVENTS_SRC = "/js/portal-events.js";
 
+
+const LAST_ACTIVITY_KEY = "veynor_last_activity_at";
+const SESSION_USER_KEY = "veynor_session_user_id";
+
+const INACTIVITY_LIMIT_MS = 2 * 60 * 60 * 1000;
+const INACTIVITY_WARNING_MS = 5 * 60 * 1000;
+
+const ACTIVITY_SAVE_INTERVAL_MS = 5000;
+const SESSION_CHECK_INTERVAL_MS = 15000;
+
+let lastActivitySave = 0;
+let inactivityLogoutStarted = false;
+let inactivityWarningVisible = false;
+let inactivityTrackingReady = false;
+
+
   let currentProfile = null;
 
   const ROLES = {
@@ -251,51 +267,85 @@ history: `
     document.head.appendChild(script);
   }
 
-  async function loadProfile() {
-    try {
-      if (typeof sb !== "function") return null;
 
-      const db = sb();
-      const { data: userData } = await db.auth.getUser();
+async function loadProfile() {
+  try {
+    currentProfile = null;
 
-      if (!userData?.user?.id) return null;
+    if (typeof sb !== "function") {
+      console.warn(
+        "[Veynor] Supabase client is unavailable."
+      );
+      return null;
+    }
 
-      let result = await db
+    const db = sb();
+
+    const { data: userData, error: authError } =
+      await db.auth.getUser();
+
+    if (authError) {
+      throw authError;
+    }
+
+    const authUserId = userData?.user?.id;
+
+    if (!authUserId) {
+      return null;
+    }
+
+    const { data: profiles, error: profileError } =
+      await db
         .from("user_profiles")
         .select(`
           *,
-          companies ( id, name ),
-          customers ( id, name, customer_code )
+          companies (
+            id,
+            name
+          ),
+          customers (
+            id,
+            name,
+            customer_code
+          )
         `)
-        .eq("id", userData.user.id)
+        .eq("auth_user_id", authUserId)
         .eq("is_active", true)
-        .maybeSingle();
+        .limit(2);
 
-      if (!result.data && !result.error) {
-        result = await db
-          .from("user_profiles")
-          .select(`
-            *,
-            companies ( id, name ),
-            customers ( id, name, customer_code )
-          `)
-          .eq("auth_user_id", userData.user.id)
-          .eq("is_active", true)
-          .maybeSingle();
-      }
+    if (profileError) {
+      throw profileError;
+    }
 
-      if (result.error) {
-        console.warn("Layout profile query failed:", result.error.message);
-        return null;
-      }
-
-      currentProfile = result.data || null;
-      return currentProfile;
-    } catch (error) {
-      console.warn("Layout profile load failed:", error);
+    if (!profiles || profiles.length !== 1) {
+      console.warn(
+        "[Veynor] No unique active user profile found."
+      );
       return null;
     }
+
+    if (!profiles[0].company_id) {
+      console.warn(
+        "[Veynor] Active profile has no company_id."
+      );
+      return null;
+    }
+
+    currentProfile = profiles[0];
+
+    return currentProfile;
+
+  } catch (error) {
+    currentProfile = null;
+
+    console.warn(
+      "[Veynor] Layout profile load failed:",
+      error?.message || error
+    );
+
+    return null;
   }
+}
 
   function userRole() {
     return normalize(currentProfile?.role || "");
@@ -487,7 +537,30 @@ history: `
   padding: 0;
   box-shadow: none;
 }
-rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf8)!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:center!important;cursor:pointer!important;z-index:5000!important;box-shadow:0 18px 38px rgba(18,103,255,.35);}
+
+.sidebar-toggle {
+  position: absolute;
+  top: 82px;
+  right: -25px;
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(125, 211, 252, .45) !important;
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    #1267ff,
+    #38bdf8
+  ) !important;
+  color: #fff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  z-index: 5000 !important;
+  box-shadow: 0 18px 38px rgba(
+    18, 103, 255, .35
+  );
+}
       .sidebar-toggle-icon{font-size:28px;font-weight:950;line-height:1;transform:rotate(180deg);}
       body.sidebar-collapsed .sidebar-toggle-icon{transform:rotate(0deg);}
       .sidebar-system-status{margin:8px 8px 2px;padding:12px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.085),rgba(255,255,255,.035));border:1px solid rgba(125,211,252,.16);}
@@ -638,17 +711,296 @@ rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf
     }
   }
 
-  async function logout() {
-    await trackLogoutBeforeSignOut();
 
-    try {
-      if (typeof sb === "function") await sb().auth.signOut();
-    } catch (error) {
-      console.error("Logout failed:", error);
+  // ============================================================
+  // VEYNOR — TWO-HOUR INACTIVITY MANAGEMENT
+  // ============================================================
+
+  function getLastActivity() {
+    const value = Number(
+      localStorage.getItem(LAST_ACTIVITY_KEY)
+    );
+
+    return Number.isFinite(value) && value > 0
+      ? value
+      : null;
+  }
+
+  function clearInactivityStorage() {
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
+    localStorage.removeItem(SESSION_USER_KEY);
+  }
+
+  function removeInactivityWarning() {
+    document.getElementById(
+      "veynorInactivityWarning"
+    )?.remove();
+
+    inactivityWarningVisible = false;
+  }
+
+  function showInactivityWarning(remainingMs) {
+    let warning = document.getElementById(
+      "veynorInactivityWarning"
+    );
+
+    if (!warning) {
+      warning = document.createElement("div");
+      warning.id = "veynorInactivityWarning";
+
+      Object.assign(warning.style, {
+        position: "fixed",
+        bottom: "24px",
+        right: "24px",
+        zIndex: "999999",
+        width: "340px",
+        maxWidth: "calc(100vw - 32px)",
+        padding: "18px",
+        borderRadius: "16px",
+        background: "#07152f",
+        color: "#ffffff",
+        boxShadow: "0 20px 60px rgba(0,0,0,.25)",
+        fontFamily: "inherit",
+        fontSize: "13px",
+        lineHeight: "1.5"
+      });
+
+      warning.innerHTML = `
+        <strong style="font-size:15px;">
+          Session expiring soon
+        </strong>
+
+        <div style="margin-top:8px;">
+          You will be logged out after two hours
+          of inactivity.
+        </div>
+
+        <div
+          id="veynorInactivityCountdown"
+          style="margin-top:10px;font-weight:900;"
+        ></div>
+
+        <button
+          id="veynorStaySignedIn"
+          type="button"
+          style="
+            margin-top:12px;
+            border:0;
+            border-radius:10px;
+            background:#1267ff;
+            color:white;
+            padding:10px 16px;
+            font-weight:900;
+            cursor:pointer;
+          "
+        >
+          Stay signed in
+        </button>
+      `;
+
+      document.body.appendChild(warning);
+
+      document.getElementById(
+        "veynorStaySignedIn"
+      )?.addEventListener("click", () => {
+        recordUserActivity(true);
+      });
     }
 
-    window.location.href = "/login.html";
+    const minutes = Math.max(
+      0,
+      Math.ceil(remainingMs / 60000)
+    );
+
+    const countdown = document.getElementById(
+      "veynorInactivityCountdown"
+    );
+
+    if (countdown) {
+      countdown.textContent =
+        `${minutes} minute(s) remaining`;
+    }
+
+    inactivityWarningVisible = true;
   }
+
+  function recordUserActivity(force = false) {
+    if (inactivityLogoutStarted) return;
+
+    const now = Date.now();
+    const lastActivity = getLastActivity();
+
+    // Never revive an already expired session.
+    if (
+      lastActivity !== null &&
+      now - lastActivity >= INACTIVITY_LIMIT_MS
+    ) {
+      void expireInactiveSession();
+      return;
+    }
+
+    // Avoid excessive localStorage writes.
+    if (
+      !force &&
+      now - lastActivitySave <
+        ACTIVITY_SAVE_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    localStorage.setItem(
+      LAST_ACTIVITY_KEY,
+      String(now)
+    );
+
+    lastActivitySave = now;
+
+    if (inactivityWarningVisible) {
+      removeInactivityWarning();
+    }
+  }
+
+  async function expireInactiveSession() {
+    if (inactivityLogoutStarted) return;
+
+    inactivityLogoutStarted = true;
+
+    removeInactivityWarning();
+
+    clearInactivityStorage();
+
+    try {
+      if (typeof sb === "function") {
+        await sb().auth.signOut();
+      }
+    } catch (error) {
+      console.warn(
+        "[Veynor] Inactivity sign-out failed:",
+        error
+      );
+    }
+
+    window.location.replace(
+      "/login.html?reason=inactive"
+    );
+  }
+
+  function checkInactivity() {
+    if (inactivityLogoutStarted) return;
+
+    const lastActivity = getLastActivity();
+
+    if (lastActivity === null) {
+      // Do not silently extend an unknown session.
+      void expireInactiveSession();
+      return;
+    }
+
+    const elapsed = Date.now() - lastActivity;
+
+    if (elapsed >= INACTIVITY_LIMIT_MS) {
+      void expireInactiveSession();
+      return;
+    }
+
+    const remaining =
+      INACTIVITY_LIMIT_MS - elapsed;
+
+    if (remaining <= INACTIVITY_WARNING_MS) {
+      showInactivityWarning(remaining);
+    } else if (inactivityWarningVisible) {
+      removeInactivityWarning();
+    }
+  }
+
+  function initializeInactivityTracking() {
+    if (
+      inactivityTrackingReady ||
+      isLoginPage()
+    ) {
+      return;
+    }
+
+    inactivityTrackingReady = true;
+
+    // Validate existing session before registering
+    // any activity.
+    checkInactivity();
+
+    if (inactivityLogoutStarted) return;
+
+    const activityEvents = [
+      "mousemove",
+      "mousedown",
+      "keydown",
+      "scroll",
+      "touchstart",
+      "pointerdown"
+    ];
+
+    activityEvents.forEach(eventName => {
+      document.addEventListener(
+        eventName,
+        () => recordUserActivity(),
+        { passive: true }
+      );
+    });
+
+    window.addEventListener("focus", () => {
+      checkInactivity();
+    });
+
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (!document.hidden) {
+          checkInactivity();
+        }
+      }
+    );
+
+    window.addEventListener(
+      "storage",
+      event => {
+        if (
+          event.key === LAST_ACTIVITY_KEY ||
+          event.key === SESSION_USER_KEY
+        ) {
+          checkInactivity();
+        }
+      }
+    );
+
+    setInterval(
+      checkInactivity,
+      SESSION_CHECK_INTERVAL_MS
+    );
+  }
+
+
+
+async function logout() {
+  inactivityLogoutStarted = true;
+
+  removeInactivityWarning();
+
+  await trackLogoutBeforeSignOut();
+
+  clearInactivityStorage();
+
+  try {
+    if (typeof sb === "function") {
+      await sb().auth.signOut();
+    }
+  } catch (error) {
+    console.error(
+      "[Veynor] Logout failed:",
+      error
+    );
+  }
+
+  window.location.replace("/login.html");
+}
 
   function bindAccountMenu() {
     const menu = document.getElementById("globalAccountMenu");
@@ -703,52 +1055,92 @@ rgba(125,211,252,.45)!important;background:linear-gradient(135deg,#1267ff,#38bdf
 
 async function updateMessageCenterNavBadge() {
   try {
-    if (!currentProfile || typeof sb !== "function") return;
+    if (!currentProfile || typeof sb !== "function") {
+      return;
+    }
+
+    const companyId = currentProfile.company_id;
+    const customerId = currentProfile.customer_id;
+    const profileId = currentProfile.id;
+    const role = currentProfile.role;
+
+    if (!companyId) {
+      console.warn(
+        "[Veynor] No company assigned to current profile."
+      );
+      return;
+    }
 
     const db = sb();
 
-    const unreadMessagesQuery = db
+    let messagesQuery = db
       .from("messages")
       .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
       .is("read_at", null)
-      .neq("sender_profile_id", currentProfile.id);
+      .neq("sender_profile_id", profileId);
 
-    const unreadNotificationsQuery = db
+    let notificationsQuery = db
       .from("system_notifications")
       .select("id", { count: "exact", head: true })
+      .eq("company_id", companyId)
       .eq("is_read", false);
 
-    if (currentProfile.company_id) {
-      unreadMessagesQuery.eq("company_id", currentProfile.company_id);
-      unreadNotificationsQuery.eq("company_id", currentProfile.company_id);
+    if (customerId) {
+      messagesQuery = messagesQuery.eq(
+        "customer_id",
+        customerId
+      );
+
+      notificationsQuery = notificationsQuery.eq(
+        "customer_id",
+        customerId
+      );
     }
 
-    if (currentProfile.customer_id) {
-      unreadMessagesQuery.eq("customer_id", currentProfile.customer_id);
-      unreadNotificationsQuery.eq("customer_id", currentProfile.customer_id);
-    }
+    const recipientFilter =
+      `recipient_profile_id.eq.${profileId},` +
+      `recipient_role.eq.${role},` +
+      `recipient_role.is.null`;
 
-    unreadMessagesQuery.or(
-      `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
-    );
+    messagesQuery = messagesQuery.or(recipientFilter);
 
-    unreadNotificationsQuery.or(
-      `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
-    );
+    notificationsQuery =
+      notificationsQuery.or(recipientFilter);
 
-    const [messagesRes, notificationsRes] = await Promise.all([
-      unreadMessagesQuery,
-      unreadNotificationsQuery
+    const [
+      messagesResult,
+      notificationsResult
+    ] = await Promise.all([
+      messagesQuery,
+      notificationsQuery
     ]);
 
-    const unreadMessages = messagesRes.count || 0;
-    const unreadNotifications = notificationsRes.count || 0;
-    const total = unreadMessages + unreadNotifications;
+    if (messagesResult.error) {
+      throw messagesResult.error;
+    }
 
-    const badge = document.querySelector('[data-nav-badge="message-center"]');
+    if (notificationsResult.error) {
+      throw notificationsResult.error;
+    }
+
+    const unreadMessages =
+      messagesResult.count || 0;
+
+    const unreadNotifications =
+      notificationsResult.count || 0;
+
+    const total =
+      unreadMessages + unreadNotifications;
+
+    const badge = document.querySelector(
+      '[data-nav-badge="message-center"]'
+    );
+
     if (badge) {
       badge.textContent = String(total);
-      badge.style.display = total > 0 ? "inline-flex" : "none";
+      badge.style.display =
+        total > 0 ? "inline-flex" : "none";
     }
 
     window.VeynorUnreadCounts = {
@@ -757,51 +1149,17 @@ async function updateMessageCenterNavBadge() {
       total
     };
 
-    window.dispatchEvent(new CustomEvent("veynor:unread-counts", {
-      detail: window.VeynorUnreadCounts
-    }));
+    window.dispatchEvent(
+      new CustomEvent("veynor:unread-counts", {
+        detail: window.VeynorUnreadCounts
+      })
+    );
 
   } catch (error) {
-    console.warn("Message Center badge failed:", error);
-  }
-}
-
-async function updateMessageCenterNavBadge() {
-  try {
-    if (!currentProfile || typeof sb !== "function") return;
-
-    const db = sb();
-
-    let query = db
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .is("read_at", null)
-      .neq("sender_profile_id", currentProfile.id);
-
-    if (currentProfile.role) {
-      query = query.or(
-        `recipient_profile_id.eq.${currentProfile.id},recipient_role.eq.${currentProfile.role},recipient_role.is.null`
-      );
-    }
-
-    if (currentProfile.customer_id) {
-      query = query.eq("customer_id", currentProfile.customer_id);
-    }
-
-    const { count, error } = await query;
-
-    if (error) {
-      console.warn("Message Center badge failed:", error.message);
-      return;
-    }
-
-    const badge = document.querySelector('[data-nav-badge="message-center"]');
-    if (!badge) return;
-
-    badge.textContent = String(count || 0);
-    badge.style.display = count > 0 ? "inline-flex" : "none";
-  } catch (error) {
-    console.warn("Message Center badge failed:", error);
+    console.warn(
+      "[Veynor] Message Center badge failed:",
+      error
+    );
   }
 }
 
@@ -871,9 +1229,19 @@ document.addEventListener("DOMContentLoaded", async () => {
     injectFavicon();
     injectPortalEventsScript();
 
-    await loadProfile();
+
+await loadProfile();
+
+if (!isLoginPage() && currentProfile) {
+  initializeInactivityTracking();
+}
+
+if (inactivityLogoutStarted) {
+  return;
+}
 
 renderSidebar();
+
 await updateMessageCenterNavBadge();
 
 window.VeynorUpdateMessageCenterNavBadge = updateMessageCenterNavBadge;
@@ -884,9 +1252,6 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) updateMessageCenterNavBadge();
 });
 
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) updateMessageCenterNavBadge();
-});
 
     if (!document.getElementById("logoutModal")) {
       document.body.insertAdjacentHTML("beforeend", renderLogoutModal());

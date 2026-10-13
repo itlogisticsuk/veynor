@@ -5,7 +5,6 @@
      CONFIG
   ========================================================= */
 
-  const TENANT_NAME = "Sofa2U";
 
   const LIVE_LOCATION_START_HOUR = 6;
   const LIVE_LOCATION_END_HOUR = 18;
@@ -517,54 +516,32 @@
   }
 
 
-  async function getCompanyId() {
-    if (companyId) {
-      return companyId;
-    }
 
-    if (
-      currentProfile
-        ?.company_id
-    ) {
-      companyId =
-        currentProfile
-          .company_id;
+async function getCompanyId() {
+  // Gebruik uitsluitend de tenant uit het ingelogde profiel.
+  const activeCompanyId =
+    currentProfile?.company_id || null;
 
-      return companyId;
-    }
-
-    const {
-      data,
-      error
-    } =
-      await getClient()
-        .from(
-          "companies"
-        )
-        .select(
-          "id"
-        )
-        .eq(
-          "name",
-          TENANT_NAME
-        )
-        .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error(
-        `Company "${TENANT_NAME}" not found.`
-      );
-    }
-
-    companyId =
-      data.id;
-
-    return companyId;
+  if (!activeCompanyId) {
+    throw new Error(
+      "No company is assigned to the current user profile."
+    );
   }
+
+  // Voorkom gebruik van oude gegevens bij een tenantwissel.
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
 
 
   /* =========================================================

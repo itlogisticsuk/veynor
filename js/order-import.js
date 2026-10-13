@@ -1,8 +1,7 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-  const OWNER_PROFILES_KEY = "product_owner_profiles";
+ const OWNER_PROFILES_KEY = "product_owner_profiles";
 
   let client = null;
   let companyId = null;
@@ -444,21 +443,66 @@ function getStockPriorityClass(value) {
     return { raw, brand: "", sku: raw };
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
+ 
+async function getCompanyId() {
+  const db = client;
 
-    const { data, error } = await client
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Tenant "${TENANT_NAME}" not found in companies.`);
-
-    companyId = data.id;
-    return companyId;
+  if (!db) {
+    throw new Error(
+      "Supabase client is not initialised."
+    );
   }
+
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error(
+      "No authenticated user found."
+    );
+  }
+
+  const { data: profiles, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select("id, company_id, role, is_active")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+  if (profileError) throw profileError;
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active user profile."
+    );
+  }
+
+  const activeCompanyId = profiles[0].company_id;
+
+  if (!activeCompanyId) {
+    throw new Error(
+      "No tenant is assigned to this account."
+    );
+  }
+
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
+
 
 async function loadSettings() {
   assertImportAccess();

@@ -1,8 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-  const DEFAULT_PRODUCT_OWNER = "Bellstone";
   const OWNER_PROFILES_KEY = "product_owner_profiles";
 
   const SMALL_LABEL_W_MM = 89;
@@ -29,8 +27,6 @@ let removeCurrentProductImage = false;
 
 const PRODUCT_IMAGE_BUCKET = "product-images";
 const MAX_PRODUCT_IMAGE_SIZE = 5 * 1024 * 1024;
-
-  const DEFAULT_OWNER_NAMES = ["bellstone", "zoy", "zoe"];
 
 const OPTIONAL_FIELDS = [
   "image_url",
@@ -151,23 +147,57 @@ const OPTIONAL_FIELDS = [
     return client;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
 
-    const db = ensureClient();
+async function getCompanyId() {
+  const db = ensureClient();
 
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+  if (authError) throw authError;
 
-    companyId = data.id;
-    return companyId;
+  const userId = authData?.user?.id;
+
+  if (!userId) {
+    throw new Error("No authenticated user found.");
   }
+
+  const { data: profiles, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select("id, company_id, is_active")
+      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+      .eq("is_active", true);
+
+  if (profileError) throw profileError;
+
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active user profile."
+    );
+  }
+
+  const activeCompanyId = profiles[0].company_id;
+
+  if (!activeCompanyId) {
+    throw new Error(
+      "No tenant is assigned to this account."
+    );
+  }
+
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
+    throw new Error(
+      "Active tenant has changed. Reload the page."
+    );
+  }
+
+  companyId = activeCompanyId;
+
+  return companyId;
+}
 
   function productHasColumn(column) {
     return productColumns.has(column);
@@ -302,11 +332,9 @@ function getMissingProductInfo(row) {
     `;
   }
 
-  function getDefaultOwnerCustomerId() {
-    const direct = customers.find(c => normalize(c.name).includes(normalize(DEFAULT_PRODUCT_OWNER)));
-    if (direct?.id) return direct.id;
-    return customers[0]?.id || "";
-  }
+function getDefaultOwnerCustomerId() {
+  return "";
+}
 
   async function loadOwnerProfiles() {
     const db = ensureClient();
@@ -358,16 +386,22 @@ function getMissingProductInfo(row) {
     );
   }
 
-  function customerLooksLikeProductOwner(customer) {
-    if (customer?.customer_type === "product_owner") return true;
 
-    const name = normalize(customer?.name || "");
-    if (!name) return false;
+function customerLooksLikeProductOwner(customer) {
+  if (!customer) return false;
 
-    if (DEFAULT_OWNER_NAMES.some(owner => name.includes(owner))) return true;
-
-    return ownerProfiles.some(profile => customerMatchesOwnerProfile(customer, profile));
+  // Product Owner expliciet geregistreerd in Supabase.
+  if (
+    normalize(customer.customer_type) === "product_owner"
+  ) {
+    return true;
   }
+
+  // Of gekoppeld via de tenantinstellingen.
+  return ownerProfiles.some(profile =>
+    customerMatchesOwnerProfile(customer, profile)
+  );
+}
 
   function buildImportOwnerOptions() {
     const options = [];
@@ -411,33 +445,31 @@ function getMissingProductInfo(row) {
     importOwnerOptions = options.sort((a, b) => a.label.localeCompare(b.label));
   }
 
-  async function loadCustomers() {
-    const db = ensureClient();
-    const cid = await getCompanyId();
 
-    await loadOwnerProfiles();
+async function loadCustomers() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const { data, error } = await db
-      .from("customers")
-      .select("id, name, customer_type, customer_code")
-      .eq("company_id", cid)
-      .order("name", { ascending: true });
+  await loadOwnerProfiles();
 
-    if (error) throw error;
+  const { data, error } = await db
+    .from("customers")
+    .select("id, name, customer_type, customer_code")
+    .eq("company_id", cid)
+    .order("name", { ascending: true });
 
-    allCustomers = data || [];
+  if (error) throw error;
 
-    customers = allCustomers.filter(customerLooksLikeProductOwner);
+  allCustomers = data || [];
 
-    if (!customers.length) {
-      customers = allCustomers.filter(c =>
-        DEFAULT_OWNER_NAMES.some(owner => normalize(c.name).includes(owner))
-      );
-    }
+  // Product Owners uitsluitend dynamisch herkennen.
+  customers = allCustomers.filter(
+    customerLooksLikeProductOwner
+  );
 
-    buildImportOwnerOptions();
-    renderCustomerSelects();
-  }
+  buildImportOwnerOptions();
+  renderCustomerSelects();
+}
 
   function renderCustomerSelects() {
     const formSelect = byId("productCustomer");
@@ -478,9 +510,7 @@ importSelect.innerHTML =
       if (current && importOwnerOptions.some(o => o.value === current)) {
         importSelect.value = current;
       } else {
-        const bellstone = importOwnerOptions.find(o => normalize(o.label).includes("bellstone"));
-        importSelect.value = bellstone?.value || importOwnerOptions[0]?.value || "";
-      }
+importSelect.value = "";      }
     }
   }
 
@@ -1702,7 +1732,7 @@ function openStockLabelModal(row) {
       const sku = selectedLabelProduct?.sku_base || "stock-label";
       const packageNo = toInteger(byId("stockLabelPackageSelect")?.value, 1);
 
-      pdf.save(`sofa2u-stock-label-${sku}-package-${packageNo}.pdf`);
+pdf.save(`veynor-stock-label-${sku}-package-${packageNo}.pdf`);
       showToast("PDF downloaded.", "ok");
     } catch (error) {
       console.error(error);

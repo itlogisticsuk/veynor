@@ -6,22 +6,25 @@ const DEFAULT_VAT_RATE = 0.20;
 const DEFAULT_PAYMENT_TERM_DAYS = 14;
 const DEFAULT_FUEL_SURCHARGE_PERCENT = 8.5;
 
-  const FALLBACK_COMPANY = {
-    name: "Sofa2U Ltd",
-    displayName: "Sofa2U",
-    address: "860-862 Garratt Lane, London, SW17 0NB",
-    phone: "+44 (0) 7894 469947",
-    email: "sales@sofa2u.co.uk",
-    vat: "GB 368 665 249",
-    logoUrl: "",
-    bankName: "NatWest",
-    sortCode: "51-61-11",
-    accountNo: "7797 5170",
-    iban: "",
-    bic: "",
-    paymentNote: "Please make payments via bank transfer using the details shown on this invoice.",
-    footerText: ""
-  };
+
+const FALLBACK_COMPANY = {
+  name: "",
+  displayName: "",
+  address: "",
+  phone: "",
+  email: "",
+  vat: "",
+  logoUrl: "",
+  bankCompanyName: "",
+  bankName: "",
+  sortCode: "",
+  accountNo: "",
+  iban: "",
+  bic: "",
+  paymentNote:
+    "Please make payments using the bank details shown on this invoice.",
+  footerText: ""
+};
 
 const COL = {
   order: 14,
@@ -904,47 +907,83 @@ async function loadCompanySettings(client, companyId) {
   };
 }
 
-  async function loadProductOwnerProfile(client, customerId) {
-    if (!customerId) {
-      throw new Error("Selected orders have no product owner/customer_id.");
-    }
 
-    const { data: customer, error: customerError } = await client
+async function loadProductOwnerProfile(
+  client,
+  customerId,
+  companyId
+) {
+  if (!client || !companyId || !customerId) {
+    throw new Error(
+      "Client, tenant or Product Owner ID is missing."
+    );
+  }
+
+  const { data: customer, error: customerError } =
+    await client
       .from("customers")
       .select("*")
+      .eq("company_id", companyId)
       .eq("id", customerId)
       .maybeSingle();
 
-    if (customerError) throw customerError;
-    if (!customer?.id) throw new Error("Product owner/customer record not found.");
+  if (customerError) throw customerError;
 
-    let address = null;
+  if (!customer?.id) {
+    throw new Error(
+      "Product Owner not found within the active tenant."
+    );
+  }
 
-    const { data: addresses, error: addressError } = await client
+  const { data: addresses, error: addressError } =
+    await client
       .from("customer_addresses")
       .select("*")
       .eq("customer_id", customerId)
-      .order("is_default", { ascending: false })
+      .order("is_default", {
+        ascending: false
+      })
       .limit(1);
 
-    if (!addressError && addresses?.length) {
-      address = addresses[0];
-    }
+  if (addressError) throw addressError;
 
-    return {
-      id: customer.id,
-      name: customer.name || customer.trading_name || "Product Owner",
-      customerCode: customer.customer_code || "",
-      vat: customer.vat_number || customer.vat || "",
-      email: customer.billing_email || customer.email || "",
-      address1: address?.street || customer.address1 || customer.address_1 || "",
-      address2: address?.address2 || customer.address2 || customer.address_2 || "",
-      city: address?.city || customer.city || "",
-      county: address?.county || customer.county || "",
-      postcode: address?.postal_code || address?.postcode || customer.postcode || "",
-      country: address?.country || customer.country || "United Kingdom"
-    };
-  }
+  const address = addresses?.[0] || null;
+
+  return {
+    id: customer.id,
+    name:
+      customer.name ||
+      customer.trading_name ||
+      "Product Owner",
+    customerCode: customer.customer_code || "",
+    vat: customer.vat_number || customer.vat || "",
+    email:
+      customer.billing_email ||
+      customer.email ||
+      "",
+    address1:
+      address?.street ||
+      customer.address1 ||
+      customer.address_1 ||
+      "",
+    address2:
+      address?.address2 ||
+      customer.address2 ||
+      customer.address_2 ||
+      "",
+    city: address?.city || customer.city || "",
+    county: address?.county || customer.county || "",
+    postcode:
+      address?.postal_code ||
+      address?.postcode ||
+      customer.postcode ||
+      "",
+    country:
+      address?.country ||
+      customer.country ||
+      ""
+  };
+}
 
 
 /* ==========================================================
@@ -1604,9 +1643,21 @@ rows.push([
       noteY
     );
 
+
     doc.setFontSize(9);
   }
+
+  // ==========================================================
+  // PAYMENT DETAILS — TENANT CONFIGURATION
+  // ==========================================================
+
+  drawPaymentDetails(
+    doc,
+    224,
+    ctx.company
+  );
 }
+
 
 
  function drawSpecificationHeader(
@@ -3062,11 +3113,12 @@ async function generateTestInvoice(
     companyId
   );
 
-  ctx.productOwner =
-    await loadProductOwnerProfile(
-      client,
-      productOwnerId
-    );
+ctx.productOwner =
+  await loadProductOwnerProfile(
+    client,
+    productOwnerId,
+    companyId
+  );
 
   ctx.invoiceMode = getInvoiceMode(
     ctx.productOwner
@@ -3338,10 +3390,11 @@ async function generate(orders, client, companyId) {
     companyId
   );
 
-  ctx.productOwner = await loadProductOwnerProfile(
-    client,
-    productOwnerId
-  );
+ctx.productOwner = await loadProductOwnerProfile(
+  client,
+  productOwnerId,
+  companyId
+);
 
   ctx.invoiceMode = getInvoiceMode(ctx.productOwner);
 

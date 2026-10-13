@@ -3,16 +3,16 @@
 
   const POD_BUCKET = "pod-assets";
 
-  const FALLBACK_COMPANY = {
-    name: "Sofa2U Ltd",
-    displayName: "Sofa2U",
-    address: "860-862 Garratt Lane, London, SW17 0NB",
-    phone: "+44 (0) 7894 469947",
-    email: "sales@sofa2u.co.uk",
-    vat: "GB 368 665 249",
-    logoUrl: "",
-    footerText: ""
-  };
+const FALLBACK_COMPANY = {
+  name: "",
+  displayName: "",
+  address: "",
+  phone: "",
+  email: "",
+  vat: "",
+  logoUrl: "",
+  footerText: ""
+};
 
   const DEFAULT_DAMAGE_NOTE =
     "All goods must be checked for damage and reported within 5 days of delivery.";
@@ -159,49 +159,71 @@ function getSupplierReference(order) {
     return qty * unit;
   }
 
-  async function loadCompanySettings(client, companyId) {
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
 
-    if (error) {
-      console.warn("Settings skipped:", error.message);
-      return {
-        company: { ...FALLBACK_COMPANY },
-        ownerProfiles: [],
-        damageNote: DEFAULT_DAMAGE_NOTE
-      };
-    }
+async function loadCompanySettings(client, companyId) {
+  if (!client || !companyId) {
+    throw new Error(
+      "Supabase client or active tenant is missing."
+    );
+  }
 
-    const map = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
 
-    let ownerProfiles = [];
-    try {
-      ownerProfiles = JSON.parse(map.get("product_owner_profiles") || "[]");
-      if (!Array.isArray(ownerProfiles)) ownerProfiles = [];
-    } catch {
+  if (error) {
+    throw error;
+  }
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
+
+  let ownerProfiles = [];
+
+  try {
+    const raw = map.get("product_owner_profiles") || "[]";
+
+    ownerProfiles =
+      typeof raw === "string" ? JSON.parse(raw) : raw;
+
+    if (!Array.isArray(ownerProfiles)) {
       ownerProfiles = [];
     }
-
-    return {
-      company: {
-        name: map.get("main_company_name") || FALLBACK_COMPANY.name,
-        displayName: map.get("main_display_name") || FALLBACK_COMPANY.displayName,
-        address: map.get("main_address") || FALLBACK_COMPANY.address,
-        phone: map.get("main_phone") || FALLBACK_COMPANY.phone,
-        email: map.get("main_email") || FALLBACK_COMPANY.email,
-        vat: map.get("main_vat") || FALLBACK_COMPANY.vat,
-        logoUrl: map.get("main_logo_url") || FALLBACK_COMPANY.logoUrl,
-        footerText: map.get("document_footer_text") || FALLBACK_COMPANY.footerText
-      },
-      ownerProfiles,
-      damageNote:
-        map.get("text_damage_reporting_note") ||
-        map.get("doc_damage_note") ||
-        DEFAULT_DAMAGE_NOTE
-    };
+  } catch {
+    ownerProfiles = [];
   }
+
+  const company = {
+    name: map.get("main_company_name") || "",
+    displayName: map.get("main_display_name") || "",
+    address: map.get("main_address") || "",
+    phone: map.get("main_phone") || "",
+    email: map.get("main_email") || "",
+    vat: map.get("main_vat") || "",
+    logoUrl: map.get("main_logo_url") || "",
+    footerText: map.get("document_footer_text") || ""
+  };
+
+  if (!company.name.trim()) {
+    throw new Error(
+      "Company name is missing. Configure it in Settings."
+    );
+  }
+
+  return {
+    company,
+    ownerProfiles,
+    damageNote:
+      map.get("text_damage_reporting_note") ||
+      map.get("doc_damage_note") ||
+      DEFAULT_DAMAGE_NOTE
+  };
+}
 
   async function loadProductOwnerProfile(client, order, ownerProfiles) {
     const fallbackName = getProductOwnerName(order);

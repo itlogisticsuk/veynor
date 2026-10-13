@@ -1,8 +1,7 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-  const DEFAULT_FUEL_PERCENTAGE = 8.5;
+let DEFAULT_FUEL_PERCENTAGE = 0;
 
   let client = null;
   let companyId = null;
@@ -71,22 +70,82 @@
     return `${pc || "NOPC"}-${name || "MAN"}`;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
+async function loadFuelSurchargeSettings() {
+  const cid = await getCompanyId();
 
-    const { data, error } = await db()
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
+  const { data, error } = await db()
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", cid)
+    .in("setting_key", [
+      "fuel_surcharge_enabled",
+      "fuel_surcharge_percent"
+    ]);
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company ${TENANT_NAME} not found.`);
+  if (error) throw error;
 
-    companyId = data.id;
-    return companyId;
+  const settings = Object.fromEntries(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  const enabled =
+    String(settings.fuel_surcharge_enabled || "")
+      .toLowerCase() === "true";
+
+  const percentage = toNumber(
+    settings.fuel_surcharge_percent,
+    0
+  );
+
+  DEFAULT_FUEL_PERCENTAGE = enabled
+    ? percentage
+    : 0;
+
+  const checkbox = byId("manualChargeFuelEnabled");
+  const input = byId("manualChargeFuelPercentage");
+
+  if (checkbox) checkbox.checked = enabled;
+  if (input) input.value = DEFAULT_FUEL_PERCENTAGE;
+
+  refreshPreview();
+}
+
+async function getCompanyId() {
+  if (companyId) return companyId;
+
+  const { data: authData, error: authError } =
+    await db().auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+  if (!userId) throw new Error("Not authenticated.");
+
+  let { data, error } = await db()
+    .from("user_profiles")
+    .select("company_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!data && !error) {
+    ({ data, error } = await db()
+      .from("user_profiles")
+      .select("company_id")
+      .eq("auth_user_id", userId)
+      .maybeSingle());
   }
 
+  if (error) throw error;
+  if (!data?.company_id) {
+    throw new Error("No company_id found for current user.");
+  }
+
+  companyId = data.company_id;
+  return companyId;
+}
   async function loadProductOwners() {
     if (productOwners.length) return productOwners;
 
@@ -100,21 +159,11 @@
 
     if (error) throw error;
 
-    productOwners = (data || []).filter(row => {
-      const text = `${row.name || ""} ${row.customer_code || ""} ${row.customer_type || ""}`.toLowerCase();
-
-      return (
-        text.includes("bellstone") ||
-        text.includes("zoy") ||
-        text.includes("product_owner") ||
-        text.includes("product owner")
-      );
-    });
-
-    if (!productOwners.length) {
-      productOwners = data || [];
-    }
-
+productOwners = (data || []).filter(row =>
+  String(row.customer_type || "")
+    .trim()
+    .toLowerCase() === "product_owner"
+);
     return productOwners;
   }
 
@@ -916,9 +965,7 @@ function addManualChargeLine(type = "mileage") {
       </option>
     `).join("");
 
-    const bellstone = owners.find(owner => String(owner.name || "").toLowerCase().includes("bellstone"));
-    if (bellstone) select.value = bellstone.id;
-  }
+ }
 
 function getAmounts() {
   const lines =
@@ -1063,24 +1110,24 @@ function refreshPreview() {
   }
 }
 
+function close() {
+  const modal = byId("manualChargeModal");
+  if (!modal) return;
+
+  modal.classList.remove("open");
+  modal.setAttribute("aria-hidden", "true");
+}
+
 async function open() {
   ensureModal();
 
   await populateOwners();
+await loadFuelSurchargeSettings();
 
   byId("manualChargeRetailer").value = "";
   byId("manualChargePostcode").value = "";
   byId("manualChargeReference").value = "";
   byId("manualChargePo").value = "";
-
-  byId(
-    "manualChargeFuelEnabled"
-  ).checked = false;
-
-  byId(
-    "manualChargeFuelPercentage"
-  ).value =
-    DEFAULT_FUEL_PERCENTAGE;
 
   byId(
     "manualChargeStatus"

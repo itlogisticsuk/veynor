@@ -917,61 +917,32 @@
   }
 
 
-  async function loadLocations() {
-
-    const {
-      data,
-      error
-    } =
-      await db
-        .from(
-          "warehouse_locations"
-        )
-        .select(`
-          id,
-          warehouse_id,
-          code
-        `)
-        .eq(
-          "company_id",
-          companyId
-        );
-
-
-    if (error) {
-
-      /*
-       * Sommige oudere schemas hebben geen company_id
-       * op warehouse_locations.
-       */
-      const fallback =
-        await db
-          .from(
-            "warehouse_locations"
-          )
-          .select(`
-            id,
-            warehouse_id,
-            code
-          `);
-
-
-      if (fallback.error) {
-        throw fallback.error;
-      }
-
-
-      allLocations =
-        fallback.data ||
-        [];
-
-      return;
-    }
-
-
-    allLocations =
-      data || [];
+  
+async function loadLocations() {
+  if (!db || !companyId) {
+    throw new Error(
+      "Supabase client or active tenant is missing."
+    );
   }
+
+  const { data, error } = await db
+    .from("warehouse_locations")
+    .select(`
+      id,
+      warehouse_id,
+      code
+    `)
+    .eq("company_id", companyId);
+
+  if (error) {
+    throw new Error(
+      `Unable to load warehouse locations: ${error.message}`
+    );
+  }
+
+  allLocations = data || [];
+}
+
 
 
   // ==========================================================
@@ -3656,9 +3627,7 @@ function buildCompletedPeriods(
           );
 
 
-      /*
-       * Bellstone standaard selecteren wanneer aanwezig.
-       */
+els.customerFilter.value = "";
       const bellstone =
         allCustomers.find(
           customer =>

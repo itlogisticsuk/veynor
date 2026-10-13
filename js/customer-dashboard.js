@@ -1,8 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-
   let client = null;
   let currentUser = null;
   let currentProfile = null;
@@ -241,27 +239,42 @@ function formatDays(value) {
     ).get(name);
   }
 
-  async function loadProfile() {
-    const {
-      data: userData,
-      error: userError
-    } = await client.auth.getUser();
 
-    if (userError) {
-      throw userError;
-    }
+async function loadProfile() {
+  const { data: userData, error: userError } =
+    await client.auth.getUser();
 
-    currentUser = userData?.user || null;
+  if (userError) {
+    throw userError;
+  }
 
-    if (!currentUser?.id) {
-      window.location.href = "/login.html";
-      throw new Error("Not authenticated.");
-    }
+  currentUser = userData?.user || null;
 
-    const {
-      data,
-      error
-    } = await client
+  if (!currentUser?.id) {
+    window.location.href = "/login.html";
+    throw new Error("Not authenticated.");
+  }
+
+  let result = await client
+    .from("user_profiles")
+    .select(`
+      *,
+      companies (
+        id,
+        name
+      ),
+      customers (
+        id,
+        name,
+        customer_code
+      )
+    `)
+    .eq("auth_user_id", currentUser.id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!result.data && !result.error) {
+    result = await client
       .from("user_profiles")
       .select(`
         *,
@@ -278,115 +291,105 @@ function formatDays(value) {
       .eq("id", currentUser.id)
       .eq("is_active", true)
       .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error(
-        "No active profile found."
-      );
-    }
-
-    currentProfile = data;
-    companyId = data.company_id || null;
-
-    if (
-      !companyId &&
-      normalize(data.role) === ROLE.VEYNOR_ADMIN
-    ) {
-      const {
-        data: company,
-        error: companyError
-      } = await client
-        .from("companies")
-        .select("id, name")
-        .eq("name", TENANT_NAME)
-        .maybeSingle();
-
-      if (companyError) {
-        throw companyError;
-      }
-
-      if (!company?.id) {
-        throw new Error(
-          `Company "${TENANT_NAME}" not found.`
-        );
-      }
-
-      companyId = company.id;
-    }
   }
 
-  async function resolveCustomer() {
-    if (isProductOwnerRole()) {
-      selectedCustomerId =
-        currentProfile.customer_id;
-    } else if (isTenantRole()) {
-      selectedCustomerId =
-        getQueryParam("customer_id") || null;
-    }
+  if (result.error) {
+    throw result.error;
+  }
 
-    if (!selectedCustomerId) {
-      if (isTenantRole()) {
-        await loadCustomerPicker();
-        return;
-      }
+  if (!result.data?.id) {
+    throw new Error("No active profile found.");
+  }
 
-      throw new Error(
-        "No customer selected."
-      );
-    }
+  currentProfile = result.data;
+  companyId = currentProfile.company_id || null;
 
-    const {
-      data,
-      error
-    } = await client
-      .from("customers")
-      .select(`
-        id,
-        name,
-        customer_code,
-        billing_email
-      `)
-      .eq("id", selectedCustomerId)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error(
-        "Selected customer not found."
-      );
-    }
-
-    selectedCustomer = data;
-
-    setText(
-      "customerName",
-      selectedCustomer.name || "Customer"
+  if (!companyId) {
+    throw new Error(
+      "No active tenant is assigned to this account."
     );
+  }
+}
 
-    setText(
-      "customerMeta",
-      selectedCustomer.customer_code
-        ? `Customer code: ${selectedCustomer.customer_code}`
-        : "Customer portal"
+
+async function resolveCustomer() {
+  if (!companyId) {
+    throw new Error("No active tenant selected.");
+  }
+
+  selectedCustomer = null;
+  selectedCustomerId = null;
+
+  if (isProductOwnerRole()) {
+    selectedCustomerId =
+      currentProfile.customer_id || null;
+  } else if (isTenantRole()) {
+    selectedCustomerId =
+      getQueryParam("customer_id") || null;
+  } else {
+    throw new Error(
+      "Not authorised to access this dashboard."
     );
+  }
 
+  if (!selectedCustomerId) {
     if (isTenantRole()) {
       await loadCustomerPicker();
+      return;
+    }
 
-      const select = byId("customerSelect");
+    throw new Error(
+      "No customer is assigned to this account."
+    );
+  }
 
-      if (select) {
-        select.value = selectedCustomerId;
-      }
+  const { data, error } = await client
+    .from("customers")
+    .select(`
+      id,
+      company_id,
+      name,
+      customer_code,
+      billing_email
+    `)
+    .eq("company_id", companyId)
+    .eq("id", selectedCustomerId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!data?.id) {
+    throw new Error(
+      "Selected customer does not belong to the active tenant."
+    );
+  }
+
+  selectedCustomer = data;
+
+  setText(
+    "customerName",
+    selectedCustomer.name || "Customer"
+  );
+
+  setText(
+    "customerMeta",
+    selectedCustomer.customer_code
+      ? `Customer code: ${selectedCustomer.customer_code}`
+      : "Customer portal"
+  );
+
+  if (isTenantRole()) {
+    await loadCustomerPicker();
+
+    const select = byId("customerSelect");
+
+    if (select) {
+      select.value = selectedCustomerId;
     }
   }
+}
 
   async function loadCustomerPicker() {
     const wrap = byId(
@@ -2571,7 +2574,7 @@ function renderDeliveryPerformanceModal() {
                   <thead>
                     <tr>
                       <th>Order</th>
-                      <th>Bellstone Ref</th>
+                      <th>Supplier Ref</th><th>Bellstone Ref</th>
                       <th>Retailer</th>
                       <th>Region</th>
                       <th>Imported</th>
@@ -3056,11 +3059,11 @@ function exportDeliveryPerformancePdf() {
         y
       );
 
-      doc.text(
-        "Bellstone Ref",
-        margin + 24,
-        y
-      );
+doc.text(
+  "Supplier Ref",
+  margin + 24,
+  y
+);
 
       doc.text(
         "Retailer",
@@ -4907,8 +4910,7 @@ async function init() {
       !isProductOwnerRole()
     ) {
       throw new Error(
-        "This dashboard is only available for Veynor, Sofa2U or product owner accounts."
-      );
+"This dashboard is only available for authorised tenant and product owner accounts."      );
     }
 
 

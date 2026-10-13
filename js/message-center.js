@@ -100,6 +100,58 @@ const state = {
     return profile?.customer_id || profile?.customers?.id || null;
   }
 
+
+function canAccessMessage(message) {
+  if (!profile?.id || !profile?.company_id || !message) {
+    return false;
+  }
+
+  if (String(message.company_id) !== String(profile.company_id)) {
+    return false;
+  }
+
+  if (
+    !isTenantRole() &&
+    String(message.customer_id || "") !==
+      String(currentCustomerId() || "")
+  ) {
+    return false;
+  }
+
+  if (String(message.sender_profile_id) === String(profile.id)) {
+    return true;
+  }
+
+  if (message.recipient_profile_id) {
+    return String(message.recipient_profile_id) ===
+      String(profile.id);
+  }
+
+  if (message.recipient_role) {
+    return String(message.recipient_role) ===
+      String(profile.role);
+  }
+
+  return false;
+}
+
+function canAccessThread(thread) {
+  if (!profile?.company_id || !thread) return false;
+
+  if (String(thread.company_id) !== String(profile.company_id)) {
+    return false;
+  }
+
+  if (!isTenantRole()) {
+    return !!currentCustomerId() &&
+      String(thread.customer_id || "") ===
+      String(currentCustomerId());
+  }
+
+  return true;
+}
+
+
   function greeting() {
     const hour = new Date().getHours();
     if (hour < 12) return "Good morning";
@@ -133,54 +185,68 @@ const state = {
     return { icon: "🔔", cls: "blue" };
   }
 
-  async function loadProfile() {
-    const client = ensureClient();
-    const { data: userData } = await client.auth.getUser();
-    const userId = userData?.user?.id;
 
-    if (!userId) throw new Error("No authenticated user found.");
 
-    let result = await client
-      .from("user_profiles")
-      .select(`
-        *,
-        companies ( id, name ),
-        customers ( id, name, customer_code )
-      `)
-      .eq("id", userId)
-      .maybeSingle();
+async function loadProfile() {
+  const client = ensureClient();
 
-    if (!result.data && !result.error) {
-      result = await client
-        .from("user_profiles")
-        .select(`
-          *,
-          companies ( id, name ),
-          customers ( id, name, customer_code )
-        `)
-        .eq("auth_user_id", userId)
-        .maybeSingle();
-    }
+  profile = null;
 
-    if (result.error) throw result.error;
+  const { data: auth, error: authError } =
+    await client.auth.getUser();
 
-    profile = result.data;
-    if (!profile) throw new Error("User profile not found.");
+  if (authError) throw authError;
 
-    setText("welcomeTitle", `${greeting()}, ${displayName()}.`);
+  const userId = auth?.user?.id;
 
-    if (isTenantRole()) {
-      setText(
-        "welcomeText",
-        "Welcome back to Veynor. This Message Center gives you a live overview of customer messages, operational updates, warehouse activity and platform notifications."
-      );
-    } else {
-      setText(
-        "welcomeText",
-        "Welcome to the Veynor Customer Portal. Here you can monitor your orders, deliveries, documents and warehouse activity in real time."
-      );
-    }
+  if (!userId) {
+    throw new Error("No authenticated user found.");
   }
+
+  const { data: profiles, error } = await client
+    .from("user_profiles")
+    .select(`
+      *,
+      companies ( id, name ),
+      customers ( id, name, customer_code )
+    `)
+    .eq("auth_user_id", userId)
+    .eq("is_active", true)
+    .limit(2);
+
+  if (error) throw error;
+
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "No unique active tenant profile found."
+    );
+  }
+
+  profile = profiles[0];
+
+  setText(
+    "welcomeTitle",
+    `${greeting()}, ${displayName()}.`
+  );
+
+  if (isTenantRole()) {
+    setText(
+      "welcomeText",
+      "Welcome back to Veynor. This Message Center gives you a live overview of customer messages, operational updates, warehouse activity and platform notifications."
+    );
+  } else {
+    setText(
+      "welcomeText",
+      "Welcome to the Veynor Customer Portal. Here you can monitor your orders, deliveries, documents and warehouse activity in real time."
+    );
+  }
+
+  return profile;
+}
 
   async function loadNotificationState() {
     const client = ensureClient();
@@ -213,39 +279,72 @@ const state = {
     notificationState = inserted;
   }
 
-  function scopedQuery(query, tableHasCustomer = true) {
-    if (profile?.company_id) query = query.eq("company_id", profile.company_id);
 
-    if (!isTenantRole() && tableHasCustomer && currentCustomerId()) {
-      query = query.eq("customer_id", currentCustomerId());
-    }
 
-    return query;
+function scopedQuery(query, tableHasCustomer = true) {
+  if (!profile?.company_id) {
+    throw new Error(
+      "Database query blocked: active tenant missing."
+    );
   }
 
-  async function safeCount(table, filters = {}) {
-    try {
-      const client = ensureClient();
+  query = query.eq("company_id", profile.company_id);
 
-      let query = client
-        .from(table)
-        .select("id", { count: "exact", head: true });
+  if (!isTenantRole() && tableHasCustomer) {
+    const customerId = currentCustomerId();
 
-      query = scopedQuery(query, filters.customer !== false);
-
-      if (filters.gte) query = query.gte(filters.gte.field, filters.gte.value);
-      if (filters.lte) query = query.lte(filters.lte.field, filters.lte.value);
-      if (filters.eq) filters.eq.forEach(f => query = query.eq(f.field, f.value));
-      if (filters.in) filters.in.forEach(f => query = query.in(f.field, f.value));
-
-      const { count, error } = await query;
-      if (error) return 0;
-
-      return count || 0;
-    } catch {
-      return 0;
+    if (!customerId) {
+      throw new Error(
+        "Customer account has no customer_id."
+      );
     }
+
+    query = query.eq("customer_id", customerId);
   }
+
+  return query;
+}
+
+
+async function safeCount(table, filters = {}) {
+  const client = ensureClient();
+
+  let query = client
+    .from(table)
+    .select("id", { count: "exact", head: true });
+
+  query = scopedQuery(query, filters.customer !== false);
+
+  if (filters.gte) {
+    query = query.gte(filters.gte.field, filters.gte.value);
+  }
+
+  if (filters.lte) {
+    query = query.lte(filters.lte.field, filters.lte.value);
+  }
+
+  const equalFilters = filters.eq
+    ? (Array.isArray(filters.eq) ? filters.eq : [filters.eq])
+    : [];
+
+  const inFilters = filters.in
+    ? (Array.isArray(filters.in) ? filters.in : [filters.in])
+    : [];
+
+  for (const filter of equalFilters) {
+    query = query.eq(filter.field, filter.value);
+  }
+
+  for (const filter of inFilters) {
+    query = query.in(filter.field, filter.value);
+  }
+
+  const { count, error } = await query;
+
+  if (error) throw error;
+
+  return count ?? 0;
+}
 
   async function loadNotifications() {
     const client = ensureClient();
@@ -270,41 +369,127 @@ const state = {
     state.notifications = data || [];
   }
 
-  async function loadThreads() {
-    const client = ensureClient();
 
-    let query = client
-      .from("message_threads")
-      .select("*")
-      .order("updated_at", { ascending: false })
-      .limit(100);
+async function loadThreads() {
+  const client = ensureClient();
 
-    query = scopedQuery(query, true);
-
-    const { data, error } = await query;
-    if (error) throw error;
-
-    state.threads = data || [];
+  if (!profile?.company_id) {
+    throw new Error("Active tenant missing.");
   }
 
-  async function loadMessages(threadId = null) {
-    const client = ensureClient();
+  let query = client
+    .from("message_threads")
+    .select("*")
+    .eq("company_id", profile.company_id)
+    .order("updated_at", { ascending: false })
+    .limit(100);
 
-    let query = client
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error("Customer account is not configured.");
+    }
+
+    query = query.eq("customer_id", currentCustomerId());
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+
+  const candidateThreads = (data || [])
+    .filter(canAccessThread);
+
+  if (isTenantRole()) {
+    state.threads = candidateThreads;
+    return;
+  }
+
+  if (!candidateThreads.length) {
+    state.threads = [];
+    return;
+  }
+
+  const ids = candidateThreads.map(thread => thread.id);
+
+  const { data: messages, error: messageError } =
+    await client
       .from("messages")
-      .select("*")
-      .order("created_at", { ascending: true })
-      .limit(500);
+      .select(`
+        thread_id,
+        company_id,
+        customer_id,
+        sender_profile_id,
+        recipient_profile_id,
+        recipient_role
+      `)
+      .eq("company_id", profile.company_id)
+      .eq("customer_id", currentCustomerId())
+      .in("thread_id", ids);
 
-    query = scopedQuery(query, true);
+  if (messageError) throw messageError;
 
-    if (threadId) query = query.eq("thread_id", threadId);
+  const accessibleIds = new Set(
+    (messages || [])
+      .filter(canAccessMessage)
+      .map(message => String(message.thread_id))
+  );
 
-    const { data, error } = await query;
-    if (error) throw error;
+  state.threads = candidateThreads.filter(thread =>
+    accessibleIds.has(String(thread.id)) ||
+    String(thread.created_by) === String(profile.id)
+  );
+}
 
-    state.messages = data || [];
+
+async function loadMessages(threadId = null) {
+  const client = ensureClient();
+
+  if (!profile?.company_id) {
+    throw new Error("Active tenant missing.");
   }
+
+  const allowedThreads = state.threads.filter(
+    canAccessThread
+  );
+
+  if (threadId && !allowedThreads.some(
+    thread => String(thread.id) === String(threadId)
+  )) {
+    throw new Error("Conversation is not accessible.");
+  }
+
+  const threadIds = threadId
+    ? [threadId]
+    : allowedThreads.map(thread => thread.id);
+
+  if (!threadIds.length) {
+    state.messages = [];
+    return;
+  }
+
+  let query = client
+    .from("messages")
+    .select("*")
+    .eq("company_id", profile.company_id)
+    .in("thread_id", threadIds)
+    .order("created_at", { ascending: true })
+    .limit(500);
+
+  if (!isTenantRole()) {
+    query = query.eq(
+      "customer_id",
+      currentCustomerId()
+    );
+  }
+
+  const { data, error } = await query;
+
+  if (error) throw error;
+
+  // A conversation already authorised by loadThreads()
+  // is displayed in full to preserve reply context.
+  state.messages = data || [];
+}
 
 async function loadPlanningMessages() {
   const client =
@@ -378,24 +563,56 @@ async function loadPlanningMessages() {
     });
   }
 
-  async function loadUsersAndCustomers() {
-    const client = ensureClient();
+async function loadUsersAndCustomers() {
+  const client = ensureClient();
 
-    const [usersRes, customersRes] = await Promise.all([
+  if (!profile?.company_id) {
+    throw new Error(
+      "Cannot load contacts without an active tenant."
+    );
+  }
+
+  const cid = profile.company_id;
+
+  const [usersRes, customersRes] =
+    await Promise.all([
       client
         .from("user_profiles")
-        .select("id, full_name, email, role, customer_id")
+        .select(`
+          id,
+          company_id,
+          customer_id,
+          full_name,
+          email,
+          role,
+          is_active
+        `)
+        .eq("company_id", cid)
         .eq("is_active", true)
-        .order("full_name", { ascending: true }),
+        .order("full_name", {
+          ascending: true
+        }),
+
       client
         .from("customers")
-        .select("id, name, customer_code")
-        .order("name", { ascending: true })
+        .select(`
+          id,
+          company_id,
+          name,
+          customer_code
+        `)
+        .eq("company_id", cid)
+        .order("name", {
+          ascending: true
+        })
     ]);
 
-    state.users = usersRes.data || [];
-    state.customers = customersRes.data || [];
-  }
+  if (usersRes.error) throw usersRes.error;
+  if (customersRes.error) throw customersRes.error;
+
+  state.users = usersRes.data || [];
+  state.customers = customersRes.data || [];
+}
 
   async function renderSinceLastVisit() {
     const lastSeen = notificationState?.last_seen_at ||
@@ -586,28 +803,53 @@ list.innerHTML = rows.map(r => {
     setText("kpiNotifications", n(state.notifications.filter(n => !n.is_read).length));
   }
 
+
 async function markNotificationRead(notificationId) {
-  if (!notificationId) return;
-
-  const client = ensureClient();
-
-  const { error } = await client
-    .from("system_notifications")
-    .update({
-      is_read: true,
-      read_at: new Date().toISOString()
-    })
-    .eq("id", notificationId);
-
-  if (error) {
-    console.warn("Notification read update failed:", error.message);
-    return;
+  if (!notificationId || !profile?.company_id) {
+    throw new Error("Notification or tenant missing.");
   }
 
-  state.notifications = state.notifications.map(n =>
-    String(n.id) === String(notificationId)
-      ? { ...n, is_read: true, read_at: new Date().toISOString() }
-      : n
+  const existing = state.notifications.find(
+    item => String(item.id) === String(notificationId)
+  );
+
+  if (!existing) {
+    throw new Error("Notification is not accessible.");
+  }
+
+  const client = ensureClient();
+  const readAt = new Date().toISOString();
+
+  let query = client
+    .from("system_notifications")
+    .update({ is_read: true, read_at: readAt })
+    .eq("id", notificationId)
+    .eq("company_id", profile.company_id);
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error("Customer ID missing.");
+    }
+    query = query.eq("customer_id", currentCustomerId());
+  }
+
+  query = query.or(
+    `recipient_profile_id.eq.${profile.id},` +
+    `recipient_role.eq.${profile.role},` +
+    `recipient_role.is.null`
+  );
+
+  const { data, error } = await query.select("id");
+
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error("Notification could not be updated.");
+  }
+
+  state.notifications = state.notifications.map(item =>
+    String(item.id) === String(notificationId)
+      ? { ...item, is_read: true, read_at: readAt }
+      : item
   );
 
   renderNotifications();
@@ -979,24 +1221,21 @@ function csvEscape(value) {
 }
 
 
+
 function exportPlanningDigest(message) {
-  const rows =
-    parsePlanningDigest(
-      message
-    );
+  const rows = parsePlanningDigest(message);
 
   if (!rows.length) {
     showToast(
       "No planning data available for export.",
       "err"
     );
-
     return;
   }
 
   const headers = [
     "Order",
-    "Bellstone Ref",
+    "External Reference",
     "Retailer",
     "Previous Delivery Date",
     "Delivery Date",
@@ -1005,80 +1244,49 @@ function exportPlanningDigest(message) {
 
   const csvRows = [
     headers.map(csvEscape).join(","),
-
-    ...rows.map(row =>
-      [
-        row.orderNumber,
-        row.bellstoneRef,
-        row.retailer,
-        row.previousDate,
-        row.deliveryDate,
-        row.changeType
-      ]
-        .map(csvEscape)
-        .join(",")
-    )
+    ...rows.map(row => [
+      row.orderNumber,
+      row.bellstoneRef,
+      row.retailer,
+      row.previousDate,
+      row.deliveryDate,
+      row.changeType
+    ].map(csvEscape).join(","))
   ];
 
-  /*
-   * BOM zorgt ervoor dat Excel
-   * UTF-8 netjes opent.
-   */
-  const csv =
-    "\uFEFF" +
-    csvRows.join("\r\n");
+  const csv = "\uFEFF" + csvRows.join("\r\n");
 
-  const blob =
-    new Blob(
-      [csv],
-      {
-        type:
-          "text/csv;charset=utf-8;"
-      }
-    );
+  const blob = new Blob(
+    [csv],
+    { type: "text/csv;charset=utf-8;" }
+  );
 
-  const url =
-    URL.createObjectURL(
-      blob
-    );
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
 
-  const link =
-    document.createElement("a");
+  const date = new Date(
+    message.created_at || Date.now()
+  );
 
-  const date =
-    new Date(
-      message.created_at ||
-      Date.now()
-    );
-
-  const yyyy =
-    date.getFullYear();
-
-  const mm =
-    String(
-      date.getMonth() + 1
-    ).padStart(2, "0");
-
-  const dd =
-    String(
-      date.getDate()
-    ).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const mm = String(
+    date.getMonth() + 1
+  ).padStart(2, "0");
+  const dd = String(
+    date.getDate()
+  ).padStart(2, "0");
 
   link.href = url;
-
   link.download =
     `Veynor-Planning-${yyyy}-${mm}-${dd}.csv`;
 
-  document.body.appendChild(
-    link
-  );
-
+  document.body.appendChild(link);
   link.click();
   link.remove();
 
-  URL.revokeObjectURL(
-    url
-  );
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
 
   showToast(
     "Planning export downloaded.",
@@ -1327,7 +1535,9 @@ function renderPlanningDigestBody(message) {
                 </div>
 
                 <div>
-                  Bellstone Ref
+                  <div>
+  External Reference
+</div>
                 </div>
 
                 <div>
@@ -1562,118 +1772,150 @@ function renderPlanning() {
       .join("");
 }
 
-async function markPlanningMessageRead(
-  messageId
-) {
-  if (!messageId) {
-    return;
+
+async function markPlanningMessageRead(messageId) {
+  if (!messageId || !profile?.company_id) {
+    throw new Error("Message or tenant missing.");
   }
 
-  const existing =
-    state.planningMessages.find(
-      message =>
-        String(message.id) ===
-        String(messageId)
-    );
+  const existing = state.planningMessages.find(
+    message => String(message.id) === String(messageId)
+  );
 
-  if (
-    !existing ||
-    existing.read_at
-  ) {
-    return;
+  if (!existing || existing.read_at) return;
+
+  const client = ensureClient();
+  const readAt = new Date().toISOString();
+
+  let query = client
+    .from("messages")
+    .update({ read_at: readAt })
+    .eq("id", messageId)
+    .eq("company_id", profile.company_id)
+    .eq("message_type", "planning_digest");
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error("Customer ID missing.");
+    }
+    query = query.eq("customer_id", currentCustomerId());
   }
 
-  const client =
-    ensureClient();
+  const { data, error } = await query.select("id");
 
-  const readAt =
-    new Date()
-      .toISOString();
-
-  const {
-    error
-  } =
-    await client
-      .from("messages")
-      .update({
-        read_at: readAt
-      })
-      .eq(
-        "id",
-        messageId
-      );
-
-  if (error) {
-    throw error;
+  if (error) throw error;
+  if (!data?.length) {
+    throw new Error("Planning message could not be updated.");
   }
 
-  state.planningMessages =
-    state.planningMessages.map(
-      message =>
-        String(message.id) ===
-        String(messageId)
-          ? {
-              ...message,
-              read_at: readAt
-            }
-          : message
-    );
+  state.planningMessages = state.planningMessages.map(
+    message => String(message.id) === String(messageId)
+      ? { ...message, read_at: readAt }
+      : message
+  );
 
   renderPlanning();
   updateTabBadges();
 
-  if (
-    window
-      .VeynorUpdateMessageCenterNavBadge
-  ) {
-    await window
-      .VeynorUpdateMessageCenterNavBadge();
+  if (typeof window.VeynorUpdateMessageCenterNavBadge === "function") {
+    await window.VeynorUpdateMessageCenterNavBadge();
   }
 }
 
+
 async function markThreadMessagesRead(threadId) {
-  const client = ensureClient();
+  if (!threadId || !profile?.company_id) return;
+
+  const thread = state.threads.find(
+    item => String(item.id) === String(threadId)
+  );
+
+  if (!thread) {
+    throw new Error("Conversation is not accessible.");
+  }
 
   const unreadIds = state.messages
-    .filter(m =>
-      String(m.thread_id) === String(threadId) &&
-      String(m.sender_profile_id) !== String(profile.id) &&
-      !m.read_at
+    .filter(message =>
+      String(message.thread_id) === String(threadId) &&
+      String(message.sender_profile_id) !== String(profile.id) &&
+      !message.read_at
     )
-    .map(m => m.id);
+    .map(message => message.id);
 
   if (!unreadIds.length) return;
 
-  const { error } = await client
+  const client = ensureClient();
+  const readAt = new Date().toISOString();
+
+  let query = client
     .from("messages")
-    .update({ read_at: new Date().toISOString() })
+    .update({ read_at: readAt })
+    .eq("company_id", profile.company_id)
+    .eq("thread_id", threadId)
     .in("id", unreadIds);
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error("Customer ID missing.");
+    }
+    query = query.eq("customer_id", currentCustomerId());
+  }
+
+  const { data, error } = await query.select("id");
 
   if (error) throw error;
 
-  state.messages = state.messages.map(m =>
-    unreadIds.includes(m.id)
-      ? { ...m, read_at: new Date().toISOString() }
-      : m
+  const updatedIds = new Set(
+    (data || []).map(item => String(item.id))
+  );
+
+  state.messages = state.messages.map(message =>
+    updatedIds.has(String(message.id))
+      ? { ...message, read_at: readAt }
+      : message
   );
 }
 
-  async function openThread(threadId) {
-    activeThreadId = threadId;
-setReplyEnabled(true);
-    await loadMessages(threadId);
 
-    const thread = state.threads.find(t => t.id === threadId);
-    setText("activeThreadTitle", thread?.subject || "Conversation");
-    setText("activeThreadSub", `${thread?.status || "open"} · ${formatDate(thread?.updated_at || thread?.created_at)}`);
-
-await markThreadMessagesRead(threadId);
-
-renderThreads();
-renderChat();
-renderMessagesKpi();
-updateTabBadges();
+async function openThread(threadId) {
+  if (!threadId || !profile?.company_id) {
+    throw new Error("Conversation or tenant missing.");
   }
+
+  const thread = state.threads.find(
+    item => String(item.id) === String(threadId)
+  );
+
+  if (!thread || !canAccessThread(thread)) {
+    throw new Error(
+      "You do not have access to this conversation."
+    );
+  }
+
+  await loadMessages(thread.id);
+
+  activeThreadId = thread.id;
+
+  setText(
+    "activeThreadTitle",
+    thread.subject || "Conversation"
+  );
+
+  setText(
+    "activeThreadSub",
+    `${thread.status || "open"} · ` +
+    formatDate(thread.updated_at || thread.created_at)
+  );
+
+  setReplyEnabled(true);
+
+  await markThreadMessagesRead(thread.id);
+
+  renderThreads();
+  renderChat();
+  renderMessagesKpi();
+  updateTabBadges();
+}
 
   function renderChat() {
     const el = byId("chatBody");
@@ -2021,55 +2263,98 @@ function updateTabBadges() {
     }).join("");
   }
 
-function getSupportUsers() {
-  let users = state.users.filter(u => {
-    const role = String(u.role || "").toLowerCase();
-    return ["veynor_admin", "tenant_admin", "tenant_user"].includes(role);
-  });
 
-  if (!users.length) {
-    users = [
-      {
-        id: "656958cb-b0d5-4011-9a0d-aa42961cc920",
-        full_name: "Huib Jansen",
-        email: "cmjnhuur@gmail.com",
-        role: "veynor_admin"
-      },
-      {
-        id: "7b852bb4-a193-42d2-a315-dc7092675a41",
-        full_name: "Rob Justice",
-        email: "eljustice1@yahoo.com",
-        role: "tenant_admin"
-      }
-    ];
+function getSupportUsers() {
+  if (!profile?.company_id) {
+    return [];
   }
 
-  return users;
+  const supportRoles = [
+    "veynor_admin",
+    "tenant_admin",
+    "tenant_user"
+  ];
+
+  return state.users
+    .filter(user =>
+      String(user.company_id) ===
+        String(profile.company_id) &&
+      user.is_active === true &&
+      supportRoles.includes(
+        String(user.role || "").toLowerCase()
+      )
+    )
+    .sort((a, b) =>
+      String(a.full_name || a.email || "")
+        .localeCompare(
+          String(b.full_name || b.email || ""),
+          "en",
+          { sensitivity: "base" }
+        )
+    );
 }
 
+
 function populateRecipients() {
-  const typeSelect = byId("newMessageRecipientType");
+  const typeSelect = byId(
+    "newMessageRecipientType"
+  );
+
   if (!typeSelect) return;
 
+  if (!profile?.company_id) {
+    typeSelect.innerHTML = "";
+    return;
+  }
+
+  const companyName =
+    profile.companies?.name ||
+    "Company";
+
+  const currentType =
+    typeSelect.value || "tenant";
+
   if (!isTenantRole()) {
-    typeSelect.innerHTML = `<option value="tenant">Veynor / Sofa2U</option>`;
+    typeSelect.innerHTML = `
+      <option value="tenant">
+        ${escapeHtml(companyName)} Support
+      </option>
+    `;
+
     populateContactPersons();
     return;
   }
 
-  const currentType = typeSelect.value || "tenant";
-
   typeSelect.innerHTML = `
-    <option value="tenant">Veynor / Sofa2U Internal</option>
-    <option value="product_owner">Product Owner</option>
-    <option value="retailer">Retailer</option>
-    <option value="driver">Driver</option>
-    <option value="user">Specific User</option>
+    <option value="tenant">
+      ${escapeHtml(companyName)} Internal
+    </option>
+    <option value="product_owner">
+      Product Owner
+    </option>
+    <option value="retailer">
+      Retailer
+    </option>
+    <option value="driver">
+      Driver
+    </option>
+    <option value="user">
+      Specific User
+    </option>
   `;
 
-  typeSelect.value = currentType;
+  if (
+    [...typeSelect.options].some(
+      option => option.value === currentType
+    )
+  ) {
+    typeSelect.value = currentType;
+  }
+
   populateContactPersons();
 }
+
+
 function populateContactPersons() {
   const recipientType =
     byId("newMessageRecipientType")?.value || "tenant";
@@ -2077,58 +2362,39 @@ function populateContactPersons() {
   const contactSelect = byId("newMessageContact");
   if (!contactSelect) return;
 
-  let users = [];
-
-  if (!isTenantRole()) {
-
-    // Klanten kunnen alleen Veynor/Sofa2U contacten kiezen
-    users = getSupportUsers();
-
-  } else {
-
-    switch (recipientType) {
-
-      case "tenant":
-        users = state.users.filter(u =>
-          ["veynor_admin", "tenant_admin", "tenant_user"].includes(
-            String(u.role || "").toLowerCase()
-          )
-        );
-        break;
-
-      case "product_owner":
-        users = state.users.filter(u =>
-          ["product_owner_admin", "product_owner_user"].includes(
-            String(u.role || "").toLowerCase()
-          )
-        );
-        break;
-
-      case "retailer":
-        users = state.users.filter(u =>
-          String(u.role || "").toLowerCase() === "retailer_user"
-        );
-        break;
-
-      case "driver":
-        users = state.users.filter(u =>
-          ["driver", "chauffeur"].includes(
-            String(u.role || "").toLowerCase()
-          )
-        );
-        break;
-
-      case "user":
-        users = state.users;
-        break;
-
-      default:
-        users = [];
-        break;
-    }
+  if (!profile?.company_id) {
+    contactSelect.innerHTML =
+      '<option value="">No contacts available</option>';
+    return;
   }
 
-  users.sort((a, b) =>
+  const users = state.users.filter(user =>
+    String(user.company_id) === String(profile.company_id) &&
+    user.is_active === true
+  );
+
+  let recipients = [];
+
+  if (!isTenantRole()) {
+    recipients = getSupportUsers();
+  } else {
+    const rolesByType = {
+      tenant: ["veynor_admin", "tenant_admin", "tenant_user"],
+      product_owner: ["product_owner_admin", "product_owner_user"],
+      retailer: ["retailer_user"],
+      driver: ["driver", "chauffeur"]
+    };
+
+    recipients = recipientType === "user"
+      ? users
+      : users.filter(user =>
+          (rolesByType[recipientType] || []).includes(
+            String(user.role || "").toLowerCase()
+          )
+        );
+  }
+
+  recipients.sort((a, b) =>
     String(a.full_name || a.email || "").localeCompare(
       String(b.full_name || b.email || ""),
       "en",
@@ -2136,86 +2402,188 @@ function populateContactPersons() {
     )
   );
 
+  const previous = contactSelect.value;
+
   contactSelect.innerHTML =
-    `<option value="">All users / general inbox</option>` +
-    users.map(user => `
+    '<option value="">General inbox</option>' +
+    recipients.map(user => `
       <option value="${escapeHtml(user.id)}">
         ${escapeHtml(user.full_name || user.email || "User")}
       </option>
     `).join("");
 
-  console.log("Recipient type:", recipientType);
-  console.log("Loaded contacts:", users);
+  if (recipients.some(user => String(user.id) === previous)) {
+    contactSelect.value = previous;
+  }
 }
 
-  async function sendNewMessage() {
+
+async function sendNewMessage() {
   const client = ensureClient();
+
+  if (!profile?.id || !profile?.company_id) {
+    throw new Error("Active user profile is missing.");
+  }
 
   const subject = clean(byId("newMessageSubject")?.value);
   const body = clean(byId("newMessageBody")?.value);
-  const recipientType = byId("newMessageRecipientType")?.value || "tenant";
-  const contactPerson = byId("newMessageContact")?.value || null;
+  const recipientType =
+    byId("newMessageRecipientType")?.value || "tenant";
+  const contactPerson =
+    byId("newMessageContact")?.value || null;
 
   if (!subject || !body) {
     showToast("Please enter a subject and message.", "err");
     return;
   }
 
+  const allowedRoles = {
+    tenant: ["veynor_admin", "tenant_admin", "tenant_user"],
+    product_owner: ["product_owner_admin", "product_owner_user"],
+    retailer: ["retailer_user"],
+    driver: ["driver", "chauffeur"]
+  };
+
   const selectedUser = contactPerson
-    ? state.users.find(u => String(u.id) === String(contactPerson))
+    ? state.users.find(user =>
+        String(user.id) === String(contactPerson) &&
+        String(user.company_id) === String(profile.company_id) &&
+        user.is_active === true
+      )
     : null;
 
-  const customerId = selectedUser?.customer_id || (!isTenantRole() ? currentCustomerId() : null);
+  if (contactPerson && !selectedUser) {
+    throw new Error(
+      "Selected recipient is not available in this company."
+    );
+  }
 
-  const recipientRole = !isTenantRole()
-    ? "tenant_admin"
-    : (
-        recipientType === "tenant"
-          ? "tenant_admin"
-          : recipientType === "product_owner"
-            ? "product_owner_admin"
-            : recipientType === "retailer"
-              ? "retailer_user"
-              : recipientType === "driver"
-                ? "driver"
-                : null
+  if (selectedUser && !isTenantRole()) {
+    if (!allowedRoles.tenant.includes(selectedUser.role)) {
+      throw new Error(
+        "Customer users can only contact company support."
       );
+    }
+  }
 
-  const { data: thread, error: threadError } = await client
-    .from("message_threads")
-    .insert({
-      company_id: profile.company_id,
-      customer_id: customerId || null,
-      subject,
-      thread_type: "direct",
-      status: "open",
-      created_by: profile.id
-    })
-    .select("*")
-    .single();
+  if (
+    selectedUser &&
+    isTenantRole() &&
+    recipientType !== "user" &&
+    !(allowedRoles[recipientType] || []).includes(
+      selectedUser.role
+    )
+  ) {
+    throw new Error(
+      "Selected contact does not match the recipient type."
+    );
+  }
+
+  if (
+    isTenantRole() &&
+    ["product_owner", "retailer"].includes(recipientType) &&
+    !selectedUser
+  ) {
+    throw new Error(
+      "Please select a specific customer contact."
+    );
+  }
+
+  const customerId = !isTenantRole()
+    ? currentCustomerId()
+    : selectedUser?.customer_id || null;
+
+  if (!isTenantRole() && !customerId) {
+    throw new Error(
+      "Your account has no customer assigned."
+    );
+  }
+
+  if (selectedUser?.customer_id) {
+    const { data: customer, error: customerError } =
+      await client
+        .from("customers")
+        .select("id")
+        .eq("id", selectedUser.customer_id)
+        .eq("company_id", profile.company_id)
+        .maybeSingle();
+
+    if (customerError) throw customerError;
+
+    if (!customer) {
+      throw new Error(
+        "Recipient customer is not part of this tenant."
+      );
+    }
+  }
+
+  const recipientRole = selectedUser
+    ? null
+    : !isTenantRole()
+      ? "tenant_admin"
+      : recipientType === "tenant"
+        ? "tenant_admin"
+        : recipientType === "driver"
+          ? "driver"
+          : null;
+
+  if (!selectedUser && !recipientRole) {
+    throw new Error(
+      "Please select a valid recipient."
+    );
+  }
+
+  const { data: thread, error: threadError } =
+    await client
+      .from("message_threads")
+      .insert({
+        company_id: profile.company_id,
+        customer_id: customerId,
+        subject,
+        thread_type: "direct",
+        status: "open",
+        created_by: profile.id
+      })
+      .select("*")
+      .single();
 
   if (threadError) throw threadError;
 
-  const { error: msgError } = await client
+  const { error: messageError } = await client
     .from("messages")
     .insert({
       thread_id: thread.id,
       company_id: profile.company_id,
-      customer_id: customerId || null,
+      customer_id: customerId,
       sender_profile_id: profile.id,
-      recipient_profile_id: contactPerson || null,
-      recipient_role: contactPerson ? null : recipientRole,
+      recipient_profile_id: selectedUser?.id || null,
+      recipient_role: recipientRole,
       message_type: "manual",
       title: subject,
       body,
       is_system: false
     });
 
-  if (msgError) throw msgError;
+  if (messageError) {
+    // Do not delete the thread automatically:
+    // a separate process may already reference it.
+    throw new Error(
+      "Conversation created, but the message could not be sent: " +
+      messageError.message
+    );
+  }
 
-  byId("newMessageSubject").value = "";
-  byId("newMessageBody").value = "";
-  byId("newMessagePanel").style.display = "none";
+  if (byId("newMessageSubject")) {
+    byId("newMessageSubject").value = "";
+  }
+
+  if (byId("newMessageBody")) {
+    byId("newMessageBody").value = "";
+  }
+
+  if (byId("newMessagePanel")) {
+    byId("newMessagePanel").style.display = "none";
+  }
 
   await refreshAll();
   await openThread(thread.id);
@@ -2239,50 +2607,153 @@ function setReplyEnabled(enabled) {
   if (attachBtn) attachBtn.disabled = !enabled;
 }
 
-  async function sendReply() {
-    if (!activeThreadId) {
-      showToast("Select a conversation first.", "err");
-      return;
-    }
 
-    const body = clean(byId("messageReplyBody")?.value);
-    if (!body) {
-      showToast("Please type a reply.", "err");
-      return;
-    }
-
-    const client = ensureClient();
-    const thread = state.threads.find(t => t.id === activeThreadId);
-
-    const { error } = await client
-      .from("messages")
-      .insert({
-        thread_id: activeThreadId,
-        company_id: profile.company_id,
-        customer_id: thread?.customer_id || currentCustomerId() || null,
-        sender_profile_id: profile.id,
-        message_type: "manual",
-        title: thread?.subject || "Reply",
-        body,
-        is_system: false
-      });
-
-    if (error) throw error;
-
-    await client
-      .from("message_threads")
-      .update({ updated_at: new Date().toISOString() })
-      .eq("id", activeThreadId);
-
-    byId("messageReplyBody").value = "";
-
-    await loadThreads();
-    await openThread(activeThreadId);
-
-    showToast("Reply sent.", "ok");
+async function sendReply() {
+  if (!activeThreadId) {
+    showToast("Select a conversation first.", "err");
+    return;
   }
 
-  async function publishAnnouncement() {
+  const body = clean(byId("messageReplyBody")?.value);
+
+  if (!body) {
+    showToast("Please type a reply.", "err");
+    return;
+  }
+
+  if (!profile?.id || !profile?.company_id) {
+    throw new Error("Active profile is missing.");
+  }
+
+  const client = ensureClient();
+
+  const thread = state.threads.find(
+    item => String(item.id) === String(activeThreadId)
+  );
+
+  if (!thread || !canAccessThread(thread)) {
+    throw new Error("Conversation is not accessible.");
+  }
+
+  const { data: history, error: historyError } =
+    await client
+      .from("messages")
+      .select(`
+        id,
+        sender_profile_id,
+        recipient_profile_id,
+        recipient_role,
+        created_at
+      `)
+      .eq("company_id", profile.company_id)
+      .eq("thread_id", thread.id)
+      .eq("message_type", "manual")
+      .order("created_at", { ascending: true })
+      .limit(500);
+
+  if (historyError) throw historyError;
+
+  const messages = history || [];
+
+  const lastIncoming = [...messages].reverse().find(
+    message =>
+      String(message.sender_profile_id) !== String(profile.id)
+  );
+
+  const firstMessage = messages[0];
+
+  let recipientId = null;
+  let recipientRole = null;
+
+  if (lastIncoming?.sender_profile_id) {
+    recipientId = lastIncoming.sender_profile_id;
+  } else if (
+    thread.created_by &&
+    String(thread.created_by) !== String(profile.id)
+  ) {
+    recipientId = thread.created_by;
+  } else if (firstMessage?.recipient_profile_id) {
+    recipientId = firstMessage.recipient_profile_id;
+  } else if (firstMessage?.recipient_role) {
+    recipientRole = firstMessage.recipient_role;
+  }
+
+  if (
+    recipientId &&
+    String(recipientId) === String(profile.id)
+  ) {
+    recipientId = null;
+  }
+
+  if (!recipientId && !recipientRole) {
+    throw new Error(
+      "Cannot determine the recipient of this reply."
+    );
+  }
+
+  if (recipientId) {
+    const { data: recipient, error: recipientError } =
+      await client
+        .from("user_profiles")
+        .select("id, company_id, is_active")
+        .eq("id", recipientId)
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+    if (recipientError) throw recipientError;
+
+    if (!recipient) {
+      throw new Error(
+        "The recipient is not available in this company."
+      );
+    }
+  }
+
+  const { error } = await client
+    .from("messages")
+    .insert({
+      thread_id: thread.id,
+      company_id: profile.company_id,
+      customer_id: thread.customer_id || null,
+      sender_profile_id: profile.id,
+      recipient_profile_id: recipientId,
+      recipient_role: recipientRole,
+      message_type: "manual",
+      title: thread.subject || "Reply",
+      body,
+      is_system: false
+    });
+
+  if (error) throw error;
+
+  const { error: updateError } = await client
+    .from("message_threads")
+    .update({
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", thread.id)
+    .eq("company_id", profile.company_id);
+
+  if (updateError) {
+    console.warn(
+      "[Veynor] Reply sent, timestamp update failed:",
+      updateError.message
+    );
+  }
+
+  if (byId("messageReplyBody")) {
+    byId("messageReplyBody").value = "";
+  }
+
+  await loadThreads();
+  await openThread(thread.id);
+
+  showToast("Reply sent.", "ok");
+}
+
+
+async function publishAnnouncement() {
     const client = ensureClient();
 
     const title = clean(byId("announcementTitle")?.value);
@@ -2319,26 +2790,63 @@ function setReplyEnabled(enabled) {
     showToast("Announcement published.", "ok");
   }
 
-  async function markNotificationsRead() {
-    const client = ensureClient();
-    const ids = state.notifications.filter(n => !n.is_read).map(n => n.id);
 
-    if (!ids.length) return;
-
-    const { error } = await client
-      .from("system_notifications")
-      .update({
-        is_read: true,
-        read_at: new Date().toISOString()
-      })
-      .in("id", ids);
-
-    if (error) throw error;
-
-    await loadNotifications();
-    renderNotifications();
-    showToast("Notifications marked as read.", "ok");
+async function markNotificationsRead() {
+  if (!profile?.company_id) {
+    throw new Error("Active tenant missing.");
   }
+
+  const ids = state.notifications
+    .filter(notification => !notification.is_read)
+    .map(notification => notification.id);
+
+  if (!ids.length) return;
+
+  const client = ensureClient();
+  const readAt = new Date().toISOString();
+
+  let query = client
+    .from("system_notifications")
+    .update({ is_read: true, read_at: readAt })
+    .eq("company_id", profile.company_id)
+    .in("id", ids);
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error("Customer ID missing.");
+    }
+    query = query.eq("customer_id", currentCustomerId());
+  }
+
+  query = query.or(
+    `recipient_profile_id.eq.${profile.id},` +
+    `recipient_role.eq.${profile.role},` +
+    `recipient_role.is.null`
+  );
+
+  const { data, error } = await query.select("id");
+
+  if (error) throw error;
+
+  const updatedIds = new Set(
+    (data || []).map(item => String(item.id))
+  );
+
+  state.notifications = state.notifications.map(
+    notification => updatedIds.has(String(notification.id))
+      ? { ...notification, is_read: true, read_at: readAt }
+      : notification
+  );
+
+  renderNotifications();
+  updateTabBadges();
+
+  if (typeof window.VeynorUpdateMessageCenterNavBadge === "function") {
+    await window.VeynorUpdateMessageCenterNavBadge();
+  }
+
+  showToast("Notifications marked as read.", "ok");
+}
 
   async function updateLastSeen() {
     const client = ensureClient();
@@ -2717,146 +3225,216 @@ document.addEventListener("click", async event => {
     document.head.appendChild(style);
   }
 
-  function bindRealtime() {
-    const client = ensureClient();
-    if (!client.channel) return;
 
-    const channel = client.channel("message-center-live");
 
-    channel.on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: "system_notifications" },
-      payload => {
-        const n = payload.new;
+function bindRealtime() {
+  const client = ensureClient();
 
-        if (profile.company_id && n.company_id && String(n.company_id) !== String(profile.company_id)) return;
-        if (!isTenantRole() && n.customer_id && String(n.customer_id) !== String(currentCustomerId())) return;
-        if (n.recipient_profile_id && String(n.recipient_profile_id) !== String(profile.id)) return;
-        if (n.recipient_role && n.recipient_role !== profile.role) return;
-
-        state.notifications.unshift(n);
-        renderNotifications();
-        renderLiveFeed();
-        pushLivePopup(n);
-      }
+  if (!profile?.company_id || !profile?.id) {
+    console.warn(
+      "[Veynor] Realtime not started: active profile missing."
     );
+    return;
+  }
 
-channel.on(
-  "postgres_changes",
-  {
-    event: "INSERT",
-    schema: "public",
-    table: "messages"
-  },
-  payload => {
+  if (typeof client.channel !== "function") {
+    console.warn("[Veynor] Supabase Realtime unavailable.");
+    return;
+  }
 
-    const message =
-      payload.new;
+  if (window.__veynorMessageCenterChannel) {
+    client.removeChannel(
+      window.__veynorMessageCenterChannel
+    );
+  }
 
-    if (
-      profile.company_id &&
-      message.company_id &&
-      String(
-        message.company_id
-      ) !==
-      String(
-        profile.company_id
-      )
-    ) {
-      return;
+  const companyId = profile.company_id;
+
+  const channel = client.channel(
+    `message-center-${companyId}-${profile.id}`
+  );
+
+  channel.on(
+    "postgres_changes",
+    {
+      event: "INSERT",
+      schema: "public",
+      table: "system_notifications",
+      filter: `company_id=eq.${companyId}`
+    },
+    payload => {
+      const notification = payload.new;
+
+      if (!notification || !profile?.company_id) return;
+
+      if (
+        String(notification.company_id) !==
+        String(profile.company_id)
+      ) {
+        return;
+      }
+
+      if (
+        !isTenantRole() &&
+        String(notification.customer_id || "") !==
+        String(currentCustomerId() || "")
+      ) {
+        return;
+      }
+
+      if (
+        notification.recipient_profile_id &&
+        String(notification.recipient_profile_id) !==
+        String(profile.id)
+      ) {
+        return;
+      }
+
+      if (
+        notification.recipient_role &&
+        String(notification.recipient_role) !==
+        String(profile.role)
+      ) {
+        return;
+      }
+
+      if (
+        state.notifications.some(
+          item => String(item.id) === String(notification.id)
+        )
+      ) {
+        return;
+      }
+
+      state.notifications.unshift(notification);
+
+      state.notifications =
+        state.notifications.slice(0, 250);
+
+      renderNotifications();
+      renderLiveFeed();
+      updateTabBadges();
+
+      // The central Notification Service handles
+      // notification popups when available.
+      if (!window.VeynorNotifications) {
+        pushLivePopup(notification);
+      }
     }
+  );
 
-    if (
-      !isTenantRole() &&
-      message.customer_id &&
-      String(
-        message.customer_id
-      ) !==
-      String(
-        currentCustomerId()
-      )
-    ) {
-      return;
-    }
+  channel.on(
+    "postgres_changes",
+    {
+      event: "INSERT",
+      schema: "public",
+      table: "messages",
+      filter: `company_id=eq.${companyId}`
+    },
+    payload => {
+      const message = payload.new;
 
+      if (!message || !profile?.company_id) return;
 
-    /*
-     * Planning digest:
-     * GEEN gewone New Message popup.
-     *
-     * Alleen Planning-tab vernieuwen.
-     */
-    if (
-      String(
-        message.message_type ||
-        ""
-      ) ===
-      "planning_digest"
-    ) {
+      if (
+        String(message.company_id) !==
+        String(profile.company_id)
+      ) {
+        return;
+      }
 
-      loadPlanningMessages()
-        .then(() => {
-          renderPlanning();
-          updateTabBadges();
-        })
-        .catch(
-          error =>
+      if (
+        !isTenantRole() &&
+        String(message.customer_id || "") !==
+        String(currentCustomerId() || "")
+      ) {
+        return;
+      }
+
+      if (
+        String(message.message_type || "") ===
+        "planning_digest"
+      ) {
+        loadPlanningMessages()
+          .then(() => {
+            renderPlanning();
+            updateTabBadges();
+          })
+          .catch(error => {
             console.error(
-              "Planning realtime refresh failed:",
+              "[Veynor] Planning realtime refresh failed:",
               error
-            )
+            );
+          });
+
+        return;
+      }
+
+      if (!canAccessMessage(message)) {
+        return;
+      }
+
+      const isOwnMessage =
+        String(message.sender_profile_id) ===
+        String(profile.id);
+
+      if (!isOwnMessage) {
+        pushLivePopup({
+          title: "New Message",
+          message:
+            message.title ||
+            "A new message has been received.",
+          action_url: "./message-center.html",
+          notification_type: "message",
+          severity: "info"
+        });
+      }
+
+      refreshAll().catch(error => {
+        console.error(
+          "[Veynor] Message Center realtime refresh failed:",
+          error
         );
-
-      return;
-    }
-
-
-    /*
-     * Gewone directe message.
-     */
-    if (
-      String(
-        message.sender_profile_id
-      ) !==
-      String(
-        profile.id
-      )
-    ) {
-
-      pushLivePopup({
-        title:
-          "New Message",
-
-        message:
-          message.title ||
-          "A new message has been received.",
-
-        action_url:
-          "./message-center.html",
-
-        notification_type:
-          "message",
-
-        severity:
-          "info"
       });
     }
+  );
 
+  channel.subscribe(status => {
+    if (status === "CHANNEL_ERROR") {
+      console.warn(
+        "[Veynor] Message Center realtime connection error."
+      );
+    }
+  });
 
-    refreshAll();
-  }
-);
-
-    channel.subscribe();
-  }
+  window.__veynorMessageCenterChannel = channel;
+}
+   
 
 async function refreshAll() {
+  if (!profile?.company_id) {
+    throw new Error(
+      "Cannot refresh Message Center without an active tenant."
+    );
+  }
+
+  // Load conversations before their messages.
+  await loadThreads();
+
+  if (
+    activeThreadId &&
+    !state.threads.some(
+      thread => String(thread.id) ===
+        String(activeThreadId)
+    )
+  ) {
+    activeThreadId = null;
+    setReplyEnabled(false);
+  }
+
   await Promise.all([
     loadNotifications(),
-    loadThreads(),
-    loadMessages(
-      activeThreadId
-    ),
+    loadMessages(activeThreadId),
     loadPlanningMessages(),
     loadAnnouncements()
   ]);
@@ -2864,17 +3442,11 @@ async function refreshAll() {
   await renderSinceLastVisit();
 
   renderNotifications();
-
   renderThreads();
-
   renderChat();
-
   renderMessagesKpi();
-
   renderPlanning();
-
   renderAnnouncements();
-
   renderLiveFeed();
 
   await renderTasks();

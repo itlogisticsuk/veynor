@@ -1,8 +1,7 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-  const POD_BUCKET = "pod-assets";
+ const POD_BUCKET = "pod-assets";
   const ETA_WINDOW_HOURS = 2;
 
   let client = null;
@@ -742,7 +741,7 @@ async function deleteOccStorageFile(record, fallbackType = "") {
   };
 }
 
-async function deleteOccOrderDocument(documentRecord) {
+async function deleteOccOrderDocumentCore(documentRecord) {
   /*
    * Verwijdert een normaal OCC-document volledig:
    *
@@ -842,7 +841,64 @@ async function deleteOccOrderDocument(documentRecord) {
   return true;
 }
 
-async function deleteOccPodDocument(order) {
+async function deleteOccOrderDocument(documentRecord) {
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to delete documents."
+    );
+  }
+
+  if (!documentRecord?.id) {
+    throw new Error("Document ID is missing.");
+  }
+
+  const cid = await getCompanyId();
+
+  const { data: record, error } = await client
+    .from("order_documents")
+    .select("id, order_id, company_id, document_type, storage_path")
+    .eq("id", documentRecord.id)
+    .eq("company_id", cid)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!record?.order_id) {
+    throw new Error(
+      "Document not found within the active company."
+    );
+  }
+
+  await requireOccTenantOrder(record.order_id);
+
+  if (
+    documentRecord.order_id &&
+    String(documentRecord.order_id) !==
+      String(record.order_id)
+  ) {
+    throw new Error(
+      "Document order ownership mismatch."
+    );
+  }
+
+  if (
+    documentRecord.storage_path &&
+    documentRecord.storage_path !== record.storage_path
+  ) {
+    throw new Error(
+      "Document storage path mismatch."
+    );
+  }
+
+  return await deleteOccOrderDocumentCore({
+    ...documentRecord,
+    ...record
+  });
+}
+
+async function deleteOccPodDocumentCore(order) {
   /*
    * Verwijdert de POD / signed delivery note volledig.
    *
@@ -1146,7 +1202,37 @@ async function deleteOccPodDocument(order) {
   return true;
 }
 
-async function deleteOccPodPhoto(order, photoAsset) {
+async function deleteOccPodDocument(order) {
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to delete POD documents."
+    );
+  }
+
+  if (!order?.id) {
+    throw new Error("Order ID is missing.");
+  }
+
+  const verifiedOrder =
+    await requireOccTenantOrder(order.id);
+
+  if (
+    String(verifiedOrder.company_id) !==
+    String(await getCompanyId())
+  ) {
+    throw new Error(
+      "POD order belongs to another company."
+    );
+  }
+
+  return await deleteOccPodDocumentCore({
+    ...order,
+    company_id: verifiedOrder.company_id,
+    customer_id: verifiedOrder.customer_id
+  });
+}
+
+async function deleteOccPodPhotoCore(order, photoAsset) {
   /*
    * Verwijdert één specifieke POD / delivery photo volledig.
    *
@@ -1329,6 +1415,62 @@ async function deleteOccPodPhoto(order, photoAsset) {
     remainingPhotos:
       newPhotoCount
   };
+}
+
+async function deleteOccPodPhoto(order, photoAsset) {
+  if (!canDeleteOccDocuments()) {
+    throw new Error(
+      "You do not have permission to delete POD photos."
+    );
+  }
+
+  if (!order?.id || !photoAsset?.id) {
+    throw new Error(
+      "Order or photo ID is missing."
+    );
+  }
+
+  await requireOccTenantOrder(order.id);
+
+  const cid = await getCompanyId();
+
+  const { data: photo, error } = await client
+    .from("order_pod_assets")
+    .select(
+      "id, company_id, order_id, asset_type, storage_path"
+    )
+    .eq("id", photoAsset.id)
+    .eq("order_id", order.id)
+    .eq("company_id", cid)
+    .eq("asset_type", "photo")
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!photo) {
+    throw new Error(
+      "Photo not found within the active company."
+    );
+  }
+
+  if (
+    photoAsset.storage_path &&
+    photoAsset.storage_path !== photo.storage_path
+  ) {
+    throw new Error(
+      "Photo storage path mismatch."
+    );
+  }
+
+  return await deleteOccPodPhotoCore(
+    order,
+    {
+      ...photoAsset,
+      ...photo
+    }
+  );
 }
 
 function confirmOccPermanentDelete({
@@ -2492,44 +2634,113 @@ if (
     currentProfile = result.data;
     document.body.classList.add(`role-${normalize(currentProfile.role)}`);
 
-    const companyName = currentProfile.companies?.name || TENANT_NAME;
-    const customerName = currentProfile.customers?.name || "";
-    const roleLabel = ROLE_LABELS[normalize(currentProfile.role)] || currentProfile.role;
+const companyName = currentProfile.companies?.name || "";
+const customerName = currentProfile.customers?.name || "";
+const roleLabel =
+  ROLE_LABELS[normalize(currentProfile.role)] ||
+  currentProfile.role;
 
-    if (isProductOwnerRole()) {
-      setText("portalName", customerName || companyName);
-      setText("roleBadge", (customerName || "PO").slice(0, 2).toUpperCase());
-    } else if (isRetailerRole()) {
-      setText("portalName", currentProfile.retailer_code || "Retailer");
-      setText("roleBadge", "RT");
-    } else {
-      setText("portalName", companyName || TENANT_NAME);
-      setText("roleBadge", companyName.slice(0, 2).toUpperCase() || "S2");
-    }
+if (isProductOwnerRole()) {
+  setText("portalName", customerName || companyName || "Company");
+  setText("roleBadge", (customerName || "PO").slice(0, 2).toUpperCase());
+} else if (isRetailerRole()) {
+  setText("portalName", currentProfile.retailer_code || "Retailer");
+  setText("roleBadge", "RT");
+} else {
+  setText("portalName", companyName || "Company");
+  setText("roleBadge", companyName.slice(0, 2).toUpperCase() || "CO");
+}
 
-    setText("portalRole", roleLabel);
+setText("portalRole", roleLabel);  }
+
+async function getCompanyId() {
+  const db = ensureClient();
+
+  if (!currentUser?.id) {
+    throw new Error(
+      "No authenticated user is available."
+    );
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
-
-    if (currentProfile?.company_id) {
-      companyId = currentProfile.company_id;
-      return companyId;
-    }
-
-    const { data, error } = await client
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
-    return companyId;
+  if (!currentProfile?.id) {
+    throw new Error(
+      "No active user profile is available."
+    );
   }
+
+  const profileCompanyId =
+    currentProfile.company_id || null;
+
+  if (!profileCompanyId) {
+    throw new Error(
+      "Your user profile is not linked to a company. " +
+      "Please contact your Veynor administrator."
+    );
+  }
+
+  if (
+    companyId &&
+    String(companyId) !== String(profileCompanyId)
+  ) {
+    throw new Error(
+      "Company context mismatch. " +
+      "Please sign out and sign in again."
+    );
+  }
+
+  companyId = profileCompanyId;
+
+  return companyId;
+}
+
+async function requireOccTenantOrder(orderId) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
+
+  if (!orderId) {
+    throw new Error("Order ID is required.");
+  }
+
+  const { data: order, error } = await db
+    .from("orders")
+    .select("id, company_id, customer_id")
+    .eq("id", orderId)
+    .eq("company_id", cid)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(
+      "Could not verify order ownership: " +
+      error.message
+    );
+  }
+
+  if (!order) {
+    throw new Error(
+      "Order not found within the active company."
+    );
+  }
+
+  if (isProductOwnerRole()) {
+    if (
+      !currentProfile.customer_id ||
+      String(order.customer_id) !==
+        String(currentProfile.customer_id)
+    ) {
+      throw new Error(
+        "This order does not belong to your Product Owner account."
+      );
+    }
+  }
+
+  if (isRetailerRole()) {
+    throw new Error(
+      "Retailer accounts cannot perform this operation."
+    );
+  }
+
+  return order;
+}
 
   function getMemo(order) {
     return cleanText(order?.memo || "");
@@ -4900,27 +5111,31 @@ await loadStoredDeliveryGroups();
         }
       );
 
-  if (
-    isProductOwnerRole() &&
-    currentProfile.customer_id
-  ) {
-    query =
-      query.eq(
-        "customer_id",
-        currentProfile.customer_id
-      );
+if (isProductOwnerRole()) {
+  if (!currentProfile.customer_id) {
+    throw new Error(
+      "Product Owner account has no customer assigned."
+    );
   }
 
-  if (
-    isRetailerRole() &&
-    currentProfile.retailer_code
-  ) {
-    query =
-      query.eq(
-        "retailer_code",
-        currentProfile.retailer_code
-      );
+  query = query.eq(
+    "customer_id",
+    currentProfile.customer_id
+  );
+}
+
+if (isRetailerRole()) {
+  if (!currentProfile.retailer_code) {
+    throw new Error(
+      "Retailer account has no retailer code assigned."
+    );
   }
+
+  query = query.eq(
+    "retailer_code",
+    currentProfile.retailer_code
+  );
+}
 
   const {
     data,
@@ -13482,7 +13697,7 @@ function refreshTariffModalSummary() {
   );
 }
 
-async function saveTariffModal(orderId) {
+async function saveTariffModalCore(orderId) {
   const order = allOrders.find(
     row =>
       String(row.id) ===
@@ -13845,6 +14060,70 @@ async function saveTariffModal(orderId) {
   );
 }
 
+async function saveTariffModal(orderId) {
+  if (!isTenantRole()) {
+    throw new Error(
+      "You do not have permission to edit tariffs."
+    );
+  }
+
+  const order =
+    await requireOccTenantOrder(orderId);
+
+  const cid = await getCompanyId();
+
+  if (String(order.company_id) !== String(cid)) {
+    throw new Error("Company mismatch.");
+  }
+
+  const rows = Array.from(
+    document.querySelectorAll(
+      "#tariffModalBody tr[data-line-id]"
+    )
+  );
+
+  if (!rows.length) {
+    throw new Error("No tariff lines found.");
+  }
+
+  const lineIds = rows.map(row =>
+    String(row.dataset.lineId || "")
+  );
+
+  if (
+    lineIds.some(id => !id) ||
+    new Set(lineIds).size !== lineIds.length
+  ) {
+    throw new Error(
+      "Invalid or duplicate order line IDs."
+    );
+  }
+
+  const { data: lines, error } = await client
+    .from("order_lines")
+    .select("id, order_id")
+    .eq("order_id", orderId)
+    .in("id", lineIds);
+
+  if (error) {
+    throw error;
+  }
+
+  const verifiedIds = new Set(
+    (lines || []).map(line => String(line.id))
+  );
+
+  if (
+    lineIds.some(id => !verifiedIds.has(id))
+  ) {
+    throw new Error(
+      "One or more tariff lines do not belong to this order."
+    );
+  }
+
+  return await saveTariffModalCore(orderId);
+}
+
   async function insertOrderActivity(orderId, description, type = "manual_update") {
     try {
       await client
@@ -13862,6 +14141,31 @@ async function saveTariffModal(orderId) {
   }
 
 async function moveDeliveredOrderStockToOutbound(orderId) {
+  if (!isTenantRole()) {
+    throw new Error(
+      "You do not have permission to update outbound stock."
+    );
+  }
+
+  const order =
+    await requireOccTenantOrder(orderId);
+
+  const cid = await getCompanyId();
+
+  if (
+    String(order.company_id) !== String(cid)
+  ) {
+    throw new Error(
+      "Outbound stock company mismatch."
+    );
+  }
+
+  return await moveDeliveredOrderStockToOutboundCore(
+    orderId
+  );
+}
+
+async function moveDeliveredOrderStockToOutboundCore(orderId) {
   if (!orderId) {
     throw new Error(
       "Order ID missing."
@@ -15430,7 +15734,7 @@ function openPortalEventsModal(orderId) {
   return openGenericActionModal(orderId, "portal_events");
 }
 
-async function releaseAllocationsForLine(lineId, releaseCount = null) {
+async function releaseAllocationsForLineCore(lineId, releaseCount = null) {
   const order = getOrderById(byId("genericActionOrderId")?.value || "");
   const line = (order?.order_lines || []).find(l => String(l.id) === String(lineId));
 
@@ -15457,13 +15761,15 @@ async function releaseAllocationsForLine(lineId, releaseCount = null) {
     const stockSetId = allocation.items?.stock_set_id || allocation.stock_set_id || null;
     const itemId = allocation.item_id || allocation.items?.id || null;
 
-    let query = client
-      .from("items")
-      .update({
-        status: "in_stock",
-        linked_order_id: null,
-        reserved_at: null
-      });
+let query = client
+  .from("items")
+  .update({
+    status: "in_stock",
+    linked_order_id: null,
+    reserved_at: null
+  })
+  .eq("company_id", await getCompanyId());
+
 
     if (physicalProductId) {
       query = query.eq("physical_product_id", physicalProductId);
@@ -15489,6 +15795,55 @@ async function releaseAllocationsForLine(lineId, releaseCount = null) {
 
   return toRelease.length;
 }
+
+async function releaseAllocationsForLine(
+  lineId,
+  releaseCount = null
+) {
+  if (!isTenantRole()) {
+    throw new Error(
+      "You do not have permission to release allocations."
+    );
+  }
+
+  if (!lineId) {
+    throw new Error("Order line ID is missing.");
+  }
+
+  const orderId =
+    byId("genericActionOrderId")?.value || "";
+
+  if (!orderId) {
+    throw new Error(
+      "No active order is selected."
+    );
+  }
+
+  await requireOccTenantOrder(orderId);
+
+  const { data: line, error } = await client
+    .from("order_lines")
+    .select("id, order_id")
+    .eq("id", lineId)
+    .eq("order_id", orderId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (!line) {
+    throw new Error(
+      "Order line does not belong to the selected order."
+    );
+  }
+
+  return await releaseAllocationsForLineCore(
+    lineId,
+    releaseCount
+  );
+}
+
 async function runMatchingForEditedOrder(orderId) {
   if (!byId("editRunMatching")?.checked) {
     return { skipped: true, allocationsCreated: 0, itemsReserved: 0 };
@@ -15510,26 +15865,59 @@ async function runMatchingForEditedOrder(orderId) {
   };
 }
 
+
 async function neutralizeOrderLineFromDb(orderId, lineId) {
-  const { data: allocations, error: allocError } = await client
-    .from("order_allocations")
-    .select(`
-      id,
-      item_id,
-      items (
+  // Controleer of de order bij de actieve tenant hoort.
+  await requireOccTenantOrder(orderId);
+
+  const companyId = await getCompanyId();
+
+  // Controleer of de orderregel bij deze order hoort.
+  const { data: verifiedLine, error: verifyError } =
+    await client
+      .from("order_lines")
+      .select("id")
+      .eq("id", lineId)
+      .eq("order_id", orderId)
+      .maybeSingle();
+
+  if (verifyError) throw verifyError;
+
+  if (!verifiedLine) {
+    throw new Error(
+      "Order line does not belong to this order."
+    );
+  }
+
+  // Haal bestaande allocations op.
+  const { data: allocations, error: allocError } =
+    await client
+      .from("order_allocations")
+      .select(`
         id,
-        physical_product_id,
-        stock_set_id
-      )
-    `)
-    .eq("order_line_id", lineId);
+        item_id,
+        items (
+          id,
+          physical_product_id,
+          stock_set_id
+        )
+      `)
+      .eq("order_line_id", lineId);
 
   if (allocError) throw allocError;
 
+  // Geef de gekoppelde voorraad weer vrij.
   for (const allocation of allocations || []) {
-    const physicalProductId = allocation.items?.physical_product_id || null;
-    const stockSetId = allocation.items?.stock_set_id || null;
-    const itemId = allocation.item_id || allocation.items?.id || null;
+    const physicalProductId =
+      allocation.items?.physical_product_id || null;
+
+    const stockSetId =
+      allocation.items?.stock_set_id || null;
+
+    const itemId =
+      allocation.item_id ||
+      allocation.items?.id ||
+      null;
 
     let query = client
       .from("items")
@@ -15537,12 +15925,19 @@ async function neutralizeOrderLineFromDb(orderId, lineId) {
         status: "in_stock",
         linked_order_id: null,
         reserved_at: null
-      });
+      })
+      .eq("company_id", companyId);
 
     if (physicalProductId) {
-      query = query.eq("physical_product_id", physicalProductId);
+      query = query.eq(
+        "physical_product_id",
+        physicalProductId
+      );
     } else if (stockSetId) {
-      query = query.eq("stock_set_id", stockSetId);
+      query = query.eq(
+        "stock_set_id",
+        stockSetId
+      );
     } else if (itemId) {
       query = query.eq("id", itemId);
     } else {
@@ -15550,9 +15945,11 @@ async function neutralizeOrderLineFromDb(orderId, lineId) {
     }
 
     const { error } = await query;
+
     if (error) throw error;
   }
 
+  // Verwijder de bestaande allocations.
   const { error: deleteAllocError } = await client
     .from("order_allocations")
     .delete()
@@ -15560,6 +15957,7 @@ async function neutralizeOrderLineFromDb(orderId, lineId) {
 
   if (deleteAllocError) throw deleteAllocError;
 
+  // Verwijder de orderregel uit de juiste order.
   const { error: deleteLineError } = await client
     .from("order_lines")
     .delete()
@@ -15568,6 +15966,7 @@ async function neutralizeOrderLineFromDb(orderId, lineId) {
 
   if (deleteLineError) throw deleteLineError;
 
+  // Behoud de bestaande returnwaarde.
   return allocations?.length || 0;
 }
 

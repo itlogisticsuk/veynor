@@ -64,6 +64,40 @@ const ACTIVITY_VIEW_VERSION = "2026-09-08-2312";
   }
 
 
+async function getCompanyId(client = getClient()) {
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const userId = authData?.user?.id;
+  if (!userId) throw new Error("Not authenticated.");
+
+  let result = await client
+    .from("user_profiles")
+    .select("company_id")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!result.data && !result.error) {
+    result = await client
+      .from("user_profiles")
+      .select("company_id")
+      .eq("auth_user_id", userId)
+      .maybeSingle();
+  }
+
+  if (result.error) throw result.error;
+
+  if (!result.data?.company_id) {
+    throw new Error("No tenant found for current user.");
+  }
+
+  return result.data.company_id;
+}
+
+
+
   function parseDate(value) {
     if (!value) {
       return null;
@@ -731,239 +765,94 @@ const ACTIVITY_VIEW_VERSION = "2026-09-08-2312";
      OPEN TOOL
      ========================================================= */
 
-  async function open(orderId) {
+
+async function open(orderId) {
   try {
     if (!orderId) {
-      throw new Error(
-        "Order ID is missing."
-      );
+      throw new Error("Order ID is missing.");
     }
 
+    const client = getClient();
+    const companyId = await getCompanyId(client);
 
     let order = null;
 
-
-    /*
-     * =========================================
-     * 1. Eerst proberen via de OCC-cache
-     * =========================================
-     */
-
-    if (
-      typeof window.getOrderById ===
-      "function"
-    ) {
-      order =
-        window.getOrderById(
-          orderId
-        );
+    if (typeof window.getOrderById === "function") {
+      order = window.getOrderById(orderId);
     }
 
-
-    /*
-     * =========================================
-     * 2. Fallback voor externe accounts
-     *
-     * Bellstone kan de order in OCC zien,
-     * maar de lokale OCC-ordercache hoeft niet
-     * altijd beschikbaar te zijn voor deze tool.
-     *
-     * Daarom halen we de order rechtstreeks uit
-     * Supabase als de cache niets teruggeeft.
-     * RLS blijft gewoon van toepassing.
-     * =========================================
-     */
-
     if (!order) {
-      const client =
-        getClient();
+      const { data, error } = await client
+        .from("orders")
+        .select("*")
+        .eq("id", orderId)
+        .eq("company_id", companyId)
+        .maybeSingle();
 
-
-      const {
-        data,
-        error
-      } =
-        await client
-          .from("orders")
-          .select("*")
-          .eq(
-            "id",
-            orderId
-          )
-          .maybeSingle();
-
-
-      if (error) {
-        throw error;
-      }
-
-
-      order =
-        data ||
-        null;
+      if (error) throw error;
+      order = data || null;
     }
 
-
     if (!order) {
+      throw new Error("Order could not be loaded.");
+    }
+
+    if (order.company_id !== companyId) {
       throw new Error(
-        "Order could not be loaded."
+        "Order does not belong to active tenant."
       );
     }
 
+    currentOrder = order;
+    currentEvents = [];
+    currentWarnings = [];
 
-    /*
-     * =========================================
-     * 3. Tool initialiseren
-     * =========================================
-     */
-
-    currentOrder =
-      order;
-
-    currentEvents =
-      [];
-
-    currentWarnings =
-      [];
-
-
-    /*
-     * Modal meteen openen.
-     */
-    renderLoading(
-      order
-    );
-
-
-    /*
-     * =========================================
-     * 4. Lifecycle laden
-     * =========================================
-     */
+    renderLoading(order);
 
     try {
-      currentEvents =
-        await loadLifecycle(
-          order
-        );
-
-
-      renderTimeline(
-        "all"
-      );
-
+      currentEvents = await loadLifecycle(order);
+      renderTimeline("all");
     } catch (error) {
-
       console.error(
         "[ActivityViewTool] Lifecycle error:",
         error
       );
-
-
-      /*
-       * De modal blijft open.
-       * Dus Bellstone krijgt in ieder geval
-       * een duidelijke foutmelding in plaats
-       * van dat er schijnbaar niets gebeurt.
-       */
-      renderError(
-        error
-      );
+      renderError(error);
     }
 
-
   } catch (error) {
-
     console.error(
       "[ActivityViewTool] Open error:",
       error
     );
 
+    const modal = byId("occGenericActionModal");
+    const body = byId("genericActionBody");
+    const saveBtn = byId("genericActionSaveBtn");
 
-    /*
-     * Probeer ook bij een vroege fout
-     * de generic modal te gebruiken.
-     */
-    const modal =
-      byId(
-        "occGenericActionModal"
-      );
+    if (modal && body) {
+      if (saveBtn) saveBtn.style.display = "none";
 
-    const body =
-      byId(
-        "genericActionBody"
-      );
+      const title = byId("genericActionTitle");
+      const sub = byId("genericActionSub");
 
-    const saveBtn =
-      byId(
-        "genericActionSaveBtn"
-      );
-
-
-    if (
-      modal &&
-      body
-    ) {
-
-      if (saveBtn) {
-        saveBtn.style.display =
-          "none";
-      }
-
-
-      const title =
-        byId(
-          "genericActionTitle"
-        );
-
-      if (title) {
-        title.textContent =
-          "Order Lifecycle";
-      }
-
-
-      const sub =
-        byId(
-          "genericActionSub"
-        );
-
-      if (sub) {
-        sub.textContent =
-          "View Activity";
-      }
-
+      if (title) title.textContent = "Order Lifecycle";
+      if (sub) sub.textContent = "View Activity";
 
       body.innerHTML = `
         <section class="occ-modal-section">
-
-          <h3>
-            Order Lifecycle
-          </h3>
-
-          <p
-            style="
-              color:#b42318;
-              margin:0;
-            "
-          >
+          <h3>Order Lifecycle</h3>
+          <p style="color:#b42318;margin:0;">
             ${escapeHtml(
               error.message ||
               "Could not load order lifecycle."
             )}
           </p>
-
         </section>
       `;
 
-
-      modal.classList.add(
-        "open"
-      );
-
-      modal.setAttribute(
-        "aria-hidden",
-        "false"
-      );
+      modal.classList.add("open");
+      modal.setAttribute("aria-hidden", "false");
     }
   }
 }
@@ -1058,172 +947,86 @@ const ACTIVITY_VIEW_VERSION = "2026-09-08-2312";
      LOAD COMPLETE LIFECYCLE
      ========================================================= */
 
-  async function loadLifecycle(order) {
-    const client =
-      getClient();
 
-    const events = [];
+async function loadLifecycle(order) {
+  const client = getClient();
 
-    /*
-     * Order import is always available from orders.created_at.
-     */
-    if (order.created_at) {
-      events.push(
-        makeEvent({
-          id:
-            `order-import-${order.id}`,
+  if (!order?.id || !order?.company_id) {
+    throw new Error("Order tenant is missing.");
+  }
 
-          type:
-            "order_imported",
+  const events = [];
 
-          timestamp:
-            order.created_at,
-
-          description:
-            `${
-              order.order_number ||
-              "Order"
-            } imported into Veynor.`,
-
-          source:
-            "orders"
-        })
-      );
-    }
-
-
-    const [
-      activityResult,
-      documentsResult,
-      planningResult,
-      podResult,
-      stockResult
-    ] =
-      await Promise.allSettled([
-        loadActivityRows(
-          client,
-          order.id
-        ),
-
-        loadDocumentRows(
-          client,
-          order.id
-        ),
-
-        loadPlanningRows(
-          client,
-          order.id
-        ),
-
-        loadPodRows(
-          client,
-          order.id
-        ),
-
-        loadStockRows(
-          client,
-          order.id
-        )
-      ]);
-
-
-    const activityRows =
-      extractSettledRows(
-        activityResult,
-        "Activity log"
-      );
-
-    const documentRows =
-      extractSettledRows(
-        documentsResult,
-        "Documents"
-      );
-
-    const planningRows =
-      extractSettledRows(
-        planningResult,
-        "Planning history"
-      );
-
-    const podRows =
-      extractSettledRows(
-        podResult,
-        "POD assets"
-      );
-
-    const stockRows =
-      extractSettledRows(
-        stockResult,
-        "Stock history"
-      );
-
-
+  if (order.created_at) {
     events.push(
-      ...buildDocumentEvents(
-        documentRows
-      )
-    );
-
-    events.push(
-      ...buildPlanningEvents(
-        planningRows
-      )
-    );
-
-    events.push(
-      ...buildStockEvents(
-        stockRows
-      )
-    );
-
-    events.push(
-      ...buildPodEvents(
-        podRows
-      )
-    );
-
-    events.push(
-      ...buildActivityEvents(
-        activityRows,
-        {
-          hasDocuments:
-            documentRows.length > 0,
-
-          hasPodAssets:
-            podRows.length > 0,
-
-          hasPlanningHistory:
-            planningRows.length > 0
-        }
-      )
-    );
-
-
-    /*
-     * FDS fallback:
-     * older orders do not always have an activity row.
-     */
-    addFdsFallbackEvent(
-      events,
-      order
-    );
-
-
-    /*
-     * Delivered fallback:
-     * show delivery if order currently clearly is delivered
-     * and no delivered event exists.
-     */
-    addDeliveredFallbackEvent(
-      events,
-      order
-    );
-
-
-    return dedupeAndSortEvents(
-      events
+      makeEvent({
+        id: `order-import-${order.id}`,
+        type: "order_imported",
+        timestamp: order.created_at,
+        description:
+          `${order.order_number || "Order"} imported into Veynor.`,
+        source: "orders"
+      })
     );
   }
+
+  const [
+    activityResult,
+    documentsResult,
+    planningResult,
+    podResult,
+    stockResult
+  ] = await Promise.allSettled([
+    loadActivityRows(client, order.id, order.company_id),
+    loadDocumentRows(client, order.id, order.company_id),
+    loadPlanningRows(client, order.id, order.company_id),
+    loadPodRows(client, order.id, order.company_id),
+    loadStockRows(client, order.id, order.company_id)
+  ]);
+
+  const activityRows = extractSettledRows(
+    activityResult,
+    "Activity log"
+  );
+
+  const documentRows = extractSettledRows(
+    documentsResult,
+    "Documents"
+  );
+
+  const planningRows = extractSettledRows(
+    planningResult,
+    "Planning history"
+  );
+
+  const podRows = extractSettledRows(
+    podResult,
+    "POD assets"
+  );
+
+  const stockRows = extractSettledRows(
+    stockResult,
+    "Stock history"
+  );
+
+  events.push(...buildDocumentEvents(documentRows));
+  events.push(...buildPlanningEvents(planningRows));
+  events.push(...buildStockEvents(stockRows));
+  events.push(...buildPodEvents(podRows));
+
+  events.push(
+    ...buildActivityEvents(activityRows, {
+      hasDocuments: documentRows.length > 0,
+      hasPodAssets: podRows.length > 0,
+      hasPlanningHistory: planningRows.length > 0
+    })
+  );
+
+  addFdsFallbackEvent(events, order);
+  addDeliveredFallbackEvent(events, order);
+
+  return dedupeAndSortEvents(events);
+}
 
 
   function extractSettledRows(
@@ -1257,240 +1060,154 @@ const ACTIVITY_VIEW_VERSION = "2026-09-08-2312";
      DATABASE LOADERS
      ========================================================= */
 
-  async function loadActivityRows(
-    client,
-    orderId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "order_activity_log"
-        )
-        .select(`
-          id,
-          activity_type,
-          description,
-          old_status,
-          new_status,
-          created_by,
-          created_at
-        `)
-        .eq(
-          "order_id",
-          orderId
-        )
-        .order(
-          "created_at",
-          {
-            ascending:
-              true
-          }
-        )
-        .limit(
-          500
-        );
-
-    if (error) {
-      throw error;
-    }
-
-    return (
-      data ||
-      []
-    );
+ 
+async function loadActivityRows(client, orderId, companyId) {
+  if (!orderId || !companyId) {
+    throw new Error("Order or tenant is missing.");
   }
 
+  const { data, error } = await client
+    .from("order_activity_log")
+    .select(`
+      id,
+      activity_type,
+      description,
+      old_status,
+      new_status,
+      created_by,
+      created_at
+    `)
+    .eq("order_id", orderId)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: true })
+    .limit(500);
 
-  async function loadDocumentRows(
-    client,
-    orderId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "order_documents"
-        )
-        .select(`
-          id,
-          document_type,
-          document_number,
-          document_status,
-          created_at,
-          updated_at,
-          sent_at
-        `)
-        .eq(
-          "order_id",
-          orderId
-        )
-        .order(
-          "created_at",
-          {
-            ascending:
-              true
-          }
-        );
+  if (error) throw error;
 
-    if (error) {
-      throw error;
-    }
+  return data || [];
+}
 
-    return (
-      data ||
-      []
-    );
+
+
+
+async function loadDocumentRows(client, orderId, companyId) {
+  if (!orderId || !companyId) {
+    throw new Error("Order or tenant is missing.");
   }
 
+  const { data, error } = await client
+    .from("order_documents")
+    .select(`
+      id,
+      document_type,
+      document_number,
+      document_status,
+      created_at,
+      updated_at,
+      sent_at
+    `)
+    .eq("order_id", orderId)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: true });
 
-  async function loadPlanningRows(
-    client,
-    orderId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "order_delivery_date_history"
-        )
-        .select(`
-          id,
-          delivery_date,
-          change_sequence,
-          source,
-          changed_by,
-          created_at
-        `)
-        .eq(
-          "order_id",
-          orderId
-        )
-        .order(
-          "change_sequence",
-          {
-            ascending:
-              true
-          }
-        )
-        .order(
-          "created_at",
-          {
-            ascending:
-              true
-          }
-        );
+  if (error) throw error;
 
-    if (error) {
-      throw error;
-    }
+  return data || [];
+}
 
-    return (
-      data ||
-      []
-    );
+
+
+async function loadPlanningRows(client, orderId, companyId) {
+  if (!orderId || !companyId) {
+    throw new Error("Order or tenant is missing.");
   }
 
+  const { data, error } = await client
+    .from("order_delivery_date_history")
+    .select(`
+      id,
+      delivery_date,
+      change_sequence,
+      source,
+      changed_by,
+      created_at
+    `)
+    .eq("order_id", orderId)
+    .eq("company_id", companyId)
+    .order("change_sequence", { ascending: true })
+    .order("created_at", { ascending: true });
 
-  async function loadPodRows(
-    client,
-    orderId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "order_pod_assets"
-        )
-        .select(`
-          id,
-          asset_type,
-          file_name,
-          captured_at,
-          captured_by_name,
-          created_at
-        `)
-        .eq(
-          "order_id",
-          orderId
-        )
-        .order(
-          "created_at",
-          {
-            ascending:
-              true
-          }
-        );
+  if (error) throw error;
 
-    if (error) {
-      throw error;
-    }
+  return data || [];
+}
 
-    return (
-      data ||
-      []
-    );
+
+
+async function loadPodRows(client, orderId, companyId) {
+  if (!orderId || !companyId) {
+    throw new Error("Order or tenant is missing.");
   }
 
+  const { data, error } = await client
+    .from("order_pod_assets")
+    .select(`
+      id,
+      asset_type,
+      file_name,
+      captured_at,
+      captured_by_name,
+      created_at
+    `)
+    .eq("order_id", orderId)
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: true });
 
-  async function loadStockRows(
-    client,
-    orderId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "order_lines"
-        )
-        .select(`
-          id,
-          line_number,
-          sku_base,
-          quantity_ordered,
-          packages_per_unit,
-          total_packages,
+  if (error) throw error;
 
-          order_allocations (
-            id,
-            allocation_status,
-            allocated_at,
-            item_id,
+  return data || [];
+}
 
-            items (
-              id,
-              status,
-              reserved_at,
-              picked_at,
-              loaded_at,
-              shipped_at
-            )
-          )
-        `)
-        .eq(
-          "order_id",
-          orderId
-        );
 
-    if (error) {
-      throw error;
-    }
 
-    return (
-      data ||
-      []
-    );
+async function loadStockRows(client, orderId, companyId) {
+  if (!orderId || !companyId) {
+    throw new Error("Order or tenant is missing.");
   }
+
+  const { data, error } = await client
+    .from("order_lines")
+    .select(`
+      id,
+      line_number,
+      sku_base,
+      quantity_ordered,
+      packages_per_unit,
+      total_packages,
+
+      order_allocations (
+        id,
+        allocation_status,
+        allocated_at,
+        item_id,
+
+        items (
+          id,
+          status,
+          reserved_at,
+          picked_at,
+          loaded_at,
+          shipped_at
+        )
+      )
+    `)
+    .eq("order_id", orderId)
+    .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  return data || [];
+}
 
 
   /* =========================================================

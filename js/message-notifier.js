@@ -179,110 +179,210 @@
     }, 10000);
   }
 
-  async function loadProfile() {
-    const client = ensureClient();
-    if (!client) return null;
 
-    const { data: userData } = await client.auth.getUser();
-    const userId = userData?.user?.id;
-    if (!userId) return null;
+async function loadProfile() {
+  const client = ensureClient();
 
-    let result = await client
-      .from("user_profiles")
-      .select("id, role, company_id, customer_id")
-      .eq("id", userId)
-      .maybeSingle();
+  profile = null;
 
-    if (!result.data && !result.error) {
-      result = await client
-        .from("user_profiles")
-        .select("id, role, company_id, customer_id")
-        .eq("auth_user_id", userId)
-        .maybeSingle();
-    }
-
-    profile = result.data || null;
-    return profile;
+  if (!client) {
+    throw new Error(
+      "Supabase client is unavailable."
+    );
   }
 
-  async function checkNotifications() {
-console.log("Checking notifications...", profile);
-    if (isChecking || !profile) return;
+  const { data: auth, error: authError } =
+    await client.auth.getUser();
 
-    isChecking = true;
+  if (authError) throw authError;
 
-    try {
-      const client = ensureClient();
+  const authUserId = auth?.user?.id;
 
-      let query = client
-        .from("system_notifications")
-        .select("*")
-        .eq("popup_shown", false)
-        .order("created_at", { ascending: true })
-        .limit(10);
+  if (!authUserId) return null;
 
-      if (profile.company_id) {
-        query = query.eq("company_id", profile.company_id);
-      }
+  const { data: profiles, error } = await client
+    .from("user_profiles")
+    .select(`
+      id,
+      auth_user_id,
+      company_id,
+      customer_id,
+      role,
+      is_active
+    `)
+    .eq("auth_user_id", authUserId)
+    .eq("is_active", true)
+    .limit(2);
 
-      if (profile.customer_id) {
-        query = query.eq("customer_id", profile.customer_id);
-      }
+  if (error) throw error;
 
-      query = query.or(
-        `recipient_profile_id.eq.${profile.id},recipient_role.eq.${profile.role},recipient_role.is.null`
-      );
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "No unique active tenant profile found."
+    );
+  }
 
-      const { data, error } = await query;
+  profile = profiles[0];
 
-      if (error) {
-        console.warn("Notification polling failed:", error.message);
-        return;
-      }
-
-      const rows = data || [];
-console.log("Notification rows found:", rows);
-      if (!rows.length) return;
-
-      if (rows.length <= 2) {
-        rows.forEach(showPopup);
-      } else {
-        showPopup({
-          title: `${rows.length} new updates`,
-          message: "Several new notifications are available. Open the Message Center to view all updates.",
-          action_url: "./message-center.html",
-          notification_type: "multiple_updates",
-          severity: "info"
-        });
-      }
-
-await client
-  .from("system_notifications")
-  .update({ popup_shown: true })
-  .in("id", rows.map(r => r.id));
-
-if (window.VeynorUpdateMessageCenterNavBadge) {
-  window.VeynorUpdateMessageCenterNavBadge();
+  return profile;
 }
 
-    } finally {
-      isChecking = false;
-    }
+
+async function checkNotifications() {
+  if (
+    isChecking ||
+    !profile?.company_id ||
+    !profile?.id
+  ) {
+    return;
   }
 
-  async function init() {
-    injectStyle();
+  isChecking = true;
 
-    await loadProfile();
+  try {
+    const client = ensureClient();
+
+    if (!client) return;
+
+    let query = client
+      .from("system_notifications")
+      .select("*")
+      .eq("company_id", profile.company_id)
+      .eq("popup_shown", false)
+      .order("created_at", {
+        ascending: true
+      })
+      .limit(10);
+
+    const tenantRoles = [
+      "veynor_admin",
+      "tenant_admin",
+      "tenant_user"
+    ];
+
+    if (!tenantRoles.includes(profile.role)) {
+      if (!profile.customer_id) {
+        throw new Error(
+          "Customer account has no customer_id."
+        );
+      }
+
+      query = query.eq(
+        "customer_id",
+        profile.customer_id
+      );
+    }
+
+    query = query.or(
+      `recipient_profile_id.eq.${profile.id},` +
+      `recipient_role.eq.${profile.role},` +
+      `recipient_role.is.null`
+    );
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    const rows = data || [];
+
+    if (!rows.length) return;
+
+    if (rows.length <= 2) {
+      rows.forEach(showPopup);
+    } else {
+      showPopup({
+        title: `${rows.length} new updates`,
+        message:
+          "Several new notifications are available. " +
+          "Open the Message Center to view all updates.",
+        action_url: "./message-center.html",
+        notification_type: "multiple_updates",
+        severity: "info"
+      });
+    }
+
+    const { error: updateError } = await client
+      .from("system_notifications")
+      .update({
+        popup_shown: true
+      })
+      .eq("company_id", profile.company_id)
+      .in("id", rows.map(row => row.id));
+
+    if (updateError) throw updateError;
+
+    if (
+      typeof window.VeynorUpdateMessageCenterNavBadge ===
+      "function"
+    ) {
+      await window.VeynorUpdateMessageCenterNavBadge();
+    }
+
+  } catch (error) {
+    console.warn(
+      "[Veynor Message Notifier]",
+      error?.message || error
+    );
+  } finally {
+    isChecking = false;
+  }
+}
+
+
+async function init() {
+  // The central Notification Service takes priority.
+  // Prevent duplicate polling and duplicate popups.
+  if (window.VeynorNotifications) {
+    console.log(
+      "[Veynor Message Notifier] Central service active; " +
+      "legacy notifier disabled."
+    );
+    return;
+  }
+
+  try {
+    const activeProfile = await loadProfile();
+
+    if (!activeProfile?.company_id) {
+      console.warn(
+        "[Veynor Message Notifier] No active tenant."
+      );
+      return;
+    }
+
+    injectStyle();
 
     await checkNotifications();
 
-    pollTimer = setInterval(checkNotifications, 5000);
+    if (pollTimer) {
+      clearInterval(pollTimer);
+    }
 
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) checkNotifications();
-    });
+    pollTimer = setInterval(
+      checkNotifications,
+      5000
+    );
+
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (!document.hidden) {
+          checkNotifications();
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error(
+      "[Veynor Message Notifier] Initialization failed:",
+      error?.message || error
+    );
   }
+}
 
  if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);

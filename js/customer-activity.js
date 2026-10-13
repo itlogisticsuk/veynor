@@ -1,8 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-
   let client = null;
   let companyId = null;
   let currentProfile = null;
@@ -105,23 +103,29 @@ const orderMap = new Map();
     companyId = currentProfile.company_id || null;
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
-
-    const db = ensureClient();
-
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
+ 
+async function getCompanyId() {
+  if (companyId) {
     return companyId;
   }
+
+  if (!currentProfile) {
+    await loadProfile();
+  }
+
+  const tenantId = currentProfile?.company_id;
+
+  if (!tenantId) {
+    throw new Error(
+      "No tenant is assigned to the current user."
+    );
+  }
+
+  companyId = tenantId;
+
+  return companyId;
+}
+
 
   function getCustomer(row) {
     if (!row.customer_id) return null;
@@ -184,77 +188,119 @@ function entityLabel(row) {
   return [row.entity_type, row.entity_id].filter(Boolean).join(": ");
 }
 
-  async function loadLookupData(rawEvents) {
-    const db = ensureClient();
 
-    customerMap.clear();
-    userMap.clear();
-orderMap.clear();
+async function loadLookupData(rawEvents) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const customerIds = [...new Set(
-      (rawEvents || []).map(row => row.customer_id).filter(Boolean).map(String)
-    )];
+  customerMap.clear();
+  userMap.clear();
+  orderMap.clear();
 
-    const userIds = [...new Set(
-      (rawEvents || []).map(row => row.user_profile_id).filter(Boolean).map(String)
-    )];
+  const rows = (rawEvents || []).filter(
+    row => row.company_id === cid
+  );
 
-    if (customerIds.length) {
-      const { data, error } = await db
-        .from("customers")
-        .select("id, name, customer_code")
-        .in("id", customerIds);
+  const customerIds = [...new Set(
+    rows
+      .map(row => row.customer_id)
+      .filter(Boolean)
+      .map(String)
+  )];
 
-      if (!error) {
-        (data || []).forEach(row => {
-          customerMap.set(String(row.id), row);
-        });
-      } else {
-        console.warn("Customer lookup skipped:", error.message);
-      }
-    }
+  const userIds = [...new Set(
+    rows
+      .map(row => row.user_profile_id)
+      .filter(Boolean)
+      .map(String)
+  )];
 
-       if (userIds.length) {
-      const { data, error } = await db
-        .from("user_profiles")
-        .select("id, auth_user_id, full_name, email, role")
-        .or(
-          `id.in.(${userIds.join(",")}),auth_user_id.in.(${userIds.join(",")})`
-        );
+  const orderIds = [...new Set(
+    rows
+      .filter(row =>
+        normalize(row.entity_type) === "order"
+      )
+      .map(row => row.entity_id)
+      .filter(Boolean)
+      .map(String)
+  )];
 
-      if (!error) {
-        (data || []).forEach(row => {
-          userMap.set(String(row.id), row);
-          if (row.auth_user_id) userMap.set(String(row.auth_user_id), row);
-        });
-      } else {
-        console.warn("User lookup skipped:", error.message);
-      }
-    }
+  // Customers belonging to the active tenant.
 
-    const orderIds = [...new Set(
-      (rawEvents || [])
-        .filter(row => String(row.entity_type || "").toLowerCase() === "order")
-        .map(row => row.entity_id)
-        .filter(Boolean)
-        .map(String)
-    )];
+  if (customerIds.length) {
+    const { data, error } = await db
+      .from("customers")
+      .select("id, name, customer_code")
+      .eq("company_id", cid)
+      .in("id", customerIds);
 
-    if (orderIds.length) {
-      const { data, error } = await db
-        .from("orders")
-        .select("id, order_number, external_reference, purchase_order")
-        .in("id", orderIds);
-
-      if (!error) {
-        (data || []).forEach(row => {
-          orderMap.set(String(row.id), row);
-        });
-      } else {
-        console.warn("Order lookup skipped:", error.message);
-      }
+    if (error) {
+      console.warn(
+        "Customer lookup skipped:",
+        error.message
+      );
+    } else {
+      (data || []).forEach(row => {
+        customerMap.set(String(row.id), row);
+      });
     }
   }
+
+  // User profiles belonging to the active tenant.
+
+  if (userIds.length) {
+    const { data, error } = await db
+      .from("user_profiles")
+      .select(
+        "id, auth_user_id, full_name, email, role"
+      )
+      .eq("company_id", cid)
+      .or(
+        `id.in.(${userIds.join(",")}),auth_user_id.in.(${userIds.join(",")})`
+      );
+
+    if (error) {
+      console.warn(
+        "User lookup skipped:",
+        error.message
+      );
+    } else {
+      (data || []).forEach(row => {
+        userMap.set(String(row.id), row);
+
+        if (row.auth_user_id) {
+          userMap.set(
+            String(row.auth_user_id),
+            row
+          );
+        }
+      });
+    }
+  }
+
+  // Orders belonging to the active tenant.
+
+  if (orderIds.length) {
+    const { data, error } = await db
+      .from("orders")
+      .select(
+        "id, order_number, external_reference, purchase_order"
+      )
+      .eq("company_id", cid)
+      .in("id", orderIds);
+
+    if (error) {
+      console.warn(
+        "Order lookup skipped:",
+        error.message
+      );
+    } else {
+      (data || []).forEach(row => {
+        orderMap.set(String(row.id), row);
+      });
+    }
+  }
+}
 
   async function loadEvents() {
     const db = ensureClient();

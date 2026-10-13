@@ -92,27 +92,114 @@ const state = {
     return Number(toNumber(value, 0).toFixed(2));
   }
 
-const FDS_FUEL_SURCHARGE_RATE =
-  0.08;
+let carrierImportConfig = null;
+
 
 function calculateFdsFuelSurcharge(baseAmount) {
+  if (!carrierImportConfig) {
+    throw new Error(
+      "Carrier invoice settings have not been loaded."
+    );
+  }
+
+  const rate = carrierImportConfig.fuelSurchargePct;
+
   return roundMoney(
-    toNumber(baseAmount, 0) *
-    FDS_FUEL_SURCHARGE_RATE
+    toNumber(baseAmount, 0) * rate / 100
   );
 }
 
 function calculateFdsTotalCost(baseAmount) {
-  const base =
-    roundMoney(baseAmount);
+  const base = roundMoney(baseAmount);
 
-  const fuel =
-    calculateFdsFuelSurcharge(base);
+  const fuel = calculateFdsFuelSurcharge(base);
 
-  return roundMoney(
-    base + fuel
-  );
+  return roundMoney(base + fuel);
 }
+
+
+async function loadCarrierImportConfig() {
+  const api = analyticsApi();
+  const db = api.getClient();
+  const companyId = await api.getCompanyId();
+
+  const { data, error } = await db
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId)
+    .in("setting_key", [
+      "carrier_invoice_format",
+      "carrier_invoice_default_name",
+      "fds_fuel_surcharge_pct"
+    ]);
+
+  if (error) {
+    throw error;
+  }
+
+  const settings = Object.fromEntries(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  const format = String(
+    settings.carrier_invoice_format || ""
+  ).trim().toLowerCase();
+
+  if (format !== "fds") {
+    throw new Error(
+      "The FDS invoice format is not enabled for this tenant."
+    );
+  }
+
+  const carrierName = String(
+    settings.carrier_invoice_default_name || ""
+  ).trim();
+
+  if (!carrierName) {
+    throw new Error(
+      "No default carrier name has been configured."
+    );
+  }
+
+  const rawRate = settings.fds_fuel_surcharge_pct;
+
+  if (
+    rawRate === null ||
+    rawRate === undefined ||
+    String(rawRate).trim() === ""
+  ) {
+    throw new Error(
+      "No carrier fuel surcharge percentage is configured."
+    );
+  }
+
+  const fuelSurchargePct = Number(
+    String(rawRate).replace(",", ".")
+  );
+
+  if (
+    !Number.isFinite(fuelSurchargePct) ||
+    fuelSurchargePct < 0 ||
+    fuelSurchargePct > 100
+  ) {
+    throw new Error(
+      "Invalid carrier fuel surcharge percentage."
+    );
+  }
+
+  carrierImportConfig = {
+    companyId,
+    format,
+    carrierName,
+    fuelSurchargePct
+  };
+
+  return carrierImportConfig;
+}
+
 
   function money(value) {
     return "£" + toNumber(value, 0).toLocaleString("en-GB", {
@@ -834,9 +921,12 @@ grouped.forEach(row => {
             : "",
         existingCost,
         alreadyConfirmed,
-        importable:
-          Boolean(match.order)
-      };
+importable:
+  Boolean(match.order) &&
+  (
+    row.lineType ||
+    detectCarrierLineType(row)
+  ) !== "collection"      };
     });
   }
 
@@ -1627,8 +1717,8 @@ const unmatchedAmount =
     invoice_reference:
       state.invoiceReference,
 
-    carrier_name:
-      "FDS",
+carrier_name:
+  carrierImportConfig.carrierName,
 
     status:
       unprocessedRows.length
@@ -1977,6 +2067,13 @@ async function loadPendingCarrierLines() {
 }
 
   async function handleFile(file) {
+
+if (!carrierImportConfig) {
+  throw new Error(
+    "Carrier import is not configured for this tenant."
+  );
+}
+
     if (!file) return;
 
     if (!/\.(xlsx|xls)$/i.test(file.name)) {
@@ -2041,10 +2138,11 @@ await persistCarrierInvoice();
 
     renderPreview();
 
-    toast(
-      "FDS invoice read. Review the matches before confirming.",
-      "ok"
-    );
+
+toast(
+  "Carrier invoice read. Review the matches before confirming.",
+  "ok"
+);
   }
 
   function aggregateImportableRows() {
@@ -2715,11 +2813,11 @@ toast(
 
           resetImport();
 
-          toast(
-            error.message ||
-            "The FDS invoice could not be read.",
-            "err"
-          );
+toast(
+  error.message ||
+  "The carrier invoice could not be read.",
+  "err"
+);
         } finally {
           selectButton.disabled = false;
           selectButton.textContent =
@@ -2755,30 +2853,42 @@ toast(
     );
   }
 
+
 async function init() {
   try {
     analyticsApi();
 
     bindActions();
+    resetImport();
 
-resetImport();
-
-await loadPendingCarrierLines();
+    await loadCarrierImportConfig();
 
     await loadPendingCarrierLines();
+
   } catch (error) {
     console.error(
       "[analytics-carrier-import]",
       error
     );
 
+    const selectButton = byId(
+      "btnSelectCarrierInvoice"
+    );
+
+    if (selectButton) {
+      selectButton.disabled = true;
+      selectButton.title =
+        error.message || "Carrier import unavailable.";
+    }
+
     toast(
       error.message ||
-      "Open carrier allocations could not be loaded.",
+      "Carrier invoice settings could not be loaded.",
       "err"
     );
   }
 }
+
 
   document.addEventListener(
     "DOMContentLoaded",

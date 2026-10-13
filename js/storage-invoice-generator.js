@@ -19,49 +19,23 @@
     1.20;
 
 
-  const FALLBACK_COMPANY = {
-    name:
-      "Sofa2U Ltd",
 
-    displayName:
-      "Sofa2U",
-
-    address:
-      "860-862 Garratt Lane, London, SW17 0NB",
-
-    phone:
-      "+44 (0) 7894 469947",
-
-    email:
-      "sales@sofa2u.co.uk",
-
-    vat:
-      "GB 368 665 249",
-
-    logoUrl:
-      "",
-
-    bankName:
-      "NatWest",
-
-    sortCode:
-      "51-61-11",
-
-    accountNo:
-      "7797 5170",
-
-    iban:
-      "",
-
-    bic:
-      "",
-
-    paymentNote:
-      "Please make payments via bank transfer using the details shown on this invoice.",
-
-    footerText:
-      ""
-  };
+const FALLBACK_COMPANY = {
+  name: "",
+  displayName: "",
+  address: "",
+  phone: "",
+  email: "",
+  vat: "",
+  logoUrl: "",
+  bankName: "",
+  sortCode: "",
+  accountNo: "",
+  iban: "",
+  bic: "",
+  paymentNote: "",
+  footerText: ""
+};
 
 
   // ==========================================================
@@ -405,198 +379,89 @@
   // COMPANY SETTINGS
   // ==========================================================
 
-  async function loadCompanySettings(
-    client,
-    companyId
-  ) {
-    const {
-      data,
-      error
-    } =
-      await client
-        .from(
-          "settings"
-        )
-        .select(
-          "setting_key, setting_value"
-        )
-        .eq(
-          "company_id",
-          companyId
-        );
 
-    if (error) {
-      console.warn(
-        "Storage invoice settings fallback:",
-        error.message
-      );
-
-      return {
-        company:
-          {
-            ...FALLBACK_COMPANY
-          },
-
-        vatRate:
-          DEFAULT_VAT_RATE,
-
-        paymentTermDays:
-          DEFAULT_PAYMENT_TERM_DAYS,
-
-        invoicePrefix:
-          "INV"
-      };
-    }
-
-    const map =
-      new Map(
-        (
-          data ||
-          []
-        ).map(
-          row => [
-            row.setting_key,
-            row.setting_value ??
-            ""
-          ]
-        )
-      );
-
-    const company = {
-      name:
-        map.get(
-          "main_company_name"
-        ) ||
-        FALLBACK_COMPANY.name,
-
-      displayName:
-        map.get(
-          "main_display_name"
-        ) ||
-        FALLBACK_COMPANY.displayName,
-
-      registration:
-        map.get(
-          "main_company_registration"
-        ) ||
-        "",
-
-      address:
-        map.get(
-          "main_address"
-        ) ||
-        FALLBACK_COMPANY.address,
-
-      phone:
-        map.get(
-          "main_phone"
-        ) ||
-        FALLBACK_COMPANY.phone,
-
-      email:
-        map.get(
-          "main_email"
-        ) ||
-        FALLBACK_COMPANY.email,
-
-      vat:
-        map.get(
-          "main_vat"
-        ) ||
-        FALLBACK_COMPANY.vat,
-
-      logoUrl:
-        map.get(
-          "main_logo_url"
-        ) ||
-        FALLBACK_COMPANY.logoUrl,
-
-      bankCompanyName:
-        map.get(
-          "bank_company_name"
-        ) ||
-        map.get(
-          "main_company_name"
-        ) ||
-        FALLBACK_COMPANY.name,
-
-      bankName:
-        map.get(
-          "bank_name"
-        ) ||
-        FALLBACK_COMPANY.bankName,
-
-      sortCode:
-        map.get(
-          "bank_sort_code"
-        ) ||
-        FALLBACK_COMPANY.sortCode,
-
-      accountNo:
-        map.get(
-          "bank_account_no"
-        ) ||
-        FALLBACK_COMPANY.accountNo,
-
-      iban:
-        map.get(
-          "bank_iban"
-        ) ||
-        "",
-
-      bic:
-        map.get(
-          "bank_bic"
-        ) ||
-        "",
-
-      paymentNote:
-        map.get(
-          "invoice_payment_note"
-        ) ||
-        FALLBACK_COMPANY.paymentNote,
-
-      footerText:
-        map.get(
-          "document_footer_text"
-        ) ||
-        FALLBACK_COMPANY.footerText
-    };
-
-    return {
-      company,
-
-      vatRate:
-        toNumber(
-          map.get(
-            "tax_default_vat_rate"
-          ) ||
-          map.get(
-            "doc_vat_rate"
-          ),
-          DEFAULT_VAT_RATE
-        ),
-
-      paymentTermDays:
-        Math.round(
-          toNumber(
-            map.get(
-              "default_payment_terms_days"
-            ) ||
-            map.get(
-              "doc_default_payment_terms"
-            ),
-            DEFAULT_PAYMENT_TERM_DAYS
-          )
-        ),
-
-      invoicePrefix:
-        map.get(
-          "invoice_prefix"
-        ) ||
-        "INV"
-    };
+async function loadCompanySettings(client, companyId) {
+  if (!client || !companyId) {
+    throw new Error(
+      "Supabase client or active tenant is missing."
+    );
   }
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
+
+  if (error) {
+    throw new Error(
+      `Unable to load company settings: ${error.message}`
+    );
+  }
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
+
+  const get = key => String(map.get(key) ?? "").trim();
+
+  const company = {
+    name: get("main_company_name"),
+    displayName: get("main_display_name"),
+    registration: get("main_company_registration"),
+    address: get("main_address"),
+    phone: get("main_phone"),
+    email: get("main_email"),
+    vat: get("main_vat"),
+    logoUrl: get("main_logo_url"),
+    bankCompanyName:
+      get("bank_company_name") ||
+      get("main_company_name"),
+    bankName: get("bank_name"),
+    sortCode: get("bank_sort_code"),
+    accountNo: get("bank_account_no"),
+    iban: get("bank_iban"),
+    bic: get("bank_bic"),
+    paymentNote: get("invoice_payment_note"),
+    footerText: get("document_footer_text")
+  };
+
+  if (!company.name) {
+    throw new Error(
+      "Company name is missing. Configure it in Settings."
+    );
+  }
+
+  if (!company.bankName ||
+      (!company.accountNo && !company.iban)) {
+    throw new Error(
+      "Bank details are incomplete. Configure them in Settings."
+    );
+  }
+
+  const vatRate = toNumber(
+    get("tax_default_vat_rate") ||
+    get("doc_vat_rate"),
+    DEFAULT_VAT_RATE
+  );
+
+  const paymentTermDays = Math.round(
+    toNumber(
+      get("default_payment_terms_days") ||
+      get("doc_default_payment_terms"),
+      DEFAULT_PAYMENT_TERM_DAYS
+    )
+  );
+
+  return {
+    company,
+    vatRate,
+    paymentTermDays,
+    invoicePrefix: get("invoice_prefix") || "INV"
+  };
+}
 
 
   // ==========================================================

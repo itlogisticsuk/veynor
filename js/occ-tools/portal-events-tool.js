@@ -128,12 +128,15 @@ let userProfileMap = new Map();
     modal.setAttribute("aria-hidden", "false");
   }
 
-  async function loadPortalEvents(order) {
-    const client = getClient();
+async function loadPortalEvents(order) {
+  const client = getClient();
 
-    const orderId = String(order.id || "");
-    const orderNumber = String(order.order_number || "");
+  if (!order?.company_id) {
+    throw new Error("Order tenant is missing.");
+  }
 
+  const orderId = String(order.id || "");
+  const orderNumber = String(order.order_number || "");
     let query = client
       .from("portal_events")
       .select(`
@@ -152,8 +155,9 @@ let userProfileMap = new Map();
         user_agent,
         created_at
       `)
-      .order("created_at", { ascending: false })
-      .limit(250);
+.eq("company_id", order.company_id)
+.order("created_at", { ascending: false })
+.limit(250);
 
 if (orderId || orderNumber) {
   const filters = [];

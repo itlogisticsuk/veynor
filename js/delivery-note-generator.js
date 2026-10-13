@@ -3,16 +3,18 @@
 
   const DOCUMENT_BUCKET = "order-documents";
 
-  const FALLBACK_COMPANY = {
-    name: "Sofa2U Ltd",
-    displayName: "Sofa2U",
-    address: "860-862 Garratt Lane, London, SW17 0NB",
-    phone: "+44 (0) 7894 469947",
-    email: "sales@sofa2u.co.uk",
-    vat: "GB 368 665 249",
-    logoUrl: "",
-    footerText: ""
-  };
+
+const FALLBACK_COMPANY = Object.freeze({
+  name: "",
+  displayName: "",
+  address: "",
+  phone: "",
+  email: "",
+  vat: "",
+  logoUrl: "",
+  footerText: ""
+});
+
 
   const DEFAULT_DAMAGE_NOTE =
     "Received in good condition. Claims for damages must be reported within 48 hours.";
@@ -180,26 +182,27 @@ function isWarehousePickupOrder(order) {
     ]);
   }
 
+
 function getWarehousePickupLines(ctx) {
-  const depot =
-    ctx?.depot ||
-    {};
+  const depot = ctx?.depot || {};
 
-  return uniqueLines([
-    depot.name ||
-      "Sofa2U",
-
-    "Forge Farm - Warehouse",
-
-    depot.city ||
-      "Shrewsbury",
-
-    depot.postcode ||
-      "SY4 4UD",
-
-    depot.country ||
-      "United Kingdom"
+  const lines = uniqueLines([
+    depot.name,
+    depot.address1,
+    depot.address2,
+    depot.city,
+    depot.postcode,
+    depot.country
   ]);
+
+  if (!depot.name || !depot.postcode) {
+    throw new Error(
+      "Warehouse pickup address is incomplete. " +
+      "Configure the depot name and postcode in Tenant Settings."
+    );
+  }
+
+  return lines;
 }
 
   function getOrderLines(order) {
@@ -964,217 +967,139 @@ function isServiceOrder(order) {
     }
   }
 
- async function loadCompanySettings(
-  client,
-  companyId
-) {
-  const {
-    data,
-    error
-  } =
-    await client
-      .from("settings")
-      .select(
-        "setting_key, setting_value"
-      )
-      .eq(
-        "company_id",
-        companyId
-      );
 
+async function loadCompanySettings(client, companyId) {
+  if (!client || !companyId) {
+    throw new Error(
+      "Cannot load delivery note settings: tenant is missing."
+    );
+  }
+
+  const { data: company, error: companyError } =
+    await client
+      .from("companies")
+      .select("id, name")
+      .eq("id", companyId)
+      .single();
+
+  if (companyError) throw companyError;
+
+  if (!company?.id) {
+    throw new Error("Active tenant was not found.");
+  }
+
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
 
   if (error) {
-    console.warn(
-      "Delivery note settings skipped:",
-      error.message
+    throw new Error(
+      `Cannot load tenant settings: ${error.message}`
     );
-
-    return {
-      company: {
-        ...FALLBACK_COMPANY
-      },
-
-      depot: {
-        name:
-          "Sofa2U",
-
-        city:
-          "Shrewsbury",
-
-        postcode:
-          "SY4 4UD",
-
-        country:
-          "United Kingdom",
-
-        latitude:
-          "52.698120",
-
-        longitude:
-          "-2.653040"
-      },
-
-      ownerProfiles: [],
-
-      damageNote:
-        DEFAULT_DAMAGE_NOTE
-    };
   }
 
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
 
-  const map =
-    new Map(
-      (data || []).map(
-        row => [
-          row.setting_key,
-          row.setting_value ??
-          ""
-        ]
-      )
-    );
+  const setting = key =>
+    cleanText(map.get(key) || "");
 
-
-  let ownerProfiles =
-    [];
-
+  let ownerProfiles = [];
 
   try {
-    ownerProfiles =
-      JSON.parse(
-        map.get(
-          "product_owner_profiles"
-        ) ||
-        "[]"
-      );
+    const parsed = JSON.parse(
+      map.get("product_owner_profiles") || "[]"
+    );
 
-
-    if (
-      !Array.isArray(
-        ownerProfiles
-      )
-    ) {
-      ownerProfiles =
-        [];
+    if (Array.isArray(parsed)) {
+      ownerProfiles = parsed;
     }
-
-  } catch {
-    ownerProfiles =
-      [];
+  } catch (error) {
+    console.warn(
+      "Invalid product owner profiles:",
+      error.message
+    );
   }
 
+  const companyName =
+    setting("main_company_name") ||
+    cleanText(company.name);
+
+  if (!companyName) {
+    throw new Error(
+      "Tenant company name is missing."
+    );
+  }
 
   return {
-
-    /* =====================================================
-     * SOFA2U COMPANY DETAILS
-     * =================================================== */
-
     company: {
-      name:
-        map.get(
-          "main_company_name"
-        ) ||
-        FALLBACK_COMPANY.name,
+      name: companyName,
 
       displayName:
-        map.get(
-          "main_display_name"
-        ) ||
-        FALLBACK_COMPANY.displayName,
+        setting("main_display_name") ||
+        companyName,
 
       address:
-        map.get(
-          "main_address"
-        ) ||
-        FALLBACK_COMPANY.address,
+        setting("main_address"),
 
       phone:
-        map.get(
-          "main_phone"
-        ) ||
-        FALLBACK_COMPANY.phone,
+        setting("main_phone"),
 
       email:
-        map.get(
-          "main_email"
-        ) ||
-        FALLBACK_COMPANY.email,
+        setting("main_email"),
 
       vat:
-        map.get(
-          "main_vat"
-        ) ||
-        FALLBACK_COMPANY.vat,
+        setting("main_vat"),
 
       logoUrl:
-        map.get(
-          "main_logo_url"
-        ) ||
-        FALLBACK_COMPANY.logoUrl,
+        setting("main_logo_url"),
 
       footerText:
-        map.get(
-          "document_footer_text"
-        ) ||
-        FALLBACK_COMPANY.footerText
+        setting("document_footer_text")
     },
-
-
-    /* =====================================================
-     * SOFA2U WAREHOUSE / HOME DEPOT
-     *
-     * Used for Pick Up Warehouse orders.
-     * =================================================== */
 
     depot: {
       name:
-        map.get(
-          "home_depot_name"
-        ) ||
-        "Sofa2U",
+        setting("home_depot_name"),
+
+      address1:
+        setting("home_depot_address_1"),
+
+      address2:
+        setting("home_depot_address_2"),
 
       city:
-        map.get(
-          "home_depot_city"
-        ) ||
-        "Shrewsbury",
+        setting("home_depot_city"),
 
       postcode:
-        map.get(
-          "home_depot_postcode"
-        ) ||
-        "SY4 4UD",
+        setting("home_depot_postcode"),
 
       country:
-        map.get(
-          "home_depot_country"
-        ) ||
-        "United Kingdom",
+        setting("home_depot_country"),
 
       latitude:
-        map.get(
-          "home_depot_lat"
-        ) ||
-        "52.698120",
+        setting("home_depot_lat"),
 
       longitude:
-        map.get(
-          "home_depot_lng"
-        ) ||
-        "-2.653040"
-    },
+        setting("home_depot_lng"),
 
+      pickupInstructions:
+        setting("home_depot_pickup_instructions"),
+
+      pickupPdfPath:
+        setting("home_depot_pickup_pdf_path")
+    },
 
     ownerProfiles,
 
-
     damageNote:
-      map.get(
-        "text_damage_reporting_note"
-      ) ||
-      map.get(
-        "doc_damage_note"
-      ) ||
+      setting("text_damage_reporting_note") ||
+      setting("doc_damage_note") ||
       DEFAULT_DAMAGE_NOTE
   };
 }
@@ -1197,13 +1122,12 @@ function isServiceOrder(order) {
       error: customerError
     } =
       await client
-        .from("customers")
-        .select("*")
-        .eq(
-          "id",
-          order.customer_id
-        )
-        .maybeSingle();
+
+.from("customers")
+.select("*")
+.eq("company_id", order.company_id)
+.eq("id", order.customer_id)
+.maybeSingle();
 
     if (customerError) {
       throw customerError;
@@ -3208,13 +3132,13 @@ async function appendWarehousePickupInstructions(
           .from(
             "order_documents"
           )
-          .update(
-            payload
-          )
-          .eq(
-            "id",
-            existing.id
-          );
+
+.update(payload)
+.eq("id", existing.id)
+.eq("company_id", companyId)
+.eq("order_id", order.id)
+.select("id")
+.single();
 
       if (error) {
         throw error;
@@ -3398,24 +3322,24 @@ async function appendWarehousePickupInstructions(
     );
   }
 
-  async function generate(
-  order,
-  client,
-  companyId
-) {
+
+async function generate(order, client, companyId) {
+
+  /* =====================================================
+   * 1. VALIDATE INPUT
+   * ===================================================== */
+
   if (!order?.id) {
     throw new Error(
       "Cannot generate delivery note: order is missing."
     );
   }
 
-
   if (!client) {
     throw new Error(
       "Cannot generate delivery note: Supabase client is missing."
     );
   }
-
 
   if (!companyId) {
     throw new Error(
@@ -3425,7 +3349,7 @@ async function appendWarehousePickupInstructions(
 
 
   /* =====================================================
-   * FRESH ORDER LOADEN
+   * 2. LOAD FRESH ORDER FROM ACTIVE TENANT
    * ===================================================== */
 
   const freshOrder =
@@ -3435,63 +3359,71 @@ async function appendWarehousePickupInstructions(
       order.id
     );
 
+  if (!freshOrder?.id) {
+    throw new Error(
+      "Cannot generate delivery note: order was not found " +
+      "within the active tenant."
+    );
+  }
 
-const workingOrder =
-  freshOrder ||
-  order;
+  if (freshOrder.company_id !== companyId) {
+    throw new Error(
+      "Cannot generate delivery note: tenant mismatch."
+    );
+  }
 
-
-/* =====================================================
- * BESTAANDE DELIVERY NOTE HERGEBRUIKEN
- * ===================================================== */
-
-const existingDeliveryNote =
-  (
-    workingOrder.order_documents ||
-    []
-  ).find(
-    doc =>
-      normalize(
-        doc.document_type
-      ) ===
-        "delivery_note" &&
-      doc.file_url &&
-      doc.storage_path
-  );
-
-if (existingDeliveryNote) {
-  console.log(
-    "Existing delivery note reused:",
-    workingOrder.order_number,
-    existingDeliveryNote.storage_path
-  );
-
-  return {
-    documentId:
-      existingDeliveryNote.id,
-
-    fileUrl:
-      existingDeliveryNote.file_url,
-
-    storagePath:
-      existingDeliveryNote.storage_path,
-
-    reused:
-      true
-  };
-}
+  const workingOrder = freshOrder;
 
 
-/* =====================================================
- * SETTINGS
- * ===================================================== */
+  /* =====================================================
+   * 3. CHECK EXISTING DELIVERY NOTE
+   *
+   * Reuse existing documents.
+   * Do not create unnecessary duplicates.
+   * ===================================================== */
 
-const ctx =
-  await loadCompanySettings(
+  const existingDeliveryNote =
+    (workingOrder.order_documents || []).find(
+      doc =>
+        normalize(doc.document_type) ===
+          "delivery_note" &&
+        doc.file_url &&
+        doc.storage_path &&
+        doc.storage_path.startsWith(
+          `${companyId}/${workingOrder.id}/`
+        )
+    );
+
+  if (existingDeliveryNote) {
+    console.log(
+      "Existing delivery note reused:",
+      workingOrder.order_number,
+      existingDeliveryNote.storage_path
+    );
+
+    return {
+      documentId: existingDeliveryNote.id,
+      fileUrl: existingDeliveryNote.file_url,
+      storagePath: existingDeliveryNote.storage_path,
+      reused: true
+    };
+  }
+
+
+  /* =====================================================
+   * 4. LOAD TENANT SETTINGS
+   * ===================================================== */
+
+  const ctx =
+    await loadCompanySettings(
       client,
       companyId
     );
 
+
+  /* =====================================================
+   * 5. LOAD PRODUCT OWNER
+   * ===================================================== */
 
   ctx.productOwner =
     await loadProductOwnerProfile(
@@ -3500,9 +3432,16 @@ const ctx =
       ctx.ownerProfiles
     );
 
+  if (!ctx.productOwner?.id) {
+    throw new Error(
+      "Cannot generate delivery note: " +
+      "product owner could not be resolved."
+    );
+  }
+
 
   /* =====================================================
-   * NORMALE DELIVERY NOTE GENEREREN
+   * 6. CREATE DELIVERY NOTE PDF
    * ===================================================== */
 
   const deliveryNoteBlob =
@@ -3511,15 +3450,21 @@ const ctx =
       ctx
     );
 
+  if (
+    !(deliveryNoteBlob instanceof Blob) ||
+    deliveryNoteBlob.size === 0
+  ) {
+    throw new Error(
+      "Delivery note PDF generation failed."
+    );
+  }
+
 
   /* =====================================================
-   * PICK UP WAREHOUSE INSTRUCTIES
+   * 7. WAREHOUSE PICKUP INSTRUCTIONS
    *
-   * Normale order:
-   * deliveryNoteBlob blijft ongewijzigd.
-   *
-   * Pick Up Warehouse:
-   * Forge Farm PDF wordt erachter geplaatst.
+   * Existing Forge Farm PDF behaviour retained.
+   * This will become tenant-configurable later.
    * ===================================================== */
 
   const finalBlob =
@@ -3528,9 +3473,18 @@ const ctx =
       workingOrder
     );
 
+  if (
+    !(finalBlob instanceof Blob) ||
+    finalBlob.size === 0
+  ) {
+    throw new Error(
+      "Final delivery note PDF is empty."
+    );
+  }
+
 
   /* =====================================================
-   * DEFINITIEVE PDF UPLOADEN
+   * 8. UPLOAD PDF TO TENANT STORAGE PATH
    * ===================================================== */
 
   const uploaded =
@@ -3541,31 +3495,43 @@ const ctx =
       finalBlob
     );
 
-
   if (
-    !uploaded.fileUrl ||
-    !uploaded.storagePath
+    !uploaded?.fileUrl ||
+    !uploaded?.storagePath
   ) {
     throw new Error(
-      "Delivery note PDF was uploaded, but no file URL/storage path was returned."
+      "Delivery note PDF was uploaded, but " +
+      "no file URL or storage path was returned."
+    );
+  }
+
+  if (
+    !uploaded.storagePath.startsWith(
+      `${companyId}/${workingOrder.id}/`
+    )
+  ) {
+    throw new Error(
+      "Generated document storage path does not " +
+      "belong to the active tenant."
     );
   }
 
 
   /* =====================================================
-   * DOCUMENT RECORD
+   * 9. CREATE OR UPDATE DOCUMENT RECORD
    * ===================================================== */
 
-  await upsertDocumentRecord(
-    client,
-    companyId,
-    workingOrder,
-    uploaded
-  );
+  const documentId =
+    await upsertDocumentRecord(
+      client,
+      companyId,
+      workingOrder,
+      uploaded
+    );
 
 
   /* =====================================================
-   * ACTIVITY
+   * 10. RECORD DOCUMENT ACTIVITY
    * ===================================================== */
 
   await createActivity(
@@ -3576,24 +3542,47 @@ const ctx =
 
 
   /* =====================================================
-   * LAST ACTIVITY
+   * 11. UPDATE ORDER LAST ACTIVITY
+   *
+   * Both order ID and tenant ID are required.
    * ===================================================== */
 
-  await client
-    .from(
-      "orders"
-    )
-    .update({
-      last_activity_at:
-        new Date().toISOString()
-    })
-    .eq(
-      "id",
-      workingOrder.id
-    );
+  const { error: activityUpdateError } =
+    await client
+      .from("orders")
+      .update({
+        last_activity_at:
+          new Date().toISOString()
+      })
+      .eq("id", workingOrder.id)
+      .eq("company_id", companyId)
+      .select("id")
+      .single();
+
+  if (activityUpdateError) {
+    throw activityUpdateError;
+  }
 
 
-  return uploaded;
+  /* =====================================================
+   * 12. RETURN GENERATED DOCUMENT
+   * ===================================================== */
+
+  console.log(
+    "Delivery note generated successfully:",
+    {
+      tenant: companyId,
+      order: workingOrder.order_number,
+      documentId,
+      storagePath: uploaded.storagePath
+    }
+  );
+
+  return {
+    ...uploaded,
+    documentId,
+    reused: false
+  };
 }
 
   window.DeliveryNoteGenerator = {

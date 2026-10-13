@@ -1,8 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-
   let client = null;
   let companyId = null;
   let currentUser = null;
@@ -71,49 +69,64 @@
     return client;
   }
 
-  async function loadContext() {
-    const db = ensureClient();
+ 
+async function loadContext() {
+  const db = ensureClient();
 
-    const { data: userData, error: userError } = await db.auth.getUser();
-    if (userError) throw userError;
-    currentUser = userData?.user || null;
+  // Controleer de ingelogde gebruiker.
+  const { data: userData, error: userError } =
+    await db.auth.getUser();
 
-    let profileResult = await db
+  if (userError) throw userError;
+
+  currentUser = userData?.user || null;
+
+  if (!currentUser?.id) {
+    throw new Error("No authenticated user found.");
+  }
+
+  // Zoek het actieve gebruikersprofiel.
+  const { data: profiles, error: profileError } =
+    await db
       .from("user_profiles")
       .select("*")
-      .eq("id", currentUser?.id || "")
-      .eq("is_active", true)
-      .maybeSingle();
+      .or(
+        `id.eq.${currentUser.id},auth_user_id.eq.${currentUser.id}`
+      )
+      .eq("is_active", true);
 
-    if (!profileResult.data && !profileResult.error) {
-      profileResult = await db
-        .from("user_profiles")
-        .select("*")
-        .eq("auth_user_id", currentUser?.id || "")
-        .eq("is_active", true)
-        .maybeSingle();
-    }
+  if (profileError) throw profileError;
 
-    if (profileResult.error) throw profileResult.error;
-    currentProfile = profileResult.data || null;
-
-    if (currentProfile?.company_id) {
-      companyId = currentProfile.company_id;
-      return companyId;
-    }
-
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
-    return companyId;
+  if (!profiles || profiles.length !== 1) {
+    throw new Error(
+      "Unable to resolve a unique active user profile."
+    );
   }
+
+  currentProfile = profiles[0];
+
+  // Haal de tenant uitsluitend uit het gebruikersprofiel.
+  if (!currentProfile.company_id) {
+    throw new Error(
+      "No company is assigned to this user."
+    );
+  }
+
+  // Controleer of er geen andere tenant in het geheugen staat.
+  if (
+    companyId &&
+    String(companyId) !== String(currentProfile.company_id)
+  ) {
+    throw new Error(
+      "Active company has changed. Please reload the page."
+    );
+  }
+
+  companyId = currentProfile.company_id;
+
+  return companyId;
+}
+
 
   function getProductPackageCount(product) {
     const packageCount = toNumber(product?.package_count, 0);

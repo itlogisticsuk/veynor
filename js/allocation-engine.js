@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const CANCELLED_ALLOCATION_STATUS = "cancelled";
 
   const ORDER_STATUSES = {
@@ -231,18 +230,36 @@ requested_package_label: line.requested_package_label || null
     return result;
   }
 
-  async function getCompanyId(client) {
-    const { data, error } = await client
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
+async function getCompanyId(client) {
+  const { data: userData, error: userError } =
+    await client.auth.getUser();
+
+  if (userError) throw userError;
+
+  const userId = userData?.user?.id;
+
+  if (!userId) {
+    throw new Error("User is not authenticated.");
+  }
+
+  const { data: profile, error: profileError } =
+    await client
+      .from("user_profiles")
+      .select("company_id, is_active")
+      .eq("auth_user_id", userId)
+      .eq("is_active", true)
       .maybeSingle();
 
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
+  if (profileError) throw profileError;
 
-    return data.id;
+  if (!profile?.company_id) {
+    throw new Error(
+      "No active tenant is assigned to this user."
+    );
   }
+
+  return profile.company_id;
+}
 
 async function fetchOrders(
   client,

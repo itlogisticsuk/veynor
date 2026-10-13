@@ -1,7 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
   const PRODUCT_OWNER_PROFILES_KEY = "product_owner_profiles";
 
   const UK_BOUNDS = [
@@ -144,22 +143,55 @@ const charts = {};
     }
   }
 
-  async function getCompanyId() {
-    if (companyId) return companyId;
 
-    const db = ensureClient();
-    const { data, error } = await db
-      .from("companies")
-      .select("id")
-      .eq("name", TENANT_NAME)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error(`Company "${TENANT_NAME}" not found.`);
-
-    companyId = data.id;
+async function getCompanyId() {
+  if (companyId) {
     return companyId;
   }
+
+  const db = ensureClient();
+
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
+
+  if (authError) {
+    throw authError;
+  }
+
+  const authUserId = authData?.user?.id;
+
+  if (!authUserId) {
+    throw new Error(
+      "Dashboard cannot load: user is not authenticated."
+    );
+  }
+
+  const { data: profiles, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select("company_id")
+      .eq("auth_user_id", authUserId)
+      .eq("is_active", true);
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "Dashboard cannot determine a unique active tenant."
+    );
+  }
+
+  companyId = profiles[0].company_id;
+
+  return companyId;
+}
+
 
   async function loadTable(tableName, cid, selectText = "*", options = {}) {
     return safeQuery(tableName, async () => {
@@ -369,43 +401,57 @@ async function loadDeliveryGroups(cid) {
     });
   }
 
-  async function loadProductOwners(cid) {
-    return safeQuery("product owner profiles", async () => {
-      let profiles = [];
 
-      const { data: settingsRow } = await client
-        .from("settings")
-        .select("setting_value")
-        .eq("company_id", cid)
-        .eq("setting_key", PRODUCT_OWNER_PROFILES_KEY)
-        .maybeSingle();
+async function loadProductOwners(cid) {
+  return safeQuery(
+    "product owner profiles",
+    async () => {
+      const db = ensureClient();
+
+      const { data: settingsRow, error: settingsError } =
+        await db
+          .from("settings")
+          .select("setting_value")
+          .eq("company_id", cid)
+          .eq(
+            "setting_key",
+            PRODUCT_OWNER_PROFILES_KEY
+          )
+          .maybeSingle();
+
+      if (settingsError) {
+        throw settingsError;
+      }
+
+      let profiles = [];
 
       if (settingsRow?.setting_value) {
         try {
-          profiles = JSON.parse(settingsRow.setting_value || "[]");
-        } catch {
-          profiles = [];
+          const parsed = JSON.parse(
+            settingsRow.setting_value
+          );
+
+          profiles = Array.isArray(parsed)
+            ? parsed
+            : [];
+
+        } catch (error) {
+          console.warn(
+            "[dashboard] Invalid product owner profiles:",
+            error
+          );
         }
       }
 
-      if (!Array.isArray(profiles) || !profiles.length) {
-        profiles = [
-          {
-            key: "bellstone",
-            name: "Bellstone Furniture Distributors Ltd",
-            trading_name: "Bellstone",
-            customer_code: "BELLSTONE"
-          },
-          {
-            key: "zoy",
-            name: "Zoy",
-            trading_name: "Zoy",
-            customer_code: "ZOY"
-          }
-        ];
+      if (!profiles.length) {
+        return [];
       }
 
-      const customers = await loadTable("customers", cid, "*");
+      const customers = await loadTable(
+        "customers",
+        cid,
+        "*"
+      );
 
       return profiles.map(profile => {
         const searchValues = [
@@ -414,51 +460,140 @@ async function loadDeliveryGroups(cid) {
           profile.customer_code,
           profile.default_import_name,
           profile.key
-        ].map(normalize).filter(Boolean);
+        ]
+          .map(normalize)
+          .filter(Boolean);
 
         const customer = customers.find(c => {
-          const customerValues = [c.name, c.customer_code].map(normalize).filter(Boolean);
+          const customerValues = [
+            c.name,
+            c.customer_code
+          ]
+            .map(normalize)
+            .filter(Boolean);
+
           return searchValues.some(search =>
-            customerValues.some(cv => cv === search || cv.includes(search) || search.includes(cv))
+            customerValues.some(cv =>
+              cv === search ||
+              cv.includes(search) ||
+              search.includes(cv)
+            )
           );
         });
 
+        const ownerKey =
+          profile.key ||
+          profile.customer_code ||
+          profile.name ||
+          "";
+
         return {
-          id: customer?.id || profile.key || profile.customer_code || profile.name,
-          key: profile.key || profile.customer_code || "",
-          name: profile.trading_name || profile.name || "Product Owner",
-          legal_name: profile.name || "",
-          customer_code: profile.customer_code || profile.key || "",
+          id:
+            customer?.id ||
+            ownerKey,
+
+          key: ownerKey,
+
+          name:
+            profile.trading_name ||
+            profile.name ||
+            "Product Owner",
+
+          legal_name:
+            profile.name || "",
+
+          customer_code:
+            profile.customer_code ||
+            profile.key ||
+            "",
+
           dashboard_url: customer?.id
             ? `./customer-dashboard.html?customer_id=${encodeURIComponent(customer.id)}`
-            : `./customer-dashboard.html?product_owner=${encodeURIComponent(profile.key || profile.customer_code || profile.name || "")}`
+            : `./customer-dashboard.html?product_owner=${encodeURIComponent(ownerKey)}`
         };
       });
-    }, []);
-  }
+    },
+    []
+  );
+}
 
-  async function loadDepotSettings(cid) {
-    return safeQuery("depot settings", async () => {
-      for (const table of ["company_settings", "settings"]) {
-        const { data, error } = await client
+
+async function loadDepotSettings(cid) {
+  return safeQuery(
+    "depot settings",
+    async () => {
+      const db = ensureClient();
+
+      const keys = [
+        "home_depot_name",
+        "home_depot_lat",
+        "home_depot_lng"
+      ];
+
+      const settingsMap = new Map();
+
+      for (const table of [
+        "settings",
+        "company_settings"
+      ]) {
+        const { data, error } = await db
           .from(table)
           .select("setting_key, setting_value")
           .eq("company_id", cid)
-          .in("setting_key", ["home_depot_name", "home_depot_lat", "home_depot_lng"]);
+          .in("setting_key", keys);
 
-        if (!error && Array.isArray(data)) {
-          const map = new Map(data.map(row => [row.setting_key, row.setting_value]));
-          return {
-            name: map.get("home_depot_name") || "Depot",
-            lat: toNumber(map.get("home_depot_lat"), null),
-            lng: toNumber(map.get("home_depot_lng"), null)
-          };
+        if (error) {
+          console.warn(
+            `[dashboard] ${table} depot lookup:`,
+            error.message
+          );
+          continue;
+        }
+
+        for (const row of data || []) {
+          if (
+            !settingsMap.has(row.setting_key) &&
+            row.setting_value !== null &&
+            row.setting_value !== undefined &&
+            String(row.setting_value).trim() !== ""
+          ) {
+            settingsMap.set(
+              row.setting_key,
+              row.setting_value
+            );
+          }
         }
       }
 
-      return { name: "Depot", lat: null, lng: null };
-    }, { name: "Depot", lat: null, lng: null });
-  }
+      const lat = toNumber(
+        settingsMap.get("home_depot_lat"),
+        null
+      );
+
+      const lng = toNumber(
+        settingsMap.get("home_depot_lng"),
+        null
+      );
+
+      return {
+        name:
+          settingsMap.get("home_depot_name") ||
+          "Depot",
+
+        lat:
+          Number.isFinite(lat) ? lat : null,
+
+        lng:
+          Number.isFinite(lng) ? lng : null
+      };
+    },
+    {
+      name: "Depot",
+      lat: null,
+      lng: null
+    }
+  );
+}
 
   function isClosedStatus(value) {
     return ["delivered", "closed", "cancelled", "paid", "archived", "pod_completed"].includes(normalize(value));
@@ -903,13 +1038,19 @@ function calculateMonthlyRevenueBreakdown(rows, monthInvoices) {
     return normalize(vehicle.vehicle_type || vehicle.type || "");
   }
 
-  function getCarrierVehicle(vehicles) {
-    return vehicles.find(vehicle =>
-      getVehicleType(vehicle) === "carrier" ||
-      normalize(getVehicleName(vehicle)) === "fds" ||
-      normalize(vehicle.name).includes("fds")
-    ) || null;
+
+function getCarrierVehicle(vehicles) {
+  const carriers = (vehicles || []).filter(
+    vehicle =>
+      getVehicleType(vehicle) === "carrier"
+  );
+
+  if (carriers.length === 1) {
+    return carriers[0];
   }
+
+  return null;
+}
 
   function getCarrierOrderDate(order) {
     return (
@@ -921,45 +1062,113 @@ function calculateMonthlyRevenueBreakdown(rows, monthInvoices) {
     );
   }
 
-  function getFdsOrders(rows, indexes, dateFilter = "") {
-    const carrier = getCarrierVehicle(rows.vehicles);
 
-    return rows.orders.filter(order => {
-      const status = normalize(order.status);
-      const transport = normalize(order.transport_type);
-      const orderDate = getCarrierOrderDate(order);
-      const carrierMatch = !carrier || !order.carrier_vehicle_id || String(order.carrier_vehicle_id) === String(carrier.id);
+function getFdsOrders(rows, indexes, dateFilter = "") {
+  const carrier = getCarrierVehicle(
+    rows.vehicles
+  );
 
-      const isFds =
+  return rows.orders
+    .filter(order => {
+      const status = normalize(
+        order.status
+      );
+
+      const transport = normalize(
+        order.transport_type
+      );
+
+      const transportStatus = normalize(
+        order.transport_status
+      );
+
+      const orderDate = getCarrierOrderDate(
+        order
+      );
+
+      const isCharter =
         transport === "charter" ||
         transport === "fds" ||
-        status === "export_for_charter";
+        status === "export_for_charter" ||
+        transportStatus === "export_for_charter";
+
+      const carrierMatch =
+        !carrier ||
+        !order.carrier_vehicle_id ||
+        String(order.carrier_vehicle_id) ===
+          String(carrier.id);
+
+      const isDelivered =
+        status === "delivered" ||
+        transportStatus === "delivered" ||
+        isDeliveredOrder(order);
+
+      const dateMatch =
+        !dateFilter ||
+        !orderDate ||
+        String(orderDate).slice(0, 10) ===
+          dateFilter;
 
       return (
-        isFds &&
-        status !== "delivered" &&
+        isCharter &&
+        !isDelivered &&
         !order.route_id &&
         carrierMatch &&
-        (!dateFilter || !orderDate || String(orderDate).slice(0, 10) === dateFilter)
+        dateMatch
       );
-    }).sort((a, b) => String(a.order_number || "").localeCompare(String(b.order_number || "")));
-  }
+    })
+    .sort((a, b) =>
+      String(a.order_number || "")
+        .localeCompare(
+          String(b.order_number || ""),
+          "en-GB",
+          { numeric: true }
+        )
+    );
+}
 
-  function getFdsDates(rows) {
-    const dates = new Set();
 
-    rows.orders.forEach(order => {
-      const status = normalize(order.status);
-      const transport = normalize(order.transport_type);
-      const isFds = transport === "charter" || transport === "fds" || status === "export_for_charter";
-      if (!isFds || order.route_id || status === "delivered") return;
+function getFdsDates(rows) {
+  const dates = new Set();
 
-      const date = String(getCarrierOrderDate(order) || "").slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.add(date);
-    });
+  rows.orders.forEach(order => {
+    const status = normalize(
+      order.status
+    );
 
-    return [...dates].sort();
-  }
+    const transport = normalize(
+      order.transport_type
+    );
+
+    const transportStatus = normalize(
+      order.transport_status
+    );
+
+    const isCharter =
+      transport === "charter" ||
+      transport === "fds" ||
+      status === "export_for_charter" ||
+      transportStatus === "export_for_charter";
+
+    if (
+      !isCharter ||
+      order.route_id ||
+      isDeliveredOrder(order)
+    ) {
+      return;
+    }
+
+    const date = String(
+      getCarrierOrderDate(order) || ""
+    ).slice(0, 10);
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      dates.add(date);
+    }
+  });
+
+  return [...dates].sort();
+}
 
   function calculateMetrics(rows, indexes) {
     const today = todayIso();
@@ -1162,8 +1371,6 @@ const stockBlocked =
     monthlyRevenue.fuelSurcharge,
   deliveryGroupSurchargeMonth:
     monthlyRevenue.deliveryGroupSurcharge,
-
-  awaitingGoods: awaitingGoods.length,
 
       awaitingGoods: awaitingGoods.length,
       fullyMatched: fullyMatched.length,
@@ -2441,74 +2648,104 @@ list.innerHTML = `
     });
   }
 
-  function renderFdsPlanning(rows, indexes) {
-    const dates = getFdsDates(rows);
-    const defaultDate = dates.includes(getNextFridayIso())
-      ? getNextFridayIso()
-      : dates[0] || getNextFridayIso();
 
-    const date = selectedFdsDate || defaultDate;
-    selectedFdsDate = date;
 
-    renderFdsDateSelector(dates, date);
+function renderFdsPlanning(rows, indexes) {
+  const dates = getFdsDates(rows);
 
-    const orders = getFdsOrders(rows, indexes, date);
+  const defaultDate = dates.includes(getNextFridayIso())
+    ? getNextFridayIso()
+    : dates[0] || getNextFridayIso();
 
-    const colli = orders.reduce((sum, order) => sum + getOrderColli(order), 0);
-    const volume = orders.reduce((sum, order) => sum + getOrderVolume(order), 0);
-    const weight = orders.reduce((sum, order) => sum + getOrderWeight(order, indexes.orderLinesByOrder), 0);
+  const date = selectedFdsDate || defaultDate;
 
-    setText("fdsOrdersCount", formatNumber(orders.length));
-    setText("fdsPlanningVolume", `${formatNumber(volume, 2)} m³`);
-    setText("fdsPlanningColli", formatNumber(colli));
-    setText("fdsPlanningWeight", `${formatNumber(weight, 0)} kg`);
+  selectedFdsDate = date;
 
-    const list = byId("fdsPlanningList");
-    if (!list) return;
+  renderFdsDateSelector(dates, date);
 
-    if (!orders.length) {
-      list.innerHTML = `
-        <div class="activity-row">
-          <div class="activity-main">
-            <div class="activity-title">No FDS orders</div>
-            <div class="activity-sub">No charter handover currently planned for ${escapeHtml(formatDate(date))}.</div>
+  const orders = getFdsOrders(rows, indexes, date);
+
+  const colli = orders.reduce(
+    (sum, order) => sum + getOrderColli(order),
+    0
+  );
+
+  const volume = orders.reduce(
+    (sum, order) => sum + getOrderVolume(order),
+    0
+  );
+
+  const weight = orders.reduce(
+    (sum, order) =>
+      sum + getOrderWeight(
+        order,
+        indexes.orderLinesByOrder
+      ),
+    0
+  );
+
+  setText("fdsOrdersCount", formatNumber(orders.length));
+  setText("fdsPlanningVolume", `${formatNumber(volume, 2)} m³`);
+  setText("fdsPlanningColli", formatNumber(colli));
+  setText("fdsPlanningWeight", `${formatNumber(weight, 0)} kg`);
+
+  const list = byId("fdsPlanningList");
+
+  if (!list) return;
+
+  if (!orders.length) {
+    list.innerHTML = `
+      <div class="activity-row">
+        <div class="activity-main">
+          <div class="activity-title">
+            No charter orders
+          </div>
+          <div class="activity-sub">
+            No external carrier handover currently planned
+            for ${escapeHtml(formatDate(date))}.
           </div>
         </div>
-      `;
-      return;
-    }
+      </div>
+    `;
+    return;
+  }
 
-list.innerHTML = `
-  <details class="activity-row warning" style="display:block;">
-    <summary style="cursor:pointer;font-weight:950;color:#07152f;">
-      Show S2U / FDS orders (${formatNumber(orders.length)})
-    </summary>
+  list.innerHTML = `
+    <details class="activity-row warning" style="display:block;">
+      <summary style="cursor:pointer;font-weight:950;color:#07152f;">
+        Show External Carrier Orders (${formatNumber(orders.length)})
+      </summary>
 
-    <div style="display:grid;gap:9px;margin-top:12px;">
-      ${orders.slice(0, 12).map(order => {
-        const weightKg = getOrderWeight(order, indexes.orderLinesByOrder);
+      <div style="display:grid;gap:9px;margin-top:12px;">
+        ${orders.slice(0, 12).map(order => {
+          const weightKg = getOrderWeight(
+            order,
+            indexes.orderLinesByOrder
+          );
 
-        return `
-          <div class="activity-row warning">
-            <div class="activity-main">
-              <div class="activity-title">
-                ${escapeHtml(order.order_number || "—")} · ${escapeHtml(getRetailerName(order))}
-              </div>
-              <div class="activity-sub">
-                ${escapeHtml(order.delivery_city || "—")}
-                · ${escapeHtml(order.delivery_postcode || "—")}
-                · ${formatNumber(getOrderColli(order))} colli
-                · ${formatNumber(getOrderVolume(order), 2)} m³
-                · ${formatNumber(weightKg, 0)} kg
+          return `
+            <div class="activity-row warning">
+              <div class="activity-main">
+                <div class="activity-title">
+                  ${escapeHtml(order.order_number || "—")}
+                  · ${escapeHtml(getRetailerName(order))}
+                </div>
+
+                <div class="activity-sub">
+                  ${escapeHtml(order.delivery_city || "—")}
+                  · ${escapeHtml(order.delivery_postcode || "—")}
+                  · ${formatNumber(getOrderColli(order))} colli
+                  · ${formatNumber(getOrderVolume(order), 2)} m³
+                  · ${formatNumber(weightKg, 0)} kg
+                </div>
               </div>
             </div>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  </details>
-`;
-  }
+          `;
+        }).join("")}
+      </div>
+    </details>
+  `;
+}
 
   function renderAlerts(m) {
     const alerts = [];
@@ -2650,33 +2887,64 @@ list.innerHTML = `
     return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
   }
 
-  function renderCustomerDashboardLinks(productOwners) {
-    const box = byId("customerDashboardLinks");
-    if (!box) return;
 
-    if (!productOwners.length) {
-      box.innerHTML = `
-        <div class="activity-row">
-          <div class="activity-main">
-            <div class="activity-title">No Product Owners found</div>
-            <div class="activity-sub">Add Bellstone, Zoy or other product owners in Settings.</div>
+
+function renderCustomerDashboardLinks(productOwners) {
+  const box = byId("customerDashboardLinks");
+
+  if (!box) return;
+
+  const owners = Array.isArray(productOwners)
+    ? productOwners
+    : [];
+
+  if (!owners.length) {
+    box.innerHTML = `
+      <div class="activity-row">
+        <div class="activity-main">
+          <div class="activity-title">
+            No Product Owners found
+          </div>
+
+          <div class="activity-sub">
+            Add product owners in Settings to enable
+            their customer dashboards.
           </div>
         </div>
-      `;
-      return;
-    }
-
-    box.innerHTML = productOwners.map(owner => `
-      <a class="customer-dashboard-card" href="${escapeHtml(owner.dashboard_url)}">
-        <div class="customer-dashboard-top">
-          <div class="customer-avatar">${escapeHtml(customerInitials(owner.name))}</div>
-          <div class="customer-dashboard-arrow">→</div>
-        </div>
-        <strong>${escapeHtml(owner.name || "Product Owner")}</strong>
-        <span>${escapeHtml(owner.legal_name || owner.customer_code || "Product Owner Dashboard")}</span>
-      </a>
-    `).join("");
+      </div>
+    `;
+    return;
   }
+
+  box.innerHTML = owners.map(owner => `
+    <a
+      class="customer-dashboard-card"
+      href="${escapeHtml(owner.dashboard_url || "#")}"
+    >
+      <div class="customer-dashboard-top">
+        <div class="customer-avatar">
+          ${escapeHtml(customerInitials(owner.name))}
+        </div>
+
+        <div class="customer-dashboard-arrow">
+          →
+        </div>
+      </div>
+
+      <strong>
+        ${escapeHtml(owner.name || "Product Owner")}
+      </strong>
+
+      <span>
+        ${escapeHtml(
+          owner.legal_name ||
+          owner.customer_code ||
+          "Product Owner Dashboard"
+        )}
+      </span>
+    </a>
+  `).join("");
+}
 
   function destroyChart(id) {
     if (charts[id]) {

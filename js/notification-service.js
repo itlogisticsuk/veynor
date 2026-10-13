@@ -102,31 +102,60 @@ function iconFor(type, severity) {
   // Profile
   // --------------------------------------------------
 
-  async function loadProfile() {
-    const client = ensureClient();
-    if (!client) return null;
 
-    const { data: userData } = await client.auth.getUser();
-    const userId = userData?.user?.id;
-    if (!userId) return null;
+async function loadProfile() {
+  const client = ensureClient();
 
-    let result = await client
-      .from("user_profiles")
-      .select("id, role, company_id, customer_id, full_name")
-      .eq("id", userId)
-      .maybeSingle();
+  profile = null;
 
-    if (!result.data && !result.error) {
-      result = await client
-        .from("user_profiles")
-        .select("id, role, company_id, customer_id, full_name")
-        .eq("auth_user_id", userId)
-        .maybeSingle();
-    }
-
-    profile = result.data || null;
-    return profile;
+  if (!client) {
+    throw new Error(
+      "Supabase client is unavailable."
+    );
   }
+
+  const { data: auth, error: authError } =
+    await client.auth.getUser();
+
+  if (authError) throw authError;
+
+  const authUserId = auth?.user?.id;
+
+  if (!authUserId) {
+    return null;
+  }
+
+  const { data: profiles, error } = await client
+    .from("user_profiles")
+    .select(`
+      id,
+      auth_user_id,
+      company_id,
+      customer_id,
+      full_name,
+      role,
+      is_active
+    `)
+    .eq("auth_user_id", authUserId)
+    .eq("is_active", true)
+    .limit(2);
+
+  if (error) throw error;
+
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "No unique active tenant profile found."
+    );
+  }
+
+  profile = profiles[0];
+
+  return profile;
+}
 
   // --------------------------------------------------
   // Styles
@@ -481,83 +510,135 @@ background:
   // Scoping
   // --------------------------------------------------
 
-  function scopedNotificationQuery(query) {
-    if (!profile) return query;
 
-    if (profile.company_id) {
-      query = query.eq("company_id", profile.company_id);
-    }
-
-    if (!isTenantRole() && currentCustomerId()) {
-      query = query.eq("customer_id", currentCustomerId());
-    }
-
-    query = query.or(
-      `recipient_profile_id.eq.${profile.id},recipient_role.eq.${profile.role},recipient_role.is.null`
+function scopedNotificationQuery(query) {
+  if (!profile?.company_id || !profile?.id) {
+    throw new Error(
+      "Notification query blocked: no active tenant."
     );
-
-    return query;
   }
 
-  function scopedMessageQuery(query) {
-    if (!profile) return query;
+  query = query.eq(
+    "company_id",
+    profile.company_id
+  );
 
-    if (profile.company_id) {
-      query = query.eq("company_id", profile.company_id);
-    }
-
-    if (!isTenantRole() && currentCustomerId()) {
-      query = query.eq("customer_id", currentCustomerId());
-    }
-
-    query = query
-      .is("read_at", null)
-      .neq("sender_profile_id", profile.id)
-      .or(
-        `recipient_profile_id.eq.${profile.id},recipient_role.eq.${profile.role},recipient_role.is.null`
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error(
+        "Customer account has no customer_id."
       );
+    }
 
-    return query;
+    query = query.eq(
+      "customer_id",
+      currentCustomerId()
+    );
   }
+
+  return query.or(
+    `recipient_profile_id.eq.${profile.id},` +
+    `recipient_role.eq.${profile.role},` +
+    `recipient_role.is.null`
+  );
+}
+
+
+function scopedMessageQuery(query) {
+  if (!profile?.company_id || !profile?.id) {
+    throw new Error(
+      "Message query blocked: no active tenant."
+    );
+  }
+
+  query = query
+    .eq("company_id", profile.company_id)
+    .is("read_at", null)
+    .neq("sender_profile_id", profile.id);
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error(
+        "Customer account has no customer_id."
+      );
+    }
+
+    query = query.eq(
+      "customer_id",
+      currentCustomerId()
+    );
+  }
+
+  return query.or(
+    `recipient_profile_id.eq.${profile.id},` +
+    `recipient_role.eq.${profile.role},` +
+    `recipient_role.is.null`
+  );
+}
 
   // --------------------------------------------------
   // Badges
   // --------------------------------------------------
 
-  async function getUnreadCounts() {
-    const client = ensureClient();
 
-    if (!client || !profile) {
-      return {
-        messages: 0,
-        notifications: 0,
-        total: 0
-      };
-    }
+async function getUnreadCounts() {
+  const client = ensureClient();
 
-    let msgQuery = client
-      .from("messages")
-      .select("id", { count: "exact", head: true });
-
-    let notiQuery = client
-      .from("system_notifications")
-      .select("id", { count: "exact", head: true })
-      .eq("is_read", false);
-
-    msgQuery = scopedMessageQuery(msgQuery);
-    notiQuery = scopedNotificationQuery(notiQuery);
-
-    const [msgRes, notiRes] = await Promise.all([msgQuery, notiQuery]);
-
-    const messages = msgRes.count || 0;
-    const notifications = notiRes.count || 0;
-
+  if (!client || !profile?.company_id) {
     return {
-      messages,
-      notifications,
-      total: messages + notifications
+      messages: 0,
+      notifications: 0,
+      total: 0
     };
   }
+
+  let messagesQuery = client
+    .from("messages")
+    .select("id", {
+      count: "exact",
+      head: true
+    });
+
+  let notificationsQuery = client
+    .from("system_notifications")
+    .select("id", {
+      count: "exact",
+      head: true
+    })
+    .eq("is_read", false);
+
+  messagesQuery = scopedMessageQuery(
+    messagesQuery
+  );
+
+  notificationsQuery = scopedNotificationQuery(
+    notificationsQuery
+  );
+
+  const [messagesResult, notificationsResult] =
+    await Promise.all([
+      messagesQuery,
+      notificationsQuery
+    ]);
+
+  if (messagesResult.error) {
+    throw messagesResult.error;
+  }
+
+  if (notificationsResult.error) {
+    throw notificationsResult.error;
+  }
+
+  const messages = messagesResult.count || 0;
+  const notifications =
+    notificationsResult.count || 0;
+
+  return {
+    messages,
+    notifications,
+    total: messages + notifications
+  };
+}
 
   function updateBadge(id, value) {
     const el = document.getElementById(id);
@@ -830,73 +911,94 @@ background:
   ].filter(row => row.count > 0);
 }
 
+
 async function showLoginSummaryPopup() {
   const client = ensureClient();
 
-  if (!client || !profile) return;
+  if (!client || !profile?.company_id) return;
 
+  const cid = profile.company_id;
   const state = await getNotificationState();
 
   const lastSeen =
     state?.last_seen_at ||
-    new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    new Date(
+      Date.now() - 24 * 60 * 60 * 1000
+    ).toISOString();
 
   let notificationQuery = client
     .from("system_notifications")
     .select("*")
     .gt("created_at", lastSeen)
-    .order("created_at", { ascending: false })
+    .order("created_at", {
+      ascending: false
+    })
     .limit(250);
 
-  notificationQuery = scopedNotificationQuery(notificationQuery);
+  notificationQuery = scopedNotificationQuery(
+    notificationQuery
+  );
 
   let messageQuery = client
     .from("messages")
     .select("*")
     .gt("created_at", lastSeen)
-    .order("created_at", { ascending: false })
+    .order("created_at", {
+      ascending: false
+    })
     .limit(250);
 
   messageQuery = scopedMessageQuery(messageQuery);
 
-  const [notificationRes, messageRes] = await Promise.all([
-    notificationQuery,
-    messageQuery
-  ]);
+  const [notificationRes, messageRes] =
+    await Promise.all([
+      notificationQuery,
+      messageQuery
+    ]);
 
   if (notificationRes.error) {
-    console.warn("Login summary notifications failed:", notificationRes.error.message);
-    return;
+    throw notificationRes.error;
   }
 
   if (messageRes.error) {
-    console.warn("Login summary messages failed:", messageRes.error.message);
+    throw messageRes.error;
   }
 
   const rows = notificationRes.data || [];
-  const messageRows = messageRes.data || [];
-  const messageCount = messageRows.length;
+  const messages = messageRes.data || [];
 
-  const summaryRows = buildSummaryRows(rows, messageCount);
+  const summaryRows = buildSummaryRows(
+    rows,
+    messages.length
+  );
 
   if (summaryRows.length) {
     showLoginSummaryModal(summaryRows);
 
     if (rows.length) {
-      await client
+      const ids = rows.map(row => row.id);
+
+      const { error } = await client
         .from("system_notifications")
         .update({ popup_shown: true })
-        .in("id", rows.map(r => r.id));
+        .eq("company_id", cid)
+        .in("id", ids);
+
+      if (error) throw error;
     }
   }
 
-  await client
+  const now = new Date().toISOString();
+
+  const { error: stateError } = await client
     .from("user_notification_state")
     .upsert({
       user_profile_id: profile.id,
-      last_seen_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      last_seen_at: now,
+      updated_at: now
     });
+
+  if (stateError) throw stateError;
 
   await refreshBadges();
 }
@@ -905,60 +1007,79 @@ async function showLoginSummaryPopup() {
   // Polling
   // --------------------------------------------------
 
-  async function pollNotifications() {
-    if (isPolling || !profile) return;
 
-    isPolling = true;
-
-    try {
-      const client = ensureClient();
-
-      let query = client
-        .from("system_notifications")
-        .select("*")
-        .eq("popup_shown", false)
-        .order("created_at", { ascending: true })
-        .limit(10);
-
-      query = scopedNotificationQuery(query);
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.warn("Notification polling failed:", error.message);
-        return;
-      }
-
-      const rows = data || [];
-
-      if (!rows.length) {
-        await refreshBadges();
-        return;
-      }
-
-      if (rows.length <= 2) {
-        rows.forEach(showPopup);
-      } else {
-        showPopup({
-          notification_type: "multiple_updates",
-          title: `${rows.length} new updates`,
-          message: "Several new notifications are available. Open the Message Center to view all updates.",
-          action_url: "./message-center.html",
-          severity: "info"
-        });
-      }
-
-      await client
-        .from("system_notifications")
-        .update({ popup_shown: true })
-        .in("id", rows.map(r => r.id));
-
-      await refreshBadges();
-
-    } finally {
-      isPolling = false;
-    }
+async function pollNotifications() {
+  if (isPolling || !profile?.company_id) {
+    return;
   }
+
+  isPolling = true;
+
+  try {
+    const client = ensureClient();
+    const cid = profile.company_id;
+
+    if (!client) return;
+
+    let query = client
+      .from("system_notifications")
+      .select("*")
+      .eq("popup_shown", false)
+      .order("created_at", {
+        ascending: true
+      })
+      .limit(10);
+
+    query = scopedNotificationQuery(query);
+
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    const rows = data || [];
+
+    if (!rows.length) {
+      await refreshBadges();
+      return;
+    }
+
+    if (rows.length <= 2) {
+      rows.forEach(showPopup);
+    } else {
+      showPopup({
+        notification_type: "multiple_updates",
+        title: `${rows.length} new updates`,
+        message:
+          "Several new notifications are available. " +
+          "Open the Message Center to view all updates.",
+        action_url: "./message-center.html",
+        severity: "info"
+      });
+    }
+
+    const ids = rows.map(row => row.id);
+
+    const { error: updateError } = await client
+      .from("system_notifications")
+      .update({
+        popup_shown: true
+      })
+      .eq("company_id", cid)
+      .in("id", ids);
+
+    if (updateError) throw updateError;
+
+    await refreshBadges();
+
+  } catch (error) {
+    console.warn(
+      "[Veynor Notifications] Polling failed:",
+      error?.message || error
+    );
+  } finally {
+    isPolling = false;
+  }
+}
 
   function startPolling() {
     stopPolling();
@@ -983,118 +1104,251 @@ async function showLoginSummaryPopup() {
   // Mutations
   // --------------------------------------------------
 
-  async function markRead(notificationId) {
-    if (!notificationId) return;
 
-    const client = ensureClient();
+async function markRead(notificationId) {
+  if (!notificationId) return;
 
-    if (!client) return;
+  const client = ensureClient();
 
-    const { error } = await client
-      .from("system_notifications")
-      .update({
-        is_read: true,
-        read_at: new Date().toISOString()
-      })
-      .eq("id", notificationId);
-
-    if (error) {
-      console.warn("Notification markRead failed:", error.message);
-      return;
-    }
-
-    await refreshBadges();
+  if (!client || !profile?.company_id) {
+    throw new Error(
+      "Cannot mark notification as read without an active tenant."
+    );
   }
 
-  async function markAllRead() {
-    const client = ensureClient();
+  const { data, error } = await client
+    .from("system_notifications")
+    .update({
+      is_read: true,
+      read_at: new Date().toISOString()
+    })
+    .eq("company_id", profile.company_id)
+    .eq("id", notificationId)
+    .select("id");
 
-    if (!client || !profile) return;
+  if (error) throw error;
 
-    let query = client
-      .from("system_notifications")
-      .update({
-        is_read: true,
-        read_at: new Date().toISOString()
-      })
-      .eq("is_read", false);
-
-    if (profile.company_id) {
-      query = query.eq("company_id", profile.company_id);
-    }
-
-    if (!isTenantRole() && currentCustomerId()) {
-      query = query.eq("customer_id", currentCustomerId());
-    }
-
-    const { error } = await query;
-
-    if (error) {
-      console.warn("Notification markAllRead failed:", error.message);
-      return;
-    }
-
-    await refreshBadges();
+  if (!data?.length) {
+    throw new Error(
+      "Notification not found or not accessible."
+    );
   }
 
-  async function createNotification(payload) {
-    const client = ensureClient();
+  await refreshBadges();
+}
 
-    if (!client) return null;
 
-    const row = {
-      company_id: payload.company_id || profile?.company_id || null,
-      customer_id: payload.customer_id || null,
-      recipient_profile_id: payload.recipient_profile_id || null,
-      recipient_role: payload.recipient_role ?? null,
-      notification_type: payload.notification_type || payload.type || "notification",
-      title: payload.title || "New notification",
-      message: payload.message || "",
-      severity: payload.severity || "info",
-      entity_type: payload.entity_type || null,
-      entity_id: payload.entity_id || null,
-      action_url: payload.action_url || null,
-      is_read: false,
-      popup_shown: false
-    };
+async function markAllRead() {
+  const client = ensureClient();
 
-    const { data, error } = await client
-      .from("system_notifications")
-      .insert(row)
-      .select("*")
-      .single();
+  if (!client || !profile?.company_id) {
+    throw new Error(
+      "Cannot update notifications without an active tenant."
+    );
+  }
 
-    if (error) {
-      console.warn("Notification create failed:", error.message);
-      return null;
+  let query = client
+    .from("system_notifications")
+    .update({
+      is_read: true,
+      read_at: new Date().toISOString()
+    })
+    .eq("company_id", profile.company_id)
+    .eq("is_read", false);
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error(
+        "Customer account has no customer_id."
+      );
     }
 
-    await refreshBadges();
-
-    return data;
+    query = query.eq(
+      "customer_id",
+      currentCustomerId()
+    );
   }
+
+  query = query.or(
+    `recipient_profile_id.eq.${profile.id},` +
+    `recipient_role.eq.${profile.role},` +
+    `recipient_role.is.null`
+  );
+
+  const { error } = await query;
+
+  if (error) throw error;
+
+  await refreshBadges();
+}
+
+
+async function createNotification(payload) {
+  const client = ensureClient();
+
+  if (!client || !profile?.company_id) {
+    throw new Error(
+      "Cannot create notification: active tenant is missing."
+    );
+  }
+
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Invalid notification payload.");
+  }
+
+  const cid = profile.company_id;
+
+  if (
+    payload.company_id &&
+    String(payload.company_id) !== String(cid)
+  ) {
+    throw new Error(
+      "Notification rejected: company_id does not match the active tenant."
+    );
+  }
+
+  const customerId = payload.customer_id || null;
+  const recipientId = payload.recipient_profile_id || null;
+
+  if (!isTenantRole()) {
+    if (!currentCustomerId()) {
+      throw new Error(
+        "Customer account has no customer_id."
+      );
+    }
+
+    if (
+      customerId &&
+      String(customerId) !== String(currentCustomerId())
+    ) {
+      throw new Error(
+        "Notification rejected: customer belongs to another account."
+      );
+    }
+  }
+
+  if (customerId) {
+    const { data: customer, error } = await client
+      .from("customers")
+      .select("id")
+      .eq("company_id", cid)
+      .eq("id", customerId)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!customer) {
+      throw new Error(
+        "Notification customer is not accessible within this tenant."
+      );
+    }
+  }
+
+  if (recipientId) {
+    const { data: recipient, error } = await client
+      .from("user_profiles")
+      .select("id, company_id, customer_id, is_active")
+      .eq("id", recipientId)
+      .eq("company_id", cid)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!recipient) {
+      throw new Error(
+        "Notification recipient is not available within this tenant."
+      );
+    }
+
+    if (
+      !isTenantRole() &&
+      recipient.customer_id &&
+      String(recipient.customer_id) !==
+        String(currentCustomerId())
+    ) {
+      throw new Error(
+        "Notification recipient is outside the permitted customer account."
+      );
+    }
+  }
+
+  const row = {
+    company_id: cid,
+    customer_id:
+      customerId ||
+      (!isTenantRole() ? currentCustomerId() : null),
+    recipient_profile_id: recipientId,
+    recipient_role: payload.recipient_role ?? null,
+    notification_type:
+      payload.notification_type ||
+      payload.type ||
+      "notification",
+    title: payload.title || "New notification",
+    message: payload.message || "",
+    severity: payload.severity || "info",
+    entity_type: payload.entity_type || null,
+    entity_id: payload.entity_id || null,
+    action_url: payload.action_url || null,
+    is_read: false,
+    popup_shown: false
+  };
+
+  const { data, error } = await client
+    .from("system_notifications")
+    .insert(row)
+    .select("*")
+    .single();
+
+  if (error) throw error;
+
+  await refreshBadges();
+
+  return data;
+}
 
   // --------------------------------------------------
   // Init / Public API
   // --------------------------------------------------
 
-  async function init() {
-    if (isInitialised) return;
 
-    isInitialised = true;
+async function init() {
+  if (isInitialised) return;
+
+  isInitialised = true;
+
+  try {
+    const loadedProfile = await loadProfile();
+
+    if (!loadedProfile?.company_id) {
+      console.warn(
+        "[Veynor Notifications] No active tenant profile."
+      );
+      isInitialised = false;
+      return;
+    }
 
     injectStyles();
-
-    await loadProfile();
-
-    if (!profile) return;
 
     await refreshBadges();
 
     await showLoginSummaryPopup();
 
     startPolling();
+
+    console.log(
+      "[Veynor Notifications] Service started."
+    );
+
+  } catch (error) {
+    isInitialised = false;
+
+    console.error(
+      "[Veynor Notifications] Initialisation failed:",
+      error?.message || error
+    );
   }
+}
 
   async function ready() {
     if (profile) return profile;

@@ -3,52 +3,51 @@
 
   document.documentElement.classList.add("auth-loading");
 
-  const SOFA2U_ROLES = ["veynor_admin", "tenant_admin", "tenant_user"];
-  const PRODUCT_OWNER_ROLES = ["product_owner_admin", "product_owner_user"];
+const TENANT_ROLES = ["veynor_admin", "tenant_admin", "tenant_user"];  const PRODUCT_OWNER_ROLES = ["product_owner_admin", "product_owner_user"];
   const RETAILER_ROLES = ["retailer_user"];
   const CUSTOMER_ROLES = [...PRODUCT_OWNER_ROLES, ...RETAILER_ROLES];
-  const ALL_ROLES = [...SOFA2U_ROLES, ...CUSTOMER_ROLES];
+  const ALL_ROLES = [...TENANT_ROLES, ...CUSTOMER_ROLES];
 
   const PAGE_RULES = {
-    index: SOFA2U_ROLES,
-    "customer-dashboard": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+    index: TENANT_ROLES,
+    "customer-dashboard": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
 
-    "order-import": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-    "order-matching": SOFA2U_ROLES,
+    "order-import": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
+    "order-matching": TENANT_ROLES,
 "operations-control-center": ALL_ROLES,
-quality: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-orders: SOFA2U_ROLES,
+quality: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
+orders: TENANT_ROLES,
 
-products: SOFA2U_ROLES,
-"inbound-containers": [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
-scan: SOFA2U_ROLES,
+products: TENANT_ROLES,
+"inbound-containers": [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
+scan: TENANT_ROLES,
 
 stock: [
-  ...SOFA2U_ROLES,
+  ...TENANT_ROLES,
   ...PRODUCT_OWNER_ROLES
 ],
 
 "stock-history": [
-  ...SOFA2U_ROLES,
+  ...TENANT_ROLES,
   ...PRODUCT_OWNER_ROLES
 ],
 
 "storage-invoicing": [
-  ...SOFA2U_ROLES,
+  ...TENANT_ROLES,
   ...PRODUCT_OWNER_ROLES
 ],
 
-outbound: SOFA2U_ROLES,
-inventory: SOFA2U_ROLES,
+outbound: TENANT_ROLES,
+inventory: TENANT_ROLES,
 
     pod: ALL_ROLES,
-    billing: [...SOFA2U_ROLES, ...PRODUCT_OWNER_ROLES],
+    billing: [...TENANT_ROLES, ...PRODUCT_OWNER_ROLES],
 
-    analytics: SOFA2U_ROLES,
-    reports: SOFA2U_ROLES,
+    analytics: TENANT_ROLES,
+    reports: TENANT_ROLES,
 
-    events: SOFA2U_ROLES,
-    "customer-activity": SOFA2U_ROLES,
+    events: TENANT_ROLES,
+    "customer-activity": TENANT_ROLES,
 
     support: ALL_ROLES,
     settings: ["veynor_admin", "tenant_admin"]
@@ -76,7 +75,7 @@ inventory: SOFA2U_ROLES,
   }
 
   function defaultBackUrl(role) {
-    if (SOFA2U_ROLES.includes(role)) return "/operations-control-center.html";
+    if (TENANT_ROLES.includes(role)) return "/operations-control-center.html";
     if (PRODUCT_OWNER_ROLES.includes(role)) return "/customer-dashboard.html";
     if (RETAILER_ROLES.includes(role)) return "/operations-control-center.html";
     return "/login.html";

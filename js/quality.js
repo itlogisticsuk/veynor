@@ -162,15 +162,17 @@ const PAGE_SIZE = 10;
     closed: "Closed"
   };
 
-  const RESPONSIBILITY_LABELS = {
-    under_review: "Under Review",
-    s2u: "Sofa2U",
-    carrier: "Carrier",
-    product_owner: "Product Owner",
-    retailer: "Retailer",
-    customer: "Customer",
-    unknown: "Unknown"
-  };
+
+const RESPONSIBILITY_LABELS = {
+  under_review: "Under Review",
+  s2u: "Own Company",
+  carrier: "Carrier",
+  product_owner: "Product Owner",
+  retailer: "Retailer",
+  customer: "Customer",
+  unknown: "Unknown"
+};
+
 
   const PRIORITY_LABELS = {
     low: "Low",
@@ -322,27 +324,30 @@ const PAGE_SIZE = 10;
     return [...new Set(parts)].join(", ");
   }
 
-  function getCarrierName(order) {
-    const explicit =
-      cleanText(
-        order?.carrier_name ||
-        order?.assigned_carrier_name ||
-        order?.transport_company ||
-        ""
-      );
 
-    if (explicit) return explicit;
+function getCarrierName(order) {
+  const explicit = cleanText(
+    order?.carrier_name ||
+    order?.assigned_carrier_name ||
+    order?.transport_company ||
+    ""
+  );
 
-    if (
-      normalize(
-        order?.transport_type
-      ) === "charter"
-    ) {
-      return "FDS";
-    }
-
-    return "Sofa2U";
+  if (explicit) {
+    return explicit;
   }
+
+  if (
+    normalize(order?.transport_type) === "charter"
+  ) {
+    return "Carrier";
+  }
+
+  return cleanText(
+    currentProfile?.companies?.name ||
+    "Own Transport"
+  );
+}
 
   function getDriverName(order) {
     return cleanText(

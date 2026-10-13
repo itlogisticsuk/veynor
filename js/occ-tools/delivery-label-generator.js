@@ -7,7 +7,7 @@
   const LABEL_WIDTH_MM = 150;
   const LABEL_HEIGHT_MM = 110;
 
-  const DEFAULT_CONTACT_EMAIL = "sales@sofa2u.co.uk";
+const DEFAULT_CONTACT_EMAIL = "";
   const LABEL_ICON_BASE = "/assets/label-icons/";
 
   const LABEL_ICON_PATHS = {
@@ -97,29 +97,32 @@ function getPhysicalQuantity(line) {
     );
   }
 
-  async function getCompanyId(client) {
-    const fromPage = getCompanyIdFromPage();
 
-    if (fromPage) {
-      return fromPage;
-    }
+async function getCompanyId(client) {
+  const { data: authData, error: authError } =
+    await client.auth.getUser();
 
-    const { data, error } = await client
-      .from("companies")
-      .select("id")
-      .eq("name", "Sofa2U")
-      .maybeSingle();
+  if (authError) throw authError;
 
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error("Company Sofa2U not found.");
-    }
-
-    return data.id;
+  const userId = authData?.user?.id;
+  if (!userId) {
+    throw new Error("Not authenticated.");
   }
+
+  const { data: profiles, error } = await client
+    .from("user_profiles")
+    .select("company_id")
+    .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
+    .eq("is_active", true);
+
+  if (error) throw error;
+
+  if (profiles?.length !== 1 || !profiles[0].company_id) {
+    throw new Error("No unique active tenant found.");
+  }
+
+  return profiles[0].company_id;
+}
 
   function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
@@ -231,127 +234,100 @@ function getPhysicalQuantity(line) {
     }
   }
 
-  async function loadSettings(
-    client,
-    companyId,
-    orderCustomerId = null,
-    orderCustomer = null
-  ) {
-    const { data, error } = await client
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", companyId);
 
-    if (error) {
-      console.warn(
-        "Settings lookup failed:",
-        error.message
+async function loadSettings(
+  client,
+  companyId,
+  orderCustomerId = null,
+  orderCustomer = null
+) {
+  const { data, error } = await client
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", companyId);
+
+  if (error) throw error;
+
+  const map = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value
+    ])
+  );
+
+  let customer = orderCustomer || null;
+
+  if (!customer && orderCustomerId) {
+    const result = await client
+      .from("customers")
+      .select("id, name, customer_code")
+      .eq("id", orderCustomerId)
+      .eq("company_id", companyId)
+      .maybeSingle();
+
+    if (result.error) throw result.error;
+    customer = result.data;
+  }
+
+  let ownerLogoUrl = "";
+
+  const rawProfiles = map.get("product_owner_profiles");
+
+  if (rawProfiles) {
+    const profiles = JSON.parse(rawProfiles);
+
+    if (Array.isArray(profiles)) {
+      const ownerCode = clean(
+        customer?.customer_code
+      ).toLowerCase();
+
+      const ownerName = clean(
+        customer?.name
+      ).toLowerCase();
+
+      const profile = profiles.find(row =>
+        (
+          ownerCode &&
+          clean(row.customer_code).toLowerCase() === ownerCode
+        ) || (
+          ownerName &&
+          (
+            clean(row.name).toLowerCase() === ownerName ||
+            clean(row.trading_name).toLowerCase() === ownerName
+          )
+        )
       );
 
-      return {};
-    }
-
-    const map = new Map(
-      (data || []).map(row => [
-        row.setting_key,
-        row.setting_value
-      ])
-    );
-
-    let customer =
-      orderCustomer || null;
-
-    if (!customer && orderCustomerId) {
-      const {
-        data: customerData
-      } = await client
-        .from("customers")
-        .select("id, name, customer_code")
-        .eq("id", orderCustomerId)
-        .maybeSingle();
-
-      customer =
-        customerData || null;
-    }
-
-    const ownerText = [
-      customer?.name,
-      customer?.customer_code,
-      orderCustomerId
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    let ownerLogoUrl = "";
-
-    if (ownerText.includes("zoy")) {
       ownerLogoUrl =
-        "https://giwzwmoaowabhxxxymho.supabase.co/storage/v1/object/public/company-assets/product-owners/zoy/logo.png";
-    } else {
-      try {
-        const rawProfiles =
-          map.get(
-            "product_owner_profiles"
-          );
-
-        const profiles =
-          rawProfiles
-            ? JSON.parse(rawProfiles)
-            : [];
-
-        const ownerProfile =
-          Array.isArray(profiles)
-            ? profiles.find(profile =>
-                String(
-                  profile.name ||
-                  profile.trading_name ||
-                  profile.customer_code ||
-                  ""
-                )
-                  .toLowerCase()
-                  .includes("bellstone")
-              )
-            : null;
-
-        ownerLogoUrl =
-          ownerProfile?.logo_url ||
-          ownerProfile
-            ?.product_owner_logo_url ||
-          ownerProfile?.logoStorageUrl ||
-          ownerProfile
-            ?.logo_storage_url ||
-          "";
-      } catch (error) {
-        console.warn(
-          "Product owner logo lookup skipped:",
-          error.message
-        );
-      }
+        profile?.logo_url ||
+        profile?.product_owner_logo_url ||
+        profile?.logoStorageUrl ||
+        profile?.logo_storage_url ||
+        "";
     }
-
-    return {
-      sofaLogoUrl:
-        map.get("main_logo_url") ||
-        map.get("logo_url") ||
-        map.get("tenant_logo_url") ||
-        "",
-
-      sofaLogoStoragePath:
-        map.get("logo_storage_path") ||
-        map.get(
-          "main_logo_storage_path"
-        ) ||
-        "",
-
-      ownerLogoUrl,
-
-      contactEmail:
-        map.get("orders_email") ||
-        map.get("main_email") ||
-        map.get("company_email") ||
-        DEFAULT_CONTACT_EMAIL
-    };
   }
+
+  return {
+    sofaLogoUrl:
+      map.get("main_logo_url") ||
+      map.get("logo_url") ||
+      map.get("tenant_logo_url") ||
+      "",
+
+    sofaLogoStoragePath:
+      map.get("main_logo_storage_path") ||
+      map.get("logo_storage_path") ||
+      "",
+
+    ownerLogoUrl,
+
+    contactEmail:
+      map.get("orders_email") ||
+      map.get("main_email") ||
+      map.get("company_email") ||
+      DEFAULT_CONTACT_EMAIL
+  };
+}
 
   async function getPublicUrlFromStoragePath(
     client,
@@ -1104,7 +1080,7 @@ labels.push({
   ) {
     const stringValue =
       String(
-        value || "SOFA2U"
+value || "VEYNOR"
       );
 
     let cursor = x;

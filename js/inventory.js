@@ -1,8 +1,6 @@
 (function () {
   "use strict";
 
-  const TENANT_NAME = "Sofa2U";
-
   let client = null;
   let companyId = null;
   let currentUser = null;
@@ -208,98 +206,59 @@
   // USER / COMPANY
   // ============================================================
 
-  async function loadCurrentProfile() {
-    const db =
-      ensureClient();
+ 
+async function loadCurrentProfile() {
+  const db = ensureClient();
 
-    const {
-      data: userData,
-      error: userError
-    } =
-      await db.auth.getUser();
+  const { data: userData, error: userError } =
+    await db.auth.getUser();
 
-    if (userError) {
-      throw userError;
-    }
-
-    currentUser =
-      userData?.user ||
-      null;
-
-    if (!currentUser?.id) {
-      throw new Error(
-        "No authenticated user found."
-      );
-    }
-
-    let result =
-      await db
-        .from("user_profiles")
-        .select(`
-          id,
-          auth_user_id,
-          full_name,
-          email,
-          role,
-          is_active,
-          company_id,
-          customer_id
-        `)
-        .eq(
-          "id",
-          currentUser.id
-        )
-        .eq(
-          "is_active",
-          true
-        )
-        .maybeSingle();
-
-    if (
-      !result.data &&
-      !result.error
-    ) {
-      result =
-        await db
-          .from("user_profiles")
-          .select(`
-            id,
-            auth_user_id,
-            full_name,
-            email,
-            role,
-            is_active,
-            company_id,
-            customer_id
-          `)
-          .eq(
-            "auth_user_id",
-            currentUser.id
-          )
-          .eq(
-            "is_active",
-            true
-          )
-          .maybeSingle();
-    }
-
-    if (result.error) {
-      throw result.error;
-    }
-
-    if (!result.data?.id) {
-      throw new Error(
-        "No active user profile found."
-      );
-    }
-
-    currentProfile =
-      result.data;
-
-    companyId =
-      currentProfile.company_id ||
-      null;
+  if (userError) {
+    throw userError;
   }
+
+  currentUser = userData?.user || null;
+
+  if (!currentUser?.id) {
+    throw new Error(
+      "No authenticated user found."
+    );
+  }
+
+  const { data: profiles, error: profileError } =
+    await db
+      .from("user_profiles")
+      .select(`
+        id,
+        auth_user_id,
+        full_name,
+        email,
+        role,
+        is_active,
+        company_id,
+        customer_id
+      `)
+      .eq("auth_user_id", currentUser.id)
+      .eq("is_active", true);
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  if (
+    !profiles ||
+    profiles.length !== 1 ||
+    !profiles[0].company_id
+  ) {
+    throw new Error(
+      "Cannot determine a unique active tenant profile."
+    );
+  }
+
+  currentProfile = profiles[0];
+  companyId = currentProfile.company_id;
+}
+
 
   function isTenantRole() {
     return [
@@ -313,39 +272,22 @@
     );
   }
 
-  async function getCompanyId() {
-    if (companyId) {
-      return companyId;
-    }
 
-    const {
-      data,
-      error
-    } =
-      await ensureClient()
-        .from("companies")
-        .select("id")
-        .eq(
-          "name",
-          TENANT_NAME
-        )
-        .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (!data?.id) {
-      throw new Error(
-        `Company "${TENANT_NAME}" not found.`
-      );
-    }
-
-    companyId =
-      data.id;
-
+async function getCompanyId() {
+  if (companyId) {
     return companyId;
   }
+
+  await loadCurrentProfile();
+
+  if (!companyId) {
+    throw new Error(
+      "Inventory Check cannot determine the active tenant."
+    );
+  }
+
+  return companyId;
+}
 
 
   // ============================================================
@@ -3628,138 +3570,162 @@ async function findOpenPhysicalSetForPackage(
     );
   }
 
+
 async function rebuildPhysicalSetStatus(
   physicalProductId
 ) {
-  const cid =
-    await getCompanyId();
+  const cid = await getCompanyId();
 
+  if (!cid) {
+    throw new Error(
+      "Cannot rebuild physical set: active tenant is missing."
+    );
+  }
 
-  const {
-    data,
-    error
-  } =
-    await ensureClient()
-      .from("items")
-      .select(`
-        id,
-        product_id,
-        physical_product_id,
-        package_no,
-        package_total,
-        status,
-        warehouse_id,
-        location_id,
-        stock_set_id,
-        volume_m3,
-        weight_kg
-      `)
-      .eq(
-        "company_id",
-        cid
-      )
-      .eq(
-        "physical_product_id",
-        physicalProductId
-      );
+  if (!physicalProductId) {
+    throw new Error(
+      "Cannot rebuild physical set: physical product ID is missing."
+    );
+  }
 
+  const db = ensureClient();
+
+  /*
+   * ==========================================================
+   * 1. LOAD PHYSICAL PACKAGES FOR ACTIVE TENANT
+   * ==========================================================
+   */
+
+  const { data, error } = await db
+    .from("items")
+    .select(`
+      id,
+      product_id,
+      physical_product_id,
+      package_no,
+      package_total,
+      status,
+      warehouse_id,
+      location_id,
+      stock_set_id,
+      volume_m3,
+      weight_kg
+    `)
+    .eq("company_id", cid)
+    .eq("physical_product_id", physicalProductId);
 
   if (error) {
     throw error;
   }
 
+  /*
+   * ==========================================================
+   * 2. FILTER ACTIVE PHYSICAL PACKAGES
+   * ==========================================================
+   */
 
-  const items =
-    (data || []).filter(
-      item =>
-        ![
-          "out",
-          "shipped",
-          "missing",
-          "damaged"
-        ].includes(
-          normalize(
-            item.status
-          )
-        )
-    );
-
+  const items = (data || []).filter(item =>
+    ![
+      "out",
+      "shipped",
+      "missing",
+      "damaged"
+    ].includes(normalize(item.status))
+  );
 
   if (!items.length) {
     return;
   }
 
+  /*
+   * ==========================================================
+   * 3. DETERMINE REQUIRED PACKAGE COUNT
+   * ==========================================================
+   */
 
-  const packageTotal =
-    Math.max(
-      1,
-      ...items.map(
-        item =>
-          Number(
-            item.package_total ||
-            1
-          )
-      )
-    );
+  const packageTotal = Math.max(
+    1,
+    ...items.map(item =>
+      Number(item.package_total || 1)
+    )
+  );
 
+  /*
+   * ==========================================================
+   * 4. DETERMINE AVAILABLE PACKAGE NUMBERS
+   * ==========================================================
+   */
 
-  const present =
-    new Set(
-      items.map(
-        item =>
-          Number(
-            item.package_no ||
-            1
-          )
-      )
-    );
+  const present = new Set(
+    items.map(item =>
+      Number(item.package_no || 1)
+    )
+  );
 
+  /*
+   * ==========================================================
+   * 5. CHECK WHETHER PHYSICAL SET IS COMPLETE
+   *
+   * Example:
+   *
+   * 1/2 + 2/2 = complete
+   * 1/2 only  = incomplete
+   *
+   * Packages may be stored in different warehouses
+   * or locations.
+   * ==========================================================
+   */
 
-  const complete =
-    Array.from(
-      {
-        length:
-          packageTotal
-      },
-      (
-        _,
-        index
-      ) =>
-        index + 1
-    ).every(
-      packageNo =>
-        present.has(
-          packageNo
-        )
-    );
+  const complete = Array.from(
+    { length: packageTotal },
+    (_, index) => index + 1
+  ).every(packageNo =>
+    present.has(packageNo)
+  );
 
+  /*
+   * ==========================================================
+   * 6. COLLECT ITEM IDS
+   * ==========================================================
+   */
 
-  const ids =
-    items.map(
-      item =>
-        item.id
-    );
+  const ids = items
+    .map(item => item.id)
+    .filter(Boolean);
 
+  if (!ids.length) {
+    return;
+  }
 
-  const {
-    error: updateError
-  } =
-    await ensureClient()
+  /*
+   * ==========================================================
+   * 7. UPDATE STOCK SET STATUS
+   *
+   * Multi-tenant protection:
+   * company_id must match the active tenant.
+   * ==========================================================
+   */
+
+  const { data: updatedItems, error: updateError } =
+    await db
       .from("items")
       .update({
         stock_set_status:
-          complete
-            ? "complete"
-            : "incomplete"
+          complete ? "complete" : "incomplete"
       })
-      .in(
-        "id",
-        ids
-      );
-
+      .eq("company_id", cid)
+      .eq("physical_product_id", physicalProductId)
+      .in("id", ids)
+      .select("id");
 
   if (updateError) {
     throw updateError;
+  }
+
+  if ((updatedItems || []).length !== ids.length) {
+    throw new Error(
+      "Physical set status update incomplete: not all expected packages were updated."
+    );
   }
 }
 
@@ -4028,10 +3994,9 @@ async function applyPositiveAdjustment(
             currentProfile?.id ||
             null
         })
-        .in(
-          "id",
-          ids
-        );
+.eq("company_id", await getCompanyId())
+.in("id", ids);
+        
 
     if (error) {
       throw error;
@@ -4163,10 +4128,9 @@ async function applyPositiveAdjustment(
               currentProfile?.id ||
               null
           })
-          .in(
-            "id",
-            ids
-          );
+.eq("company_id", await getCompanyId())
+.in("id", ids);
+          
 
       if (error) {
         throw error;
@@ -4215,10 +4179,9 @@ async function applyPositiveAdjustment(
           match_blocked_by:
             null
         })
-        .in(
-          "id",
-          ids
-        );
+.eq("company_id", await getCompanyId())
+.in("id", ids);
+        
 
     if (error) {
       throw error;
@@ -4237,274 +4200,244 @@ async function applyPositiveAdjustment(
   // INCOMPLETE
   // ============================================================
 
-  async function applyIncompleteAdjustment(
-    row
-  ) {
-    const desired =
-      Math.max(
-        0,
-        Math.round(
-          toNumber(
-            row.incomplete_count,
-            0
-          )
-        )
+
+async function applyIncompleteAdjustment(row) {
+  const desired = Math.max(
+    0,
+    Math.round(toNumber(row.incomplete_count, 0))
+  );
+
+  const current = row.items.filter(
+    item => isIncomplete(item)
+  );
+
+  const currentCount = current.length;
+
+  if (desired === currentCount) {
+    return {
+      incomplete: 0,
+      restored: 0
+    };
+  }
+
+  const cid = await getCompanyId();
+  const db = ensureClient();
+  const now = new Date().toISOString();
+
+  if (!cid) {
+    throw new Error(
+      "Cannot adjust incomplete stock: active tenant is missing."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 1. MARK ADDITIONAL PACKAGES AS INCOMPLETE
+   * ==========================================================
+   */
+
+  if (desired > currentCount) {
+    const quantity = desired - currentCount;
+
+    const candidates = row.items.filter(
+      item =>
+        normalize(item.status) === "in_stock" &&
+        item.is_match_blocked !== true &&
+        !isIncomplete(item)
+    );
+
+    if (candidates.length < quantity) {
+      throw new Error(
+        `${row.warehouse_name} · ${row.package_label}: insufficient free stock to mark ${quantity} package(s) incomplete.`
       );
-
-    const current =
-      row.items.filter(
-        item =>
-          isIncomplete(
-            item
-          )
-      );
-
-    const currentCount =
-      current.length;
-
-    if (
-      desired ===
-      currentCount
-    ) {
-      return {
-        incomplete: 0,
-        restored: 0
-      };
     }
 
-    const now =
-      new Date()
-        .toISOString();
+    const ids = candidates
+      .slice(0, quantity)
+      .map(item => item.id);
 
-
-    if (
-      desired >
-      currentCount
-    ) {
-      const quantity =
-        desired -
-        currentCount;
-
-      const candidates =
-        row.items
-          .filter(
-            item =>
-              normalize(
-                item.status
-              ) ===
-                "in_stock" &&
-              item.is_match_blocked !==
-                true &&
-              !isIncomplete(
-                item
-              )
-          );
-
-      if (
-        candidates.length <
-        quantity
-      ) {
-        throw new Error(
-          `${row.warehouse_name} · ${row.package_label}: insufficient free stock to mark ${quantity} package(s) incomplete.`
-        );
-      }
-
-      const ids =
-        candidates
-          .slice(
-            0,
-            quantity
-          )
-          .map(
-            item =>
-              item.id
-          );
-
-      const {
-        error
-      } =
-        await ensureClient()
-          .from("items")
-          .update({
-            package_condition:
-              "open_incomplete",
-
-            condition_notes:
-              "Marked incomplete during Inventory Check",
-
-            condition_checked_at:
-              now,
-
-            condition_checked_by:
-              currentProfile?.id ||
-              null
-          })
-          .in(
-            "id",
-            ids
-          );
-
-      if (error) {
-        throw error;
-      }
-
-      return {
-        incomplete:
-          ids.length,
-
-        restored:
-          0
-      };
-    }
-
-
-    const quantity =
-      currentCount -
-      desired;
-
-    const ids =
-      current
-        .slice(
-          0,
-          quantity
-        )
-        .map(
-          item =>
-            item.id
-        );
-
-    const {
-      error
-    } =
-      await ensureClient()
-        .from("items")
-        .update({
-          package_condition:
-            "complete",
-
-          condition_notes:
-            null,
-
-          condition_checked_at:
-            now,
-
-          condition_checked_by:
-            currentProfile?.id ||
-            null
-        })
-        .in(
-          "id",
-          ids
-        );
+    const { data: updated, error } = await db
+      .from("items")
+      .update({
+        package_condition: "open_incomplete",
+        condition_notes:
+          "Marked incomplete during Inventory Check",
+        condition_checked_at: now,
+        condition_checked_by:
+          currentProfile?.id || null
+      })
+      .eq("company_id", cid)
+      .in("id", ids)
+      .select("id");
 
     if (error) {
       throw error;
     }
 
-    return {
-      incomplete: 0,
+    if ((updated || []).length !== ids.length) {
+      throw new Error(
+        "Incomplete stock adjustment failed: not all selected packages were updated."
+      );
+    }
 
-      restored:
-        ids.length
+    return {
+      incomplete: ids.length,
+      restored: 0
     };
   }
+
+  /*
+   * ==========================================================
+   * 2. RESTORE INCOMPLETE PACKAGES
+   * ==========================================================
+   */
+
+  const quantity = currentCount - desired;
+
+  const ids = current
+    .slice(0, quantity)
+    .map(item => item.id);
+
+  const { data: updated, error } = await db
+    .from("items")
+    .update({
+      package_condition: "complete",
+      condition_notes: null,
+      condition_checked_at: now,
+      condition_checked_by:
+        currentProfile?.id || null
+    })
+    .eq("company_id", cid)
+    .in("id", ids)
+    .select("id");
+
+  if (error) {
+    throw error;
+  }
+
+  if ((updated || []).length !== ids.length) {
+    throw new Error(
+      "Incomplete stock restoration failed: not all selected packages were updated."
+    );
+  }
+
+  return {
+    incomplete: 0,
+    restored: ids.length
+  };
+}
 
 
   // ============================================================
   // LOCATION / DATE / INBOUND REF CORRECTION
   // ============================================================
 
-  async function applyBatchMetadataCorrection(
-    row
-  ) {
-    if (
-      !rowMetadataChanged(
-        row
-      )
-    ) {
-      return 0;
-    }
+ 
+async function applyBatchMetadataCorrection(row) {
+  /*
+   * ==========================================================
+   * 1. CHECK IF METADATA HAS CHANGED
+   * ==========================================================
+   */
 
-    const activeItems =
-      row.items.filter(
-        item =>
-          isActivePhysicalItem(
-            item
-          )
-      );
-
-    const ids =
-      activeItems
-        .map(
-          item =>
-            item.id
-        )
-        .filter(Boolean);
-
-    if (!ids.length) {
-      return 0;
-    }
-
-    let warehouseId =
-      row.warehouse_id ||
-      null;
-
-    if (row.location_id) {
-      const location =
-        getLocation(
-          row.location_id
-        );
-
-      if (location) {
-        warehouseId =
-          location.warehouse_id ||
-          warehouseId;
-      }
-    }
-
-    const payload = {
-      warehouse_id:
-        warehouseId,
-
-      location_id:
-        row.location_id ||
-        null,
-
-      inbound_reference:
-        clean(
-          row.inbound_reference
-        ) ||
-        null
-    };
-
-    if (
-      row.actual_inbound_date
-    ) {
-      payload.inbound_date =
-        toTimestampFromDate(
-          row.actual_inbound_date
-        );
-    }
-
-    const {
-      error
-    } =
-      await ensureClient()
-        .from("items")
-        .update(
-          payload
-        )
-        .in(
-          "id",
-          ids
-        );
-
-    if (error) {
-      throw error;
-    }
-
-    return ids.length;
+  if (!rowMetadataChanged(row)) {
+    return 0;
   }
+
+  const cid = await getCompanyId();
+
+  if (!cid) {
+    throw new Error(
+      "Cannot update batch metadata: active tenant is missing."
+    );
+  }
+
+  const db = ensureClient();
+
+  /*
+   * ==========================================================
+   * 2. COLLECT ACTIVE PHYSICAL ITEMS
+   * ==========================================================
+   */
+
+  const activeItems = row.items.filter(
+    item => isActivePhysicalItem(item)
+  );
+
+  const ids = activeItems
+    .map(item => item.id)
+    .filter(Boolean);
+
+  if (!ids.length) {
+    return 0;
+  }
+
+  /*
+   * ==========================================================
+   * 3. DETERMINE WAREHOUSE
+   * ==========================================================
+   */
+
+  let warehouseId = row.warehouse_id || null;
+
+  if (row.location_id) {
+    const location = getLocation(row.location_id);
+
+    if (!location) {
+      throw new Error(
+        "Selected warehouse location is not available for the active tenant."
+      );
+    }
+
+    warehouseId = location.warehouse_id || warehouseId;
+  }
+
+  /*
+   * ==========================================================
+   * 4. BUILD METADATA UPDATE
+   * ==========================================================
+   */
+
+  const payload = {
+    warehouse_id: warehouseId,
+    location_id: row.location_id || null,
+    inbound_reference:
+      clean(row.inbound_reference) || null
+  };
+
+  if (row.actual_inbound_date) {
+    payload.inbound_date = toTimestampFromDate(
+      row.actual_inbound_date
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 5. UPDATE ACTIVE TENANT ITEMS
+   * ==========================================================
+   */
+
+  const { data: updated, error } = await db
+    .from("items")
+    .update(payload)
+    .eq("company_id", cid)
+    .eq("product_id", selectedProduct.id)
+    .in("id", ids)
+    .select("id");
+
+  if (error) {
+    throw error;
+  }
+
+  if ((updated || []).length !== ids.length) {
+    throw new Error(
+      "Batch metadata correction incomplete: not all selected packages were updated."
+    );
+  }
+
+  return ids.length;
+}
+
 
 
   // ============================================================
@@ -4871,176 +4804,224 @@ async function applyPositiveAdjustment(
   }
 
 
-  async function executeSplitBatch() {
-    const row =
-      activeSplitRow;
 
-    if (!row) {
-      throw new Error(
-        "No inventory batch selected."
-      );
-    }
+async function executeSplitBatch() {
+  const row = activeSplitRow;
 
-    const quantity =
-      Math.round(
-        toNumber(
-          byId(
-            "inventorySplitQty"
-          )?.value,
-          0
-        )
-      );
-
-    const activeItems =
-      row.items
-        .filter(
-          item =>
-            isActivePhysicalItem(
-              item
-            )
-        )
-        .sort(
-          (a, b) =>
-            new Date(
-              a.created_at ||
-              0
-            ) -
-            new Date(
-              b.created_at ||
-              0
-            )
-        );
-
-    if (
-      quantity <= 0
-    ) {
-      throw new Error(
-        "Enter a quantity to split."
-      );
-    }
-
-    if (
-      quantity >=
-      activeItems.length
-    ) {
-      throw new Error(
-        "The split quantity must be lower than the current batch quantity. Change the existing row directly if the whole batch needs another date or location."
-      );
-    }
-
-    const locationId =
-      byId(
-        "inventorySplitLocation"
-      )?.value ||
-      null;
-
-    const location =
-      getLocation(
-        locationId
-      );
-
-    const inboundDate =
-      byId(
-        "inventorySplitDate"
-      )?.value ||
-      "";
-
-    const inboundReference =
-      clean(
-        byId(
-          "inventorySplitReference"
-        )?.value ||
-        ""
-      );
-
-    const selected =
-      activeItems.slice(
-        0,
-        quantity
-      );
-
-    const ids =
-      selected.map(
-        item =>
-          item.id
-      );
-
-    const payload = {
-      location_id:
-        locationId,
-
-      warehouse_id:
-        location
-          ?.warehouse_id ||
-        row.warehouse_id ||
-        null,
-
-      inbound_reference:
-        inboundReference ||
-        null
-    };
-
-    if (inboundDate) {
-      payload.inbound_date =
-        toTimestampFromDate(
-          inboundDate
-        );
-    }
-
-    const confirmed =
-      window.confirm(
-        [
-          `Split ${quantity} package(s) from this batch?`,
-          "",
-          `SKU: ${selectedProduct?.sku_base || "—"}`,
-          `Package: ${row.package_label}`,
-          `Current batch: ${row.system_count}`,
-          `New location: ${location?.code || "No location"}`,
-          `New inbound: ${inboundDate || "unchanged"}`,
-          `New reference: ${inboundReference || "—"}`
-        ].join("\n")
-      );
-
-    if (!confirmed) {
-      return;
-    }
-
-    const {
-      error
-    } =
-      await ensureClient()
-        .from("items")
-        .update(
-          payload
-        )
-        .in(
-          "id",
-          ids
-        );
-
-    if (error) {
-      throw error;
-    }
-
-
-    await saveInventoryEvent({
-      eventType:
-        "inventory_check",
-
-      notes:
-        `Batch split: ${quantity} package(s) from ${row.location_code || "no location"} / ${row.actual_inbound_date || "no date"} to ${location?.code || "no location"} / ${inboundDate || "unchanged date"}.`
-    });
-
-
-    closeSplitModal();
-
-    await reloadSelectedProduct();
-
-    showToast(
-      `${quantity} package(s) moved into a separate inventory batch.`,
-      "ok"
+  if (!row) {
+    throw new Error(
+      "No inventory batch selected."
     );
   }
+
+  if (!selectedProduct?.id) {
+    throw new Error(
+      "No product selected for batch splitting."
+    );
+  }
+
+  const cid = await getCompanyId();
+
+  if (!cid) {
+    throw new Error(
+      "Cannot split inventory batch: active tenant is missing."
+    );
+  }
+
+  const db = ensureClient();
+
+  /*
+   * ==========================================================
+   * 1. GET SPLIT QUANTITY
+   * ==========================================================
+   */
+
+  const quantity = Math.round(
+    toNumber(
+      byId("inventorySplitQty")?.value,
+      0
+    )
+  );
+
+  /*
+   * ==========================================================
+   * 2. FIND ACTIVE PHYSICAL ITEMS
+   * ==========================================================
+   */
+
+  const activeItems = row.items
+    .filter(item => isActivePhysicalItem(item))
+    .sort(
+      (a, b) =>
+        new Date(a.created_at || 0) -
+        new Date(b.created_at || 0)
+    );
+
+  if (quantity <= 0) {
+    throw new Error(
+      "Enter a quantity to split."
+    );
+  }
+
+  if (quantity >= activeItems.length) {
+    throw new Error(
+      "The split quantity must be lower than the current batch quantity. Change the existing row directly if the whole batch needs another date or location."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 3. DETERMINE NEW LOCATION
+   * ==========================================================
+   */
+
+  const locationId =
+    byId("inventorySplitLocation")?.value || null;
+
+  const location = getLocation(locationId);
+
+  if (locationId && !location) {
+    throw new Error(
+      "Selected location does not belong to the active tenant."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 4. READ NEW INBOUND DETAILS
+   * ==========================================================
+   */
+
+  const inboundDate =
+    byId("inventorySplitDate")?.value || "";
+
+  const inboundReference = clean(
+    byId("inventorySplitReference")?.value || ""
+  );
+
+  /*
+   * ==========================================================
+   * 5. SELECT PHYSICAL ITEMS TO MOVE
+   * ==========================================================
+   */
+
+  const selected = activeItems.slice(
+    0,
+    quantity
+  );
+
+  const ids = selected
+    .map(item => item.id)
+    .filter(Boolean);
+
+  if (ids.length !== quantity) {
+    throw new Error(
+      "Could not identify all physical packages for batch splitting."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 6. BUILD UPDATE PAYLOAD
+   * ==========================================================
+   */
+
+  const payload = {
+    location_id: locationId,
+    warehouse_id:
+      location?.warehouse_id ||
+      row.warehouse_id ||
+      null,
+    inbound_reference:
+      inboundReference || null
+  };
+
+  if (inboundDate) {
+    payload.inbound_date = toTimestampFromDate(
+      inboundDate
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 7. CONFIRM SPLIT
+   * ==========================================================
+   */
+
+  const confirmed = window.confirm(
+    [
+      `Split ${quantity} package(s) from this batch?`,
+      "",
+      `SKU: ${selectedProduct.sku_base || "—"}`,
+      `Package: ${row.package_label}`,
+      `Current batch: ${row.system_count}`,
+      `New location: ${location?.code || "No location"}`,
+      `New inbound: ${inboundDate || "unchanged"}`,
+      `New reference: ${inboundReference || "—"}`
+    ].join("\n")
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  /*
+   * ==========================================================
+   * 8. UPDATE PHYSICAL ITEMS
+   *
+   * Only within active tenant and selected product.
+   * ==========================================================
+   */
+
+  const { data: updated, error } = await db
+    .from("items")
+    .update(payload)
+    .eq("company_id", cid)
+    .eq("product_id", selectedProduct.id)
+    .in("id", ids)
+    .select("id");
+
+  if (error) {
+    throw error;
+  }
+
+  if ((updated || []).length !== ids.length) {
+    throw new Error(
+      "Batch split incomplete: not all selected packages were updated."
+    );
+  }
+
+  /*
+   * ==========================================================
+   * 9. SAVE INVENTORY HISTORY
+   * ==========================================================
+   */
+
+  await saveInventoryEvent({
+    eventType: "inventory_check",
+    notes:
+      `Batch split: ${quantity} package(s) from ` +
+      `${row.location_code || "no location"} / ` +
+      `${row.actual_inbound_date || "no date"} to ` +
+      `${location?.code || "no location"} / ` +
+      `${inboundDate || "unchanged date"}.`
+  });
+
+  /*
+   * ==========================================================
+   * 10. REFRESH INVENTORY
+   * ==========================================================
+   */
+
+  closeSplitModal();
+
+  await reloadSelectedProduct();
+
+  showToast(
+    `${quantity} package(s) moved into a separate inventory batch.`,
+    "ok"
+  );
+}
 
 
   // ============================================================
