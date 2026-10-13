@@ -56,7 +56,18 @@ function assertImportAccess() {
   }
 }
 
+
 async function loadImportProfile() {
+  if (!client) {
+    if (typeof sb !== "function") {
+      throw new Error(
+        "Supabase client is unavailable."
+      );
+    }
+
+    client = sb();
+  }
+
   const { data: authData, error: authError } =
     await client.auth.getUser();
 
@@ -65,7 +76,9 @@ async function loadImportProfile() {
   const authId = authData?.user?.id;
 
   if (!authId) {
-    throw new Error("No authenticated user found.");
+    throw new Error(
+      "No authenticated user found."
+    );
   }
 
   let result = await client
@@ -102,32 +115,35 @@ async function loadImportProfile() {
 
   const cid = await getCompanyId();
 
+  const isSuperAdmin =
+    String(currentImportProfile.role)
+      .trim()
+      .toLowerCase() === "veynor_admin";
+
+  // Normal users must stay within their own tenant.
+  // Super Admin may select another active tenant
+  // through the central tenant context.
   if (
-    String(currentImportProfile.company_id) !== String(cid)
+    !isSuperAdmin &&
+    String(currentImportProfile.company_id) !==
+      String(cid)
   ) {
     throw new Error(
       "Your account is not linked to the active tenant."
     );
   }
 
+  console.info(
+    "[Veynor Order Import] Profile verified:",
+    {
+      role: currentImportProfile.role,
+      activeCompanyId: cid,
+      superAdmin: isSuperAdmin
+    }
+  );
+
   return currentImportProfile;
 }
-
-  let settingsMap = new Map();
-  let ownerProfiles = [];
-let retailerList = [];
-let productList = [];
-
-  let selectedExcelFile = null;
-  let selectedPdfFiles = [];
-  let rawRows = [];
-  let groupedOrders = [];
-let orderImportRunning = false;
-  let selectedOrderNo = null;
-  let currentSourceKind = "";
-  let lastPdfText = "";
-let manualProducts = [];
-let manualRetailers = [];
 
   function byId(id) {
     return document.getElementById(id);
@@ -444,48 +460,33 @@ function getStockPriorityClass(value) {
   }
 
  
+
 async function getCompanyId() {
-  const db = client;
-
-  if (!db) {
+  if (
+    typeof window.VeynorTenant
+      ?.getActiveCompanyId !== "function"
+  ) {
     throw new Error(
-      "Supabase client is not initialised."
+      "Central tenant context is not available."
     );
   }
 
-  const { data: authData, error: authError } =
-    await db.auth.getUser();
+  if (!client) {
+    if (typeof sb !== "function") {
+      throw new Error(
+        "Supabase client is not available."
+      );
+    }
 
-  if (authError) throw authError;
-
-  const userId = authData?.user?.id;
-
-  if (!userId) {
-    throw new Error(
-      "No authenticated user found."
-    );
+    client = sb();
   }
 
-  const { data: profiles, error: profileError } =
-    await db
-      .from("user_profiles")
-      .select("id, company_id, role, is_active")
-      .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
-      .eq("is_active", true);
-
-  if (profileError) throw profileError;
-
-  if (!profiles || profiles.length !== 1) {
-    throw new Error(
-      "Unable to resolve a unique active user profile."
-    );
-  }
-
-  const activeCompanyId = profiles[0].company_id;
+  const activeCompanyId =
+    await window.VeynorTenant.getActiveCompanyId();
 
   if (!activeCompanyId) {
     throw new Error(
-      "No tenant is assigned to this account."
+      "No active tenant could be resolved."
     );
   }
 
@@ -494,14 +495,70 @@ async function getCompanyId() {
     String(companyId) !== String(activeCompanyId)
   ) {
     throw new Error(
-      "Active tenant has changed. Reload the page."
+      "Active tenant changed. Reload the page."
     );
   }
 
   companyId = activeCompanyId;
 
+  console.info(
+    "[Veynor Order Import] Active tenant:",
+    companyId
+  );
+
   return companyId;
 }
+
+
+async function updateImportTenantDisplay() {
+  const cid = await getCompanyId();
+
+  const { data: company, error } = await client
+    .from("companies")
+    .select("id, name, company_type, is_active")
+    .eq("id", cid)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!company) {
+    throw new Error(
+      "The active tenant could not be found."
+    );
+  }
+
+  setText(
+    "importTenantName",
+    company.name || "Unnamed Tenant"
+  );
+
+  const ownerNames = ownerProfiles
+    .map(owner =>
+      String(
+        owner.trading_name ||
+        owner.name ||
+        owner.customer_code ||
+        ""
+      ).trim()
+    )
+    .filter(Boolean);
+
+  const summary = ownerNames.length
+    ? ownerNames.slice(0, 2).join(" / ") +
+      (ownerNames.length > 2
+        ? ` +${ownerNames.length - 2}`
+        : "")
+    : "No Product Owners configured";
+
+  setText("importOwnerSummary", summary);
+
+  console.info(
+    "[Veynor Order Import] Tenant display updated:",
+    company.name
+  );
+}
+
 
 
 async function loadSettings() {
@@ -542,6 +599,7 @@ async function loadSettings() {
   }
 
   await renderProductOwnerSelect();
+await updateImportTenantDisplay();
 }
 
 function getOwnerSelectValue(owner) {
@@ -3087,15 +3145,27 @@ list.innerHTML = order.lines.map((line, lineIndex) => {
     renderDetail();
   }
 
+
 async function getOrCreateProductOwnerCustomer(owner, cid) {
   assertImportAccess();
 
+  const activeCid = await getCompanyId();
+
+  if (String(cid) !== String(activeCid)) {
+    throw new Error(
+      "Product Owner lookup blocked: tenant mismatch."
+    );
+  }
+
   if (!owner) {
-    throw new Error("No Product Owner selected.");
+    throw new Error(
+      "No Product Owner selected."
+    );
   }
 
   if (isProductOwnerAccount()) {
-    const allowedOwners = await getAllowedOwnerProfiles();
+    const allowedOwners =
+      await getAllowedOwnerProfiles();
 
     const allowed = allowedOwners.some(profile =>
       getOwnerSelectValue(profile) ===
@@ -3125,68 +3195,43 @@ async function getOrCreateProductOwnerCustomer(owner, cid) {
     .toUpperCase()
     .replace(/[^A-Z0-9_-]/g, "_");
 
-  if (!ownerName) {
+  if (!ownerName || !customerCode) {
     throw new Error(
-      "Selected Product Owner has no name in Settings."
+      "Selected Product Owner is incomplete."
     );
   }
 
-  const { data: existing, error: selectError } =
-    await client
-      .from("customers")
-      .select("id, name, customer_code")
-      .eq("company_id", cid)
-      .or(
-        `customer_code.eq.${customerCode},name.ilike.${ownerName}`
-      )
-      .limit(1);
-
-  if (selectError) throw selectError;
-
-  const payload = {
-    company_id: cid,
-    name: ownerName,
-    customer_code: customerCode,
-    is_active: true
-  };
-
-  if (owner.invoice_email) {
-    payload.billing_email = owner.invoice_email;
-  }
-
-  if (owner.ops_email) {
-    payload.email = owner.ops_email;
-  }
-
-  if (owner.vat) {
-    payload.vat_number = owner.vat;
-  }
-
-  if (existing?.[0]?.id) {
-    const { error: updateError } = await client
-      .from("customers")
-      .update(payload)
-      .eq("id", existing[0].id);
-
-    if (updateError) {
-      console.warn(
-        "Product Owner update skipped:",
-        updateError.message
-      );
-    }
-
-    return existing[0].id;
-  }
-
-  const { data, error } = await client
+  const { data: customers, error } = await client
     .from("customers")
-    .insert(payload)
-    .select("id")
-    .single();
+    .select("id, name, customer_code")
+    .eq("company_id", cid);
 
   if (error) throw error;
 
-  return data.id;
+  let existing = null;
+
+  if (owner.customer_id) {
+    existing = (customers || []).find(customer =>
+      String(customer.id) ===
+      String(owner.customer_id)
+    );
+  } else {
+    existing = (customers || []).find(customer =>
+      normalize(customer.customer_code) ===
+      normalize(customerCode)
+    );
+  }
+
+  if (existing?.id) {
+    return existing.id;
+  }
+
+  // Preview must never create customers.
+  // Only the actual import may create a missing owner.
+  throw new Error(
+    "Product Owner is not registered for the active tenant. " +
+    "Configure the Product Owner in Settings first."
+  );
 }
 
   async function getOrCreateOwnerBillingAddress(owner, customerId) {
@@ -3759,7 +3804,7 @@ delivery_region: null,
         order.email ? `Retailer email: ${order.email}` : "",
         order.phone ? `Retailer phone: ${order.phone}` : "",
         billingAddressId ? "Billing address linked to product owner from settings" : "Billing address not linked",
-        "Retailer was not created as S2U customer",
+"Retailer was not created as contract customer",
         missingSkus.length ? `Product(s) not found in master data: ${missingSkus.join(", ")}` : ""
       ].filter(Boolean).join(" | ") || null
     };
@@ -4863,7 +4908,7 @@ function bindPdfDropZone() {
       const label = createRetailers.closest("label");
       if (label) {
         label.style.opacity = "0.75";
-        label.title = "Retailers are not created as Sofa2U customers. They are stored on the order as delivery information.";
+label.title = "Retailers are not created as contract customers. They are stored on the order as delivery information.";
       }
     }
   }

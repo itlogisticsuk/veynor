@@ -11,10 +11,13 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
+
 <script src="/js/supabase.js"></script>
 <script src="/js/page-guard.js" defer></script>
+<script src="/js/tenant-context.js" defer></script>
 <script src="/js/layout.js" defer></script>
 <script src="/js/veynor-progress.js"></script>
+
 
 <!-- PDF generation -->
 <script
@@ -250,7 +253,7 @@
     <section class="page-topbar">
       <div class="page-title">
         <h1>Order Import</h1>
-        <p>Import orders into the Sofa2U tenant while keeping product owners and retailers separated.</p>
+        <p>Import orders into the active tenant while keeping product owners and retailers separated.</p>
       </div>
       <div class="topbar-actions">
         <button id="btnOpenManualOrder" class="btn btn-primary" type="button">+ Manual Order</button>
@@ -266,17 +269,28 @@
         <div class="flow-sub">The software platform. This import runs inside the active tenant.</div>
       </div>
 
-      <div class="flow-card">
-        <div class="flow-kicker">Tenant</div>
-        <div class="flow-title">Sofa2U</div>
-        <div class="flow-sub">The operating company that imports, stores, plans and delivers the orders.</div>
-      </div>
 
-      <div class="flow-card">
-        <div class="flow-kicker">Product Owner</div>
-        <div class="flow-title">Bellstone / Zoy</div>
-        <div class="flow-sub">The contract customer. This is stored as <strong>orders.customer_id</strong>.</div>
-      </div>
+<div class="flow-card">
+  <div class="flow-kicker">Tenant</div>
+  <div class="flow-title" id="importTenantName">
+    Loading tenant...
+  </div>
+  <div class="flow-sub">
+    The operating company that imports,
+    stores, plans and delivers orders.
+  </div>
+</div>
+
+<div class="flow-card">
+  <div class="flow-kicker">Product Owner</div>
+  <div class="flow-title" id="importOwnerSummary">
+    Configured Product Owners
+  </div>
+  <div class="flow-sub">
+    Contract customers configured for
+    the active tenant in Settings.
+  </div>
+</div>
 
       <div class="flow-card">
         <div class="flow-kicker">Retailer</div>
