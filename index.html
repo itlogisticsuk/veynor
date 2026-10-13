@@ -16,11 +16,18 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <script src="/js/supabase.js"></script>
-  <script src="/js/page-guard.js" defer></script>
+
+<script src="/js/supabase.js"></script>
+
+<script src="/js/page-guard.js" defer></script>
+
+<!-- Central tenant context -->
+<script src="/js/tenant-context.js" defer></script>
+
 <script src="/js/available-vehicles.js" defer></script>
-  <script src="/js/index.js" defer></script>
-  <script src="/js/layout.js" defer></script>
+<script src="/js/index.js" defer></script>
+<script src="/js/layout.js" defer></script>
+
 
   <style>
     .dashboard-page{
@@ -1065,13 +1072,32 @@
 
       <div class="topbar-actions">
         <button id="btnRefreshDashboard" class="btn" type="button">Refresh</button>
-        <div class="user-mini">
-          <div class="user-badge">S2</div>
-          <div>
-            <div style="font-weight:800;">Sofa2U</div>
-            <div id="dashboardDateLabel" style="font-size:12px;color:var(--muted);">Today</div>
-          </div>
-        </div>
+
+<div class="user-mini">
+  <div
+    class="user-badge"
+    id="dashboardCompanyBadge"
+  >
+    VE
+  </div>
+
+  <div>
+    <div
+      id="dashboardCompanyName"
+      style="font-weight:800;"
+    >
+      Veynor
+    </div>
+
+    <div
+      id="dashboardDateLabel"
+      style="font-size:12px;color:var(--muted);"
+    >
+      Today
+    </div>
+  </div>
+</div>
+
       </div>
     </section>
 
