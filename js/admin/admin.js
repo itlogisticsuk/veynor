@@ -1426,6 +1426,11 @@
   // 29. ACTION AVAILABILITY
   // ==========================================================
 
+  
+  // ==========================================================
+  // 29. ACTION AVAILABILITY
+  // ==========================================================
+
   function updateActionAvailability() {
     const adminReady =
       state.adminVerified &&
@@ -1437,8 +1442,18 @@
       !isSubmitting &&
       !isLoading;
 
+    const selectedTenant =
+      getSelectedTenant();
+
     const tenantSelected =
-      Boolean(getSelectedTenant());
+      Boolean(selectedTenant);
+
+    const canOpenTenant =
+      adminReady &&
+      tenantSelected &&
+      selectedTenant.is_active === true &&
+      !isSubmitting &&
+      !isLoading;
 
     // New Tenant
     setDisabled(
@@ -1456,12 +1471,19 @@
       !canCreateTenant
     );
 
-    // Read-only management
+    // Tenant Portal
+    setDisabled(
+      "openTenantBtn",
+      !canOpenTenant
+    );
+
+    // Tenant Settings - read-only
     setDisabled(
       "tenantSettingsBtn",
       !adminReady || !tenantSelected
     );
 
+    // Sidebar
     setDisabled(
       "sideUsersBtn",
       !adminReady || !tenantSelected
@@ -1472,12 +1494,12 @@
       !adminReady
     );
 
-    // Backend functions not implemented yet
-    setDisabled("openTenantBtn", true);
+    // Backend operations not implemented yet
     setDisabled("saveTenantCompanyBtn", true);
     setDisabled("inviteTenantUserBtn", true);
     setDisabled("sendInviteUserBtn", true);
   }
+
 
   // ==========================================================
   // 30. MODAL HELPERS
@@ -2007,83 +2029,74 @@
    * Do not rely on a browser-only tenant override.
    */
 
+ 
+  // ==========================================================
+  // 40. OPEN TENANT PORTAL
+  // ==========================================================
+
   async function openTenantPortal() {
-    const tenant =
-      getSelectedTenant();
+    const tenant = getSelectedTenant();
 
     if (!tenant?.id) {
       showNotice(
         "Select a tenant first.",
         "error"
       );
-
       return;
     }
 
-    if (!isBackendAvailable()) {
+    if (
+      !state.adminVerified ||
+      !state.authenticated
+    ) {
       showNotice(
-        "Tenant portal access requires the administration backend.",
+        "Super Admin access is required.",
         "error"
       );
-
       return;
     }
 
-    try {
-      setSubmitting(true);
-
+    if (!isValidUuid(tenant.id)) {
       showNotice(
-        `Preparing access to ${tenant.name}...`
+        "Invalid tenant ID.",
+        "error"
       );
-
-      const result =
-        await invokeAdminFunction(
-          CONFIG.functions.openTenant,
-          {
-            company_id: tenant.id
-          }
-        );
-
-      const destination =
-        clean(result?.redirect_url);
-
-      if (!destination) {
-        throw new Error(
-          "Tenant access did not return a destination."
-        );
-      }
-
-      // Only permit navigation within this Veynor origin.
-      const target = new URL(
-        destination,
-        window.location.origin
-      );
-
-      if (
-        target.origin !==
-        window.location.origin
-      ) {
-        throw new Error(
-          "External tenant redirects are not allowed."
-        );
-      }
-
-      window.location.assign(
-        target.pathname +
-        target.search +
-        target.hash
-      );
-
-    } catch (error) {
-      showError(
-        error,
-        "Could not open tenant portal."
-      );
-
-    } finally {
-      setSubmitting(false);
+      return;
     }
+
+    if (tenant.is_active !== true) {
+      showNotice(
+        "This tenant is inactive.",
+        "error"
+      );
+      return;
+    }
+
+    // The dashboard must explicitly support and
+    // validate tenant switching before navigation.
+    if (
+      window.VEYNOR_TENANT_DASHBOARD_READY !== true
+    ) {
+      showNotice(
+        "Tenant dashboard switching is not enabled yet.",
+        "error"
+      );
+      return;
+    }
+
+    const url = new URL(
+      CONFIG.tenantPortalUrl,
+      window.location.origin
+    );
+
+    url.pathname = "/index.html";
+    url.searchParams.set("tenant", tenant.id);
+
+    window.location.assign(
+      url.pathname + url.search
+    );
   }
+
 
   // ==========================================================
   // 41. PLATFORM SETTINGS DIALOG
