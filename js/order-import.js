@@ -3,6 +3,30 @@
 
  const OWNER_PROFILES_KEY = "product_owner_profiles";
 
+
+  // ==========================================================
+  // ORDER IMPORT - APPLICATION STATE
+  // ==========================================================
+
+  let settingsMap = new Map();
+  let ownerProfiles = [];
+
+  let selectedExcelFile = null;
+  let selectedPdfFiles = [];
+
+  let rawRows = [];
+  let groupedOrders = [];
+
+  let selectedOrderNo = null;
+  let currentSourceKind = "";
+  let lastPdfText = "";
+
+  let manualProducts = [];
+  let manualRetailers = [];
+
+  let orderImportRunning = false;
+
+
   let client = null;
   let companyId = null;
 
