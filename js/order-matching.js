@@ -3247,21 +3247,6 @@ const { error } = await client
 
 async function runMatchModule() {
 
-  const isSuperAdminTenantTest =
-    window.VEYNOR_CURRENT_PROFILE?.role === "veynor_admin" &&
-    Boolean(
-      new URLSearchParams(window.location.search)
-        .get("tenant")
-    );
-
-  if (isSuperAdminTenantTest) {
-    showToast(
-      "Run Matching is temporarily disabled during Super Admin tenant testing.",
-      "err"
-    );
-    return;
-  }
-
   const progress = window.VeynorProgress;
   let progressOpened = false;
 
