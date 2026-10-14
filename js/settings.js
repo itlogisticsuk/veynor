@@ -159,10 +159,9 @@ london_congestion_charge: "",
 london_charge_method: "per_delivery",
 london_vehicle_applicability: "non_compliant",
 
-
 sales_order_prefix: "SO-",
 sales_order_padding: "5",
-next_sales_order_number: "3246",
+next_sales_order_number: "1",
 
     email_sender_name: "",
     email_sender_address: "",
@@ -284,20 +283,23 @@ next_sales_order_number: "3246",
     return client;
   }
 
-  async function getCompanyId() {
+  
+async function getCompanyId() {
   const db = ensureClient();
 
-  const { data: authData, error: authError } = await db.auth.getUser();
+  const { data: authData, error: authError } =
+    await db.auth.getUser();
 
   if (authError) throw authError;
 
   const userId = authData?.user?.id;
 
   if (!userId) {
-    throw new Error("You are not signed in. Please sign in again.");
+    throw new Error(
+      "You are not signed in. Please sign in again."
+    );
   }
 
-  // Ondersteun beide bestaande koppelingen met het loginaccount.
   const { data: profiles, error: profileError } = await db
     .from("user_profiles")
     .select("id, auth_user_id, company_id, role, is_active")
@@ -306,53 +308,83 @@ next_sales_order_number: "3246",
 
   if (profileError) throw profileError;
 
-  if (!profiles || profiles.length === 0) {
-    throw new Error("No active user profile was found for your account.");
-  }
-
-  if (profiles.length !== 1) {
+  if (!profiles || profiles.length !== 1) {
     throw new Error(
-      "Multiple active profiles were found. Please contact your administrator."
+      "Exactly one active user profile is required."
     );
   }
 
   const profile = profiles[0];
-  const role = String(profile.role || "").trim().toLowerCase();
+  const role = normalize(profile.role);
 
-  if (!["tenant_admin", "veynor_admin"].includes(role)) {
+  const isSuperAdmin = [
+    "super_admin",
+    "superadmin",
+    "veynor_admin"
+  ].includes(role);
+
+  if (!isSuperAdmin && role !== "tenant_admin") {
     throw new Error(
-      "You do not have permission to manage company settings."
+      "You do not have permission to manage tenant settings."
     );
   }
 
-  if (!profile.company_id) {
+  let activeCompanyId = profile.company_id;
+
+  if (isSuperAdmin) {
+    const tenantContext = window.VeynorTenant;
+
+    if (
+      !tenantContext ||
+      typeof tenantContext.getActiveCompanyId !== "function"
+    ) {
+      throw new Error(
+        "Tenant context is unavailable. Reload the page."
+      );
+    }
+
+    activeCompanyId =
+      await tenantContext.getActiveCompanyId();
+
+    if (!activeCompanyId) {
+      throw new Error(
+        "Select a tenant before opening Settings."
+      );
+    }
+  }
+
+  if (!activeCompanyId) {
     throw new Error(
-      "No company is assigned to your account. Please contact your administrator."
+      "No active company is assigned."
     );
   }
 
-  // Voorkom opslaan voor een ander bedrijf met nog oude schermgegevens.
-  if (companyId && companyId !== profile.company_id) {
+  // Prevent stale Settings data being saved to another tenant.
+  if (
+    companyId &&
+    String(companyId) !== String(activeCompanyId)
+  ) {
     throw new Error(
-      "Your active company has changed. Reload this page before continuing."
+      "Active tenant changed. Reload Settings before continuing."
     );
   }
 
   const { data: company, error: companyError } = await db
     .from("companies")
     .select("id, is_active")
-    .eq("id", profile.company_id)
+    .eq("id", activeCompanyId)
     .maybeSingle();
 
   if (companyError) throw companyError;
 
   if (!company || company.is_active !== true) {
     throw new Error(
-      "Your company could not be found or is inactive."
+      "The selected tenant does not exist or is inactive."
     );
   }
 
   companyId = company.id;
+
   return companyId;
 }
 
