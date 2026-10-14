@@ -442,13 +442,48 @@ function getStockPriorityClass(value) {
     return getFieldValue("defaultStatus", "imported") || "imported";
   }
 
-  function getExcelSourceType() {
-    return (
-      getFieldValue("excelSourceType", "") ||
-      getFieldValue("defaultSourceType", "") ||
+
+function getExcelSourceType() {
+  const selectedOwner = getSelectedProductOwner();
+
+  const configuredSource =
+    String(
+      selectedOwner?.excel_source_type ||
+      selectedOwner?.default_source_type ||
+      settingsMap.get("excel_source_type") ||
+      settingsMap.get("default_source_type") ||
+      ""
+    ).trim();
+
+  const manualSource =
+    getFieldValue("excelSourceType", "");
+
+  return (
+    manualSource ||
+    configuredSource ||
+    "sales_order_excel"
+  );
+}
+
+  
+function updateExcelSourceTypeDisplay() {
+  const input = byId("excelSourceType");
+
+  if (!input) return;
+
+  const owner = getSelectedProductOwner();
+
+  const configuredSource =
+    String(
+      owner?.excel_source_type ||
+      owner?.default_source_type ||
+      settingsMap.get("excel_source_type") ||
+      settingsMap.get("default_source_type") ||
       "sales_order_excel"
-    );
-  }
+    ).trim();
+
+  input.value = configuredSource;
+}
 
   function getPdfSourceType() {
     return (
@@ -585,6 +620,7 @@ async function updateImportTenantDisplay() {
 
 
 
+
 async function loadSettings() {
   assertImportAccess();
 
@@ -597,6 +633,7 @@ async function loadSettings() {
 
   if (error) throw error;
 
+  // Instellingen uitsluitend van de actieve tenant.
   settingsMap = new Map(
     (data || []).map(row => [
       row.setting_key,
@@ -610,20 +647,32 @@ async function loadSettings() {
     ownerProfiles = [];
   } else {
     try {
-      const parsed = typeof raw === "string"
-        ? JSON.parse(raw)
-        : raw;
+      const parsed =
+        typeof raw === "string"
+          ? JSON.parse(raw)
+          : raw;
 
       ownerProfiles = Array.isArray(parsed)
         ? parsed
         : [];
-    } catch {
+    } catch (error) {
+      console.error(
+        "Could not parse Product Owner profiles:",
+        error
+      );
+
       ownerProfiles = [];
     }
   }
 
+  // Product Owners van deze tenant tonen.
   await renderProductOwnerSelect();
-await updateImportTenantDisplay();
+
+  // Tenantnaam en Product Owner-samenvatting.
+  await updateImportTenantDisplay();
+
+  // Excel Source Type automatisch instellen.
+  updateExcelSourceTypeDisplay();
 }
 
 function getOwnerSelectValue(owner) {
@@ -5704,42 +5753,49 @@ function bindEvents() {
     "change",
     toggleManualUnknownOwnerFields
   );
+  
+// ============================================
+// MAIN PRODUCT OWNER SELECTION
+// ============================================
 
-  // ============================================
-  // MAIN PRODUCT OWNER SELECTION
-  // ============================================
+byId("productOwnerName")?.addEventListener(
+  "change",
+  async () => {
+    try {
+      assertImportAccess();
 
-  byId("productOwnerName")?.addEventListener(
-    "change",
-    async () => {
-      try {
-        assertImportAccess();
-
-        if (isProductOwnerAccount()) {
-          await renderProductOwnerSelect();
-          return;
-        }
-
-        fillManualOwnerFields();
-
-        await loadManualProducts();
-        await loadManualRetailers();
-
-        // Een bestaande preview mag niet aan een
-        // andere Product Owner gekoppeld worden.
-        clearPreview();
-
-      } catch (error) {
-        console.error(error);
-
-        showToast(
-          error.message ||
-          "Could not update Product Owner.",
-          "err"
-        );
+      if (isProductOwnerAccount()) {
+        await renderProductOwnerSelect();
+        updateExcelSourceTypeDisplay();
+        return;
       }
+
+      // Nieuwe Product Owner toepassen.
+      fillManualOwnerFields();
+
+      // Excel-importbron opnieuw bepalen.
+      updateExcelSourceTypeDisplay();
+
+      // Producten en retailers van deze
+      // Product Owner opnieuw laden.
+      await loadManualProducts();
+      await loadManualRetailers();
+
+      // Voorkom dat een bestaande preview
+      // aan een andere Product Owner hangt.
+      clearPreview();
+
+    } catch (error) {
+      console.error(error);
+
+      showToast(
+        error.message ||
+        "Could not update Product Owner.",
+        "err"
+      );
     }
-  );
+  }
+);
 
   // ============================================
   // PDF DROP ZONE
