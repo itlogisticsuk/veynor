@@ -7,11 +7,14 @@
 
   <link rel="stylesheet" href="/css/theme.css"/>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="/js/supabase.js"></script>
-  <script src="/js/page-guard.js" defer></script>
-  <script src="/js/layout.js" defer></script>
-  <script src="/js/settings.js" defer></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/supabase.js"></script>
+<script src="/js/page-guard.js" defer></script>
+<script src="/js/tenant-context.js" defer></script>
+<script src="/js/layout.js" defer></script>
+<script src="/js/settings.js" defer></script>
+
 
   <style>
     .settings-page{display:grid;gap:14px;align-content:start}
@@ -1288,21 +1291,145 @@
           <button id="btnSaveMain" class="btn btn-primary" type="button">Save Tenant Account</button>
         </div>
 
-        <div class="field-grid">
-          <div class="field"><label for="main_company_name">Tenant Company Name</label><input id="main_company_name" class="input"/></div>
-          <div class="field"><label for="main_display_name">Display Name</label><input id="main_display_name" class="input"/></div>
-          <div class="field"><label for="main_trading_name">Trading Name</label><input id="main_trading_name" class="input"/></div>
-          <div class="field"><label for="main_company_registration">Company Registration No.</label><input id="main_company_registration" class="input"/></div>
-          <div class="field"><label for="main_email">Default Email</label><input id="main_email" class="input"/></div>
-          <div class="field"><label for="main_phone">Phone</label><input id="main_phone" class="input"/></div>
-          <div class="field"><label for="main_vat">VAT Number</label><input id="main_vat" class="input"/></div>
-          <div class="field"><label for="main_country">Country</label><input id="main_country" class="input"/></div>
-          <div class="field" style="grid-column:span 2;"><label for="main_address">Trading Address</label><input id="main_address" class="input"/></div>
-          <div class="field" style="grid-column:span 2;"><label for="main_registered_address">Registered Office Address</label><input id="main_registered_address" class="input"/></div>
-          <div class="field"><label for="main_website">Website</label><input id="main_website" class="input"/></div>
-          <div class="field"><label for="main_default_currency">Default Currency</label><select id="main_default_currency" class="select"><option value="GBP">GBP</option><option value="EUR">EUR</option><option value="USD">USD</option></select></div>
-        </div>
-      </section>
+
+<div class="field-grid">
+
+  <div class="field">
+    <label for="main_company_name">
+      Tenant Company Name
+    </label>
+    <input
+      id="main_company_name"
+      class="input"
+      autocomplete="organization"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_display_name">
+      Display Name
+    </label>
+    <input
+      id="main_display_name"
+      class="input"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_trading_name">
+      Trading Name
+    </label>
+    <input
+      id="main_trading_name"
+      class="input"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_company_registration">
+      Company Registration No.
+    </label>
+    <input
+      id="main_company_registration"
+      class="input"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_email">
+      Default Email
+    </label>
+    <input
+      id="main_email"
+      class="input"
+      type="email"
+      autocomplete="email"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_phone">
+      Phone
+    </label>
+    <input
+      id="main_phone"
+      class="input"
+      type="tel"
+      autocomplete="tel"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_vat">
+      VAT Number
+    </label>
+    <input
+      id="main_vat"
+      class="input"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_country">
+      Country
+    </label>
+    <input
+      id="main_country"
+      class="input"
+      autocomplete="country-name"
+    />
+  </div>
+
+  <div class="field" style="grid-column:span 2;">
+    <label for="main_address">
+      Trading Address
+    </label>
+    <input
+      id="main_address"
+      class="input"
+      autocomplete="street-address"
+    />
+  </div>
+
+  <div class="field" style="grid-column:span 2;">
+    <label for="main_registered_address">
+      Registered Office Address
+    </label>
+    <input
+      id="main_registered_address"
+      class="input"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_website">
+      Website
+    </label>
+    <input
+      id="main_website"
+      class="input"
+      type="url"
+    />
+  </div>
+
+  <div class="field">
+    <label for="main_default_currency">
+      Default Currency
+    </label>
+    <select
+      id="main_default_currency"
+      class="select"
+    >
+      <option value="GBP">GBP</option>
+      <option value="EUR">EUR</option>
+      <option value="USD">USD</option>
+    </select>
+  </div>
+
+</div>
+
+</section>
+
 
       <section class="card settings-card">
         <div class="section-head">
@@ -1545,14 +1672,119 @@ Quality inspection charge per colli.
 
 </section>
     <section id="tab-transport" class="settings-panel">
-      <section class="summary-grid">
-        <div class="summary-box"><div class="summary-label">Labour</div><div id="summaryLabour" class="summary-value">£38.50 / hour</div><div class="summary-sub">Driver + labour</div></div>
-        <div class="summary-box"><div class="summary-label">Vehicle</div><div id="summaryVehicle" class="summary-value">£8.50 / hour</div><div class="summary-sub">Fuel + vehicle</div></div>
-        <div class="summary-box"><div class="summary-label">Average Speed</div><div id="summarySpeed" class="summary-value">50 km/h</div><div class="summary-sub">Default speed</div></div>
-        <div class="summary-box"><div class="summary-label">Stop Time</div><div id="summaryStopTime" class="summary-value">15 min</div><div class="summary-sub">Unload per stop</div></div>
-        <div class="summary-box"><div class="summary-label">Max Hours</div><div id="summaryMaxHours" class="summary-value">9.0 h</div><div class="summary-sub">Per route</div></div>
-        <div class="summary-box"><div class="summary-label">Active Vehicles</div><div id="summaryActiveVehicles" class="summary-value">0</div><div class="summary-sub">Visible in planner</div></div>
-      </section>
+
+<section class="summary-grid">
+
+  <!-- LABOUR COST -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Labour
+    </div>
+
+    <div
+      id="summaryLabour"
+      class="summary-value"
+    >
+      —
+    </div>
+
+    <div class="summary-sub">
+      Driver + labour
+    </div>
+  </div>
+
+  <!-- VEHICLE COST -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Vehicle
+    </div>
+
+    <div
+      id="summaryVehicle"
+      class="summary-value"
+    >
+      —
+    </div>
+
+    <div class="summary-sub">
+      Fuel + vehicle
+    </div>
+  </div>
+
+  <!-- AVERAGE SPEED -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Average Speed
+    </div>
+
+    <div
+      id="summarySpeed"
+      class="summary-value"
+    >
+      —
+    </div>
+
+    <div class="summary-sub">
+      Default speed
+    </div>
+  </div>
+
+  <!-- STOP TIME -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Stop Time
+    </div>
+
+    <div
+      id="summaryStopTime"
+      class="summary-value"
+    >
+      —
+    </div>
+
+    <div class="summary-sub">
+      Unload per stop
+    </div>
+  </div>
+
+  <!-- MAXIMUM ROUTE HOURS -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Max Hours
+    </div>
+
+    <div
+      id="summaryMaxHours"
+      class="summary-value"
+    >
+      —
+    </div>
+
+    <div class="summary-sub">
+      Per route
+    </div>
+  </div>
+
+  <!-- ACTIVE VEHICLES -->
+  <div class="summary-box">
+    <div class="summary-label">
+      Active Vehicles
+    </div>
+
+    <div
+      id="summaryActiveVehicles"
+      class="summary-value"
+    >
+      0
+    </div>
+
+    <div class="summary-sub">
+      Visible in planner
+    </div>
+  </div>
+
+</section>
+
 
 <!-- TRANSPORT SETTINGS HEADER -->
 <section class="card settings-card">
@@ -3740,41 +3972,106 @@ Quality inspection charge per colli.
         <div class="field-grid">
           <div class="field"><label for="doc_default_payment_terms">Default Payment Terms</label><input id="doc_default_payment_terms" class="input"/></div>
 
-<div class="field"><label for="doc_vat_rate">VAT Rate</label><input id="doc_vat_rate" class="input"/></div>
-
-<div class="field"><label for="doc_ack_lead_days">ACK Lead Days</label><input id="doc_ack_lead_days" class="input"/></div>
-
-<div class="field"><label for="doc_bucket">Document Bucket</label><input id="doc_bucket" class="input"/></div>
 
 <div class="field">
-  <label for="sales_order_prefix">Sales Order Prefix</label>
-  <input id="sales_order_prefix" class="input" value="SO-"/>
+  <label for="doc_vat_rate">
+    VAT Rate
+  </label>
+  <input
+    id="doc_vat_rate"
+    class="input"
+  />
 </div>
 
 <div class="field">
-  <label for="sales_order_padding">Sales Order Padding</label>
-  <input id="sales_order_padding" class="input" type="number" value="5"/>
+  <label for="doc_ack_lead_days">
+    ACK Lead Days
+  </label>
+  <input
+    id="doc_ack_lead_days"
+    class="input"
+  />
 </div>
 
 <div class="field">
-  <label for="next_sales_order_number">Next Sales Order Number</label>
-  <input id="next_sales_order_number" class="input" type="number" value="3246"/>
+  <label for="doc_bucket">
+    Document Bucket
+  </label>
+  <input
+    id="doc_bucket"
+    class="input"
+  />
 </div>
 
 <div class="field">
-  <label for="next_sales_order_preview">Next Generated SO Number</label>
-  <input id="next_sales_order_preview" class="input" readonly value="SO-03246"/>
+  <label for="sales_order_prefix">
+    Sales Order Prefix
+  </label>
+  <input
+    id="sales_order_prefix"
+    class="input"
+    placeholder="SO-"
+  />
 </div>
+
+
+
+<div class="field">
+  <label for="sales_order_padding">
+    Sales Order Padding
+  </label>
+  <input
+    id="sales_order_padding"
+    class="input"
+    type="number"
+    min="1"
+    max="12"
+    placeholder="5"
+  />
+</div>
+
+<div class="field">
+  <label for="next_sales_order_number">
+    Next Sales Order Number
+  </label>
+  <input
+    id="next_sales_order_number"
+    class="input"
+    type="number"
+    min="1"
+    placeholder="1"
+  />
+</div>
+
+<div class="field">
+  <label for="next_sales_order_preview">
+    Next Generated SO Number
+  </label>
+  <input
+    id="next_sales_order_preview"
+    class="input"
+    readonly
+    placeholder="SO-00001"
+  />
+</div>
+
 
 <div class="field" style="grid-column:1 / -1;">
-  <label for="doc_damage_note">Damage Note</label>
-  <textarea id="doc_damage_note" class="textarea"></textarea>
+  <label for="doc_damage_note">
+    Damage Note
+  </label>
+
+  <textarea
+    id="doc_damage_note"
+    class="textarea"
+  ></textarea>
 
   <span class="subline">
     This note will be displayed on both Order
     Acknowledgements (ACK) and Delivery Notes.
   </span>
 </div>
+
 
 </div>
       </section>
