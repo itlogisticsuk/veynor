@@ -306,21 +306,41 @@ function scopedQuery(query, tableHasCustomer = true) {
 }
 
 
+
 async function safeCount(table, filters = {}) {
   const client = ensureClient();
+
+  if (!profile?.company_id) {
+    throw new Error("Active tenant missing.");
+  }
+
+  if (table === "items") {
+    throw new Error(
+      "Use countWarehouseItemsSince() for warehouse item counts."
+    );
+  }
 
   let query = client
     .from(table)
     .select("id", { count: "exact", head: true });
 
-  query = scopedQuery(query, filters.customer !== false);
+  query = scopedQuery(
+    query,
+    filters.customer !== false
+  );
 
   if (filters.gte) {
-    query = query.gte(filters.gte.field, filters.gte.value);
+    query = query.gte(
+      filters.gte.field,
+      filters.gte.value
+    );
   }
 
   if (filters.lte) {
-    query = query.lte(filters.lte.field, filters.lte.value);
+    query = query.lte(
+      filters.lte.field,
+      filters.lte.value
+    );
   }
 
   const equalFilters = filters.eq
@@ -345,6 +365,92 @@ async function safeCount(table, filters = {}) {
 
   return count ?? 0;
 }
+
+
+async function countWarehouseItemsSince(lastSeen, type) {
+  const client = ensureClient();
+
+  if (!profile?.company_id) {
+    throw new Error("Active tenant missing.");
+  }
+
+  if (!["received", "outbound"].includes(type)) {
+    throw new Error("Invalid warehouse activity type.");
+  }
+
+  const customerId = !isTenantRole()
+    ? currentCustomerId()
+    : null;
+
+  if (!isTenantRole() && !customerId) {
+    throw new Error("Customer account is not configured.");
+  }
+
+  let productIds = null;
+
+  if (customerId) {
+    productIds = [];
+
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await client
+        .from("products")
+        .select("id")
+        .eq("company_id", profile.company_id)
+        .eq("customer_id", customerId)
+        .range(offset, offset + 999);
+
+      if (error) throw error;
+
+      productIds.push(...(data || []).map(p => p.id));
+
+      if (!data || data.length < 1000) break;
+    }
+
+    if (!productIds.length) return 0;
+  }
+
+  async function countBatch(ids) {
+    let query = client
+      .from("items")
+      .select("id", { count: "exact", head: true })
+      .eq("company_id", profile.company_id);
+
+    if (ids) {
+      query = query.in("product_id", ids);
+    }
+
+    if (type === "received") {
+      query = query.gte("received_at", lastSeen);
+    } else {
+      query = query.or(
+        `picked_at.gte.${lastSeen},` +
+        `loaded_at.gte.${lastSeen},` +
+        `shipped_at.gte.${lastSeen}`
+      );
+    }
+
+    const { count, error } = await query;
+
+    if (error) throw error;
+
+    return count ?? 0;
+  }
+
+  if (!productIds) {
+    return countBatch(null);
+  }
+
+  let total = 0;
+
+  for (let i = 0; i < productIds.length; i += 100) {
+    total += await countBatch(
+      productIds.slice(i, i + 100)
+    );
+  }
+
+  return total;
+}
+
 
   async function loadNotifications() {
     const client = ensureClient();
@@ -661,14 +767,18 @@ async function loadUsersAndCustomers() {
       String(m.sender_profile_id) !== String(profile.id)
     ).length;
 
-    const packagesReceived = await safeCount("items", {
-      gte: { field: "created_at", value: lastSeen }
-    });
 
-    const packagesBookedOut = await safeCount("items", {
-      gte: { field: "updated_at", value: lastSeen },
-      in: { field: "status", value: ["picked", "loaded", "shipped", "delivered", "outbound"] }
-    }).catch(() => 0);
+const packagesReceived =
+  await countWarehouseItemsSince(
+    lastSeen,
+    "received"
+  );
+
+const packagesBookedOut =
+  await countWarehouseItemsSince(
+    lastSeen,
+    "outbound"
+  );
 
     const rows = [
       {
