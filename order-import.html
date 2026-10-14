@@ -299,11 +299,10 @@
       </div>
     </section>
 
-    <section class="card import-card">
-  <div class="section-head">
-    <div>
- 
-    <section class="import-method-grid">
+  
+<section class="card import-card">
+  <section class="import-method-grid">
+
       <section class="card import-card">
         <div class="section-head">
           <div>
@@ -352,10 +351,25 @@
   </div>
 
 
-          <div class="field">
-            <label for="excelSourceType">Excel Source Type</label>
-            <input id="excelSourceType" class="input" value="bellstone_sales_order_excel"/>
-          </div>
+          
+<div class="field">
+  <label for="excelSourceType">
+    Excel Source Type
+  </label>
+
+  <input
+    id="excelSourceType"
+    class="input"
+    value="bellstone_sales_order_excel"
+  />
+
+  <span class="subline">
+    Identifies the Excel import format.
+    Additional import formats can be configured
+    for individual tenants.
+  </span>
+</div>
+
 
           <div class="actions-row">
             <button id="btnReadExcelFile" class="btn btn-primary" type="button">Read Excel</button>
@@ -396,10 +410,16 @@
           </div>
         </div>
 
-        <div class="note-box">
-          PDF bill-to details are not used as Sofa2U customer data.
-          Billing data comes from Settings &gt; Product Owners.
-        </div>
+        
+<div class="note-box">
+  Billing details are retrieved from the selected
+  Product Owner settings.
+
+  Billing information found in uploaded PDF documents
+  does not override the configured Product Owner
+  billing details.
+</div>
+
       </section>
     </section>
 
@@ -529,10 +549,22 @@
         </div>
       </div>
 
-      <textarea id="pdfExtractedText" class="input" style="min-height:260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;" readonly></textarea>
-    </section>
-  </main>
+     
+<textarea
+  id="pdfExtractedText"
+  class="input"
+  style="min-height:260px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;"
+  readonly
+></textarea>
+
+</section>
+
+<!-- End main import card -->
+</section>
+
+</main>
 </div>
+
 
 <div id="manualOrderModal" class="modal-backdrop">
   <section class="manual-modal">
