@@ -284,6 +284,7 @@ next_sales_order_number: "1",
   }
 
   
+
 async function getCompanyId() {
   const db = ensureClient();
 
@@ -295,95 +296,38 @@ async function getCompanyId() {
   const userId = authData?.user?.id;
 
   if (!userId) {
+    throw new Error("User is not authenticated.");
+  }
+
+  // Gebruik de centrale tenantcontext.
+  if (
+    !window.VeynorTenant ||
+    typeof window.VeynorTenant.getActiveCompanyId !== "function"
+  ) {
     throw new Error(
-      "You are not signed in. Please sign in again."
+      "Central tenant context is unavailable."
     );
   }
 
-  const { data: profiles, error: profileError } = await db
-    .from("user_profiles")
-    .select("id, auth_user_id, company_id, role, is_active")
-    .or(`id.eq.${userId},auth_user_id.eq.${userId}`)
-    .eq("is_active", true);
-
-  if (profileError) throw profileError;
-
-  if (!profiles || profiles.length !== 1) {
-    throw new Error(
-      "Exactly one active user profile is required."
-    );
-  }
-
-  const profile = profiles[0];
-  const role = normalize(profile.role);
-
-  const isSuperAdmin = [
-    "super_admin",
-    "superadmin",
-    "veynor_admin"
-  ].includes(role);
-
-  if (!isSuperAdmin && role !== "tenant_admin") {
-    throw new Error(
-      "You do not have permission to manage tenant settings."
-    );
-  }
-
-  let activeCompanyId = profile.company_id;
-
-  if (isSuperAdmin) {
-    const tenantContext = window.VeynorTenant;
-
-    if (
-      !tenantContext ||
-      typeof tenantContext.getActiveCompanyId !== "function"
-    ) {
-      throw new Error(
-        "Tenant context is unavailable. Reload the page."
-      );
-    }
-
-    activeCompanyId =
-      await tenantContext.getActiveCompanyId();
-
-    if (!activeCompanyId) {
-      throw new Error(
-        "Select a tenant before opening Settings."
-      );
-    }
-  }
+  const activeCompanyId =
+    await window.VeynorTenant.getActiveCompanyId();
 
   if (!activeCompanyId) {
-    throw new Error(
-      "No active company is assigned."
-    );
+    throw new Error("No active tenant selected.");
   }
 
-  // Prevent stale Settings data being saved to another tenant.
+  // Voorkom dat de Settings-pagina gegevens
+  // van twee tenants door elkaar gebruikt.
   if (
     companyId &&
     String(companyId) !== String(activeCompanyId)
   ) {
     throw new Error(
-      "Active tenant changed. Reload Settings before continuing."
+      "Tenant changed. Reload Settings."
     );
   }
 
-  const { data: company, error: companyError } = await db
-    .from("companies")
-    .select("id, is_active")
-    .eq("id", activeCompanyId)
-    .maybeSingle();
-
-  if (companyError) throw companyError;
-
-  if (!company || company.is_active !== true) {
-    throw new Error(
-      "The selected tenant does not exist or is inactive."
-    );
-  }
-
-  companyId = company.id;
+  companyId = activeCompanyId;
 
   return companyId;
 }
@@ -1150,34 +1094,74 @@ console.log({
   await loadVehicles();
 }
 
-  async function loadSettings() {
-    const db = ensureClient();
-    const cid = await getCompanyId();
+ 
+async function loadSettings() {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const { data, error } = await db
-      .from("settings")
-      .select("setting_key, setting_value")
-      .eq("company_id", cid);
+  // Haal uitsluitend instellingen van deze tenant op.
+  const { data, error } = await db
+    .from("settings")
+    .select("setting_key, setting_value")
+    .eq("company_id", cid);
 
-    if (error) throw error;
+  if (error) throw error;
 
-    settingsMap = new Map((data || []).map(row => [row.setting_key, row.setting_value ?? ""]));
-
-    collectAllSettingsFields().forEach(id => {
-      setFieldValue(id, getSetting(id, ""));
-    });
-
-    Object.keys(DEFAULT_SETTINGS).forEach(key => {
-      if (byId(key)) setFieldValue(key, getSetting(key, ""));
-    });
-
-    loadOwnerProfiles();
-    renderOwnerList();
-    renderOwnerEditor();
-   renderLogoPreview();
-updateSalesOrderPreview();
-updateSummary();
+  // Controleer of de tenant tijdens het laden
+  // niet is gewijzigd.
+  if (cid !== await getCompanyId()) {
+    throw new Error(
+      "Tenant changed during loading. Reload Settings."
+    );
   }
+
+  // Bouw de instellingen opnieuw op.
+  settingsMap = new Map(
+    (data || []).map(row => [
+      row.setting_key,
+      row.setting_value ?? ""
+    ])
+  );
+
+  // Reset tenantafhankelijke gegevens.
+  ownerProfiles = [];
+  selectedOwnerKey = "";
+  ownerProfilesLoaded = false;
+
+  vehiclesCache = [];
+  driverUsersCache = [];
+  portalUsersCache = [];
+
+  // Vul de bestaande invoervelden.
+  collectAllSettingsFields().forEach(id => {
+    setFieldValue(id, getSetting(id, ""));
+  });
+
+  Object.keys(DEFAULT_SETTINGS).forEach(key => {
+    if (byId(key)) {
+      setFieldValue(key, getSetting(key, ""));
+    }
+  });
+
+  // Laad de Product Owners van deze tenant.
+  loadOwnerProfiles();
+
+  // Werk de bestaande pagina bij.
+  renderOwnerList();
+  renderOwnerEditor();
+  renderLogoPreview();
+
+  updateSalesOrderPreview();
+  updateSummary();
+
+  console.log(
+    "Settings loaded for tenant:",
+    cid,
+    "Settings count:",
+    settingsMap.size
+  );
+}
+
 
 async function saveSettingsByIds(
   ids,
@@ -1191,10 +1175,14 @@ async function saveSettingsByIds(
     .filter(id => isGeneralSettingsField(byId(id)));
 
   if (!uniqueIds.length) {
-    showToast("No matching settings found to save.", "err");
+    showToast(
+      "No matching settings found to save.",
+      "err"
+    );
     return;
   }
 
+  // Iedere instelling krijgt de actieve company_id.
   const rows = uniqueIds.map(id => ({
     company_id: cid,
     setting_key: id,
@@ -1209,31 +1197,38 @@ async function saveSettingsByIds(
 
   if (error) throw error;
 
-  // Werk de lokale waarden pas bij na succesvol opslaan.
+  // Werk de lokale gegevens bij.
   rows.forEach(row => {
-    settingsMap.set(row.setting_key, row.setting_value);
+    settingsMap.set(
+      row.setting_key,
+      row.setting_value
+    );
   });
 
   showToast(successMessage, "ok");
   updateSummary();
 }
 
-  async function saveSettingValue(key, value) {
-    const db = ensureClient();
-    const cid = await getCompanyId();
+async function saveSettingValue(key, value) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    const { error } = await db
-      .from("settings")
-      .upsert({
-        company_id: cid,
-        setting_key: key,
-        setting_value: String(value ?? "")
-      }, { onConflict: "company_id,setting_key" });
+  const settingValue = String(value ?? "");
 
-    if (error) throw error;
+  const { error } = await db
+    .from("settings")
+    .upsert({
+      company_id: cid,
+      setting_key: key,
+      setting_value: settingValue
+    }, {
+      onConflict: "company_id,setting_key"
+    });
 
-    settingsMap.set(key, String(value ?? ""));
-  }
+  if (error) throw error;
+
+  settingsMap.set(key, settingValue);
+}
 
   function getFileExtension(file) {
     const nameExt = String(file?.name || "").split(".").pop().toLowerCase();
@@ -2515,24 +2510,47 @@ use_in_planning: active
     };
   }
 
-  async function saveVehicle(id) {
-    const db = ensureClient();
-    const cid = await getCompanyId();
-    const payload = readVehiclePayload(id);
+  
+async function saveVehicle(id) {
+  const db = ensureClient();
+  const cid = await getCompanyId();
 
-    if (!payload?.name) throw new Error("Vehicle name is required.");
-
-    const { error } = await db
-      .from("vehicles")
-      .upsert({ ...payload, company_id: cid });
-
-    if (error) throw error;
-
-    await loadVehicles();
-    await loadDriverUsers();
-
-    showToast("Vehicle saved.", "ok");
+  if (!id) {
+    throw new Error("Vehicle ID is required.");
   }
+
+  const payload = readVehiclePayload(id);
+
+  if (!payload?.name) {
+    throw new Error("Vehicle name is required.");
+  }
+
+  // ID wordt gebruikt om de bestaande rij te vinden.
+  // company_id bepaalt bij welke tenant deze hoort.
+  const { data, error } = await db
+    .from("vehicles")
+    .update({
+      ...payload,
+      company_id: cid
+    })
+    .eq("id", id)
+    .eq("company_id", cid)
+    .select("id");
+
+  if (error) throw error;
+
+  if (!data || data.length !== 1) {
+    throw new Error(
+      "Vehicle could not be found in the active tenant."
+    );
+  }
+
+  await loadVehicles();
+  await loadDriverUsers();
+
+  showToast("Vehicle saved.", "ok");
+}
+
 
   async function setVehicleActive(id, active) {
     const db = ensureClient();
