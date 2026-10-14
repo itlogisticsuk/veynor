@@ -2605,90 +2605,99 @@ const storagePath = `${companyId}/${order.id}/${fileName}`;
     }
   }
 
-  async function generate(order, client, companyId) {
-    if (!order?.id) throw new Error("Cannot generate ACK: order is missing.");
-    if (!client) throw new Error("Cannot generate ACK: Supabase client is missing.");
-    if (!companyId) throw new Error("Cannot generate ACK: companyId is missing.");
 
-    const freshOrder = await loadFreshOrderForAck(client, companyId, order.id);
-    const workingOrder = freshOrder || order;
+async function generate(order, client, companyId) {
+  if (!order?.id) throw new Error("Cannot generate ACK: order is missing.");
+  if (!client) throw new Error("Supabase client is missing.");
+  if (!companyId) throw new Error("Company ID is missing.");
 
-    const ctx = await loadCompanySettings(client, companyId);
-ctx.productOwner = await loadProductOwnerProfile(
-  client,
-  workingOrder.customer_id,
-  workingOrder,
-  ctx.settings || {}
-);
+  const freshOrder = await loadFreshOrderForAck(client, companyId, order.id);
+  const workingOrder = freshOrder || order;
 
-    const blob = await createPdfBlob(workingOrder, ctx);
-    const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
+  const ctx = await loadCompanySettings(client, companyId);
 
-    if (!uploaded.fileUrl || !uploaded.storagePath) {
-      throw new Error("ACK PDF was uploaded, but no file URL/storage path was returned.");
-    }
-
-    await upsertDocumentRecord(client, companyId, workingOrder, uploaded);
-
-    await createActivity(
-      client,
-      companyId,
-      workingOrder,
-      "ACK document generated and uploaded"
-    );
-
-await client
-  .from("orders")
-  .update({
-    last_activity_at: new Date().toISOString()
-  })
-  .eq("id", workingOrder.id);
-
-//-----------------------------------------------------
-// Message Center Notification
-//-----------------------------------------------------
-
-try {
-
-  await client
-    .from("system_notifications")
-    .insert({
-
-      company_id: companyId,
-      customer_id: workingOrder.customer_id,
-
-      recipient_role: null,
-
-      notification_type: "ack_generated",
-
-      title: "New Acknowledgement",
-
- message:
-  `Acknowledgement PDF is now available for order ${workingOrder.order_number || "Unknown"}.`,
-
-      severity: "info",
-
-      entity_type: "order",
-      entity_id: workingOrder.id,
-
-      action_url: uploaded.fileUrl,
-
-      is_read: false,
-      popup_shown: false
-
-    });
-
-} catch (error) {
-
-  console.warn(
-    "ACK notification could not be created:",
-    error.message
+  ctx.productOwner = await loadProductOwnerProfile(
+    client,
+    workingOrder.customer_id,
+    workingOrder,
+    ctx.settings || {}
   );
 
-}
-console.log("ACK notification should be created now");
-return uploaded;
+  const blob = await createPdfBlob(workingOrder, ctx);
+  const uploaded = await uploadPdf(client, companyId, workingOrder, blob);
+
+  if (!uploaded.fileUrl || !uploaded.storagePath) {
+    throw new Error("ACK upload failed.");
   }
+
+  await upsertDocumentRecord(client, companyId, workingOrder, uploaded);
+
+  await createActivity(
+    client,
+    companyId,
+    workingOrder,
+    "ACK document generated and uploaded"
+  );
+
+  const { error: activityError } = await client
+    .from("orders")
+    .update({ last_activity_at: new Date().toISOString() })
+    .eq("company_id", companyId)
+    .eq("id", workingOrder.id);
+
+  if (activityError) {
+    console.warn("ACK activity timestamp:", activityError.message);
+  }
+
+  // Maximaal één actieve ACK-notificatie per order.
+  try {
+    const { data: existing, error: lookupError } = await client
+      .from("system_notifications")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("customer_id", workingOrder.customer_id)
+      .eq("notification_type", "ack_generated")
+      .eq("entity_type", "order")
+      .eq("entity_id", workingOrder.id)
+      .limit(1);
+
+    if (lookupError) throw lookupError;
+
+    if (existing?.length) {
+      const { error } = await client
+        .from("system_notifications")
+        .update({
+          action_url: uploaded.fileUrl
+        })
+        .eq("id", existing[0].id);
+
+      if (error) throw error;
+    } else {
+      const { error } = await client
+        .from("system_notifications")
+        .insert({
+          company_id: companyId,
+          customer_id: workingOrder.customer_id,
+          recipient_role: null,
+          notification_type: "ack_generated",
+          title: "New Acknowledgement",
+          message: `Acknowledgement PDF is now available for order ${workingOrder.order_number || "Unknown"}.`,
+          severity: "info",
+          entity_type: "order",
+          entity_id: workingOrder.id,
+          action_url: uploaded.fileUrl,
+          is_read: false,
+          popup_shown: false
+        });
+
+      if (error) throw error;
+    }
+  } catch (error) {
+    console.warn("ACK notification:", error.message);
+  }
+
+  return uploaded;
+}
 
   window.AcknowledgementGenerator = {
     generate
