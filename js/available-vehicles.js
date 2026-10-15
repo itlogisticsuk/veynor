@@ -2312,9 +2312,8 @@ function isWarehousePickupVehicle(vehicle) {
 }
 
 
+
 function getWarehousePickupOrderDate(order) {
-  // De oorspronkelijk ingestelde pickupdatum heeft voorrang.
-  // Een daadwerkelijke afleverdatum mag deze niet vervangen.
   return String(
     order?.planned_route_date ||
     order?.expected_delivery_date ||
@@ -2323,57 +2322,36 @@ function getWarehousePickupOrderDate(order) {
 }
 
 
-
-
-
 function getWarehousePickupOrders(vehicle) {
   if (!vehicle?.id) return [];
 
-  // Lees de actuele datum van de hoofdplanner.
   const selectedDate = String(
     window.VeynorPlannerData?.selectedPlanningDate ||
     selectedPlanningDate ||
     ""
   ).slice(0, 10);
 
-  // Zonder geselecteerde datum geen pickup-orders tonen.
   if (!selectedDate) return [];
 
-  return allOrders
-    .filter(order => {
-      if (
-        normalize(order.transport_type) !==
-        "warehouse_pickup"
-      ) {
-        return false;
-      }
+  return allOrders.filter(order => {
+    if (
+      normalize(order.transport_type) !==
+      "warehouse_pickup"
+    ) {
+      return false;
+    }
 
-      if (
-        String(order.carrier_vehicle_id || "") !==
-        String(vehicle.id)
-      ) {
-        return false;
-      }
+    if (order.route_id) return false;
 
-      if (order.route_id) return false;
+    if (
+      String(order.carrier_vehicle_id || "") !==
+      String(vehicle.id)
+    ) {
+      return false;
+    }
 
-      const pickupDate = String(
-        order.planned_route_date ||
-        order.expected_delivery_date ||
-        ""
-      ).slice(0, 10);
-
-      // Exacte datumvergelijking.
-      // Status maakt niet uit: ook delivered blijft zichtbaar.
-      return pickupDate === selectedDate;
-    })
-    .sort((a, b) =>
-      String(a.order_number || "").localeCompare(
-        String(b.order_number || ""),
-        "en",
-        { numeric: true }
-      )
-    );
+    return getWarehousePickupOrderDate(order) === selectedDate;
+  });
 }
 
 function renderCarrierOrders(vehicle) {
