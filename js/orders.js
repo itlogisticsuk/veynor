@@ -2569,6 +2569,40 @@ function notifyDataChanged() {
 }
 
 
+function notifySelectionChanged() {
+  const detail = {
+    selectedOrderIds: [...selectedOrderIds],
+    selectedVehicleId: selectedVehicleId || "",
+    selectedDriverId: selectedDriverId || "",
+    selectedPlanningDate: selectedPlanningDate || todayIso(),
+    plannedStartTime: getManualRouteStartTime(),
+    finalizeEta: getManualFinalizeEta()
+  };
+
+  // Houd de gedeelde plannergegevens actueel.
+  if (window.VeynorPlannerData) {
+    window.VeynorPlannerData.selectedOrderIds =
+      detail.selectedOrderIds;
+
+    window.VeynorPlannerData.selectedVehicleId =
+      detail.selectedVehicleId;
+
+    window.VeynorPlannerData.selectedDriverId =
+      detail.selectedDriverId;
+
+    window.VeynorPlannerData.selectedPlanningDate =
+      detail.selectedPlanningDate;
+  }
+
+  // Informeer de andere plannermodules.
+  window.dispatchEvent(
+    new CustomEvent("veynor:planner-selection-changed", {
+      detail
+    })
+  );
+}
+
+
 async function refreshAll() {
   await loadDepotSettings();
   await loadProductOwnerProfiles();
