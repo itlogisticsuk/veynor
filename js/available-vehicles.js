@@ -2316,22 +2316,89 @@ function getWarehousePickupOrderDate(order) {
   );
 }
 
-function getWarehousePickupOrders(vehicle) {
-  return allOrders.filter(order => {
-    const pickupDate =
-      getWarehousePickupOrderDate(order);
 
-    return (
-      normalize(order.transport_type) === "warehouse_pickup" &&
-      !order.route_id &&
-      String(order.carrier_vehicle_id || "") === String(vehicle.id) &&
-      (
-        !selectedPlanningDate ||
-        !pickupDate ||
-        pickupDate === selectedPlanningDate
-      )
-    );
-  });
+function getWarehousePickupOrders(vehicle) {
+  if (!vehicle?.id) {
+    return [];
+  }
+
+  const closedStatuses = new Set([
+    "delivered",
+    "completed",
+    "closed",
+    "cancelled",
+    "canceled",
+    "picked_up"
+  ]);
+
+  return allOrders
+    .filter(order => {
+      // Alleen warehouse pickups.
+      if (
+        normalize(order.transport_type) !==
+        "warehouse_pickup"
+      ) {
+        return false;
+      }
+
+      // Warehouse pickups hebben geen normale route.
+      if (order.route_id) {
+        return false;
+      }
+
+      // Alleen de toegewezen pickup-resource.
+      if (
+        String(order.carrier_vehicle_id || "") !==
+        String(vehicle.id)
+      ) {
+        return false;
+      }
+
+      // Afgehandelde en geannuleerde orders uitsluiten.
+      const statuses = [
+        order.status,
+        order.transport_status,
+        order.overall_status
+      ].map(normalize);
+
+      if (
+        statuses.some(status =>
+          closedStatuses.has(status)
+        )
+      ) {
+        return false;
+      }
+
+      // Geen datumfilter:
+      // openstaande pickups uit het verleden,
+      // vandaag en de toekomst blijven zichtbaar.
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = String(
+        getWarehousePickupOrderDate(a) || ""
+      ).slice(0, 10);
+
+      const dateB = String(
+        getWarehousePickupOrderDate(b) || ""
+      ).slice(0, 10);
+
+      // Orders zonder datum onderaan.
+      if (!dateA && !dateB) {
+        return String(a.order_number || "")
+          .localeCompare(
+            String(b.order_number || ""),
+            "en",
+            { numeric: true }
+          );
+      }
+
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+
+      // Oudste pickupdatum eerst.
+      return dateA.localeCompare(dateB);
+    });
 }
 
 function renderCarrierOrders(vehicle) {
@@ -2597,7 +2664,7 @@ function renderWarehousePickupOrders(vehicle) {
   if (!orders.length) {
     return `
       <div class="av-empty">
-        No orders assigned to warehouse pickup for this planning date.
+       No outstanding warehouse pickup orders.
       </div>
     `;
   }
