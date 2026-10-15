@@ -2452,20 +2452,121 @@ window.driverLiveLocationsMapRows =
   }
 }
 
-function notifyDataChanged() {
-function notifySelectionChanged() {
-    window.VeynorPlannerSelection = {
-      selectedOrderIds: [...selectedOrderIds],
-      selectedVehicleId,
-      selectedDriverId,
-      selectedPlanningDate,
-      selectedOrders: [...selectedOrderIds].map(id => getOrderById(id)).filter(Boolean)
-    };
 
-    window.dispatchEvent(new CustomEvent("veynor:planner-selection-changed", {
-      detail: window.VeynorPlannerSelection
-    }));
+function notifyDataChanged() {
+  const today = todayIso();
+
+  // Alleen actuele en toekomstige routes op de kaart.
+  const futureRoutes = allRoutes.filter(route => {
+    const routeDate = String(
+      getRouteDateValue(route) || ""
+    ).slice(0, 10);
+
+    return routeDate && routeDate >= today;
+  });
+
+  const futureRouteIds = new Set(
+    futureRoutes.map(route => String(route.id))
+  );
+
+  const futureStops = allStops.filter(stop =>
+    futureRouteIds.has(String(stop.route_id))
+  );
+
+  // Historische routes verbergen op de kaart.
+  // Orders zonder route blijven zichtbaar.
+  const mapOrders = filteredOrders.filter(order => {
+    if (!order.route_id) return true;
+
+    return futureRouteIds.has(String(order.route_id));
+  });
+
+  // Bestaande kaartgegevens beschikbaar stellen.
+  window.ordersMapRows = mapOrders;
+  window.allRouteStopsMapRows = futureStops;
+  window.visibleRoutesMapRows = futureRoutes;
+  window.activeVehiclesMapRows = activeVehicles;
+  window.driverLiveLocationsMapRows = driverLiveLocations;
+  window.selectedOrderIdsForMap = [
+    ...selectedOrderIds
+  ];
+
+  // Warehouse pickups blijven zichtbaar ongeacht datum.
+  // Afgehandelde en geannuleerde pickups worden uitgesloten.
+  const closedStatuses = new Set([
+    "delivered",
+    "completed",
+    "closed",
+    "cancelled",
+    "canceled",
+    "picked_up"
+  ]);
+
+  function isVisiblePlanningOrder(order) {
+    const transportType = normalize(
+      order.transport_type
+    );
+
+    if (transportType === "warehouse_pickup") {
+      const statuses = [
+        order.status,
+        order.transport_status,
+        order.overall_status
+      ].map(normalize);
+
+      return !statuses.some(status =>
+        closedStatuses.has(status)
+      );
+    }
+
+    // Bestaande datumfilter voor charterorders.
+    if (transportType === "charter") {
+      const planningDate = String(
+        order.planned_route_date ||
+        order.fds_collection_date ||
+        order.expected_delivery_date ||
+        ""
+      ).slice(0, 10);
+
+      return !planningDate || planningDate >= today;
+    }
+
+    // Overige orders blijven beschikbaar.
+    return true;
   }
+
+  const planningOrders = allOrders.filter(
+    isVisiblePlanningOrder
+  );
+
+  const filteredPlanningOrders = filteredOrders.filter(
+    isVisiblePlanningOrder
+  );
+
+  // Gegevens doorgeven aan de overige plannermodules.
+  window.VeynorPlannerData = {
+    companyId,
+    allOrders: planningOrders,
+    filteredOrders: filteredPlanningOrders,
+    allRoutes,
+    allStops,
+    futureRoutes,
+    futureStops,
+    activeVehicles,
+    driverUsers,
+    driverLiveLocations,
+    selectedOrderIds: [...selectedOrderIds],
+    selectedVehicleId,
+    selectedDriverId,
+    selectedPlanningDate
+  };
+
+  window.dispatchEvent(
+    new CustomEvent("veynor:planner-data-changed", {
+      detail: window.VeynorPlannerData
+    })
+  );
+}
 
 
 async function refreshAll() {
