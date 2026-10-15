@@ -15482,53 +15482,6 @@ body.querySelectorAll("[data-remove-edit-line]").forEach(button => {
   body.querySelectorAll("tr[data-edit-line-id]").forEach(refreshEditProductLineRow);
 }
 
-async function openGenericActionModal(orderId, action) {
-  ensurePageStyles();
-
-  const order = getOrderById(orderId);
-
-  if (!order) {
-    showToast("Order not found.", "err");
-    return;
-  }
-
-  byId("genericActionOrderId").value = order.id;
-  byId("genericActionType").value = action;
-
-  const titleMap = {
-    copy_order: "Create Copy Order",
-    credit_order: "Create Credit Order",
-    change_status: "Change Status",
-    view_activity: "View Activity",
-    warehouse_events: "Warehouse Events",
-    portal_events: "Portal Events"
-  };
-
-  setText("genericActionTitle", titleMap[action] || "Order action");
-
-  setText(
-    "genericActionSub",
-    `${order.order_number || "Order"} · ${order.retailer_name || ""} · ${order.delivery_postcode || ""}`
-  );
-
-  const body = byId("genericActionBody");
-  const saveBtn = byId("genericActionSaveBtn");
-
-  if (!body || !saveBtn) return;
-
-  saveBtn.style.display = "none";
-
-  body.innerHTML = `
-    <h3>${escapeHtml(titleMap[action] || "Order action")}</h3>
-    <p class="occ-help">
-      This tool is temporarily disabled. The order itself is not changed.
-    </p>
-  `;
-
-  byId("occGenericActionModal")?.classList.add("open");
-  byId("occGenericActionModal")?.setAttribute("aria-hidden", "false");
-}
-
 function closeGenericActionModal() {
   byId("occGenericActionModal")?.classList.remove("open");
   byId("occGenericActionModal")?.setAttribute("aria-hidden", "true");
