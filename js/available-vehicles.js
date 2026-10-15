@@ -2307,33 +2307,32 @@ function isWarehousePickupVehicle(vehicle) {
   );
 }
 
+
 function getWarehousePickupOrderDate(order) {
-  return (
-    order.expected_delivery_date ||
-    order.confirmed_delivery_date ||
-    order.planned_route_date ||
+  // De oorspronkelijk ingestelde pickupdatum heeft voorrang.
+  // Een daadwerkelijke afleverdatum mag deze niet vervangen.
+  return String(
+    order?.planned_route_date ||
+    order?.expected_delivery_date ||
     ""
-  );
+  ).slice(0, 10);
 }
 
 
-function getWarehousePickupOrders(vehicle) {
-  if (!vehicle?.id) {
-    return [];
-  }
 
-  const closedStatuses = new Set([
-    "delivered",
-    "completed",
-    "closed",
-    "cancelled",
-    "canceled",
-    "picked_up"
-  ]);
+
+function getWarehousePickupOrders(vehicle) {
+  if (!vehicle?.id) return [];
+
+  const selectedDate = String(
+    selectedPlanningDate || ""
+  ).slice(0, 10);
+
+  if (!selectedDate) return [];
 
   return allOrders
     .filter(order => {
-      // Alleen warehouse pickups.
+      // Alleen warehouse pickup-orders.
       if (
         normalize(order.transport_type) !==
         "warehouse_pickup"
@@ -2341,12 +2340,7 @@ function getWarehousePickupOrders(vehicle) {
         return false;
       }
 
-      // Warehouse pickups hebben geen normale route.
-      if (order.route_id) {
-        return false;
-      }
-
-      // Alleen de toegewezen pickup-resource.
+      // Alleen de juiste pickup-resource.
       if (
         String(order.carrier_vehicle_id || "") !==
         String(vehicle.id)
@@ -2354,51 +2348,22 @@ function getWarehousePickupOrders(vehicle) {
         return false;
       }
 
-      // Afgehandelde en geannuleerde orders uitsluiten.
-      const statuses = [
-        order.status,
-        order.transport_status,
-        order.overall_status
-      ].map(normalize);
+      // Warehouse pickups hebben geen normale route.
+      if (order.route_id) return false;
 
-      if (
-        statuses.some(status =>
-          closedStatuses.has(status)
-        )
-      ) {
-        return false;
-      }
+      // Alleen orders van de geselecteerde datum.
+      const pickupDate =
+        getWarehousePickupOrderDate(order);
 
-      // Geen datumfilter:
-      // openstaande pickups uit het verleden,
-      // vandaag en de toekomst blijven zichtbaar.
-      return true;
+      return pickupDate === selectedDate;
     })
-    .sort((a, b) => {
-      const dateA = String(
-        getWarehousePickupOrderDate(a) || ""
-      ).slice(0, 10);
-
-      const dateB = String(
-        getWarehousePickupOrderDate(b) || ""
-      ).slice(0, 10);
-
-      // Orders zonder datum onderaan.
-      if (!dateA && !dateB) {
-        return String(a.order_number || "")
-          .localeCompare(
-            String(b.order_number || ""),
-            "en",
-            { numeric: true }
-          );
-      }
-
-      if (!dateA) return 1;
-      if (!dateB) return -1;
-
-      // Oudste pickupdatum eerst.
-      return dateA.localeCompare(dateB);
-    });
+    .sort((a, b) =>
+      String(a.order_number || "").localeCompare(
+        String(b.order_number || ""),
+        "en",
+        { numeric: true }
+      )
+    );
 }
 
 function renderCarrierOrders(vehicle) {

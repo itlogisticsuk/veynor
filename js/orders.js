@@ -2507,18 +2507,12 @@ function notifyDataChanged() {
       order.transport_type
     );
 
-    if (transportType === "warehouse_pickup") {
-      const statuses = [
-        order.status,
-        order.transport_status,
-        order.overall_status
-      ].map(normalize);
-
-      return !statuses.some(status =>
-        closedStatuses.has(status)
-      );
-    }
-
+if (transportType === "warehouse_pickup") {
+  // Alle warehouse pickups blijven beschikbaar,
+  // ook wanneer ze delivered of closed zijn.
+  // De juiste datum wordt gefilterd in available-vehicles.js.
+  return true;
+}
     // Bestaande datumfilter voor charterorders.
     if (transportType === "charter") {
       const planningDate = String(
