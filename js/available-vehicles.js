@@ -2177,8 +2177,12 @@ function getRouteWarehouseCost(route) {
       ? src.selectedOrderIds.map(String)
       : Array.from(src.selectedOrderIds || []).map(String);
 
-    selectedPlanningDate = src.selectedPlanningDate || selectedPlanningDate || new Date().toISOString().slice(0, 10);
-  }
+selectedPlanningDate = String(
+  src.selectedPlanningDate ||
+  window.VeynorPlannerData?.selectedPlanningDate ||
+  selectedPlanningDate ||
+  ""
+).slice(0, 10);  }
 
 async function loadSignedFdsNoticeStatus() {
   const db = ensureClient();
@@ -2321,18 +2325,22 @@ function getWarehousePickupOrderDate(order) {
 
 
 
+
 function getWarehousePickupOrders(vehicle) {
   if (!vehicle?.id) return [];
 
+  // Lees de actuele datum van de hoofdplanner.
   const selectedDate = String(
-    selectedPlanningDate || ""
+    window.VeynorPlannerData?.selectedPlanningDate ||
+    selectedPlanningDate ||
+    ""
   ).slice(0, 10);
 
+  // Zonder geselecteerde datum geen pickup-orders tonen.
   if (!selectedDate) return [];
 
   return allOrders
     .filter(order => {
-      // Alleen warehouse pickup-orders.
       if (
         normalize(order.transport_type) !==
         "warehouse_pickup"
@@ -2340,7 +2348,6 @@ function getWarehousePickupOrders(vehicle) {
         return false;
       }
 
-      // Alleen de juiste pickup-resource.
       if (
         String(order.carrier_vehicle_id || "") !==
         String(vehicle.id)
@@ -2348,13 +2355,16 @@ function getWarehousePickupOrders(vehicle) {
         return false;
       }
 
-      // Warehouse pickups hebben geen normale route.
       if (order.route_id) return false;
 
-      // Alleen orders van de geselecteerde datum.
-      const pickupDate =
-        getWarehousePickupOrderDate(order);
+      const pickupDate = String(
+        order.planned_route_date ||
+        order.expected_delivery_date ||
+        ""
+      ).slice(0, 10);
 
+      // Exacte datumvergelijking.
+      // Status maakt niet uit: ook delivered blijft zichtbaar.
       return pickupDate === selectedDate;
     })
     .sort((a, b) =>
