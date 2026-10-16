@@ -2474,6 +2474,16 @@ function renderCarrierOrders(vehicle) {
           </button>
         </div>
 
+
+<button
+  class="av-btn av-carrier-document-btn"
+  type="button"
+  data-picking-carrier="${escapeHtml(vehicle.id)}"
+>
+  Generate Picking List
+</button>
+
+
         ${
           hasSignedNotice
             ? `
@@ -2682,10 +2692,10 @@ function renderWarehousePickupOrders(vehicle) {
           </div>
         </div>
 
-        <div
-          class="av-carrier-documents-grid"
-          style="grid-template-columns:repeat(2,minmax(0,1fr));"
-        >
+<div
+  class="av-carrier-documents-grid"
+  style="grid-template-columns:repeat(3,minmax(0,1fr));"
+>
           <button
             class="av-btn av-carrier-document-btn primary-document"
             type="button"
@@ -2701,6 +2711,15 @@ function renderWarehousePickupOrders(vehicle) {
           >
             Generate Labels
           </button>
+
+<button
+  class="av-btn av-carrier-document-btn"
+  type="button"
+  data-picking-pickup="${escapeHtml(vehicle.id)}"
+>
+  Generate Picking List
+</button>
+
         </div>
       </div>
 
@@ -3342,7 +3361,7 @@ function renderOwnRouteDocuments(route) {
 
       <div
         class="av-carrier-documents-grid"
-        style="grid-template-columns:repeat(3,minmax(0,1fr));"
+        style="grid-template-columns:repeat(4,minmax(0,1fr));"
       >
 
         <button
@@ -3371,6 +3390,17 @@ function renderOwnRouteDocuments(route) {
         >
           Download Route Sheet
         </button>
+
+
+<button
+  class="av-btn av-carrier-document-btn"
+  type="button"
+  data-picking-route="${escapeHtml(routeId)}"
+  ${orderCount ? "" : "disabled"}
+>
+  Generate Picking List
+</button>
+
 
       </div>
 
@@ -3730,6 +3760,103 @@ ${
   `;
 }
 
+
+function bindPickingListButtons(mount) {
+  const bindings = [
+    {
+      selector: "[data-picking-carrier]",
+      attribute: "pickingCarrier",
+      type: "carrier"
+    },
+    {
+      selector: "[data-picking-pickup]",
+      attribute: "pickingPickup",
+      type: "warehouse_pickup"
+    },
+    {
+      selector: "[data-picking-route]",
+      attribute: "pickingRoute",
+      type: "route"
+    }
+  ];
+
+  for (const binding of bindings) {
+    mount.querySelectorAll(binding.selector).forEach(button => {
+      button.addEventListener("click", () => {
+        try {
+          const ui = window.VeynorPickingListUI;
+
+          if (!ui) {
+            throw new Error(
+              "Picking List UI is not loaded."
+            );
+          }
+
+          const id = String(
+            button.dataset[binding.attribute] || ""
+          );
+
+          if (!id) {
+            throw new Error("Picking source ID is missing.");
+          }
+
+          if (binding.type === "route") {
+            const route = allRoutes.find(
+              row => String(row.id) === id
+            );
+
+            if (!route) {
+              throw new Error("Route not found.");
+            }
+
+            ui.openForRoute(
+              route,
+              getOrdersForRoute(id)
+            );
+
+            return;
+          }
+
+          const vehicle = activeVehicles.find(
+            row => String(row.id) === id
+          );
+
+          if (!vehicle) {
+            throw new Error(
+              "Carrier or pickup resource not found."
+            );
+          }
+
+          if (binding.type === "carrier") {
+            ui.openForCarrier(
+              vehicle,
+              getCarrierOrders(vehicle)
+            );
+          } else {
+            ui.openForWarehousePickup(
+              vehicle,
+              getWarehousePickupOrders(vehicle)
+            );
+          }
+
+        } catch (error) {
+          console.error(
+            "[AvailableVehicles] Picking List:",
+            error
+          );
+
+          showToast(
+            error?.message ||
+              "Could not open Picking List Generator.",
+            "err"
+          );
+        }
+      });
+    });
+  }
+}
+
+
 function bindEvents(mount) {
 
   mount
@@ -4072,7 +4199,7 @@ mount
       }
     );
   });
-
+bindPickingListButtons(mount);
 
 }
 

@@ -600,15 +600,44 @@
     "rejected"
   ]);
 
-  function isActiveAllocation(allocation) {
-    if (!allocation?.id) {
-      return false;
-    }
+function isActiveAllocation(allocation) {
+  if (!allocation?.id) return false;
 
-    return !EXCLUDED_ALLOCATION_STATUSES.has(
-      normalize(allocation.allocation_status)
-    );
+  const status = normalize(
+    allocation.allocation_status
+  );
+
+  const activeStatuses = new Set([
+    "allocated",
+    "reserved"
+  ]);
+
+  const excludedStatuses = new Set([
+    "cancelled",
+    "canceled",
+    "released",
+    "rejected",
+    "deallocated",
+    "unallocated",
+    "shipped",
+    "delivered",
+    "completed"
+  ]);
+
+  if (excludedStatuses.has(status)) {
+    return false;
   }
+
+  if (activeStatuses.has(status)) {
+    return true;
+  }
+
+  throw new Error(
+    `Unknown allocation status "${status || "(empty)"}" ` +
+    `for allocation ${allocation.id}. ` +
+    "Verify the status before generating a picking list."
+  );
+}
 
   function isValidPhysicalItem(item) {
     return Boolean(
@@ -908,67 +937,66 @@
   // 14. LOAD SELECTED ORDERS
   // ==========================================================
 
-  async function fetchPickingOrders(
-    client,
+  
+async function fetchPickingOrders(
+  client,
+  companyId,
+  orderIds
+) {
+  const orders = await fetchInBatches(
+    orderIds,
+    CONFIG.queryBatchSize,
+
+    batch => client
+      .from("orders")
+      .select(`
+        id,
+        company_id,
+        customer_id,
+        order_number,
+        external_reference,
+        status,
+        overall_status,
+        warehouse_status,
+        transport_status,
+        transport_type,
+        route_id,
+        retail_name,
+        delivery_address_1,
+        delivery_address_2,
+        delivery_address_3,
+        delivery_address_4,
+        delivery_city,
+        delivery_postcode,
+        delivery_country,
+        created_at
+      `)
+      .eq("company_id", companyId)
+      .in("id", batch),
+
+    "Could not load picking orders"
+  );
+
+  assertTenantRows(
+    orders,
     companyId,
-    orderIds
-  ) {
-    const orders = await fetchInBatches(
-      orderIds,
-      CONFIG.queryBatchSize,
+    "Orders"
+  );
 
-      batch => client
-        .from("orders")
-        .select(`
-          id,
-          company_id,
-          customer_id,
-          order_number,
-          external_reference,
-          status,
-          overall_status,
-          warehouse_status,
-          transport_status,
-          transport_type,
-          route_id,
-          carrier_vehicle_id,
-          delivery_name,
-          delivery_address_1,
-          delivery_address_2,
-          delivery_address_3,
-          delivery_address_4,
-          delivery_city,
-          delivery_postcode,
-          delivery_country,
-          created_at
-        `)
-        .eq("company_id", companyId)
-        .in("id", batch),
+  const orderMap = makeMap(orders);
 
-      "Could not load picking orders"
-    );
-
-    assertTenantRows(
-      orders,
-      companyId,
-      "Orders"
-    );
-
-    const orderMap = makeMap(orders);
-
-    for (const orderId of orderIds) {
-      if (!orderMap.has(String(orderId))) {
-        throw new Error(
-          `Selected order is unavailable: ${orderId}`
-        );
-      }
+  for (const orderId of orderIds) {
+    if (!orderMap.has(String(orderId))) {
+      throw new Error(
+        `Selected order is unavailable: ${orderId}`
+      );
     }
-
-    return orderIds.map(
-      id => orderMap.get(String(id))
-    );
   }
 
+  return orderIds.map(
+    id => orderMap.get(String(id))
+  );
+}
 
   // ==========================================================
   // 15. LOAD ORDER LINES
@@ -1151,89 +1179,94 @@
   // 17. LOAD PHYSICAL STOCK ITEMS
   // ==========================================================
 
-  async function fetchPickingItems(
-    client,
+
+async function fetchPickingItems(
+  client,
+  companyId,
+  allocations
+) {
+  const itemIds = unique(
+    allocations.map(a => a.item_id)
+  );
+
+  if (!itemIds.length) return [];
+
+  const columns = `
+    id, company_id, product_id, physical_product_id,
+    warehouse_id, location_id, stock_set_id,
+    sku_unique, serial_number, batch_number,
+    status, package_no, package_total, package_label,
+    package_condition, condition_notes,
+    is_match_blocked, match_block_reason,
+    received_at, inbound_date, reserved_at,
+    picked_at, loaded_at, shipped_at,
+    linked_order_id, stock_variant
+  `;
+
+  const primaryItems = await fetchInBatches(
+    itemIds,
+    CONFIG.queryBatchSize,
+    batch => client
+      .from("items")
+      .select(columns)
+      .eq("company_id", companyId)
+      .in("id", batch),
+    "Could not load allocated items"
+  );
+
+  assertTenantRows(
+    primaryItems,
     companyId,
-    allocations
-  ) {
-    const itemIds = unique(
-      allocations.map(
-        allocation => allocation.item_id
-      )
-    );
+    "Allocated items"
+  );
 
-    if (!itemIds.length) {
-      return [];
+  const primaryMap = makeMap(primaryItems);
+
+  for (const allocation of allocations) {
+    if (!primaryMap.has(String(allocation.item_id))) {
+      throw new Error(
+        `Allocated item not found: ${allocation.item_id}`
+      );
     }
+  }
 
-    const items = await fetchInBatches(
-      itemIds,
+  const physicalIds = unique(
+    primaryItems.map(item => item.physical_product_id)
+  );
+
+  let relatedItems = [];
+
+  if (physicalIds.length) {
+    relatedItems = await fetchInBatches(
+      physicalIds,
       CONFIG.queryBatchSize,
-
       batch => client
         .from("items")
-        .select(`
-          id,
-          company_id,
-          product_id,
-          physical_product_id,
-          warehouse_id,
-          location_id,
-          stock_set_id,
-          sku_unique,
-          serial_number,
-          batch_number,
-          status,
-          package_no,
-          package_total,
-          package_label,
-          package_condition,
-          condition_notes,
-          is_match_blocked,
-          match_block_reason,
-          received_at,
-          inbound_date,
-          reserved_at,
-          picked_at,
-          loaded_at,
-          shipped_at,
-          linked_order_id,
-          stock_variant
-        `)
+        .select(columns)
         .eq("company_id", companyId)
-        .in("id", batch),
-
-      "Could not load physical stock items"
+        .in("physical_product_id", batch),
+      "Could not load physical product packages"
     );
 
     assertTenantRows(
-      items,
+      relatedItems,
       companyId,
-      "Physical stock"
+      "Physical product packages"
     );
-
-    const itemMap = makeMap(items);
-
-    for (const allocation of allocations) {
-      const item = itemMap.get(
-        String(allocation.item_id)
-      );
-
-      if (!item) {
-        throw new Error(
-          `Allocated stock item not found: ` +
-          allocation.item_id
-        );
-      }
-
-      validatePhysicalItem(
-        item,
-        companyId
-      );
-    }
-
-    return items;
   }
+
+  const allItems = new Map();
+
+  for (const item of [
+    ...primaryItems,
+    ...relatedItems
+  ]) {
+    validatePhysicalItem(item, companyId);
+    allItems.set(String(item.id), item);
+  }
+
+  return [...allItems.values()];
+}
 
 
   // ==========================================================
@@ -1338,11 +1371,11 @@
           qr_code_value,
           package_count,
           packages_per_unit,
+          sales_units_per_package,
           package_1_qty,
           package_2_qty,
           package_3_qty,
-          is_active
-        `)
+          is_active        `)
         .eq("company_id", companyId)
         .in("id", batch),
 
@@ -2052,54 +2085,673 @@
   // 36. BUILD ONE PHYSICAL PICKING LINE
   // ==========================================================
 
-  function createPhysicalPickingLine(
+function createPhysicalPickingLine(
+  allocation,
+  data
+) {
+  const maps = data.maps;
+
+  const orderLine = maps.orderLines.get(
+    String(allocation.order_line_id)
+  );
+
+  const item = maps.items.get(
+    String(allocation.item_id)
+  );
+
+  if (!orderLine || !item) {
+    throw new Error(
+      "Picking allocation references missing data."
+    );
+  }
+
+  const order = maps.orders.get(
+    String(orderLine.order_id)
+  );
+
+  if (!order) {
+    throw new Error(
+      "Picking order could not be resolved."
+    );
+  }
+
+  const stockStatus = normalize(item.status);
+
+  const unavailableStatuses = new Set([
+    "shipped",
+    "delivered",
+    "loaded",
+    "picked",
+    "damaged",
+    "missing",
+    "quarantine",
+    "quarantined",
+    "written_off",
+    "scrapped"
+  ]);
+
+  if (
+    unavailableStatuses.has(stockStatus) ||
+    item.picked_at ||
+    item.loaded_at ||
+    item.shipped_at
+  ) {
+    throw new Error(
+      `Item ${item.id} is not available for picking. ` +
+      `Current status: ${stockStatus || "unknown"}.`
+    );
+  }
+
+  if (item.is_match_blocked === true) {
+    throw new Error(
+      `Item ${item.id} is blocked for matching.`
+    );
+  }
+
+  if (
+    item.linked_order_id &&
+    String(item.linked_order_id) !== String(order.id)
+  ) {
+    throw new Error(
+      `Item ${item.id} is linked to another order.`
+    );
+  }
+
+  const product = maps.products.get(
+    String(orderLine.product_id || item.product_id)
+  );
+
+  const stockSetId =
+    allocation.stock_set_id ||
+    item.stock_set_id ||
+    null;
+
+  const stockSet = stockSetId
+    ? maps.stockSets.get(String(stockSetId))
+    : null;
+
+  const location = resolvePickingLocation(
+    item,
+    stockSet,
+    maps
+  );
+
+  const owner = order.customer_id
+    ? maps.productOwners.get(
+        String(order.customer_id)
+      )
+    : null;
+
+  const packageNumber = toInteger(
+    item.package_no ||
+    orderLine.requested_package_no,
+    0
+  );
+
+  const packageTotal = toInteger(
+    item.package_total ||
+    stockSet?.package_total ||
+    orderLine.requested_package_total ||
+    orderLine.packages_per_unit,
+    0
+  );
+
+  return {
+    id: allocation.id,
+
+    company_id: data.companyId,
+
+    allocation_id: allocation.id,
+
+    order_id: order.id,
+    order_line_id: orderLine.id,
+
+    item_id: item.id,
+    stock_set_id: stockSetId,
+
+    product_id:
+      orderLine.product_id ||
+      item.product_id,
+
+    order_number: clean(order.order_number),
+
+    external_reference:
+      clean(order.external_reference),
+
+    product_owner_id:
+      order.customer_id || null,
+
+    product_owner_name:
+      clean(owner?.name || ""),
+
+    product_owner_code:
+      clean(owner?.customer_code || ""),
+
+    sku: getPickingSku(
+      orderLine,
+      product,
+      item
+    ),
+
+    product_description:
+      getPickingDescription(
+        orderLine,
+        product
+      ),
+
+    barcode: getPickingBarcode(
+      item,
+      product
+    ),
+
+    sku_unique: clean(item.sku_unique),
+
+    package_number: packageNumber || null,
+    package_total: packageTotal || null,
+
+    package_label: clean(
+      item.package_label ||
+      orderLine.requested_package_label ||
+      formatPackage(
+        packageNumber,
+        packageTotal
+      )
+    ),
+
+    quantity_required: 1,
+    quantity_picked: 0,
+    quantity_short: 0,
+
+    status: "pending",
+
+    warehouse_id: location.warehouse_id,
+    location_id: location.location_id,
+
+    warehouse_name: location.warehouse_name,
+    location_code: location.location_code,
+
+    location_verified:
+      location.location_verified,
+
+    stock_status: clean(item.status),
+
+    package_condition:
+      clean(item.package_condition),
+
+    is_match_blocked:
+      item.is_match_blocked === true,
+
+    received_at:
+      item.received_at ||
+      item.inbound_date ||
+      null,
+
+    received_timestamp:
+      getReceivedTimestamp(item),
+
+    allocated_at: allocation.allocated_at,
+
+    allocation_status:
+      allocation.allocation_status,
+
+    is_missing: false,
+    is_physical: true
+  };
+}
+
+  // ==========================================================
+  // 37. BUILD ALLOCATED PICKING LINES
+  // ==========================================================
+
+
+
+function getAllocatedPhysicalPackages(
+  allocation,
+  data
+) {
+  const primary = data.maps.items.get(
+    String(allocation.item_id)
+  );
+
+  if (!primary) {
+    throw new Error(
+      `Allocated item not found: ${allocation.item_id}`
+    );
+  }
+
+  const orderLine = data.maps.orderLines.get(
+    String(allocation.order_line_id)
+  );
+
+  if (!orderLine) {
+    throw new Error(
+      "Allocation order line not found."
+    );
+  }
+
+  const orderId = String(orderLine.order_id);
+
+  const allowedConditions = new Set([
+    "complete",
+    "open_complete"
+  ]);
+
+  function validatePackage(item) {
+    if (
+      String(item.company_id) !==
+      String(data.companyId)
+    ) {
+      throw new Error(
+        `Package ${item.id} belongs to another company.`
+      );
+    }
+
+    if (normalize(item.status) !== "reserved") {
+      throw new Error(
+        `Package ${item.id} is not reserved. ` +
+        `Current status: ${item.status || "unknown"}.`
+      );
+    }
+
+    if (
+      String(item.linked_order_id || "") !==
+      orderId
+    ) {
+      throw new Error(
+        `Package ${item.id} is not reserved ` +
+        `for the selected order.`
+      );
+    }
+
+    if (item.is_match_blocked === true) {
+      throw new Error(
+        `Package ${item.id} is blocked for matching.`
+      );
+    }
+
+    const condition = normalize(
+      item.package_condition || "complete"
+    );
+
+    if (!allowedConditions.has(condition)) {
+      throw new Error(
+        `Package ${item.id} has an invalid condition: ` +
+        `${condition}.`
+      );
+    }
+
+    if (
+      item.picked_at ||
+      item.loaded_at ||
+      item.shipped_at
+    ) {
+      throw new Error(
+        `Package ${item.id} has already been ` +
+        `picked, loaded or shipped.`
+      );
+    }
+
+    if (
+      String(item.product_id || "") !==
+      String(primary.product_id || "")
+    ) {
+      throw new Error(
+        `Product mismatch in physical set ` +
+        `${primary.physical_product_id || primary.id}.`
+      );
+    }
+
+    return true;
+  }
+
+  // The primary allocated item must always be valid.
+  validatePackage(primary);
+
+  const requestedPackageNo = toInteger(
+    orderLine.requested_package_no
+  );
+
+  const requestedPackageTotal = toInteger(
+    orderLine.requested_package_total
+  );
+
+  // A spare-part order only needs its requested package.
+  if (
+    requestedPackageNo > 0 &&
+    requestedPackageTotal > 0
+  ) {
+    if (
+      toInteger(primary.package_no) !==
+        requestedPackageNo ||
+      toInteger(primary.package_total) !==
+        requestedPackageTotal
+    ) {
+      throw new Error(
+        `Allocated package does not match ` +
+        `the requested package for order line ${orderLine.id}.`
+      );
+    }
+
+    return [primary];
+  }
+
+  // Legacy or single-package items without a physical ID.
+  if (!primary.physical_product_id) {
+    return [primary];
+  }
+
+  const physicalId = String(
+    primary.physical_product_id
+  );
+
+  const related = data.items.filter(item =>
+    String(item.physical_product_id || "") ===
+    physicalId
+  );
+
+  const packages = related.filter(item =>
+    normalize(item.status) === "reserved" &&
+    String(item.linked_order_id || "") === orderId
+  );
+
+  if (!packages.some(item =>
+    String(item.id) === String(primary.id)
+  )) {
+    throw new Error(
+      `Primary item ${primary.id} is missing ` +
+      `from the reserved physical set.`
+    );
+  }
+
+  const expectedTotal = Math.max(
+    1,
+    toInteger(primary.package_total, 1)
+  );
+
+  const packageNumbers = new Set();
+
+  for (const item of packages) {
+    validatePackage(item);
+
+    const number = toInteger(item.package_no);
+
+    if (
+      number < 1 ||
+      number > expectedTotal ||
+      packageNumbers.has(number)
+    ) {
+      throw new Error(
+        `Invalid or duplicate package number ` +
+        `in physical set ${physicalId}.`
+      );
+    }
+
+    if (
+      toInteger(item.package_total) !==
+      expectedTotal
+    ) {
+      throw new Error(
+        `Package total mismatch in physical set ${physicalId}.`
+      );
+    }
+
+    packageNumbers.add(number);
+  }
+
+  if (packageNumbers.size !== expectedTotal) {
+    throw new Error(
+      `Incomplete reserved product set ${physicalId}: ` +
+      `${packageNumbers.size}/${expectedTotal} packages.`
+    );
+  }
+
+  return packages.sort(
+    (a, b) =>
+      toInteger(a.package_no) -
+      toInteger(b.package_no)
+  );
+}
+
+
+function createPickingLineForPackage(
+  allocation,
+  item,
+  data
+) {
+  const line = createPhysicalPickingLine(
     allocation,
     data
-  ) {
-    const maps = data.maps;
+  );
 
-    const orderLine = maps.orderLines.get(
-      String(allocation.order_line_id)
-    );
+  const stockSet = item.stock_set_id
+    ? data.maps.stockSets.get(
+        String(item.stock_set_id)
+      )
+    : null;
 
-    const item = maps.items.get(
-      String(allocation.item_id)
-    );
+  const location = resolvePickingLocation(
+    item,
+    stockSet,
+    data.maps
+  );
 
-    if (!orderLine || !item) {
+  const packageNumber = toInteger(
+    item.package_no
+  );
+
+  const packageTotal = toInteger(
+    item.package_total
+  );
+
+  return {
+    ...line,
+
+    id: `${allocation.id}:${item.id}`,
+    item_id: item.id,
+
+    stock_set_id:
+      item.stock_set_id ||
+      allocation.stock_set_id ||
+      null,
+
+    sku_unique: clean(item.sku_unique),
+
+    package_number: packageNumber || null,
+    package_total: packageTotal || null,
+
+    package_label: clean(
+      item.package_label ||
+      formatPackage(
+        packageNumber,
+        packageTotal
+      )
+    ),
+
+    warehouse_id: location.warehouse_id,
+    location_id: location.location_id,
+
+    warehouse_name: location.warehouse_name,
+    location_code: location.location_code,
+
+    location_verified:
+      location.location_verified,
+
+    stock_status: clean(item.status),
+
+    package_condition:
+      clean(item.package_condition),
+
+    is_match_blocked:
+      item.is_match_blocked === true,
+
+    received_at:
+      item.received_at ||
+      item.inbound_date ||
+      null,
+
+    received_timestamp:
+      getReceivedTimestamp(item),
+
+    quantity_required: 1,
+    quantity_picked: 0,
+    quantity_short: 0,
+
+    is_physical: true,
+    is_missing: false
+  };
+}
+
+
+
+function buildAllocatedPickingLines(data) {
+  const lines = [];
+
+  const seenAllocations = new Set();
+  const seenItems = new Set();
+
+  for (const allocation of data.allocations) {
+    if (!isActiveAllocation(allocation)) {
+      continue;
+    }
+
+    if (seenAllocations.has(String(allocation.id))) {
       throw new Error(
-        "Picking allocation references missing data."
+        `Duplicate allocation: ${allocation.id}`
       );
+    }
+
+    seenAllocations.add(String(allocation.id));
+
+    const packages = getAllocatedPhysicalPackages(
+      allocation,
+      data
+    );
+
+    for (const item of packages) {
+      const itemId = String(item.id);
+
+      if (seenItems.has(itemId)) {
+        throw new Error(
+          `Physical package ${itemId} appears ` +
+          "in multiple picking allocations."
+        );
+      }
+
+      seenItems.add(itemId);
+
+      lines.push(
+        createPickingLineForPackage(
+          allocation,
+          item,
+          data
+        )
+      );
+    }
+  }
+
+  if (lines.length > CONFIG.maxItems) {
+    throw new Error(
+      `Picking list exceeds ${CONFIG.maxItems} packages.`
+    );
+  }
+
+  return lines;
+}
+
+
+  // ==========================================================
+  // 38. REQUIRED PACKAGE COUNT
+  // ==========================================================
+
+function getRequiredPackageCount(line, product) {
+  const quantity = Math.max(
+    0,
+    toNumber(line.quantity_ordered)
+  );
+
+  if (
+    toInteger(line.requested_package_no) > 0 &&
+    toInteger(line.requested_package_total) > 0
+  ) {
+    return Math.ceil(quantity);
+  }
+
+  const salesUnitsPerPackage = Math.max(
+    1,
+    toNumber(product?.sales_units_per_package, 1)
+  );
+
+  const stockUnits = Math.ceil(
+    quantity / salesUnitsPerPackage
+  );
+
+  const packagesPerUnit = Math.max(
+    1,
+    toInteger(
+      product?.package_count ||
+      product?.packages_per_unit ||
+      line.packages_per_unit,
+      1
+    )
+  );
+
+  return stockUnits * packagesPerUnit;
+}
+
+  // ==========================================================
+  // 39. BUILD MISSING PICKING LINES
+  // ==========================================================
+
+  function buildMissingPickingLines(data) {
+  const result = [];
+  const maps = data.maps;
+
+  for (const line of data.orderLines) {
+    if (
+      normalize(line.line_type) === "manual" ||
+      normalize(line.sku_base) === "miscellaneous" ||
+      line.manually_completed === true
+    ) {
+      continue;
     }
 
     const order = maps.orders.get(
-      String(orderLine.order_id)
+      String(line.order_id)
     );
 
-    if (!order) {
-      throw new Error(
-        "Picking order could not be resolved."
-      );
-    }
+    if (!order) continue;
 
-    const product = maps.products.get(
-      String(orderLine.product_id || item.product_id)
-    );
-
-    const stockSetId =
-      allocation.stock_set_id ||
-      item.stock_set_id ||
-      null;
-
-    const stockSet = stockSetId
-      ? maps.stockSets.get(String(stockSetId))
+    const product = line.product_id
+      ? maps.products.get(String(line.product_id))
       : null;
 
-    const location = resolvePickingLocation(
-      item,
-      stockSet,
-      maps
+    const required = getRequiredPackageCount(
+      line,
+      product
     );
+
+    const allocations =
+      maps.allocationsByLine.get(String(line.id)) || [];
+
+    const allocatedItemIds = new Set();
+
+    for (const allocation of allocations) {
+      const packages = getAllocatedPhysicalPackages(
+        allocation,
+        data
+      );
+
+      for (const item of packages) {
+        allocatedItemIds.add(String(item.id));
+      }
+    }
+
+    const missing = Math.max(
+      0,
+      required - allocatedItemIds.size
+    );
+
+    if (!missing) continue;
 
     const owner = order.customer_id
       ? maps.productOwners.get(
@@ -2107,40 +2759,20 @@
         )
       : null;
 
-    const packageNumber = toInteger(
-      item.package_no ||
-      orderLine.requested_package_no,
-      0
-    );
-
-    const packageTotal = toInteger(
-      item.package_total ||
-      stockSet?.package_total ||
-      orderLine.requested_package_total ||
-      orderLine.packages_per_unit,
-      0
-    );
-
-    return {
-      id: allocation.id,
+    result.push({
+      id: `missing-${line.id}`,
 
       company_id: data.companyId,
 
-      allocation_id: allocation.id,
+      allocation_id: null,
+      item_id: null,
+      stock_set_id: null,
 
       order_id: order.id,
-      order_line_id: orderLine.id,
+      order_line_id: line.id,
+      product_id: line.product_id || null,
 
-      item_id: item.id,
-      stock_set_id: stockSetId,
-
-      product_id:
-        orderLine.product_id ||
-        item.product_id,
-
-      order_number:
-        clean(order.order_number),
-
+      order_number: clean(order.order_number),
       external_reference:
         clean(order.external_reference),
 
@@ -2153,328 +2785,55 @@
       product_owner_code:
         clean(owner?.customer_code || ""),
 
-      sku: getPickingSku(
-        orderLine,
-        product,
-        item
-      ),
+      sku: getPickingSku(line, product, null),
 
       product_description:
-        getPickingDescription(
-          orderLine,
-          product
-        ),
+        getPickingDescription(line, product),
 
-      barcode:
-        getPickingBarcode(
-          item,
-          product
-        ),
+      barcode: "",
+      sku_unique: "",
 
-      sku_unique:
-        clean(item.sku_unique),
+      package_number:
+        toInteger(line.requested_package_no) || null,
 
-      package_number: packageNumber || null,
-      package_total: packageTotal || null,
+      package_total:
+        toInteger(
+          line.requested_package_total ||
+          line.packages_per_unit
+        ) || null,
 
       package_label:
-        clean(
-          item.package_label ||
-          orderLine.requested_package_label ||
-          formatPackage(
-            packageNumber,
-            packageTotal
-          )
-        ),
+        clean(line.requested_package_label),
 
-      quantity_required: 1,
+      quantity_required: missing,
       quantity_picked: 0,
-      quantity_short: 0,
+      quantity_short: missing,
 
-      status: "pending",
+      status: "short_pick",
 
-      warehouse_id:
-        location.warehouse_id,
+      warehouse_id: null,
+      location_id: null,
 
-      location_id:
-        location.location_id,
+      warehouse_name: "Unallocated",
+      location_code: "No Location",
+      location_verified: false,
 
-      warehouse_name:
-        location.warehouse_name,
+      stock_status: "missing",
+      package_condition: "",
+      is_match_blocked: false,
 
-      location_code:
-        location.location_code,
+      received_at: null,
+      received_timestamp: null,
+      allocated_at: null,
+      allocation_status: null,
 
-      location_verified:
-        location.location_verified,
-
-      stock_status:
-        clean(item.status),
-
-      package_condition:
-        clean(item.package_condition),
-
-      is_match_blocked:
-        item.is_match_blocked === true,
-
-      received_at:
-        item.received_at ||
-        item.inbound_date ||
-        null,
-
-      received_timestamp:
-        getReceivedTimestamp(item),
-
-      allocated_at:
-        allocation.allocated_at,
-
-      allocation_status:
-        allocation.allocation_status,
-
-      is_missing: false,
-
-      is_physical: true
-    };
+      is_missing: true,
+      is_physical: false
+    });
   }
 
-
-  // ==========================================================
-  // 37. BUILD ALLOCATED PICKING LINES
-  // ==========================================================
-
-  function buildAllocatedPickingLines(data) {
-    const lines = [];
-
-    const seenAllocations = new Set();
-    const seenItems = new Set();
-
-    for (const allocation of data.allocations) {
-      if (!isActiveAllocation(allocation)) {
-        continue;
-      }
-
-      if (seenAllocations.has(allocation.id)) {
-        throw new Error(
-          "Duplicate allocation in picking data."
-        );
-      }
-
-      seenAllocations.add(allocation.id);
-
-      if (seenItems.has(allocation.item_id)) {
-        throw new Error(
-          "Physical item appears more than once " +
-          "in the picking list."
-        );
-      }
-
-      seenItems.add(allocation.item_id);
-
-      lines.push(
-        createPhysicalPickingLine(
-          allocation,
-          data
-        )
-      );
-    }
-
-    return lines;
-  }
-
-
-  // ==========================================================
-  // 38. REQUIRED PACKAGE COUNT
-  // ==========================================================
-
-  function getRequiredPackageCount(line, product) {
-    if (
-      toInteger(line.requested_package_no) > 0 &&
-      toInteger(line.requested_package_total) > 0
-    ) {
-      return Math.max(
-        0,
-        toInteger(line.quantity_ordered)
-      );
-    }
-
-    const explicit = toInteger(
-      line.total_packages
-    );
-
-    if (explicit > 0) {
-      return explicit;
-    }
-
-    const quantity = Math.max(
-      0,
-      toInteger(line.quantity_ordered)
-    );
-
-    const perUnit = Math.max(
-      1,
-      toInteger(
-        line.packages_per_unit ||
-        product?.packages_per_unit ||
-        product?.package_count,
-        1
-      )
-    );
-
-    return quantity * perUnit;
-  }
-
-
-  // ==========================================================
-  // 39. BUILD MISSING PICKING LINES
-  // ==========================================================
-
-  function buildMissingPickingLines(data) {
-    const result = [];
-
-    const maps = data.maps;
-
-    for (const line of data.orderLines) {
-      if (
-        normalize(line.line_type) === "manual" ||
-        line.manually_completed === true
-      ) {
-        continue;
-      }
-
-      const order = maps.orders.get(
-        String(line.order_id)
-      );
-
-      if (!order) continue;
-
-      const product = line.product_id
-        ? maps.products.get(
-            String(line.product_id)
-          )
-        : null;
-
-      const required = getRequiredPackageCount(
-        line,
-        product
-      );
-
-      const allocations =
-        maps.allocationsByLine.get(
-          String(line.id)
-        ) || [];
-
-      const allocated = allocations.length;
-
-      const missing = Math.max(
-        0,
-        required - allocated
-      );
-
-      if (!missing) continue;
-
-      const owner = order.customer_id
-        ? maps.productOwners.get(
-            String(order.customer_id)
-          )
-        : null;
-
-      result.push({
-        id: `missing-${line.id}`,
-
-        company_id: data.companyId,
-
-        allocation_id: null,
-        item_id: null,
-        stock_set_id: null,
-
-        order_id: order.id,
-        order_line_id: line.id,
-
-        product_id:
-          line.product_id || null,
-
-        order_number:
-          clean(order.order_number),
-
-        external_reference:
-          clean(order.external_reference),
-
-        product_owner_id:
-          order.customer_id || null,
-
-        product_owner_name:
-          clean(owner?.name || ""),
-
-        product_owner_code:
-          clean(owner?.customer_code || ""),
-
-        sku: getPickingSku(
-          line,
-          product,
-          null
-        ),
-
-        product_description:
-          getPickingDescription(
-            line,
-            product
-          ),
-
-        barcode: "",
-
-        sku_unique: "",
-
-        package_number:
-          toInteger(
-            line.requested_package_no
-          ) || null,
-
-        package_total:
-          toInteger(
-            line.requested_package_total ||
-            line.packages_per_unit
-          ) || null,
-
-        package_label:
-          clean(
-            line.requested_package_label
-          ),
-
-        quantity_required: missing,
-        quantity_picked: 0,
-        quantity_short: missing,
-
-        status: "short_pick",
-
-        warehouse_id: null,
-        location_id: null,
-
-        warehouse_name:
-          "Unallocated",
-
-        location_code:
-          "No Location",
-
-        location_verified: false,
-
-        stock_status: "missing",
-
-        package_condition: "",
-
-        is_match_blocked: false,
-
-        received_at: null,
-        received_timestamp: null,
-        allocated_at: null,
-        allocation_status: null,
-
-        is_missing: true,
-        is_physical: false
-      });
-    }
-
-    return result;
-  }
+  return result;
+}
 
 
   // ==========================================================
@@ -2572,35 +2931,85 @@
   // 42. SORT PICKING LINES
   // ==========================================================
 
-  function sortPickingLines(
-    lines,
-    options
-  ) {
-    const result = [...lines];
+function sortPickingLines(lines, options) {
+  const result = [...lines];
 
-    const method = options.pickingMethod;
+  const method = options.pickingMethod;
+  const sortMethod = options.sortMethod;
 
-    if (method === "by_order") {
-      return result.sort(compareByOrder);
+  function compareWithinGroup(a, b) {
+    if (sortMethod === "sku") {
+      return (
+        compareNatural(a.sku, b.sku) ||
+        compareWarehouseLocation(a, b) ||
+        compareNatural(
+          a.order_number,
+          b.order_number
+        )
+      );
     }
 
-    if (method === "by_product") {
-      return result.sort(compareByProduct);
+    if (sortMethod === "order") {
+      return (
+        compareNatural(
+          a.order_number,
+          b.order_number
+        ) ||
+        compareWarehouseLocation(a, b)
+      );
     }
 
-    if (method === "by_warehouse") {
-      return result.sort(compareByWarehouse);
-    }
-
-    if (method === "by_order_group") {
-      return result.sort(compareByOwner);
-    }
-
-    return result.sort(
-      compareWarehouseLocation
+    return (
+      compareWarehouseLocation(a, b) ||
+      compareNatural(
+        a.order_number,
+        b.order_number
+      )
     );
   }
 
+  const groupValue = line => {
+    switch (method) {
+      case "by_order":
+        return line.order_number;
+
+      case "by_product":
+        return line.sku;
+
+      case "by_warehouse":
+        return line.warehouse_name;
+
+      case "by_order_group":
+        return line.product_owner_name;
+
+      case "by_location":
+      default:
+        return (
+          line.warehouse_name +
+          "|" +
+          line.location_code
+        );
+    }
+  };
+
+  return result.sort((a, b) => {
+    // Unallocated items always appear last.
+    if (a.is_missing !== b.is_missing) {
+      return a.is_missing ? 1 : -1;
+    }
+
+    const groupCompare = compareNatural(
+      groupValue(a),
+      groupValue(b)
+    );
+
+    if (groupCompare !== 0) {
+      return groupCompare;
+    }
+
+    return compareWithinGroup(a, b);
+  });
+}
 
   // ==========================================================
   // 43. GROUP KEY HELPERS
@@ -2680,69 +3089,182 @@
   // 45. BUILD PICKING GROUPS
   // ==========================================================
 
-  function buildPickingGroups(
-    lines,
-    options
-  ) {
-    const sorted = sortPickingLines(
-      lines,
-      options
-    );
+function consolidatePickingLines(lines) {
+  const groups = new Map();
 
-    const groups = new Map();
+  for (const line of lines) {
+    // Unallocated lines are kept separate per order line.
+    const key = line.is_missing
+      ? [
+          "missing",
+          line.order_line_id
+        ].join("|")
+      : [
+          line.company_id,
+          line.product_owner_id || "",
+          line.warehouse_id || "",
+          line.location_id || "",
+          line.product_id || line.sku,
+          line.package_number ?? "",
+          line.package_total ?? ""
+        ].join("|");
 
-    for (const line of sorted) {
-      const key = getPickingGroupKey(
-        line,
-        options.pickingMethod
-      );
+    if (!groups.has(key)) {
+      groups.set(key, {
+        ...line,
 
-      if (!groups.has(key)) {
-        groups.set(key, {
-          key,
+        quantity_required: 0,
+        quantity_picked: 0,
+        quantity_short: 0,
 
-          title: getPickingGroupTitle(
-            line,
-            options.pickingMethod
-          ),
+        source_lines: [],
+        order_numbers: [],
+        order_ids: [],
+        item_ids: [],
+        allocation_ids: [],
 
-          method: options.pickingMethod,
-
-          warehouse_id:
-            line.warehouse_id,
-
-          warehouse_name:
-            line.warehouse_name,
-
-          location_id:
-            line.location_id,
-
-          location_code:
-            line.location_code,
-
-          lines: [],
-
-          total_packages: 0,
-          missing_packages: 0
-        });
-      }
-
-      const group = groups.get(key);
-
-      group.lines.push(line);
-
-      if (line.is_missing) {
-        group.missing_packages +=
-          line.quantity_required;
-      } else {
-        group.total_packages +=
-          line.quantity_required;
-      }
+        consolidated: true
+      });
     }
 
-    return [...groups.values()];
+    const group = groups.get(key);
+
+    group.quantity_required +=
+      toInteger(line.quantity_required);
+
+    group.quantity_picked +=
+      toInteger(line.quantity_picked);
+
+    group.quantity_short +=
+      toInteger(line.quantity_short);
+
+    group.source_lines.push(line);
+
+    if (
+      line.order_number &&
+      !group.order_numbers.includes(
+        line.order_number
+      )
+    ) {
+      group.order_numbers.push(
+        line.order_number
+      );
+    }
+
+    if (
+      line.order_id &&
+      !group.order_ids.includes(line.order_id)
+    ) {
+      group.order_ids.push(line.order_id);
+    }
+
+    if (
+      line.item_id &&
+      !group.item_ids.includes(line.item_id)
+    ) {
+      group.item_ids.push(line.item_id);
+    }
+
+    if (
+      line.allocation_id &&
+      !group.allocation_ids.includes(
+        line.allocation_id
+      )
+    ) {
+      group.allocation_ids.push(
+        line.allocation_id
+      );
+    }
   }
 
+  return [...groups.values()].map(group => ({
+    ...group,
+
+    order_numbers: group.order_numbers.sort(
+      compareNatural
+    ),
+
+    order_number:
+      group.order_numbers.join(", "),
+
+    order_count: group.order_numbers.length,
+
+    item_count: group.item_ids.length
+  }));
+}
+
+function buildPickingGroups(lines, options) {
+  const method = options.pickingMethod;
+
+  const sorted = sortPickingLines(
+    lines,
+    options
+  );
+
+  const groups = new Map();
+
+  for (const line of sorted) {
+    const key = getPickingGroupKey(
+      line,
+      method
+    );
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+
+        title: getPickingGroupTitle(
+          line,
+          method
+        ),
+
+        method,
+
+        warehouse_id: line.warehouse_id,
+        warehouse_name: line.warehouse_name,
+
+        location_id: line.location_id,
+        location_code: line.location_code,
+
+        lines: [],
+        source_lines: [],
+
+        total_packages: 0,
+        missing_packages: 0
+      });
+    }
+
+    const group = groups.get(key);
+
+    group.source_lines.push(line);
+
+    if (line.is_missing) {
+      group.missing_packages +=
+        line.quantity_required;
+    } else {
+      group.total_packages +=
+        line.quantity_required;
+    }
+  }
+
+  for (const group of groups.values()) {
+    if (method === "by_order") {
+      group.lines = sortPickingLines(
+        group.source_lines,
+        options
+      );
+    } else {
+      group.lines = sortPickingLines(
+        consolidatePickingLines(
+          group.source_lines
+        ),
+        options
+      );
+    }
+  }
+
+  return [...groups.values()];
+}
 
   // ==========================================================
   // 46. BUILD PICKING SUMMARY
@@ -3430,36 +3952,49 @@
   // 56. ROW VALUE HELPERS
   // ==========================================================
 
-  function getPickingCellValue(
-    line,
-    key
-  ) {
-    switch (key) {
-      case "location":
-        return line.location_code;
+function getPickingCellValue(line, key) {
+  switch (key) {
+    case "location":
+      return line.location_code || "—";
 
-      case "sku":
-        return line.sku;
+    case "sku":
+      return line.sku || "—";
 
-      case "order":
-        return line.order_number;
+    case "order": {
+      const orders = line.order_numbers;
 
-      case "package":
-        return formatPackage(
-          line.package_number,
-          line.package_total
+      if (
+        Array.isArray(orders) &&
+        orders.length > 0
+      ) {
+        if (orders.length <= 2) {
+          return orders.join(", ");
+        }
+
+        return (
+          `${orders.length} orders: ` +
+          orders.join(", ")
         );
+      }
 
-      case "quantity":
-        return formatNumber(
-          line.quantity_required
-        );
-
-      default:
-        return "";
+      return line.order_number || "—";
     }
-  }
 
+    case "package":
+      return formatPackage(
+        line.package_number,
+        line.package_total
+      );
+
+    case "quantity":
+      return formatNumber(
+        line.quantity_required
+      );
+
+    default:
+      return "";
+  }
+}
 
   // ==========================================================
   // 57. PICKING CHECKBOX
@@ -3493,86 +4028,123 @@
   // 58. PICKING TABLE ROW
   // ==========================================================
 
-  function drawPickingTableRow(
-    doc,
-    line,
-    columns,
-    y,
-    options,
-    rowIndex
-  ) {
-    const colors = PDF.colors;
+function drawPickingTableRow(
+  doc,
+  line,
+  columns,
+  y,
+  options,
+  rowIndex
+) {
+  const colors = PDF.colors;
 
-    const isFull =
-      options.detailLevel === "full";
+  const isFull =
+    options.detailLevel === "full";
 
-    const rowHeight =
-      isFull ? 15 : 10;
+  const orderNumbers =
+    Array.isArray(line.order_numbers)
+      ? line.order_numbers
+      : [line.order_number].filter(Boolean);
 
-    if (rowIndex % 2 === 1) {
-      pdfFillColor(
+  const orderText = orderNumbers.join(", ");
+
+  const orderColumn = columns.find(
+    column => column.key === "order"
+  );
+
+  const orderWidth =
+    (orderColumn?.width || 35) - 4;
+
+  pdfFont(doc, 6.5, "normal");
+
+  const orderLines = doc.splitTextToSize(
+    pdfText(orderText),
+    orderWidth
+  );
+
+  const extraOrderLines = Math.max(
+    0,
+    orderLines.length - 1
+  );
+
+  const baseHeight = isFull ? 15 : 10;
+
+  const rowHeight = Math.max(
+    baseHeight,
+    9 + extraOrderLines * 4.5
+  );
+
+  if (rowIndex % 2 === 1) {
+    pdfFillColor(doc, [249, 251, 255]);
+
+    doc.rect(
+      PDF_LEFT,
+      y,
+      PDF_WIDTH,
+      rowHeight,
+      "F"
+    );
+  }
+
+  if (line.is_missing) {
+    pdfFillColor(doc, [255, 245, 231]);
+
+    doc.rect(
+      PDF_LEFT,
+      y,
+      PDF_WIDTH,
+      rowHeight,
+      "F"
+    );
+  }
+
+  let x = PDF_LEFT + 2;
+
+  for (const column of columns) {
+    const key = column.key;
+
+    if (key === "picked") {
+      drawPickingCheckbox(
         doc,
-        [249, 251, 255]
+        x + 3,
+        y + 3,
+        options.includeCheckboxes &&
+        !line.is_missing
       );
 
-      doc.rect(
-        PDF_LEFT,
-        y,
-        PDF_WIDTH,
-        rowHeight,
-        "F"
-      );
+      x += column.width;
+      continue;
     }
 
-    if (line.is_missing) {
-      pdfFillColor(
-        doc,
-        [255, 245, 231]
+    pdfTextColor(
+      doc,
+      line.is_missing
+        ? colors.orange
+        : colors.dark
+    );
+
+    pdfFont(
+      doc,
+      7,
+      key === "sku" ? "bold" : "normal"
+    );
+
+    if (key === "order") {
+      pdfFont(doc, 6.5, "normal");
+
+      orderLines.forEach(
+        (text, index) => {
+          doc.text(
+            text,
+            x,
+            y + 5.5 + index * 4.5
+          );
+        }
       );
-
-      doc.rect(
-        PDF_LEFT,
-        y,
-        PDF_WIDTH,
-        rowHeight,
-        "F"
-      );
-    }
-
-    let x = PDF_LEFT + 2;
-
-    for (const column of columns) {
-      const key = column.key;
-
-      if (key === "picked") {
-        drawPickingCheckbox(
-          doc,
-          x + 3,
-          y + (rowHeight - 4) / 2,
-          options.includeCheckboxes &&
-          !line.is_missing
-        );
-
-        x += column.width;
-        continue;
-      }
-
+    } else {
       const value = getPickingCellValue(
         line,
         key
-      );
-
-      pdfFont(
-        doc,
-        7,
-        key === "sku" ? "bold" : "normal"
-      );
-
-      pdfTextColor(
-        doc,
-        line.is_missing
-          ? colors.orange
-          : colors.dark
       );
 
       doc.text(
@@ -3584,59 +4156,45 @@
         x,
         y + 5.5
       );
-
-      if (
-        key === "sku" &&
-        isFull
-      ) {
-        pdfFont(
-          doc,
-          6.3,
-          "normal"
-        );
-
-        pdfTextColor(
-          doc,
-          colors.muted
-        );
-
-        const description =
-          line.is_missing
-            ? "UNALLOCATED - " +
-              line.product_description
-            : line.product_description;
-
-        doc.text(
-          pdfFitText(
-            doc,
-            description,
-            column.width - 4
-          ),
-          x,
-          y + 11
-        );
-      }
-
-      x += column.width;
     }
 
-    pdfDrawColor(
-      doc,
-      colors.border
-    );
+    if (key === "sku" && isFull) {
+      pdfFont(doc, 6.3, "normal");
 
-    doc.setLineWidth(0.15);
+      pdfTextColor(doc, colors.muted);
 
-    doc.line(
-      PDF_LEFT,
-      y + rowHeight,
-      PDF_RIGHT,
-      y + rowHeight
-    );
+      const description = line.is_missing
+        ? "UNALLOCATED - " +
+          line.product_description
+        : line.product_description;
 
-    return y + rowHeight;
+      doc.text(
+        pdfFitText(
+          doc,
+          description,
+          column.width - 4
+        ),
+        x,
+        y + 11
+      );
+    }
+
+    x += column.width;
   }
 
+  pdfDrawColor(doc, colors.border);
+
+  doc.setLineWidth(0.15);
+
+  doc.line(
+    PDF_LEFT,
+    y + rowHeight,
+    PDF_RIGHT,
+    y + rowHeight
+  );
+
+  return y + rowHeight;
+}
 
   // ==========================================================
   // 59. NEW PDF PAGE
@@ -3689,82 +4247,142 @@
   // 61. DRAW ONE PICKING GROUP
   // ==========================================================
 
-  function drawPickingGroup(
+
+function getPickingRowHeight(
+  doc,
+  line,
+  columns,
+  options
+) {
+  const isFull =
+    options.detailLevel === "full";
+
+  const baseHeight = isFull ? 15 : 10;
+
+  const orderNumbers =
+    Array.isArray(line.order_numbers)
+      ? line.order_numbers
+      : [line.order_number].filter(Boolean);
+
+  const orderText = orderNumbers.join(", ");
+
+  const orderColumn = columns.find(
+    column => column.key === "order"
+  );
+
+  const orderWidth =
+    (orderColumn?.width || 35) - 4;
+
+  pdfFont(doc, 6.5, "normal");
+
+  const orderLines = doc.splitTextToSize(
+    pdfText(orderText),
+    orderWidth
+  );
+
+  const extraOrderLines = Math.max(
+    0,
+    orderLines.length - 1
+  );
+
+  return Math.max(
+    baseHeight,
+    9 + extraOrderLines * 4.5
+  );
+}
+
+
+
+function drawPickingGroup(
+  doc,
+  document,
+  group,
+  startY
+) {
+  const options = document.options;
+
+  const columns = getPickingColumns(options);
+
+  let y = ensurePickingSpace(
     doc,
     document,
+    startY,
+    37
+  );
+
+  y = drawPickingGroupHeader(
+    doc,
     group,
-    startY
+    y
+  );
+
+  y = drawPickingTableHeader(
+    doc,
+    columns,
+    y
+  );
+
+  for (
+    let index = 0;
+    index < group.lines.length;
+    index++
   ) {
-    const options = document.options;
+    const line = group.lines[index];
 
-    const columns =
-      getPickingColumns(options);
-
-    let y = ensurePickingSpace(
+    const rowHeight = getPickingRowHeight(
       doc,
-      document,
-      startY,
-      37
-    );
-
-    y = drawPickingGroupHeader(
-      doc,
-      group,
-      y
-    );
-
-    y = drawPickingTableHeader(
-      doc,
+      line,
       columns,
-      y
+      options
     );
 
-    for (
-      let index = 0;
-      index < group.lines.length;
-      index++
-    ) {
-      const line = group.lines[index];
+    const availableOnFreshPage =
+      PDF_CONTENT_BOTTOM -
+      PDF_CONTENT_TOP -
+      25;
 
-      const rowHeight =
-        options.detailLevel === "full"
-          ? 15
-          : 10;
-
-      if (
-        y + rowHeight >
-        PDF_CONTENT_BOTTOM
-      ) {
-        y = addPickingPage(
-          doc,
-          document
-        );
-
-        y = drawPickingGroupHeader(
-          doc,
-          group,
-          y
-        );
-
-        y = drawPickingTableHeader(
-          doc,
-          columns,
-          y
-        );
-      }
-
-      y = drawPickingTableRow(
-        doc,
-        line,
-        columns,
-        y,
-        options,
-        index
+    if (rowHeight > availableOnFreshPage) {
+      throw new Error(
+        `Picking row is too large for one PDF page. ` +
+        `SKU: ${line.sku || "unknown"}. ` +
+        `Try generating smaller picking groups.`
       );
     }
 
-    return y + 6;
+    if (
+      y + rowHeight >
+      PDF_CONTENT_BOTTOM
+    ) {
+      y = addPickingPage(
+        doc,
+        document
+      );
+
+      y = drawPickingGroupHeader(
+        doc,
+        group,
+        y
+      );
+
+      y = drawPickingTableHeader(
+        doc,
+        columns,
+        y
+      );
+    }
+
+    y = drawPickingTableRow(
+      doc,
+      line,
+      columns,
+      y,
+      options,
+      index
+    );
   }
+
+  return y + 6;
+}
 
 
   // ==========================================================
