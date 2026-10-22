@@ -2513,17 +2513,12 @@ if (transportType === "warehouse_pickup") {
   // De juiste datum wordt gefilterd in available-vehicles.js.
   return true;
 }
-    // Bestaande datumfilter voor charterorders.
-    if (transportType === "charter") {
-      const planningDate = String(
-        order.planned_route_date ||
-        order.fds_collection_date ||
-        order.expected_delivery_date ||
-        ""
-      ).slice(0, 10);
-
-      return !planningDate || planningDate >= today;
-    }
+// FDS / Carrier orders blijven beschikbaar,
+// ook wanneer de collection date in het verleden ligt.
+// available-vehicles.js filtert op de geselecteerde datum.
+if (transportType === "charter") {
+  return true;
+}
 
     // Overige orders blijven beschikbaar.
     return true;
