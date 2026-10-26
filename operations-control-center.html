@@ -35,6 +35,18 @@
 <script src="./js/occ-tools/copy-order-tool.js"></script>
 <script src="./js/occ-tools/credit-order-tool.js"></script>
 <script src="./js/occ-tools/credit-note-generator.js"></script>
+
+<!-- ZIP library -->
+<script
+  src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"
+  defer>
+</script>
+
+<!-- Veynor Bulk POD Export -->
+<script
+  src="/js/occ-tools/bulk-pod-export.js"
+  defer>
+</script>
   <style>
     .occ-page{display:grid;gap:14px}
 
@@ -617,6 +629,116 @@
   }
 }
 
+
+/* ================================================
+   VEYNOR — BULK POD DOWNLOAD
+   ================================================ */
+
+.bulk-pod-shell {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.bulk-pod-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  background: #f8fafc;
+  color: #07152f;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+  text-align: left;
+}
+
+.bulk-pod-toggle:hover {
+  background: #eff6ff;
+}
+
+.bulk-pod-chevron {
+  font-size: 18px;
+  color: #64748b;
+}
+
+.bulk-pod-toggle[aria-expanded="true"]
+.bulk-pod-chevron {
+  transform: rotate(180deg);
+}
+
+.bulk-pod-panel {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+
+.bulk-pod-panel[hidden] {
+  display: none !important;
+}
+
+.bulk-pod-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-pod-status {
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.bulk-pod-status[data-status="success"] {
+  background: #ecfdf5;
+  color: #166534;
+}
+
+.bulk-pod-status[data-status="warning"] {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.bulk-pod-status[data-status="error"] {
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+#bulkPodOrderNumbers {
+  min-height: 130px;
+  font-family: monospace;
+  line-height: 1.6;
+}
+
+#bulkPodResults {
+  min-width: 0;
+}
+
+#bulkPodResults .occ-table {
+  min-width: 0;
+  width: 100%;
+}
+
+@media (max-width: 700px) {
+  .bulk-pod-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .bulk-pod-actions .btn {
+    width: 100%;
+  }
+}
+
+
   </style>
 </head>
 
@@ -848,6 +970,124 @@
     Historical Orders
   </button>
 </div>
+
+
+<!-- ================================================
+     BULK SIGNED POD DOWNLOAD
+     ================================================ -->
+
+<section class="bulk-pod-shell tenant-only">
+
+  <button
+    id="bulkPodToggle"
+    class="bulk-pod-toggle"
+    type="button"
+    aria-expanded="false"
+    aria-controls="bulkPodPanel"
+  >
+    <span>📦 Bulk Document Download</span>
+    <span class="bulk-pod-chevron">⌄</span>
+  </button>
+
+  <div id="bulkPodPanel" class="bulk-pod-panel" hidden>
+
+
+<p class="occ-help">
+  Select a document type and paste Sales Order numbers
+  or a complete email. Veynor will automatically
+  extract the SO numbers and prepare the documents
+  in one ZIP file.
+</p>
+
+<div class="field">
+  <label for="bulkDocumentType">
+    Document Type
+  </label>
+
+  <select
+    id="bulkDocumentType"
+    class="select"
+  >
+    <option value="pod">
+      Signed PODs
+    </option>
+
+    <option value="delivery_note">
+      Delivery Notes
+    </option>
+  </select>
+</div>
+
+
+    <div class="field">
+      <label for="bulkPodOrderNumbers">
+        Sales Order Numbers
+      </label>
+
+      <textarea
+        id="bulkPodOrderNumbers"
+        class="input"
+        rows="6"
+        placeholder="SO-03709&#10;SO-03690&#10;SO-03774"
+        spellcheck="false"
+      ></textarea>
+
+      <span id="bulkPodInputCount" class="occ-help">
+        0 unique SO numbers
+      </span>
+    </div>
+
+    <div class="bulk-pod-actions">
+
+      <button
+        id="bulkPodCheckBtn"
+        class="btn"
+        type="button"
+        disabled
+      >
+        Check Documents
+      </button>
+
+      <button
+        id="bulkPodDownloadBtn"
+        class="btn btn-primary"
+        type="button"
+        disabled
+      >
+        Download ZIP
+      </button>
+
+      <button
+        id="bulkPodClearBtn"
+        class="btn"
+        type="button"
+      >
+        Clear
+      </button>
+
+    </div>
+
+    <div
+      id="bulkPodStatus"
+      class="bulk-pod-status"
+      role="status"
+      aria-live="polite"
+      style="display:none;"
+    ></div>
+
+    <div
+      id="bulkPodProgress"
+      class="occ-help"
+      role="status"
+      style="display:none;"
+    ></div>
+
+    <div id="bulkPodResults"></div>
+
+  </div>
+
+</section>
+
 
 <div class="occ-manual-charge-action tenant-only">
   <button

@@ -637,69 +637,98 @@ function addManualLine() {
   updateManualCompletionControls();
 }
 
+
 function isManualCompletionEligible(order, rows = null) {
   if (!order) return false;
 
-  const status = String(
-    order.status || ""
-  ).trim().toLowerCase();
+  const status = String(order.status || "").trim().toLowerCase();
+  const warehouseStatus = String(order.warehouse_status || "").trim().toLowerCase();
 
-  const warehouseStatus = String(
-    order.warehouse_status || ""
-  ).trim().toLowerCase();
-
-  // Afgesloten of geannuleerde orders niet aanpassen.
   if (
     ["cancelled", "delivered", "closed"].includes(status) ||
-    ["cancelled", "delivered", "closed"].includes(warehouseStatus)
+    ["cancelled", "delivered", "closed"].includes(warehouseStatus) ||
+    order.route_id
   ) {
     return false;
   }
 
   const lines = rows || order.order_lines || [];
+  if (!lines.length) return false;
 
-  // Een order zonder regels mag niet handmatig compleet.
-  if (!lines.length) {
-    return false;
-  }
+  let hasManualOrMisc = false;
 
-  // Alle orderregels moeten MISC of handmatig zijn.
-  return lines.every(line => {
+  for (const line of lines) {
+    const isElement = typeof Element !== "undefined" &&
+      line instanceof Element;
 
-    // Controleer de regels zoals ze in Edit Order staan.
-    if (line instanceof Element) {
-      const isManual =
-        line.dataset.oeManual === "1";
+    const original = isElement
+      ? (order.order_lines || []).find(
+          item => String(item.id) ===
+            String(line.dataset.oeLineId)
+        )
+      : line;
 
-      if (isManual) {
-        return true;
-      }
-
-      const product = productFromRow(line);
-
-      return (
-        String(product?.sku || "")
-          .trim()
-          .toUpperCase() === "MISC"
-      );
-    }
-
-    // Controleer opgeslagen Supabase-orderregels.
-    const lineType = String(
-      line.line_type || ""
-    ).trim().toLowerCase();
+    const product = isElement ? productFromRow(line) : null;
 
     const sku = String(
-      line.sku_base ||
-      line.products?.sku_base ||
-      ""
+      isElement
+        ? product?.sku || ""
+        : line.sku_base || line.products?.sku_base || ""
     ).trim().toUpperCase();
 
-    return (
-      lineType === "manual" ||
-      sku === "MISC"
-    );
-  });
+    const isManual = isElement
+      ? line.dataset.oeManual === "1"
+      : String(line.line_type || "").toLowerCase() === "manual";
+
+    if (isManual || sku === "MISC") {
+      hasManualOrMisc = true;
+      continue;
+    }
+
+    // Normale producten moeten bestaande regels zijn.
+    if (!original?.id || !product && isElement) {
+      return false;
+    }
+
+    // Product en hoeveelheid mogen niet gewijzigd zijn.
+    if (isElement) {
+      const oldProductId = original.product_id ||
+        original.products?.id;
+
+      const qty = Number(
+        line.querySelector("[data-oe-qty]")?.value
+      );
+
+      if (
+        String(product.id) !== String(oldProductId) ||
+        qty !== Number(original.quantity_ordered)
+      ) {
+        return false;
+      }
+    }
+
+    const required =
+      Number(original.quantity_ordered || 0) *
+      getProductPackageCount(original.products || {});
+
+    const allocations = original.order_allocations || [];
+
+    const allocated = allocations.filter(a =>
+      ["allocated", "reserved"].includes(
+        String(a.allocation_status || "").toLowerCase()
+      ) &&
+      a.items?.id &&
+      !["missing", "cancelled", "shipped"].includes(
+        String(a.items.status || "").toLowerCase()
+      )
+    ).length;
+
+    if (required <= 0 || allocated < required) {
+      return false;
+    }
+  }
+
+  return hasManualOrMisc;
 }
 
 function updateManualCompletionControls() {
@@ -722,13 +751,13 @@ function updateManualCompletionControls() {
 
   reason.disabled = !eligible || !checkbox.checked;
 
-  if (help) {
-    help.textContent = eligible
-      ? "Only use this when the required service or MISC items " +
-        "have been confirmed and no stock allocation is required."
-      : "Manual completion is only available for orders " +
-        "containing exclusively MISC or manual service lines.";
-  }
+
+if (help) {
+  help.textContent = eligible
+    ? "Manual completion is available. All regular stock products must be fully allocated. MISC or manual service items may be approved."
+    : "Manual completion requires at least one MISC or manual service item, with all regular stock products fully allocated.";
+}
+
 }
 
   function openModal(order) {
@@ -1407,6 +1436,58 @@ async function releaseManualCompleteOrder(order) {
   };
 }
 
+
+async function saveManualCompletionOnly(order, reason) {
+  const db = ensureClient();
+
+  const { data: latest, error: loadError } = await db
+    .from("orders")
+    .select(
+      "id, company_id, status, warehouse_status, " +
+      "route_id, manual_completion_override"
+    )
+    .eq("company_id", order.company_id)
+    .eq("id", order.id)
+    .single();
+
+  if (loadError) throw loadError;
+
+  if (
+    ["cancelled", "delivered", "closed"].includes(
+      String(latest.status || "").toLowerCase()
+    ) ||
+    latest.route_id
+  ) {
+    throw new Error(
+      "This order cannot be manually completed."
+    );
+  }
+
+  const { error: saveError } = await db
+    .from("orders")
+    .update({
+      manual_completion_override: true,
+      manual_completion_reason: reason,
+      manual_completion_at: new Date().toISOString(),
+      last_activity_at: new Date().toISOString()
+    })
+    .eq("company_id", order.company_id)
+    .eq("id", order.id);
+
+  if (saveError) throw saveError;
+
+  const result = await releaseManualCompleteOrder(order);
+
+  await insertActivity(
+    order.id,
+    `Manual completion approved: ${reason}`,
+    "manual_completion"
+  );
+
+  return result;
+}
+
+
 async function save() {
   if (saving) return;
 
@@ -1428,8 +1509,8 @@ async function save() {
     !isManualCompletionEligible(order, getRows())
   ) {
     throw new Error(
-      "Manual completion is only available for orders " +
-      "containing exclusively MISC or manual service lines."
+"Manual completion requires all regular stock " +
+"products to be fully allocated."
     );
   }
 
@@ -1438,6 +1519,58 @@ async function save() {
       "Enter a reason for manual completion."
     );
   }
+
+
+  // Manual completion zonder orderregels of documenten te wijzigen.
+  if (manualComplete) {
+    saving = true;
+
+    const saveBtn = byId("genericActionSaveBtn");
+    const oldText = saveBtn?.textContent || "Save Order";
+
+    try {
+      if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Completing...";
+      }
+
+      const result = await saveManualCompletionOnly(
+        order,
+        manualReason
+      );
+
+      byId("occGenericActionModal")?.classList.remove("open");
+      byId("occGenericActionModal")?.setAttribute(
+        "aria-hidden",
+        "true"
+      );
+
+      showToast(
+        result?.released
+          ? "Order manually completed and released to planning."
+          : "Manual completion saved. Planning release pending: " +
+            (result?.reason || "Check delivery location."),
+        result?.released ? "ok" : "err"
+      );
+
+      if (typeof window.OCCReloadOrders === "function") {
+        await window.OCCReloadOrders();
+      } else {
+        window.location.reload();
+      }
+
+    } finally {
+      saving = false;
+
+      if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = oldText;
+      }
+    }
+
+    return;
+  }
+
 
   saving = true;
 
